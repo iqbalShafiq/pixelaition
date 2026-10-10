@@ -125,7 +125,7 @@ export function EditorScreen() {
 
   const [frameId, setFrameId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, History>>({});
-  const [tool, setTool] = useState<Tool>("pencil");
+  const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(1);
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
@@ -1016,7 +1016,7 @@ export function EditorScreen() {
             {leftPanels}
           </aside>
 
-          <div className="relative flex min-h-0 min-w-0 flex-col lg:border-x lg:border-line">
+          <div className="relative flex min-h-0 min-w-0 flex-col">
             <div className="order-2 min-w-0 sm:order-1">
               <Toolbar
                 tool={tool}
