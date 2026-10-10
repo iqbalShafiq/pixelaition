@@ -78,6 +78,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
                   autoComplete="name"
                   autoFocus
                   required
+                  placeholder="Ada Lovelace"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                 />
@@ -94,22 +95,20 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
                 autoFocus={login}
                 required
                 invalid={Boolean(error) && !login}
+                placeholder="you@studio.example"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
               />
             </Field>
 
-            <Field
-              label="Password"
-              htmlFor="auth-password"
-              hint={login ? undefined : "at least 8 characters"}
-            >
+            <Field label="Password" htmlFor="auth-password" hint="at least 8 characters">
               <PasswordInput
                 id="auth-password"
                 name="password"
                 autoComplete={login ? "current-password" : "new-password"}
                 minLength={8}
                 required
+                placeholder={login ? "your password" : "pick something long"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
