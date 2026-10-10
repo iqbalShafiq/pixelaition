@@ -21,7 +21,7 @@ pnpm db:migrate
 - Anvia agents are constructed with `new Agent`. Do not use the v0 builder API.
 - The drawing agent may change a canvas only through its tools. Tool handlers reject colors and coordinates the document refuses.
 - `@anvia/durable` runs in `apps/worker` only, against one SQLite file.
-- A Durable submission carries no model controls. Reasoning effort is set by registering one agent per effort and choosing the `agentId`, never by writing the effort into the prompt.
+- A Durable submission carries no model controls. Reasoning effort is set by registering one agent per model and effort and choosing the `agentId`, never by writing the effort into the prompt.
 - Langfuse is optional. When it is configured, capture reasoning, tool arguments, and messages, and redact secrets.
 - Canvas drawing lives in `apps/web/src/components/pixel-canvas.tsx`. The frame is drawn as a scaled bitmap; do not go back to one `fillRect` per cell. The transparency checker is baked into that bitmap in whole document pixels, never drawn in screen space.
 - Interface colours come from Sweetie 16 through the tokens in `DESIGN.md`. Do not introduce a colour outside that table, and never use `faint` for copy.
