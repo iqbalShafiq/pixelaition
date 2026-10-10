@@ -159,6 +159,16 @@ export const generationRuns = pgTable("generation_runs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
+export const models = pgTable("models", {
+  id: text("id").primaryKey(),
+  api: text("api").notNull(),
+  efforts: jsonb("efforts").notNull(),
+  position: integer("position").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const userRelations = relations(user, ({ many, one }) => ({
   sessions: many(session),
   accounts: many(account),
