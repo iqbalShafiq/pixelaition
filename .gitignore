@@ -8,6 +8,9 @@ test-results
 .env.local
 *.sqlite
 *.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+data/
 .DS_Store
 *.tsbuildinfo
 apps/web/dist
