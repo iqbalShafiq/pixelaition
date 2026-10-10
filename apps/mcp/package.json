@@ -1,0 +1,29 @@
+{
+  "name": "@pixelaition/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pixelaition-mcp": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "with-env": "dotenv -e ../../.env --"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@pixelaition/pixel": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@pixelaition/config": "workspace:*",
+    "@types/node": "^26.6.5",
+    "eslint": "^9.39.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
+  }
+}

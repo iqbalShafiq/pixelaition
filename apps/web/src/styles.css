@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-ink: #f4efe4;
+  --color-paper: #14120e;
+  --color-panel: #1c1915;
+  --color-muted: #9a917f;
+  --color-accent: #e8ff6a;
+  --color-erase: #ff5d3a;
+  --color-line: rgba(244, 239, 228, 0.12);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a342c transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

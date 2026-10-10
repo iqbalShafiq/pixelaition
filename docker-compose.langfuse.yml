@@ -1,0 +1,5 @@
+# Langfuse runs from its own official Compose file so this app does not
+# vendor ClickHouse, Redis, and MinIO. After it is up, set LANGFUSE_BASE_URL,
+# LANGFUSE_PUBLIC_KEY, and LANGFUSE_SECRET_KEY in the root .env.
+# https://langfuse.com/self-hosting/docker-compose
+services: {}

@@ -1,0 +1,264 @@
+import { cloneBuffer, layerById, replaceLayer } from "./buffer.js";
+import {
+  clonePixels,
+  inBounds,
+  indexOf,
+  isSizeAllowed,
+  normalizeHex,
+  readCell,
+} from "./pixels.js";
+import {
+  MAX_COLORS,
+  MAX_LAYERS,
+  type Command,
+  type CommandResult,
+  type FrameBuffer,
+  type Point,
+} from "./types.js";
+
+function fail(code: string, message: string): CommandResult {
+  return { ok: false, code, message };
+}
+
+function requireLayer(buffer: FrameBuffer, layerId: string): CommandResult | FrameBuffer {
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  return buffer;
+}
+
+function paintPoints(
+  buffer: FrameBuffer,
+  layerId: string,
+  points: Array<Point & { color?: number }>,
+  colorFor: (point: Point & { color?: number }) => number,
+): CommandResult {
+  const gate = requireLayer(buffer, layerId);
+  if ("ok" in gate) return gate;
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const next = clonePixels(layer.pixels);
+  for (const point of points) {
+    if (!inBounds(buffer.width, buffer.height, point.x, point.y)) {
+      return fail("OUT_OF_BOUNDS", "A pixel sits outside the canvas.");
+    }
+    const color = colorFor(point);
+    if (!Number.isInteger(color) || color < 0 || color >= buffer.palette.length) {
+      return fail("PALETTE_INDEX", "A pixel uses a color that is not in the palette.");
+    }
+    next[indexOf(buffer.width, point.x, point.y)] = color;
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
+function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
+  const points: Point[] = [];
+  let x = x0;
+  let y = y0;
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let error = dx - dy;
+  for (;;) {
+    points.push({ x, y });
+    if (x === x1 && y === y1) break;
+    const doubled = error * 2;
+    if (doubled > -dy) {
+      error -= dy;
+      x += sx;
+    }
+    if (doubled < dx) {
+      error += dx;
+      y += sy;
+    }
+  }
+  return points;
+}
+
+function flood(
+  buffer: FrameBuffer,
+  layerId: string,
+  x: number,
+  y: number,
+  color: number,
+): CommandResult {
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  if (!inBounds(buffer.width, buffer.height, x, y)) {
+    return fail("OUT_OF_BOUNDS", "The fill starts outside the canvas.");
+  }
+  if (!Number.isInteger(color) || color < 0 || color >= buffer.palette.length) {
+    return fail("PALETTE_INDEX", "The fill color is not in the palette.");
+  }
+  const target = readCell(layer.pixels, indexOf(buffer.width, x, y));
+  if (target === color) return { ok: true, buffer };
+  const next = clonePixels(layer.pixels);
+  const stack: Point[] = [{ x, y }];
+  while (stack.length > 0) {
+    const point = stack.pop();
+    if (!point || !inBounds(buffer.width, buffer.height, point.x, point.y)) continue;
+    const index = indexOf(buffer.width, point.x, point.y);
+    if (readCell(next, index) !== target) continue;
+    next[index] = color;
+    stack.push(
+      { x: point.x + 1, y: point.y },
+      { x: point.x - 1, y: point.y },
+      { x: point.x, y: point.y + 1 },
+      { x: point.x, y: point.y - 1 },
+    );
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
+export function applyCommand(source: FrameBuffer, command: Command): CommandResult {
+  const buffer = cloneBuffer(source);
+  switch (command.type) {
+    case "paint":
+      return paintPoints(
+        buffer,
+        command.layerId,
+        command.points,
+        (point) => point.color ?? 0,
+      );
+    case "erase":
+      return paintPoints(buffer, command.layerId, command.points, () => 0);
+    case "fill":
+      return flood(buffer, command.layerId, command.x, command.y, command.color);
+    case "line":
+      return paintPoints(
+        buffer,
+        command.layerId,
+        linePoints(command.x0, command.y0, command.x1, command.y1).map((point) => ({
+          ...point,
+          color: command.color,
+        })),
+        (point) => point.color ?? 0,
+      );
+    case "rect": {
+      if (command.width < 1 || command.height < 1) {
+        return fail("SIZE", "A rectangle needs a positive width and height.");
+      }
+      const points: Array<Point & { color: number }> = [];
+      const x1 = command.x + command.width - 1;
+      const y1 = command.y + command.height - 1;
+      for (let y = command.y; y <= y1; y += 1) {
+        for (let x = command.x; x <= x1; x += 1) {
+          const edge = x === command.x || y === command.y || x === x1 || y === y1;
+          if (command.filled || edge) points.push({ x, y, color: command.color });
+        }
+      }
+      return paintPoints(buffer, command.layerId, points, (point) => point.color ?? 0);
+    }
+    case "setPalette": {
+      if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
+        return fail(
+          "PALETTE_SIZE",
+          "A palette needs a transparent color and at most 32 others.",
+        );
+      }
+      const palette: string[] = [];
+      for (const color of command.palette) {
+        const hex = normalizeHex(color);
+        if (!hex)
+          return fail(
+            "PALETTE_COLOR",
+            "Index 0 must be #00000000 and every entry must be hex.",
+          );
+        palette.push(hex);
+      }
+      if (palette[0] !== "#00000000") {
+        return fail(
+          "PALETTE_COLOR",
+          "Index 0 must be #00000000 and every entry must be hex.",
+        );
+      }
+      const highest = highestIndex(buffer);
+      if (highest >= palette.length) {
+        return fail(
+          "PALETTE_IN_USE",
+          "The canvas still uses a color this palette would remove.",
+        );
+      }
+      return { ok: true, buffer: { ...buffer, palette } };
+    }
+    case "resize": {
+      if (!isSizeAllowed(command.width) || !isSizeAllowed(command.height)) {
+        return fail("SIZE", "Canvas size must be an integer from 8 to 128.");
+      }
+      const layers = buffer.layers.map((layer) => {
+        const pixels = new Uint8Array(command.width * command.height);
+        const copyWidth = Math.min(buffer.width, command.width);
+        const copyHeight = Math.min(buffer.height, command.height);
+        for (let y = 0; y < copyHeight; y += 1) {
+          for (let x = 0; x < copyWidth; x += 1) {
+            pixels[indexOf(command.width, x, y)] = readCell(
+              layer.pixels,
+              indexOf(buffer.width, x, y),
+            );
+          }
+        }
+        return { ...layer, pixels };
+      });
+      return {
+        ok: true,
+        buffer: { ...buffer, width: command.width, height: command.height, layers },
+      };
+    }
+    case "addLayer": {
+      if (buffer.layers.length >= MAX_LAYERS) {
+        return fail("LAYER_LIMIT", "A frame can hold four layers.");
+      }
+      const name = command.name.trim();
+      if (!name) return fail("LAYER_NAME", "A layer needs a name.");
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: [
+            ...buffer.layers,
+            {
+              id: command.id,
+              name,
+              visible: true,
+              pixels: new Uint8Array(buffer.width * buffer.height),
+            },
+          ],
+        },
+      };
+    }
+    case "mirror": {
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) => ({
+            ...layer,
+            pixels: mirrorPixels(layer.pixels, buffer.width, buffer.height),
+          })),
+        },
+      };
+    }
+    default: {
+      const unexpected: never = command;
+      return fail("UNKNOWN_COMMAND", `Unsupported edit: ${JSON.stringify(unexpected)}`);
+    }
+  }
+}
+
+function highestIndex(buffer: FrameBuffer): number {
+  let highest = 0;
+  for (const layer of buffer.layers) {
+    for (const color of layer.pixels) highest = Math.max(highest, color);
+  }
+  return highest;
+}
+
+function mirrorPixels(pixels: Uint8Array, width: number, height: number): Uint8Array {
+  const next = new Uint8Array(pixels.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      next[indexOf(width, width - 1 - x, y)] = readCell(pixels, indexOf(width, x, y));
+    }
+  }
+  return next;
+}
