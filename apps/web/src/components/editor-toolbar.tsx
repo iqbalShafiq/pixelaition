@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
-import { Button, IconButton, Separator, Toggle } from "./ui.js";
+import { Button, Checkbox, IconButton, Panel, Separator } from "./ui.js";
 
 const stroke = 2;
 const size = 16;
@@ -37,9 +37,6 @@ export function Toolbar({
   tool,
   brushSize,
   zoom,
-  grid,
-  checker,
-  onion,
   selectionActive,
   locked,
   onTool,
@@ -47,9 +44,6 @@ export function Toolbar({
   onZoom,
   onFit,
   onActualSize,
-  onGrid,
-  onChecker,
-  onOnion,
   onSelectionFill,
   onSelectionClear,
   onDeselect,
@@ -57,9 +51,6 @@ export function Toolbar({
   tool: Tool;
   brushSize: number;
   zoom: number;
-  grid: boolean;
-  checker: boolean;
-  onion: boolean;
   selectionActive: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
@@ -67,9 +58,6 @@ export function Toolbar({
   onZoom: (direction: 1 | -1) => void;
   onFit: () => void;
   onActualSize: () => void;
-  onGrid: (next: boolean) => void;
-  onChecker: (next: boolean) => void;
-  onOnion: (next: boolean) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onDeselect: () => void;
@@ -107,12 +95,12 @@ export function Toolbar({
 
       <Separator vertical />
 
+      <span className="shrink-0 border-2 border-line bg-field px-2 py-1 font-mono text-[11px] text-muted">
+        {Math.round(zoom * 100)}%
+      </span>
       <IconButton label="Zoom out" onClick={() => onZoom(-1)}>
         <Minus size={size} strokeWidth={stroke} />
       </IconButton>
-      <span className="w-14 shrink-0 border-2 border-line bg-field py-1 text-center font-mono text-[11px] text-muted">
-        {Math.round(zoom * 100)}%
-      </span>
       <IconButton label="Zoom in" onClick={() => onZoom(1)}>
         <Plus size={size} strokeWidth={stroke} />
       </IconButton>
@@ -134,12 +122,6 @@ export function Toolbar({
       >
         1:1
       </Button>
-
-      <Separator vertical />
-
-      <Toggle label="Grid" checked={grid} onChange={onGrid} />
-      <Toggle label="Checker" checked={checker} onChange={onChecker} />
-      <Toggle label="Onion" checked={onion} onChange={onOnion} />
 
       {selectionActive ? (
         <>
@@ -166,5 +148,31 @@ export function Toolbar({
         </>
       ) : null}
     </div>
+  );
+}
+/** Display switches live in the right rail, the way editors separate them. */
+export function ViewPanel({
+  grid,
+  checker,
+  onion,
+  onGrid,
+  onChecker,
+  onOnion,
+}: {
+  grid: boolean;
+  checker: boolean;
+  onion: boolean;
+  onGrid: (next: boolean) => void;
+  onChecker: (next: boolean) => void;
+  onOnion: (next: boolean) => void;
+}) {
+  return (
+    <Panel title="View">
+      <div className="grid gap-2">
+        <Checkbox label="Grid" checked={grid} onChange={onGrid} />
+        <Checkbox label="Transparency" checked={checker} onChange={onChecker} />
+        <Checkbox label="Onion skin" checked={onion} onChange={onOnion} />
+      </div>
+    </Panel>
   );
 }

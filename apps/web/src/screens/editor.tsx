@@ -27,7 +27,7 @@ import {
   PalettePanel,
   StylePanel,
 } from "../components/editor-panels.js";
-import { Toolbar } from "../components/editor-toolbar.js";
+import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -770,6 +770,14 @@ export function EditorScreen() {
           void updateAsset({ palette: [...buffer.palette, hex] });
         }}
       />
+      <ViewPanel
+        grid={grid}
+        checker={checker}
+        onion={onion}
+        onGrid={setGrid}
+        onChecker={setChecker}
+        onOnion={setOnion}
+      />
       <StylePanel
         style={style}
         width={asset.data?.width ?? 32}
@@ -849,9 +857,6 @@ export function EditorScreen() {
                 tool={tool}
                 brushSize={brushSize}
                 zoom={camera.zoom}
-                grid={grid}
-                checker={checker}
-                onion={onion}
                 selectionActive={selection !== null}
                 locked={locked}
                 onTool={setTool}
@@ -872,9 +877,6 @@ export function EditorScreen() {
                     );
                   }
                 }}
-                onGrid={setGrid}
-                onChecker={setChecker}
-                onOnion={setOnion}
                 onSelectionFill={() => selectionCommand("fill")}
                 onSelectionClear={() => selectionCommand("clear")}
                 onDeselect={() => setSelection(null)}

@@ -112,7 +112,7 @@ export function FramePanel({
                   aria-current={current}
                   className={`flex w-full items-center gap-2 border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
                     current
-                      ? "border-accent bg-accent/15 text-accent"
+                      ? "border-accent bg-raised text-accent"
                       : "border-transparent text-ink hover:border-line hover:bg-raised"
                   }`}
                 >
@@ -226,7 +226,7 @@ export function LayerPanel({
                 aria-label={`Select layer ${layer.name}`}
                 className={`min-w-0 flex-1 truncate border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
                   current
-                    ? "border-accent bg-accent/15 text-accent"
+                    ? "border-accent bg-raised text-accent"
                     : "border-transparent text-ink hover:border-line hover:bg-raised"
                 } ${layer.visible ? "" : "opacity-55"}`}
               >
