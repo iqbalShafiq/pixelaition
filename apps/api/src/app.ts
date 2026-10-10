@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
-import { decideFromPrompt } from "@pixelaition/agent";
+import { decidePrompt } from "@pixelaition/agent";
 import {
   addFrameRecord,
   createApiKey,
@@ -294,7 +294,12 @@ export function createApp() {
         reasoningEffort: z.string().min(1),
       })
       .parse(req.body);
-    const decision = decideFromPrompt(body.prompt);
+    const decision = await decidePrompt(body.prompt, {
+      typesafeApiKey: process.env.TYPESAFE_API_KEY,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL,
+      decisionModel: process.env.DECISION_MODEL,
+    });
     if (decision.intent === "clarify") {
       return fail(
         res,
