@@ -22,17 +22,29 @@ const TERMINAL: Record<string, "completed" | "failed" | "cancelled"> = {
   cancelled: "cancelled",
 };
 
-function toolSummary(name: string, data: unknown): string | undefined {
-  const input = (data as { input?: Record<string, unknown> } | undefined)?.input;
-  if (!input) return undefined;
-  if (name === "paint_stroke" && Array.isArray(input.points)) {
-    return `${input.points.length} px`;
+function toolPayload(body: Record<string, unknown> | undefined): {
+  name?: string;
+  input: unknown;
+} {
+  const inner = (body?.input ?? {}) as {
+    toolCall?: { toolName?: unknown; input?: unknown };
+  };
+  const name =
+    typeof inner.toolCall?.toolName === "string" ? inner.toolCall.toolName : undefined;
+  return { name, input: inner.toolCall?.input };
+}
+
+function toolSummary(name: string, input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const value = input as Record<string, unknown>;
+  if (name === "paint_stroke" && Array.isArray(value.points)) {
+    return `${value.points.length} px`;
   }
-  if (name === "set_palette" && Array.isArray(input.palette)) {
-    return `${input.palette.length} colors`;
+  if (name === "set_palette" && Array.isArray(value.palette)) {
+    return `${value.palette.length} colors`;
   }
   if (name === "fill_rect") {
-    return `${input.width}×${input.height}`;
+    return `${value.width}×${value.height}`;
   }
   return undefined;
 }
@@ -64,14 +76,13 @@ export function applyRunEvent(
     );
   }
   if (type === "tool_call" || type === "tool_started") {
-    const name =
-      typeof body?.name === "string" && body.name.length > 0 ? body.name : undefined;
+    const { name, input } = toolPayload(body);
     const existing = rows.find((row) => row.id === id);
     if (existing && existing.kind === "tool") {
       if (name && existing.name === "tool") {
         return rows.map((row) =>
           row.id === id && row.kind === "tool"
-            ? { ...row, name, summary: toolSummary(name, body) ?? row.summary }
+            ? { ...row, name, summary: toolSummary(name, input) ?? row.summary }
             : row,
         );
       }
@@ -84,7 +95,7 @@ export function applyRunEvent(
         id,
         kind: "tool",
         name: finalName,
-        summary: toolSummary(finalName, body),
+        summary: toolSummary(finalName, input),
         state: "running",
       },
     ];
@@ -120,9 +131,22 @@ export function applyRunEvent(
   if (type === "done") {
     const status = typeof body?.status === "string" ? body.status : "completed";
     const state = TERMINAL[status] ?? "completed";
+    const previous = rows.find((row) => row.kind === "status");
+    const detail =
+      typeof body?.error === "string"
+        ? body.error
+        : previous && previous.kind === "status"
+          ? previous.detail
+          : undefined;
     return [
       ...rows.filter((row) => row.kind !== "status"),
-      { id: `done-${sequence}`, kind: "status", label: state, state },
+      {
+        id: `done-${sequence}`,
+        kind: "status",
+        label: state,
+        state,
+        ...(detail ? { detail } : {}),
+      },
     ];
   }
   return rows;

@@ -397,10 +397,27 @@ export function PalettePanel({
             <div
               role="slider"
               aria-label="Saturation and brightness"
+              aria-valuemin={0}
+              aria-valuemax={1}
+              aria-valuenow={Math.round(hsv.s * 100) / 100}
+              aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
               tabIndex={0}
               className="relative h-24 cursor-pointer border-2 border-line-strong"
               style={{
                 background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${hsvToHex(hsv.h, 1, 1)})`,
+              }}
+              onKeyDown={(event) => {
+                const step = 0.05;
+                if (event.key === "ArrowLeft")
+                  setFromHsv({ ...hsv, s: Math.max(0, hsv.s - step) });
+                else if (event.key === "ArrowRight")
+                  setFromHsv({ ...hsv, s: Math.min(1, hsv.s + step) });
+                else if (event.key === "ArrowUp")
+                  setFromHsv({ ...hsv, v: Math.min(1, hsv.v + step) });
+                else if (event.key === "ArrowDown")
+                  setFromHsv({ ...hsv, v: Math.max(0, hsv.v - step) });
+                else return;
+                event.preventDefault();
               }}
               onPointerDown={(event) => {
                 event.currentTarget.setPointerCapture(event.pointerId);

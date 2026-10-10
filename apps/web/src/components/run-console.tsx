@@ -21,25 +21,36 @@ export function RunConsole({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
-  const startedAt = useRef<number>(Date.now());
-  const [now, setNow] = useState(Date.now());
+  const startedAt = useRef<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [lastRunMs, setLastRunMs] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  useEffect(() => {
-    if (!running) startedAt.current = Date.now();
+    if (!running) {
+      startedAt.current = null;
+      setElapsed(0);
+      return;
+    }
+    startedAt.current = Date.now();
+    setLastRunMs(null);
+    const timer = window.setInterval(() => {
+      setElapsed(Date.now() - (startedAt.current ?? Date.now()));
+    }, 500);
+    return () => {
+      if (startedAt.current !== null) setLastRunMs(Date.now() - startedAt.current);
+      window.clearInterval(timer);
+    };
   }, [running]);
   useEffect(() => {
     if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [rows, follow, message]);
 
   const steps = rows.length;
+  const lastStatus = [...rows].reverse().find((row) => row.kind === "status");
+  const stateLabel = lastStatus?.kind === "status" ? lastStatus.label : "finished";
   const summary = running
-    ? `working · ${formatDuration(now - startedAt.current)}`
-    : `${steps} steps · finished`;
+    ? `working · ${formatDuration(elapsed)}`
+    : `${steps} steps · ${stateLabel}${lastRunMs !== null ? ` in ${formatDuration(lastRunMs)}` : ""}`;
 
   return (
     <section

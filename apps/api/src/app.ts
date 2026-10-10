@@ -13,7 +13,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
@@ -216,6 +216,27 @@ export function createApp() {
         ),
       })
       .parse(req.body);
+    // Defence in depth: a live agent owns the frame, so the client cannot
+    // clobber streamed strokes even if its own suspension fails.
+    const thread = await ensureThread(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    const [latestRun] = await db
+      .select({ status: generationRuns.status })
+      .from(generationRuns)
+      .where(eq(generationRuns.threadId, thread.id))
+      .orderBy(desc(generationRuns.createdAt))
+      .limit(1);
+    if (latestRun && (latestRun.status === "queued" || latestRun.status === "running")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset; the frame cannot be written right now.",
+      );
+    }
     const saved = await saveFrame(
       db,
       res.locals.userId as string,
@@ -518,7 +539,9 @@ export function createApp() {
     const [run] = await db
       .select()
       .from(generationRuns)
-      .where(eq(generationRuns.threadId, thread.id));
+      .where(eq(generationRuns.threadId, thread.id))
+      .orderBy(desc(generationRuns.createdAt))
+      .limit(1);
     res.json({
       run: run && (run.status === "queued" || run.status === "running") ? run : null,
     });

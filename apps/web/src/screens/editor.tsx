@@ -307,8 +307,15 @@ export function EditorScreen() {
 
   useEffect(() => {
     // The agent owns the frame while a run is live: the editor never writes a
-    // stale buffer over the streamed strokes.
-    if (running) return;
+    // stale buffer over the streamed strokes, and any armed debounce is
+    // cancelled so a pre-run edit cannot slip through mid-run.
+    if (running) {
+      if (debounce.current !== null) {
+        window.clearTimeout(debounce.current);
+        debounce.current = null;
+      }
+      return;
+    }
     if (!present || !frameId) return;
     pending.current.set(frameId, present);
     if (debounce.current !== null) window.clearTimeout(debounce.current);
@@ -426,6 +433,13 @@ export function EditorScreen() {
           }
           return;
         }
+        if (body.type === "status") {
+          const data = body.data as { status?: string; outcome?: { text?: string } };
+          if (data.status === "completed" && typeof data.outcome?.text === "string") {
+            setMessage(data.outcome.text);
+          }
+          return;
+        }
         if (body.type === "done") {
           const data = body.data as { status?: string; error?: string };
           setMessage(
@@ -441,6 +455,7 @@ export function EditorScreen() {
           // from the server become the truth.
           const target = runFrameIdRef.current;
           if (target) {
+            pending.current.delete(target);
             setDrafts((current) => {
               if (!current[target]) return current;
               const next = { ...current };
@@ -456,9 +471,22 @@ export function EditorScreen() {
       source.onerror = () => {
         source.close();
         sourceRef.current = null;
-        setRunId(null);
-        setRunFrameId(null);
-        log("The activity stream closed");
+        // A dropped stream does not mean the run stopped: ask the server.
+        void api<{ run: { id: string; status: string } | null }>(
+          `/api/assets/${assetId}/active-run`,
+        )
+          .catch(() => ({ run: null }))
+          .then((result) => {
+            if (result.run) {
+              setRunId(result.run.id);
+              log("The stream dropped; rejoining the running agent");
+              listen(result.run.id, "", 0);
+              return;
+            }
+            setRunId(null);
+            setRunFrameId(null);
+            log("The activity stream closed");
+          });
       };
     },
     [assetId, client, log],
@@ -728,17 +756,14 @@ export function EditorScreen() {
     if (!runId) return;
     try {
       await api(`/api/runs/${runId}/cancel`, { method: "POST" });
-      log("Stopped");
+      log("Stopped; waiting for the agent to acknowledge");
+      // The stream stays open: the worker's cancelled status and done event
+      // clear the run state and reload the frame.
     } catch (reason) {
       notify({
         title: "Could not stop the run",
         description: reason instanceof Error ? reason.message : "Unknown error",
       });
-    } finally {
-      setRunId(null);
-      setRunFrameId(null);
-      sourceRef.current?.close();
-      sourceRef.current = null;
     }
   }
 
@@ -927,7 +952,7 @@ export function EditorScreen() {
             </div>
             <div
               ref={viewRef}
-              className="relative order-1 min-h-0 min-w-0 flex-1 pb-28 sm:order-2"
+              className="relative order-1 min-h-0 min-w-0 flex-1 sm:order-2"
             >
               {asset.isPending ? (
                 <Centered>
@@ -985,11 +1010,11 @@ export function EditorScreen() {
                 </p>
               ) : null}
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2 px-3">
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center gap-2 overflow-y-auto px-3">
               <RunConsole
                 rows={rows}
                 running={running}
-                open={consoleOpen || running}
+                open={consoleOpen}
                 onOpen={setConsoleOpen}
                 message={message || (error ?? "")}
               />

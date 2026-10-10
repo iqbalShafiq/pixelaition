@@ -1,18 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { applyRunEvent, formatDuration, type RunRow } from "./run-activity.js";
 
+// Payloads shaped like the real worker stream (captured from pxl-trial logs):
+// tool_started data = { operationId, input: { turn, toolCall: { toolName, input }, args } }
+const toolStarted = (operationId: string, toolName: string, input: unknown) => ({
+  operationId,
+  input: {
+    turn: 1,
+    toolCall: { type: "tool-call", toolName, input },
+    args: JSON.stringify(input),
+  },
+});
+
 describe("run activity rows", () => {
   it("pairs a tool call with its result", () => {
     let rows: RunRow[] = [];
-    rows = applyRunEvent(rows, 3, "tool_call", {
-      operationId: "0:tool:3",
-      name: "paint_stroke",
-      input: { points: [{ x: 1, y: 1, color: 2 }] },
-    });
+    rows = applyRunEvent(
+      rows,
+      3,
+      "tool_started",
+      toolStarted("0:tool:3", "paint_stroke", {
+        layerId: "l1",
+        label: "outline",
+        points: [
+          { x: 1, y: 1, color: 2 },
+          { x: 2, y: 1, color: 2 },
+        ],
+      }),
+    );
     expect(rows[0]).toMatchObject({
       kind: "tool",
       name: "paint_stroke",
-      summary: "1 px",
+      summary: "2 px",
       state: "running",
     });
     rows = applyRunEvent(rows, 4, "tool_completed", {
@@ -24,10 +43,12 @@ describe("run activity rows", () => {
 
   it("keeps the provider error on a failed tool", () => {
     let rows: RunRow[] = [];
-    rows = applyRunEvent(rows, 1, "tool_call", {
-      operationId: "0:tool:1",
-      name: "paint_stroke",
-    });
+    rows = applyRunEvent(
+      rows,
+      1,
+      "tool_started",
+      toolStarted("0:tool:1", "paint_stroke", { points: [] }),
+    );
     rows = applyRunEvent(rows, 2, "tool_completed", {
       operationId: "0:tool:1",
       result: { failed: true, error: "That layer is not on this frame." },
@@ -50,39 +71,26 @@ describe("run activity rows", () => {
     }
   });
 
-  it("records terminal status with the provider error", () => {
+  it("keeps the provider error when the terminal done arrives", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(rows, 1, "status", { status: "running" });
-    rows = applyRunEvent(rows, 2, "done", {
+    rows = applyRunEvent(rows, 2, "status", {
       status: "failed",
       error: "Reached max turn limit: 24",
     });
-    expect(rows.at(-1)).toMatchObject({ kind: "status", state: "failed" });
-  });
-
-  it("merges the tool name when the second event carries it", () => {
-    let rows: RunRow[] = [];
-    rows = applyRunEvent(rows, 5, "tool_started", { operationId: "0:tool:5" });
-    expect(rows[0]).toMatchObject({ kind: "tool", name: "tool" });
-    rows = applyRunEvent(rows, 6, "tool_call", {
-      operationId: "0:tool:5",
-      name: "paint_stroke",
-      input: {
-        points: [
-          { x: 1, y: 1 },
-          { x: 2, y: 1 },
-        ],
-      },
-    });
-    expect(rows[0]).toMatchObject({
-      kind: "tool",
-      name: "paint_stroke",
-      summary: "2 px",
+    rows = applyRunEvent(rows, 3, "done", { status: "failed", effort: "xhigh" });
+    expect(rows.at(-1)).toMatchObject({
+      kind: "status",
+      state: "failed",
+      detail: "Reached max turn limit: 24",
     });
   });
 
   it("ignores unknown events", () => {
     expect(applyRunEvent([], 1, "heartbeat", {})).toEqual([]);
+    expect(
+      applyRunEvent([], 2, "model_delta", { operationId: "0:model:1", event: {} }),
+    ).toEqual([]);
   });
 });
 
