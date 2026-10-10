@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildOtlpPayload, traceIdFor, type TelemetrySpan } from "./telemetry.js";
+import {
+  buildOtlpPayload,
+  LangfuseTelemetry,
+  traceIdFor,
+  type TelemetrySpan,
+} from "./telemetry.js";
 
 const span: TelemetrySpan = {
   traceId: "t",
@@ -100,5 +105,45 @@ describe("telemetry", () => {
     expect(attributes["langfuse.observation.status_message"]).toBe(
       "That layer is not on this frame.",
     );
+  });
+
+  it("delivers a standalone span with basic auth and the v4 header", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const telemetry = new LangfuseTelemetry({
+      publicKey: "pk-lf-test",
+      secretKey: "sk-lf-test",
+      baseUrl: "https://langfuse.test",
+      serviceName: "pixelaition-api",
+      fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), init });
+        return new Response("{}", { status: 200 });
+      }) as typeof fetch,
+    });
+    await telemetry.recordSpan(
+      {
+        traceId: traceIdFor("request-1"),
+        kind: "generation",
+        name: "decide-request",
+        startMs: 1_000,
+        endMs: 1_100,
+        input: "draw a slime",
+        output: '{"intent":"draw"}',
+        model: "muse-spark-1.3-contributor",
+      },
+      {
+        name: "decide",
+        userId: "user-1",
+        sessionId: "thread-1",
+        tags: ["pixelaition", "decide"],
+      },
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://langfuse.test/api/public/otel/v1/traces");
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    expect(headers["x-langfuse-ingestion-version"]).toBe("4");
+    expect(headers.authorization).toBe(
+      `Basic ${Buffer.from("pk-lf-test:sk-lf-test").toString("base64")}`,
+    );
+    expect(telemetry.pendingCount()).toBe(0);
   });
 });

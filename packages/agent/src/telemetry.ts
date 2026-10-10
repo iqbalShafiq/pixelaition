@@ -150,6 +150,7 @@ export type LangfuseTelemetryOptions = {
   secretKey: string;
   baseUrl?: string | undefined;
   serviceName: string;
+  fetchImpl?: typeof fetch;
 };
 
 function messageText(value: unknown): string | undefined {
@@ -326,6 +327,28 @@ export class LangfuseTelemetry {
     return this.pending.length;
   }
 
+  /** Records one standalone span (the prompt decision) on its own trace. */
+  async recordSpan(
+    input: {
+      traceId: string;
+      kind: TelemetrySpanKind;
+      name: string;
+      startMs: number;
+      endMs: number;
+      input?: string;
+      output?: string;
+      model?: string;
+      usage?: Record<string, unknown>;
+      level?: "DEFAULT" | "WARNING" | "ERROR";
+      statusMessage?: string;
+    },
+    context: TraceContext,
+  ): Promise<void> {
+    this.pending.push({ ...input, spanId: spanId() });
+    this.contexts.set(input.traceId, context);
+    await this.flush();
+  }
+
   async flush(): Promise<void> {
     if (this.pending.length === 0) return;
     const spans = this.pending.splice(0, this.pending.length);
@@ -352,7 +375,7 @@ export class LangfuseTelemetry {
     const auth = Buffer.from(
       `${this.options.publicKey}:${this.options.secretKey}`,
     ).toString("base64");
-    const response = await fetch(`${base}${path}`, {
+    const response = await (this.options.fetchImpl ?? fetch)(`${base}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
