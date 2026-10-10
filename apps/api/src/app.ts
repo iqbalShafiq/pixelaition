@@ -102,7 +102,11 @@ export function createApp() {
   });
 
   app.get("/api/models", async (_req, res) => {
-    res.json({ models: await listModels() });
+    res.json({
+      models: await listModels(),
+      modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      reasoningEfforts: await listReasoningEfforts(),
+    });
   });
 
   app.post("/api/api-keys", async (req, res) => {
@@ -550,6 +554,37 @@ async function listModels(): Promise<Array<{ id: string }>> {
     return modelCache.models;
   } catch {
     return fallback;
+  }
+}
+
+const fallbackEfforts = ["none", "low", "medium", "high"];
+
+let effortCache: { at: number; efforts: string[] } | undefined;
+
+/**
+ * The worker owns the reasoning-effort options, because only it knows which
+ * controls the configured model actually declares. Falls back to the generic
+ * set when the worker is unreachable or the model takes no controls.
+ */
+async function listReasoningEfforts(): Promise<string[]> {
+  if (effortCache && Date.now() - effortCache.at < 5 * 60 * 1000) {
+    return effortCache.efforts;
+  }
+  const base = process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002";
+  try {
+    const response = await fetch(`${base}/internal/agents`, {
+      headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
+    });
+    if (!response.ok) return fallbackEfforts;
+    const body = (await response.json()) as { reasoningEfforts?: string[] };
+    const efforts = body.reasoningEfforts?.filter(Boolean) ?? [];
+    effortCache = {
+      at: Date.now(),
+      efforts: efforts.length > 0 ? efforts : fallbackEfforts,
+    };
+    return effortCache.efforts;
+  } catch {
+    return fallbackEfforts;
   }
 }
 

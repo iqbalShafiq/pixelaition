@@ -1,11 +1,10 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { StreamMarkdown } from "@anvia/react-ui/stream";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType, SVGProps } from "react";
 import {
   applyCommand,
   centerCamera,
-  composite,
   createHistory,
   fitZoom,
   frameToBuffer,
@@ -13,32 +12,63 @@ import {
   redoHistory,
   stepZoom,
   undoHistory,
-  zoomAt,
+  usedColorCount,
   type Camera,
+  type Command,
   type FrameBuffer,
   type History,
 } from "@pixelaition/pixel";
-import { Button, ModelSelect, TextInput } from "../components/ui.js";
+import { Composer, type ActivityLine } from "../components/composer.js";
+import { ExportDialog } from "../components/export-dialog.js";
+import { FrameList, LayerList, PalettePanel } from "../components/editor-panels.js";
+import {
+  normalizeRect,
+  PixelCanvas,
+  type CanvasAction,
+  type Point,
+  type Rect,
+  type Tool,
+} from "../components/pixel-canvas.js";
+import {
+  EraserIcon,
+  FillIcon,
+  LineIcon,
+  PanIcon,
+  PencilIcon,
+  PickerIcon,
+  RectIcon,
+  SelectIcon,
+} from "../components/tool-icons.js";
+import { Button, IconButton, Toggle } from "../components/ui.js";
 import { api } from "../lib/api.js";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  type AssetDto,
+  type FrameDto,
+} from "../lib/types.js";
 
-type LayerDto = { id: string; name: string; visible: boolean; pixels: string };
-type FrameDto = { id: string; name: string; index: number; layers: LayerDto[] };
-type AssetDto = {
-  id: string;
-  name: string;
-  width: number;
-  height: number;
-  palette: string[];
-  frames: FrameDto[];
-};
+const toolList: Array<{
+  id: Tool;
+  label: string;
+  key: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+}> = [
+  { id: "select", label: "Select", key: "V", icon: SelectIcon },
+  { id: "pencil", label: "Pencil", key: "B", icon: PencilIcon },
+  { id: "eraser", label: "Eraser", key: "E", icon: EraserIcon },
+  { id: "fill", label: "Fill", key: "G", icon: FillIcon },
+  { id: "picker", label: "Eyedropper", key: "I", icon: PickerIcon },
+  { id: "line", label: "Line", key: "L", icon: LineIcon },
+  { id: "rect", label: "Rectangle", key: "R", icon: RectIcon },
+  { id: "pan", label: "Pan", key: "H", icon: PanIcon },
+];
 
-type Activity = { id: string; text: string };
-
-const tools = ["pencil", "eraser", "fill", "pan"] as const;
-type Tool = (typeof tools)[number];
+const toolByKey = new Map(toolList.map((item) => [item.key.toLowerCase(), item.id]));
 
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
+  const client = useQueryClient();
   const asset = useQuery({
     queryKey: ["asset", assetId],
     queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
@@ -50,107 +80,121 @@ export function EditorScreen() {
         "/api/preferences",
       ),
   });
-  const models = useQuery({
+  const catalog = useQuery({
     queryKey: ["models"],
-    queryFn: () => api<{ models: Array<{ id: string }> }>("/api/models"),
+    queryFn: () =>
+      api<{
+        models: Array<{ id: string }>;
+        modelReady: boolean;
+        reasoningEfforts: string[];
+      }>("/api/models"),
   });
+
   const [frameId, setFrameId] = useState<string | null>(null);
-  const [history, setHistory] = useState<History | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, History>>({});
   const [tool, setTool] = useState<Tool>("pencil");
+  const [brushSize, setBrushSize] = useState(1);
   const [color, setColor] = useState(1);
+  const [activeLayerId, setActiveLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
+  const [selection, setSelection] = useState<Rect | null>(null);
+  const [grid, setGrid] = useState(true);
+  const [checker, setChecker] = useState(true);
+  const [onion, setOnion] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
-  const [activity, setActivity] = useState<Activity[]>([]);
+  const [activity, setActivity] = useState<ActivityLine[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const viewRef = useRef<HTMLCanvasElement>(null);
-  const space = useRef(false);
-  const dragging = useRef<{ x: number; y: number; camera: Camera } | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const sourceRef = useRef<EventSource | null>(null);
 
+  const frames = asset.data?.frames ?? [];
+  const frame = frames.find((item) => item.id === frameId) ?? null;
+  const history = frameId ? drafts[frameId] : undefined;
+  const buffer = history?.present;
+  const running = runId !== null;
+
+  // Seed a draft for every frame the server knows about, keeping local edits intact.
   useEffect(() => {
-    if (!asset.data || history) return;
-    const frame = asset.data.frames[0];
-    if (!frame) return;
-    setFrameId(frame.id);
-    setHistory(
-      createHistory(
-        frameToBuffer(frame, asset.data.width, asset.data.height, asset.data.palette),
-      ),
-    );
-  }, [asset.data, history]);
+    if (!asset.data) return;
+    const data = asset.data;
+    setDrafts((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const item of data.frames) {
+        if (next[item.id]) continue;
+        next[item.id] = createHistory(
+          frameToBuffer(item, data.width, data.height, data.palette),
+        );
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+    setFrameId((current) => current ?? data.frames[0]?.id ?? null);
+  }, [asset.data]);
 
   useEffect(() => {
     if (preferences.data?.lastModelId) setModelId(preferences.data.lastModelId);
-    if (preferences.data?.lastReasoningEffort)
+    if (preferences.data?.lastReasoningEffort) {
       setEffort(preferences.data.lastReasoningEffort);
+    }
   }, [preferences.data]);
 
+  // The active layer follows the frame so switching frames never draws on a stale id.
   useEffect(() => {
-    const view = viewRef.current;
-    const buffer = history?.present;
-    if (!view || !buffer) return;
-    const context = view.getContext("2d");
-    if (!context) return;
-    const draw = () => {
-      const rect = view.getBoundingClientRect();
-      view.width = Math.floor(rect.width * devicePixelRatio);
-      view.height = Math.floor(rect.height * devicePixelRatio);
-      context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-      context.imageSmoothingEnabled = false;
-      context.fillStyle = "#1c1915";
-      context.fillRect(0, 0, rect.width, rect.height);
-      const indexes = composite(buffer);
-      for (let y = 0; y < buffer.height; y += 1) {
-        for (let x = 0; x < buffer.width; x += 1) {
-          const index = indexes[y * buffer.width + x] ?? 0;
-          context.fillStyle =
-            index === 0 ? "rgba(244,239,228,0.04)" : (buffer.palette[index] ?? "#000");
-          context.fillRect(
-            camera.x + x * camera.zoom,
-            camera.y + y * camera.zoom,
-            camera.zoom,
-            camera.zoom,
-          );
-        }
-      }
-    };
-    draw();
-    const observer = new ResizeObserver(draw);
-    observer.observe(view);
-    return () => observer.disconnect();
-  }, [history, camera]);
-
-  function cell(event: React.PointerEvent<HTMLCanvasElement>) {
-    const buffer = history?.present;
-    const view = viewRef.current;
-    if (!buffer || !view) return null;
-    const rect = view.getBoundingClientRect();
-    return {
-      x: Math.floor((event.clientX - rect.left - camera.x) / camera.zoom),
-      y: Math.floor((event.clientY - rect.top - camera.y) / camera.zoom),
-    };
-  }
-
-  function edit(command: Parameters<typeof applyCommand>[1]) {
-    if (!history) return;
-    const result = applyCommand(history.present, command);
-    if (!result.ok) {
-      setError(result.message);
+    const layers = buffer?.layers ?? [];
+    if (layers.length === 0) {
+      setActiveLayerId("");
       return;
     }
-    setError(null);
-    setHistory(pushHistory(history, result.buffer));
-  }
+    if (!layers.some((layer) => layer.id === activeLayerId)) {
+      setActiveLayerId(layers[0]?.id ?? "");
+    }
+  }, [buffer, activeLayerId]);
+
+  const onionSkin = useMemo(() => {
+    if (!onion || !asset.data || !frame) return [];
+    const index = asset.data.frames.findIndex((item) => item.id === frame.id);
+    const neighbors: FrameBuffer[] = [];
+    for (const offset of [-1, 1]) {
+      const item = asset.data.frames[index + offset];
+      if (item)
+        neighbors.push(
+          frameToBuffer(item, asset.data.width, asset.data.height, asset.data.palette),
+        );
+    }
+    return neighbors;
+  }, [onion, asset.data, frame]);
+
+  const update = useCallback((frameKey: string, next: History) => {
+    setDrafts((current) => ({ ...current, [frameKey]: next }));
+  }, []);
+
+  const edit = useCallback(
+    (frameKey: string, current: History | undefined, command: Command) => {
+      if (!current) return;
+      const result = applyCommand(current.present, command);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setError(null);
+      update(frameKey, pushHistory(current, result.buffer));
+    },
+    [update],
+  );
 
   const save = useMutation({
-    mutationFn: async (buffer: FrameBuffer) => {
-      if (!frameId) return;
-      await api(`/api/assets/${assetId}/frames/${frameId}`, {
+    mutationFn: async (input: { frameId: string; buffer: FrameBuffer }) => {
+      await api(`/api/assets/${assetId}/frames/${input.frameId}`, {
         method: "PUT",
         body: JSON.stringify({
-          layers: buffer.layers.map((layer) => ({
+          layers: input.buffer.layers.map((layer) => ({
             id: layer.id,
             name: layer.name,
             visible: layer.visible,
@@ -161,69 +205,329 @@ export function EditorScreen() {
     },
   });
 
+  const present = history?.present;
   useEffect(() => {
-    if (!history) return;
-    const timer = window.setTimeout(() => save.mutate(history.present), 500);
+    if (!present || !frameId) return;
+    const timer = window.setTimeout(() => {
+      void save.mutateAsync({ frameId, buffer: present });
+    }, 500);
     return () => window.clearTimeout(timer);
-  }, [history?.present]);
+    // Saving follows the frame's buffer, not the whole history object.
+  }, [present, frameId]);
+
+  function fit() {
+    const rect = viewRef.current?.getBoundingClientRect();
+    if (!rect || !buffer) return;
+    const zoom = fitZoom(rect.width, rect.height, buffer.width, buffer.height);
+    setCamera(centerCamera(rect.width, rect.height, buffer.width, buffer.height, zoom));
+  }
+
+  function actualSize() {
+    const rect = viewRef.current?.getBoundingClientRect();
+    if (!rect || !buffer) return;
+    setCamera(centerCamera(rect.width, rect.height, buffer.width, buffer.height, 1));
+  }
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.code === "Space") space.current = event.type === "keydown";
-      if (event.key === "b") setTool("pencil");
-      if (event.key === "e") setTool("eraser");
-      if (event.key === "g") setTool("fill");
-      if (event.key === "h") setTool("pan");
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === "z") {
-        setHistory((current) =>
-          current
-            ? event.shiftKey
-              ? redoHistory(current)
-              : undoHistory(current)
-            : current,
-        );
+        event.preventDefault();
+        if (frameId) {
+          setDrafts((current) => {
+            const entry = current[frameId];
+            if (!entry) return current;
+            return {
+              ...current,
+              [frameId]: event.shiftKey ? redoHistory(entry) : undoHistory(entry),
+            };
+          });
+        }
+        return;
       }
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key === "0" &&
-        viewRef.current &&
-        history
-      ) {
-        const rect = viewRef.current.getBoundingClientRect();
-        const zoom = fitZoom(
-          rect.width,
-          rect.height,
-          history.present.width,
-          history.present.height,
-        );
-        setCamera(
-          centerCamera(
-            rect.width,
-            rect.height,
-            history.present.width,
-            history.present.height,
-            zoom,
-          ),
+      if ((event.metaKey || event.ctrlKey) && event.key === "0") {
+        event.preventDefault();
+        fit();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === "1") {
+        event.preventDefault();
+        actualSize();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const next = toolByKey.get(event.key.toLowerCase());
+      if (next) {
+        setTool(next);
+        return;
+      }
+      if (event.key === "Escape") setSelection(null);
+      if (event.key === "[" || event.key === "]") {
+        setBrushSize((size) =>
+          event.key === "]" ? Math.min(3, size + 1) : Math.max(1, size - 1),
         );
       }
     }
     window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // Playback walks the frame list on an interval and stops on the last frame.
+  useEffect(() => {
+    if (!playing || frames.length < 2) return;
+    const timer = window.setInterval(() => {
+      setFrameId((current) => {
+        const index = frames.findIndex((item) => item.id === current);
+        const nextIndex = (index + 1) % frames.length;
+        return frames[nextIndex]?.id ?? current;
+      });
+    }, 220);
+    return () => window.clearInterval(timer);
+  }, [playing, frames]);
+
+  const log = useCallback((text: string) => {
+    setActivity((current) => [...current.slice(-6), { id: crypto.randomUUID(), text }]);
+  }, []);
+
+  const listen = useCallback(
+    (id: string, targetFrameId: string) => {
+      sourceRef.current?.close();
+      const source = new EventSource(`/api/runs/${id}/stream`);
+      sourceRef.current = source;
+      source.onmessage = (event) => {
+        const body = JSON.parse(event.data) as { type: string; data: unknown };
+        if (body.type === "canvas-stroke") {
+          const data = body.data as { layers?: FrameDto["layers"] };
+          if (data.layers && targetFrameId) {
+            const layers = data.layers.map((layer) => ({
+              ...layer,
+              pixels: base64ToBytes(layer.pixels),
+            }));
+            setDrafts((current) => {
+              const entry = current[targetFrameId];
+              if (!entry) return current;
+              return {
+                ...current,
+                [targetFrameId]: { ...entry, present: { ...entry.present, layers } },
+              };
+            });
+            log("Drawing on the canvas");
+          }
+          return;
+        }
+        if (body.type === "tool_call") {
+          const data = body.data as { name?: string };
+          log(data.name ? `Using ${data.name.replaceAll("_", " ")}` : "Using a tool");
+          return;
+        }
+        if (body.type === "model_delta") {
+          log("Thinking it through");
+          return;
+        }
+        if (body.type === "done") {
+          const data = body.data as { status?: string };
+          setMessage(
+            data.status === "completed"
+              ? "The frame is ready."
+              : `Run ${data.status ?? "finished"}.`,
+          );
+          source.close();
+          sourceRef.current = null;
+          setRunId(null);
+          void client.invalidateQueries({ queryKey: ["asset", assetId] });
+          return;
+        }
+        log(body.type.replaceAll("_", " "));
+      };
+      source.onerror = () => {
+        source.close();
+        sourceRef.current = null;
+        setRunId(null);
+      };
+    },
+    [assetId, client, log, update],
+  );
+
+  // Rejoin a run that is still going, which is what a page refresh needs.
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ run: { id: string; status: string } | null }>(
+      `/api/assets/${assetId}/active-run`,
+    )
+      .then((result) => {
+        if (cancelled || !result.run || runId) return;
+        setRunId(result.run.id);
+        listen(result.run.id, frameId ?? "");
+      })
+      .catch(() => undefined);
     return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
+      cancelled = true;
     };
-  }, [history]);
+    // Runs are picked up once per asset.
+  }, [assetId]);
+
+  useEffect(() => () => sourceRef.current?.close(), []);
+
+  function onAction(action: CanvasAction) {
+    if (!frameId) return;
+    if (action.kind === "pick") {
+      setColor(action.index);
+      setTool("pencil");
+      return;
+    }
+    if (action.kind === "select") {
+      setSelection(action.rect);
+      return;
+    }
+    if (running) return;
+    const current = drafts[frameId];
+    if (!current || !activeLayerId) return;
+    if (selection && "points" in action) {
+      const inside = action.points
+        .filter((point) => insideSelection(selection, point))
+        .map((point) => ({ ...point, color }));
+      if (inside.length === 0) return;
+      edit(
+        frameId,
+        current,
+        action.kind === "erase"
+          ? {
+              type: "erase",
+              layerId: activeLayerId,
+              points: action.points.filter((point) => insideSelection(selection, point)),
+            }
+          : { type: "paint", layerId: activeLayerId, points: inside },
+      );
+      return;
+    }
+    switch (action.kind) {
+      case "paint":
+        edit(frameId, current, {
+          type: "paint",
+          layerId: activeLayerId,
+          points: action.points.map((point) => ({ ...point, color })),
+        });
+        return;
+      case "erase":
+        edit(frameId, current, {
+          type: "erase",
+          layerId: activeLayerId,
+          points: action.points,
+        });
+        return;
+      case "fill":
+        edit(
+          frameId,
+          current,
+          selection
+            ? {
+                type: "region",
+                layerId: activeLayerId,
+                ...selection,
+                color,
+                mode: "flood",
+              }
+            : { type: "fill", layerId: activeLayerId, ...action.point, color },
+        );
+        return;
+      case "line":
+        edit(frameId, current, {
+          type: "line",
+          layerId: activeLayerId,
+          x0: action.from.x,
+          y0: action.from.y,
+          x1: action.to.x,
+          y1: action.to.y,
+          color,
+        });
+        return;
+      case "rect": {
+        const box = normalizeRect(action.from, action.to);
+        edit(frameId, current, {
+          type: "rect",
+          layerId: activeLayerId,
+          ...box,
+          color,
+          filled: action.filled,
+        });
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  function selectionCommand(mode: "fill" | "clear") {
+    if (!frameId || !selection || !activeLayerId) return;
+    edit(frameId, drafts[frameId], {
+      type: "region",
+      layerId: activeLayerId,
+      ...selection,
+      color,
+      mode,
+    });
+  }
+
+  const refresh = () => client.invalidateQueries({ queryKey: ["asset", assetId] });
+
+  async function frameAction(
+    kind: "add" | "duplicate" | "rename" | "delete",
+    value?: string,
+  ) {
+    if (!frameId) return;
+    try {
+      if (kind === "add") {
+        await api(`/api/assets/${assetId}/frames`, {
+          method: "POST",
+          body: JSON.stringify({ name: value ?? "" }),
+        });
+      } else if (kind === "duplicate") {
+        await api(`/api/assets/${assetId}/frames/${frameId}/duplicate`, {
+          method: "POST",
+          body: JSON.stringify({ name: value }),
+        });
+      } else if (kind === "rename" && value !== undefined) {
+        await api(`/api/assets/${assetId}/frames/${frameId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: value }),
+        });
+      } else if (kind === "delete") {
+        await api(`/api/assets/${assetId}/frames/${frameId}`, { method: "DELETE" });
+      }
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "That frame change failed.");
+    }
+  }
+
+  async function updateAsset(input: {
+    name?: string;
+    width?: number;
+    height?: number;
+    palette?: string[];
+  }) {
+    try {
+      await api(`/api/assets/${assetId}`, {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      });
+      setSelection(null);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "That asset change failed.");
+    }
+  }
 
   async function generate() {
     if (!frameId) return;
     setError(null);
     setMessage("");
-    await api("/api/preferences", {
-      method: "PATCH",
-      body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
-    });
     try {
+      await api("/api/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
+      });
       const started = await api<{ runId: string }>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
@@ -234,203 +538,264 @@ export function EditorScreen() {
           reasoningEffort: effort,
         }),
       });
-      const source = new EventSource(`/api/runs/${started.runId}/stream`);
-      source.onmessage = (event) => {
-        const body = JSON.parse(event.data) as {
-          type: string;
-          data: { layers?: LayerDto[]; status?: string; delta?: string };
-        };
-        if (body.type === "canvas-stroke" && body.data.layers && history) {
-          const next = structuredClone(history.present);
-          next.layers = body.data.layers.map((layer) => ({
-            ...layer,
-            pixels: base64ToBytes(layer.pixels),
-          }));
-          setHistory(pushHistory(history, next));
-        }
-        if (body.type === "model_delta") {
-          const text =
-            typeof body.data === "object" && body.data && "event" in body.data
-              ? JSON.stringify(body.data)
-              : body.type;
-          setActivity((current) => [
-            ...current.slice(-6),
-            { id: crypto.randomUUID(), text },
-          ]);
-        } else if (body.type !== "canvas-stroke") {
-          setActivity((current) => [
-            ...current.slice(-6),
-            { id: crypto.randomUUID(), text: body.type.replaceAll("_", " ") },
-          ]);
-        }
-        if (body.type === "done") {
-          setMessage(
-            body.data.status === "completed"
-              ? "The frame is ready."
-              : `Run ${body.data.status ?? "finished"}.`,
-          );
-          source.close();
-        }
-      };
+      setRunId(started.runId);
+      listen(started.runId, frameId);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Generation failed.");
     }
   }
 
-  const buffer = history?.present;
-  const layerId = buffer?.layers[0]?.id ?? "";
-  const modelOptions =
-    models.data?.models.map((model) => model.id) ??
-    (modelId ? [modelId] : ["Set OPENAI_MODEL"]);
+  async function stop() {
+    if (!runId) return;
+    try {
+      await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+    } finally {
+      setRunId(null);
+      sourceRef.current?.close();
+      sourceRef.current = null;
+    }
+  }
+
+  const usedColors = buffer ? usedColorCount(buffer) : 0;
+  const models = catalog.data?.models.map((item) => item.id) ?? [];
+  const efforts = catalog.data?.reasoningEfforts ?? [];
 
   return (
     <div className="grid h-screen grid-rows-[auto_1fr_auto] bg-paper">
-      <header className="flex items-center justify-between border-b border-line px-4 py-3">
+      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2">
         <a href="/projects" className="font-mono text-xs tracking-[0.18em] text-accent">
           PIXELAITION
         </a>
-        <p className="text-sm text-muted">{asset.data?.name ?? "Loading asset"}</p>
-      </header>
-      <div className="grid min-h-0 lg:grid-cols-[240px_1fr_260px]">
-        <aside className="hidden border-r border-line p-3 lg:block">
-          <p className="text-xs text-muted">Frames</p>
-          <div className="mt-2 grid gap-1">
-            {asset.data?.frames.map((frame) => (
-              <button
-                key={frame.id}
-                className={`rounded px-2 py-1 text-left text-sm ${frame.id === frameId ? "bg-panel text-accent" : ""}`}
-                onClick={() => switchFrame(frame)}
-              >
-                {frame.name}
-              </button>
-            ))}
-          </div>
-        </aside>
-        <canvas
-          ref={viewRef}
-          className="h-full w-full touch-none"
-          onWheel={(event) => {
-            event.preventDefault();
-            if (!buffer) return;
-            const rect = event.currentTarget.getBoundingClientRect();
-            const next = stepZoom(camera.zoom, event.deltaY < 0 ? 1 : -1);
-            setCamera(
-              zoomAt(camera, event.clientX - rect.left, event.clientY - rect.top, next),
-            );
-          }}
-          onPointerDown={(event) => {
-            if (tool === "pan" || space.current) {
-              dragging.current = { x: event.clientX, y: event.clientY, camera };
-              return;
-            }
-            const point = cell(event);
-            if (!point) return;
-            if (tool === "fill") edit({ type: "fill", layerId, ...point, color });
-            else if (tool === "eraser") edit({ type: "erase", layerId, points: [point] });
-            else edit({ type: "paint", layerId, points: [{ ...point, color }] });
-          }}
-          onPointerMove={(event) => {
-            if (dragging.current) {
-              setCamera({
-                ...dragging.current.camera,
-                x: dragging.current.camera.x + event.clientX - dragging.current.x,
-                y: dragging.current.camera.y + event.clientY - dragging.current.y,
-              });
-              return;
-            }
-            if (event.buttons !== 1 || tool === "fill") return;
-            const point = cell(event);
-            if (!point) return;
-            if (tool === "eraser") edit({ type: "erase", layerId, points: [point] });
-            else edit({ type: "paint", layerId, points: [{ ...point, color }] });
-          }}
-          onPointerUp={() => {
-            dragging.current = null;
-          }}
-        />
-        <aside className="hidden border-l border-line p-3 lg:block">
-          <p className="text-xs text-muted">Palette</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {buffer?.palette.map((swatch, index) => (
-              <button
-                key={swatch + index}
-                aria-label={`Color ${index}`}
-                className={`h-7 w-7 rounded border ${color === index ? "border-accent" : "border-line"}`}
-                style={{ background: index === 0 ? "transparent" : swatch }}
-                onClick={() => setColor(index)}
-              />
-            ))}
-          </div>
-          <p className="mt-4 font-mono text-xs text-muted">
-            {Math.round(camera.zoom * 100)}%
-          </p>
-        </aside>
-      </div>
-      <footer className="border-t border-line p-3">
-        <div className="mb-2 flex flex-wrap gap-2">
-          {tools.map((item) => (
-            <Button
-              key={item}
-              tone={tool === item ? "solid" : "ghost"}
-              onClick={() => setTool(item)}
-            >
-              {item}
-            </Button>
-          ))}
-        </div>
-        {activity.length > 0 ? (
-          <p className="mb-2 font-mono text-xs text-muted">{activity.at(-1)?.text}</p>
-        ) : null}
-        {message ? <StreamMarkdown content={message} /> : null}
-        {error ? <p className="mb-2 text-sm text-erase">{error}</p> : null}
-        <div className="flex flex-wrap items-center gap-2">
-          <TextInput
-            className="min-w-64 flex-1"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Describe the pixel asset or a new state"
-          />
-          <ModelSelect
-            label="Model"
-            value={modelId || modelOptions[0] || ""}
-            options={modelOptions}
-            onChange={setModelId}
-          />
-          <ModelSelect
-            label="Reasoning effort"
-            value={effort}
-            options={["none", "low", "medium", "high"]}
-            onChange={setEffort}
-          />
-          <Button onClick={() => void generate()} disabled={!prompt.trim() || !modelId}>
-            Generate
+        <p className="truncate text-sm text-muted">
+          {asset.data
+            ? `${asset.data.projectName} / ${asset.data.name}`
+            : "Loading asset"}
+        </p>
+        <div className="flex items-center gap-2">
+          {running ? (
+            <span className="font-mono text-[11px] text-accent">
+              {frame ? `Drawing ${frame.name}` : "Drawing"}
+            </span>
+          ) : null}
+          <Button tone="ghost" onClick={() => setExportOpen(true)} disabled={!asset.data}>
+            Export
           </Button>
         </div>
+      </header>
+
+      <div className="grid min-h-0 lg:grid-cols-[240px_1fr_260px]">
+        <aside className="hidden min-h-0 gap-5 overflow-auto border-r border-line p-3 lg:flex lg:flex-col">
+          <FrameList
+            frames={frames}
+            activeId={frameId}
+            playing={playing}
+            onSelect={(id) => {
+              setFrameId(id);
+              setSelection(null);
+            }}
+            onTogglePlay={() => setPlaying((value) => !value)}
+            onAdd={() => void frameAction("add")}
+            onDuplicate={() => void frameAction("duplicate")}
+            onRename={(_id, name) => void frameAction("rename", name)}
+            onDelete={() => void frameAction("delete")}
+          />
+          <LayerList
+            buffer={buffer}
+            activeId={activeLayerId}
+            onSelect={setActiveLayerId}
+            onToggleVisible={(layerId, visible) =>
+              frameId &&
+              edit(frameId, drafts[frameId], {
+                type: "setLayerVisible",
+                layerId,
+                visible,
+              })
+            }
+            onAdd={() =>
+              frameId &&
+              edit(frameId, drafts[frameId], {
+                type: "addLayer",
+                id: crypto.randomUUID(),
+                name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+              })
+            }
+            onRename={(layerId, name) =>
+              frameId &&
+              edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
+            }
+            onDelete={() =>
+              frameId &&
+              edit(frameId, drafts[frameId], {
+                type: "removeLayer",
+                layerId: activeLayerId,
+              })
+            }
+          />
+        </aside>
+
+        <div className="flex min-h-0 flex-col">
+          <div className="flex flex-wrap items-center gap-1 border-b border-line px-2 py-1.5">
+            {toolList.map((item) => {
+              const Icon = item.icon;
+              return (
+                <IconButton
+                  key={item.id}
+                  label={`${item.label} (${item.key})`}
+                  active={tool === item.id}
+                  onClick={() => setTool(item.id)}
+                >
+                  <Icon />
+                </IconButton>
+              );
+            })}
+            <span className="mx-1 h-5 w-px bg-line" />
+            <IconButton
+              label="Brush size 1"
+              active={brushSize === 1}
+              onClick={() => setBrushSize(1)}
+            >
+              <span className="text-[10px]">1</span>
+            </IconButton>
+            <IconButton
+              label="Brush size 2"
+              active={brushSize === 2}
+              onClick={() => setBrushSize(2)}
+            >
+              <span className="text-[10px]">2</span>
+            </IconButton>
+            <IconButton
+              label="Brush size 3"
+              active={brushSize === 3}
+              onClick={() => setBrushSize(3)}
+            >
+              <span className="text-[10px]">3</span>
+            </IconButton>
+            <span className="mx-1 h-5 w-px bg-line" />
+            <IconButton
+              label="Zoom out"
+              onClick={() => setCamera({ ...camera, zoom: stepZoom(camera.zoom, -1) })}
+            >
+              −
+            </IconButton>
+            <span className="w-12 text-center font-mono text-[11px] text-muted">
+              {Math.round(camera.zoom * 100)}%
+            </span>
+            <IconButton
+              label="Zoom in"
+              onClick={() => setCamera({ ...camera, zoom: stepZoom(camera.zoom, 1) })}
+            >
+              +
+            </IconButton>
+            <IconButton label="Fit to view" onClick={fit}>
+              Fit
+            </IconButton>
+            <IconButton label="Actual size" onClick={actualSize}>
+              1:1
+            </IconButton>
+            <span className="mx-1 h-5 w-px bg-line" />
+            <Toggle label="Grid" checked={grid} onChange={setGrid} />
+            <Toggle label="Checker" checked={checker} onChange={setChecker} />
+            <Toggle label="Onion skin" checked={onion} onChange={setOnion} />
+            {selection ? (
+              <>
+                <span className="mx-1 h-5 w-px bg-line" />
+                <Button tone="ghost" onClick={() => selectionCommand("fill")}>
+                  Fill
+                </Button>
+                <Button tone="ghost" onClick={() => selectionCommand("clear")}>
+                  Clear
+                </Button>
+                <Button tone="ghost" onClick={() => setSelection(null)}>
+                  Deselect
+                </Button>
+              </>
+            ) : null}
+          </div>
+          <div ref={viewRef} className="relative min-h-0 flex-1">
+            <PixelCanvas
+              buffer={buffer ?? emptyBuffer()}
+              camera={camera}
+              tool={tool}
+              brushSize={brushSize}
+              grid={grid}
+              checker={checker}
+              onionSkin={onionSkin}
+              selection={selection}
+              locked={running}
+              onAction={onAction}
+              onCamera={setCamera}
+            />
+          </div>
+        </div>
+
+        <aside className="hidden min-h-0 gap-5 overflow-auto border-l border-line p-3 lg:flex lg:flex-col">
+          <PalettePanel
+            palette={buffer?.palette ?? []}
+            color={color}
+            usedColors={usedColors}
+            width={asset.data?.width ?? 32}
+            height={asset.data?.height ?? 32}
+            onPick={setColor}
+            onAdd={(hex) => {
+              if (!frameId || !buffer) return;
+              if (buffer.palette.includes(hex)) {
+                setColor(buffer.palette.indexOf(hex));
+                return;
+              }
+              void updateAsset({ palette: [...buffer.palette, hex] });
+            }}
+            onResize={(width, height) => void updateAsset({ width, height })}
+          />
+        </aside>
+      </div>
+
+      <footer className="border-t border-line p-3">
+        <Composer
+          prompt={prompt}
+          onPrompt={setPrompt}
+          modelId={modelId}
+          models={models}
+          onModel={setModelId}
+          effort={effort}
+          efforts={efforts}
+          onEffort={setEffort}
+          running={running}
+          modelReady={catalog.data?.modelReady ?? false}
+          activity={activity}
+          message={message}
+          error={error}
+          onGenerate={() => void generate()}
+          onStop={() => void stop()}
+        />
       </footer>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        projectId={asset.data?.projectId ?? ""}
+        assetId={assetId}
+        frameId={frameId ?? ""}
+        frameName={frame?.name ?? ""}
+        assetName={asset.data?.name ?? ""}
+      />
     </div>
   );
-
-  function switchFrame(frame: FrameDto) {
-    if (!asset.data) return;
-    setFrameId(frame.id);
-    setHistory(
-      createHistory(
-        frameToBuffer(frame, asset.data.width, asset.data.height, asset.data.palette),
-      ),
-    );
-  }
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
+function insideSelection(box: Rect, point: Point): boolean {
+  return (
+    point.x >= box.x &&
+    point.y >= box.y &&
+    point.x < box.x + box.width &&
+    point.y < box.y + box.height
+  );
 }
 
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1)
-    bytes[index] = binary.charCodeAt(index);
-  return bytes;
+function emptyBuffer(): FrameBuffer {
+  return {
+    width: 8,
+    height: 8,
+    palette: ["#00000000"],
+    layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
+  };
 }
