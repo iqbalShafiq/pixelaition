@@ -295,10 +295,18 @@ app.post("/internal/runs", async (req, res) => {
           pixels: encodePixels(layer.pixels),
         })),
       });
-      void db
-        .update(frames)
-        .set({ layers: bufferToFrame(buffer, frame).layers, updatedAt: new Date() })
-        .where(eq(frames.id, frame.id));
+      // Drizzle query promises are lazy: without awaiting or then-ing, the
+      // update never executes. Persist explicitly and surface any failure.
+      void (async () => {
+        try {
+          await db
+            .update(frames)
+            .set({ layers: bufferToFrame(buffer, frame).layers, updatedAt: new Date() })
+            .where(eq(frames.id, frame.id));
+        } catch (error) {
+          console.error("[onStroke] frame persist failed", error);
+        }
+      })();
     },
   });
   void follow(runtime, run.id, body.runId, target.effort);
