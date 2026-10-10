@@ -750,6 +750,7 @@ export function EditorScreen() {
     <>
       <FramePanel
         frames={frames}
+        palette={buffer?.palette ?? asset.data?.palette ?? []}
         activeId={frameId}
         playing={playing}
         locked={running}

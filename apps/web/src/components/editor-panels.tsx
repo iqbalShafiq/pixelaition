@@ -1,6 +1,6 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
 import { Copy, Play, Plus, Square, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   Button,
@@ -15,8 +15,9 @@ import {
   Popover,
   TextInput,
 } from "./ui.js";
+import { hexToRgba } from "../lib/color.js";
 import { hexToHsv, hsvToHex } from "../lib/hsv.js";
-import type { FrameDto } from "../lib/types.js";
+import { base64ToBytes, type FrameDto } from "../lib/types.js";
 
 /**
  * Text that writes through on every keystroke issues a request per character and
@@ -65,8 +66,50 @@ export function CommitInput({
 
 /* ------------------------------------------------------------------ frames */
 
+function FrameThumb({
+  frame,
+  palette,
+  size = 36,
+}: {
+  frame: FrameDto;
+  palette: string[];
+  size?: number;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const layer = frame.layers.find((item) => item.visible) ?? frame.layers[0];
+    if (!layer) return;
+    const pixels = base64ToBytes(layer.pixels);
+    const width = Math.sqrt(pixels.length);
+    if (!Number.isInteger(width)) return;
+    canvas.width = width;
+    canvas.height = width;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const image = context.createImageData(width, width);
+    for (let index = 0; index < pixels.length; index += 1) {
+      const value = pixels[index] ?? 0;
+      if (value === 0) continue;
+      const [r, g, b, a] = hexToRgba(palette[value] ?? "#000000");
+      image.data.set([r, g, b, a], index * 4);
+    }
+    context.putImageData(image, 0, 0);
+  }, [frame, palette]);
+  return (
+    <canvas
+      ref={ref}
+      aria-hidden
+      className="shrink-0 border-2 border-line bg-screen"
+      style={{ width: size, height: size, imageRendering: "pixelated" }}
+    />
+  );
+}
+
 export function FramePanel({
   frames,
+  palette,
   activeId,
   playing,
   locked,
@@ -78,6 +121,7 @@ export function FramePanel({
   onDelete,
 }: {
   frames: FrameDto[];
+  palette: string[];
   activeId: string | null;
   playing: boolean;
   locked: boolean;
@@ -119,6 +163,7 @@ export function FramePanel({
                       : "border-transparent text-ink hover:border-line hover:bg-raised"
                   }`}
                 >
+                  <FrameThumb frame={frame} palette={palette} />
                   <span className="font-mono text-[10px] text-muted">
                     {String(index + 1).padStart(2, "0")}
                   </span>

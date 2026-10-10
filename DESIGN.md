@@ -113,3 +113,17 @@ The wheel listener is attached with `{ passive: false }` on the canvas rather th
 Buttons, fields, cards, selects, menus, dialogs, sheets, tooltips, scroll areas, and toasts live in `apps/web/src/components/ui.tsx`. Screens use those pieces instead of one-off control styles. Scrollbars are thin and use the same ink family. Tool glyphs are inline SVG in `tool-icons.tsx`, so the toolbar needs no icon package.
 
 `Field` associates its label with `htmlFor`, never by wrapping. A wrapped label also absorbs any button inside it, which is how a password field silently becomes "Password Show password" to a screen reader.
+
+## Composer and run console
+
+The composer floats over the canvas column: max width 40rem, `field` surface, 2px `line-strong` border, pixel-corners, the standard solid lift bar, and 28 units of canvas padding underneath so the sprite keeps a resting area. Enter generates, Shift+Enter breaks the line, Escape blurs. When the key or the catalog is missing the composer says so in one mono line; the card that used to explain manual editing is gone.
+
+The run console sits above the composer in the same width and surface family. It shows the agent's real steps — thinking phases (reasoning text only when the provider sends it; encrypted reasoning stays a timed phase), tool rows with argument summaries and results, and the assistant message. It opens while a run is live, collapses to a summary bar when it ends, and never animates a step that did not happen.
+
+## Realtime contract
+
+A stroke appears when the worker's tool call commits it, never as a replay. While a run is active for the asset the editor suspends autosave; the reload after the run makes the server pixels the truth; a reopened editor rejoins an active run and repaints from the retained stream.
+
+## Palette picker
+
+The add-color control is the last tile of the swatch grid and opens a pixel popover: an SV square, a hue strip, the Sweetie 16 presets, a hex field, and one solid Add button. Square corners, 2px borders, no native colour input.

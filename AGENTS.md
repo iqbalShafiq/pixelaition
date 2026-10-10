@@ -25,6 +25,7 @@ pnpm db:migrate
 - When the app cannot do something for real — a missing key, an unknown model or effort, an unreachable provider — it fails with an error naming the cause. Deterministic fallbacks and silent substitutions are forbidden.
 - Langfuse is optional. When it is configured, run traces travel over the OTLP endpoint with user, session, tags, and metadata attached; trace payloads are size-capped and provider keys never travel through telemetry.
 - Canvas drawing lives in `apps/web/src/components/pixel-canvas.tsx`. The frame is drawn as a scaled bitmap; do not go back to one `fillRect` per cell. The transparency checker is baked into that bitmap in whole document pixels, never drawn in screen space.
+- While a run is active for an asset, the editor never writes the frame back; strokes come from the agent's tool calls as they happen. The canvas is a live feed, not a replay.
 - Interface colours come from Sweetie 16 through the tokens in `DESIGN.md`. Do not introduce a colour outside that table, and never use `faint` for copy.
 - Commit messages follow Conventional Commits.
 

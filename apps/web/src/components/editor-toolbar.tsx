@@ -1,6 +1,8 @@
 import {
   Eraser,
+  Grid3X3,
   Hand,
+  Layers,
   Minus,
   PaintBucket,
   Pencil,
@@ -12,7 +14,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
-import { Button, Checkbox, IconButton, Panel, Separator } from "./ui.js";
+import { Button, IconButton, Panel, Separator } from "./ui.js";
 
 const stroke = 2;
 const size = 16;
@@ -168,10 +170,20 @@ export function ViewPanel({
 }) {
   return (
     <Panel title="View">
-      <div className="grid gap-2">
-        <Checkbox label="Grid" checked={grid} onChange={onGrid} />
-        <Checkbox label="Transparency" checked={checker} onChange={onChecker} />
-        <Checkbox label="Onion skin" checked={onion} onChange={onOnion} />
+      <div className="flex items-center gap-1">
+        <IconButton label="Grid" active={grid} onClick={() => onGrid(!grid)}>
+          <Grid3X3 size={15} strokeWidth={2} />
+        </IconButton>
+        <IconButton
+          label="Transparency"
+          active={checker}
+          onClick={() => onChecker(!checker)}
+        >
+          <SquareDashed size={15} strokeWidth={2} />
+        </IconButton>
+        <IconButton label="Onion skin" active={onion} onClick={() => onOnion(!onion)}>
+          <Layers size={15} strokeWidth={2} />
+        </IconButton>
       </div>
     </Panel>
   );
