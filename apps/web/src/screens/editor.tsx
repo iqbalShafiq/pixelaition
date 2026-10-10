@@ -19,7 +19,9 @@ import {
   type History,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { Composer, type ActivityLine } from "../components/composer.js";
+import { Composer } from "../components/composer.js";
+import { RunConsole } from "../components/run-console.js";
+import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import {
   FramePanel,
@@ -122,13 +124,15 @@ export function EditorScreen() {
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
-  const [activity, setActivity] = useState<ActivityLine[]>([]);
+  const [rows, setRows] = useState<RunRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
+  const runFrameIdRef = useRef<string | null>(null);
+  runFrameIdRef.current = runFrameId;
   const [exportOpen, setExportOpen] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
@@ -282,35 +286,45 @@ export function EditorScreen() {
   const mutate = useRef(save.mutateAsync);
   mutate.current = save.mutateAsync;
 
-  const flush = useCallback(() => {
+  const flush = useCallback(async () => {
     if (debounce.current !== null) {
       window.clearTimeout(debounce.current);
       debounce.current = null;
     }
     const batch = [...pending.current.entries()];
     pending.current.clear();
-    for (const [id, buffer] of batch) {
-      void mutate.current({ frameId: id, buffer }).catch((reason: unknown) =>
-        notify({
-          title: "A frame did not save",
-          description: reason instanceof Error ? reason.message : "Unknown error",
-        }),
-      );
-    }
+    await Promise.all(
+      batch.map(([id, buffer]) =>
+        mutate.current({ frameId: id, buffer }).catch((reason: unknown) =>
+          notify({
+            title: "A frame did not save",
+            description: reason instanceof Error ? reason.message : "Unknown error",
+          }),
+        ),
+      ),
+    );
   }, [notify]);
 
   useEffect(() => {
+    // The agent owns the frame while a run is live: the editor never writes a
+    // stale buffer over the streamed strokes.
+    if (running) return;
     if (!present || !frameId) return;
     pending.current.set(frameId, present);
     if (debounce.current !== null) window.clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => {
       debounce.current = null;
-      flush();
+      void flush();
     }, 500);
     return () => undefined;
-  }, [present, frameId, flush]);
+  }, [present, frameId, flush, running]);
 
-  useEffect(() => () => flush(), [flush]);
+  useEffect(
+    () => () => {
+      void flush();
+    },
+    [flush],
+  );
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -374,16 +388,24 @@ export function EditorScreen() {
   }, [playing, frames]);
 
   const log = useCallback((text: string) => {
-    setActivity((current) => [...current.slice(-60), { id: crypto.randomUUID(), text }]);
+    setRows((current) => [
+      ...current.slice(-120),
+      { id: crypto.randomUUID(), kind: "status", label: text, state: "running" },
+    ]);
   }, []);
 
   const listen = useCallback(
-    (id: string, fallbackFrameId: string) => {
+    (id: string, fallbackFrameId: string, after = 0) => {
       sourceRef.current?.close();
-      const source = new EventSource(`/api/runs/${id}/stream`);
+      const source = new EventSource(`/api/runs/${id}/stream?after=${after}`);
       sourceRef.current = source;
       source.onmessage = (event) => {
-        const body = JSON.parse(event.data) as { type: string; data: unknown };
+        const body = JSON.parse(event.data) as {
+          type: string;
+          data: unknown;
+          sequence: number;
+        };
+        setRows((current) => applyRunEvent(current, body.sequence, body.type, body.data));
         if (body.type === "canvas-stroke") {
           const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
           const target = data.frameId ?? fallbackFrameId;
@@ -404,31 +426,32 @@ export function EditorScreen() {
           }
           return;
         }
-        if (body.type === "tool_call") {
-          const data = body.data as { name?: string };
-          log(data.name ? `Tool · ${data.name.replaceAll("_", " ")}` : "Tool call");
-          return;
-        }
-        if (body.type === "model_delta") {
-          log("Reasoning…");
-          return;
-        }
         if (body.type === "done") {
-          const data = body.data as { status?: string };
+          const data = body.data as { status?: string; error?: string };
           setMessage(
             data.status === "completed"
-              ? "The frame is ready."
-              : `The run ${data.status ?? "finished"}.`,
+              ? ""
+              : (data.error ?? `The run ${data.status ?? "finished"}.`),
           );
-          log(`Run ${data.status ?? "finished"}`);
           source.close();
           sourceRef.current = null;
           setRunId(null);
           setRunFrameId(null);
+          // Drop the local draft for the drawn frame so the reloaded pixels
+          // from the server become the truth.
+          const target = runFrameIdRef.current;
+          if (target) {
+            setDrafts((current) => {
+              if (!current[target]) return current;
+              const next = { ...current };
+              delete next[target];
+              return next;
+            });
+          }
           void client.invalidateQueries({ queryKey: ["asset", assetId] });
           return;
         }
-        log(body.type.replaceAll("_", " "));
+        // Other events are already reflected in the row list above.
       };
       source.onerror = () => {
         source.close();
@@ -443,20 +466,23 @@ export function EditorScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ run: { id: string; status: string } | null }>(
-      `/api/assets/${assetId}/active-run`,
-    )
-      .then((result) => {
-        if (cancelled || !result.run) return;
-        setRunId(result.run.id);
-        log("Rejoined a run that was still going");
-        listen(result.run.id, "");
-      })
-      .catch(() => undefined);
+    async function check() {
+      const result = await api<{ run: { id: string; status: string } | null }>(
+        `/api/assets/${assetId}/active-run`,
+      ).catch(() => ({ run: null }));
+      if (cancelled || !result.run || sourceRef.current) return;
+      setRunId(result.run.id);
+      setConsoleOpen(true);
+      log("Rejoined a run that was still going");
+      listen(result.run.id, "", 0);
+    }
+    void check();
+    window.addEventListener("focus", check);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", check);
     };
-  }, [assetId]);
+  }, [assetId, listen, log]);
 
   useEffect(() => () => sourceRef.current?.close(), []);
 
@@ -668,8 +694,11 @@ export function EditorScreen() {
     if (!frameId || locked) return;
     setError(null);
     setMessage("");
-    setActivity([]);
+    setRows([]);
+    setConsoleOpen(true);
     try {
+      // Local edits made before the run must land before the agent starts.
+      await flush();
       await api("/api/preferences", {
         method: "PATCH",
         body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
@@ -858,13 +887,13 @@ export function EditorScreen() {
         </span>
       </header>
 
-      <div className="grid min-h-0 min-w-0 grid-rows-[1fr_auto]">
+      <div className="grid min-h-0 min-w-0 grid-rows-[1fr]">
         <div className="grid min-h-0 min-w-0 lg:grid-cols-[280px_1fr_300px]">
           <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r border-line p-3 lg:flex">
             {leftPanels}
           </aside>
 
-          <div className="flex min-h-0 min-w-0 flex-col">
+          <div className="relative flex min-h-0 min-w-0 flex-col">
             <div className="order-2 min-w-0 sm:order-1">
               <Toolbar
                 tool={tool}
@@ -897,7 +926,7 @@ export function EditorScreen() {
             </div>
             <div
               ref={viewRef}
-              className="relative order-1 min-h-0 min-w-0 flex-1 sm:order-2"
+              className="relative order-1 min-h-0 min-w-0 flex-1 pb-28 sm:order-2"
             >
               {asset.isPending ? (
                 <Centered>
@@ -955,32 +984,35 @@ export function EditorScreen() {
                 </p>
               ) : null}
             </div>
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex flex-col items-center gap-2 px-3">
+              <RunConsole
+                rows={rows}
+                running={running}
+                open={consoleOpen || running}
+                onOpen={setConsoleOpen}
+                message={message || (error ?? "")}
+              />
+              <Composer
+                prompt={prompt}
+                onPrompt={setPrompt}
+                modelId={modelId}
+                models={models}
+                onModel={setModelId}
+                effort={effort}
+                efforts={efforts}
+                onEffort={setEffort}
+                running={running}
+                modelReady={catalog.data?.modelReady ?? false}
+                onGenerate={() => void generate()}
+                onStop={() => void stop()}
+              />
+            </div>
           </div>
 
           <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-l border-line p-3 lg:flex">
             {rightPanels}
           </aside>
         </div>
-
-        <Composer
-          prompt={prompt}
-          onPrompt={setPrompt}
-          modelId={modelId}
-          models={models}
-          onModel={setModelId}
-          effort={effort}
-          efforts={efforts}
-          onEffort={setEffort}
-          running={running}
-          modelReady={catalog.data?.modelReady ?? false}
-          activity={activity}
-          message={message}
-          error={error}
-          expanded={expanded}
-          onExpanded={setExpanded}
-          onGenerate={() => void generate()}
-          onStop={() => void stop()}
-        />
       </div>
 
       {wide ? null : (

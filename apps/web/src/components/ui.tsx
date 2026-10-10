@@ -7,7 +7,7 @@ import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
 import { motion, type HTMLMotionProps } from "motion/react";
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
 
 /** DESIGN.md: 140-200ms, ease-out, transform and opacity only. */
@@ -201,7 +201,7 @@ export function PasswordInput({
 export function Textarea({
   className = "",
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
   return (
     <textarea
       {...props}
