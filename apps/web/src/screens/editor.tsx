@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ComponentType, SVGProps } from "react";
 import {
   applyCommand,
   centerCamera,
@@ -18,10 +17,17 @@ import {
   type Command,
   type FrameBuffer,
   type History,
+  type StyleGuide,
 } from "@pixelaition/pixel";
 import { Composer, type ActivityLine } from "../components/composer.js";
 import { ExportDialog } from "../components/export-dialog.js";
-import { FrameList, LayerList, PalettePanel } from "../components/editor-panels.js";
+import {
+  FramePanel,
+  LayerPanel,
+  PalettePanel,
+  StylePanel,
+} from "../components/editor-panels.js";
+import { Toolbar } from "../components/editor-toolbar.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -31,17 +37,15 @@ import {
   type Tool,
 } from "../components/pixel-canvas.js";
 import {
-  EraserIcon,
-  FillIcon,
-  LineIcon,
-  PanIcon,
-  PencilIcon,
-  PickerIcon,
-  RectIcon,
-  SelectIcon,
-} from "../components/tool-icons.js";
-import { Button, IconButton, Toggle } from "../components/ui.js";
+  Button,
+  Callout,
+  EmptyState,
+  IconButton,
+  Sheet,
+  useToast,
+} from "../components/ui.js";
 import { api } from "../lib/api.js";
+import { useMediaQuery } from "../lib/use-media.js";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -49,27 +53,40 @@ import {
   type FrameDto,
 } from "../lib/types.js";
 
-const toolList: Array<{
-  id: Tool;
-  label: string;
-  key: string;
-  icon: ComponentType<SVGProps<SVGSVGElement>>;
-}> = [
-  { id: "select", label: "Select", key: "V", icon: SelectIcon },
-  { id: "pencil", label: "Pencil", key: "B", icon: PencilIcon },
-  { id: "eraser", label: "Eraser", key: "E", icon: EraserIcon },
-  { id: "fill", label: "Fill", key: "G", icon: FillIcon },
-  { id: "picker", label: "Eyedropper", key: "I", icon: PickerIcon },
-  { id: "line", label: "Line", key: "L", icon: LineIcon },
-  { id: "rect", label: "Rectangle", key: "R", icon: RectIcon },
-  { id: "pan", label: "Pan", key: "H", icon: PanIcon },
-];
+const toolByKey = new Map<string, Tool>([
+  ["v", "select"],
+  ["b", "pencil"],
+  ["e", "eraser"],
+  ["g", "fill"],
+  ["i", "picker"],
+  ["l", "line"],
+  ["r", "rect"],
+  ["h", "pan"],
+]);
 
-const toolByKey = new Map(toolList.map((item) => [item.key.toLowerCase(), item.id]));
+const fallbackStyle: StyleGuide = {
+  defaultWidth: 32,
+  defaultHeight: 32,
+  maxColors: 8,
+  outline: "#1a1c2c",
+  shadowDirection: "down",
+  notes: "",
+};
+
+// One shared placeholder, so the canvas bitmap cache does not collect a new
+// offscreen canvas on every render while the asset query is in flight.
+const fallbackBuffer: FrameBuffer = {
+  width: 8,
+  height: 8,
+  palette: ["#00000000"],
+  layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
+};
 
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
   const client = useQueryClient();
+  const notify = useToast();
+
   const asset = useQuery({
     queryKey: ["asset", assetId],
     queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
@@ -110,20 +127,54 @@ export function EditorScreen() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [runFrameId, setRunFrameId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [leftSheet, setLeftSheet] = useState(false);
+  const [rightSheet, setRightSheet] = useState(false);
+  // Below lg the columns become sheets. Keeping them mounted at desktop widths
+  // strands Base UI's exit animation and its inert overlay blocks the page.
+  const wide = useMediaQuery("(min-width: 1024px)");
+  useEffect(() => {
+    if (!wide) return;
+    setLeftSheet(false);
+    setRightSheet(false);
+  }, [wide]);
   const viewRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<EventSource | null>(null);
+  const fitted = useRef<string | null>(null);
 
   const frames = asset.data?.frames ?? [];
   const frame = frames.find((item) => item.id === frameId) ?? null;
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
   const running = runId !== null;
-  // Live values for handlers that must not capture a stale render.
+  const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
+  // Only the frame the agent is painting on is locked.
+  const lockedFrameId = running ? (runFrameId ?? frameId) : null;
+  const locked = lockedFrameId !== null && lockedFrameId === frameId;
   const bufferRef = useRef<FrameBuffer | undefined>(buffer);
   bufferRef.current = buffer;
 
-  // Seed a draft for every frame the server knows about, keeping local edits intact.
+  const fit = useCallback(() => {
+    const rect = viewRef.current?.getBoundingClientRect();
+    const doc = bufferRef.current;
+    if (!rect || !doc || rect.width === 0) return;
+    const zoom = fitZoom(rect.width, rect.height, doc.width, doc.height);
+    setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, zoom));
+  }, []);
+
+  // Opening an asset should show the whole sprite, not a corner of it.
+  useEffect(() => {
+    const key = asset.data ? `${assetId}:${asset.data.width}x${asset.data.height}` : null;
+    if (!key || !buffer || fitted.current === key) return;
+    const rect = viewRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    fitted.current = key;
+    fit();
+  }, [assetId, asset.data, buffer, fit]);
+
+  // Seed a draft for every frame the server knows about, keeping local edits.
   useEffect(() => {
     if (!asset.data) return;
     const data = asset.data;
@@ -149,7 +200,6 @@ export function EditorScreen() {
     }
   }, [preferences.data]);
 
-  // The active layer follows the frame so switching frames never draws on a stale id.
   useEffect(() => {
     const layers = buffer?.layers ?? [];
     if (layers.length === 0) {
@@ -167,10 +217,11 @@ export function EditorScreen() {
     const neighbors: FrameBuffer[] = [];
     for (const offset of [-1, 1]) {
       const item = asset.data.frames[index + offset];
-      if (item)
+      if (item) {
         neighbors.push(
           frameToBuffer(item, asset.data.width, asset.data.height, asset.data.palette),
         );
+      }
     }
     return neighbors;
   }, [onion, asset.data, frame]);
@@ -185,12 +236,13 @@ export function EditorScreen() {
       const result = applyCommand(current.present, command);
       if (!result.ok) {
         setError(result.message);
+        notify({ title: "That edit was refused", description: result.message });
         return;
       }
       setError(null);
       update(frameKey, pushHistory(current, result.buffer));
     },
-    [update],
+    [notify, update],
   );
 
   const save = useMutation({
@@ -210,8 +262,6 @@ export function EditorScreen() {
   });
 
   const present = history?.present;
-  // A frame the user just left keeps its unsaved buffer in `pending`, so the
-  // debounce can restart without dropping the edit.
   const pending = useRef(new Map<string, FrameBuffer>());
   const debounce = useRef<number | null>(null);
   // The mutation result is a fresh object every render, so it must not be a
@@ -227,9 +277,14 @@ export function EditorScreen() {
     const batch = [...pending.current.entries()];
     pending.current.clear();
     for (const [id, buffer] of batch) {
-      void mutate.current({ frameId: id, buffer });
+      void mutate.current({ frameId: id, buffer }).catch((reason: unknown) =>
+        notify({
+          title: "A frame did not save",
+          description: reason instanceof Error ? reason.message : "Unknown error",
+        }),
+      );
     }
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     if (!present || !frameId) return;
@@ -240,44 +295,25 @@ export function EditorScreen() {
       flush();
     }, 500);
     return () => undefined;
-    // Saving follows the frame's buffer, not the whole history object.
   }, [present, frameId, flush]);
 
-  // Leaving the editor must not strand a dirty frame.
   useEffect(() => () => flush(), [flush]);
-
-  function fit() {
-    const rect = viewRef.current?.getBoundingClientRect();
-    const doc = bufferRef.current;
-    if (!rect || !doc) return;
-    const zoom = fitZoom(rect.width, rect.height, doc.width, doc.height);
-    setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, zoom));
-  }
-
-  function actualSize() {
-    const rect = viewRef.current?.getBoundingClientRect();
-    const doc = bufferRef.current;
-    if (!rect || !doc) return;
-    setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, 1));
-  }
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
-        if (running) return;
-        if (frameId) {
-          setDrafts((current) => {
-            const entry = current[frameId];
-            if (!entry) return current;
-            return {
-              ...current,
-              [frameId]: event.shiftKey ? redoHistory(entry) : undoHistory(entry),
-            };
-          });
-        }
+        if (running || !frameId) return;
+        setDrafts((current) => {
+          const entry = current[frameId];
+          if (!entry) return current;
+          return {
+            ...current,
+            [frameId]: event.shiftKey ? redoHistory(entry) : undoHistory(entry),
+          };
+        });
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key === "0") {
@@ -287,7 +323,11 @@ export function EditorScreen() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key === "1") {
         event.preventDefault();
-        actualSize();
+        const rect = viewRef.current?.getBoundingClientRect();
+        const doc = bufferRef.current;
+        if (rect && doc) {
+          setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, 1));
+        }
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -305,10 +345,8 @@ export function EditorScreen() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // fit and actualSize read the live camera and buffer through refs below.
-  }, [frameId, running]);
+  }, [fit, frameId, running]);
 
-  // Playback walks the frame list on an interval and stops on the last frame.
   useEffect(() => {
     if (!playing || frames.length < 2) return;
     const timer = window.setInterval(() => {
@@ -323,7 +361,7 @@ export function EditorScreen() {
   }, [playing, frames]);
 
   const log = useCallback((text: string) => {
-    setActivity((current) => [...current.slice(-6), { id: crypto.randomUUID(), text }]);
+    setActivity((current) => [...current.slice(-60), { id: crypto.randomUUID(), text }]);
   }, []);
 
   const listen = useCallback(
@@ -335,11 +373,9 @@ export function EditorScreen() {
         const body = JSON.parse(event.data) as { type: string; data: unknown };
         if (body.type === "canvas-stroke") {
           const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
-          // The payload names the frame being drawn. On a refresh the editor has no
-          // frame yet when the stream attaches, so trusting the captured id would
-          // drop every stroke.
           const target = data.frameId ?? fallbackFrameId;
           if (data.layers && target) {
+            setRunFrameId(target);
             const layers = data.layers.map((layer) => ({
               ...layer,
               pixels: base64ToBytes(layer.pixels),
@@ -352,17 +388,16 @@ export function EditorScreen() {
                 [target]: { ...entry, present: { ...entry.present, layers } },
               };
             });
-            log("Drawing on the canvas");
           }
           return;
         }
         if (body.type === "tool_call") {
           const data = body.data as { name?: string };
-          log(data.name ? `Using ${data.name.replaceAll("_", " ")}` : "Using a tool");
+          log(data.name ? `Tool · ${data.name.replaceAll("_", " ")}` : "Tool call");
           return;
         }
         if (body.type === "model_delta") {
-          log("Thinking it through");
+          log("Reasoning…");
           return;
         }
         if (body.type === "done") {
@@ -370,11 +405,13 @@ export function EditorScreen() {
           setMessage(
             data.status === "completed"
               ? "The frame is ready."
-              : `Run ${data.status ?? "finished"}.`,
+              : `The run ${data.status ?? "finished"}.`,
           );
+          log(`Run ${data.status ?? "finished"}`);
           source.close();
           sourceRef.current = null;
           setRunId(null);
+          setRunFrameId(null);
           void client.invalidateQueries({ queryKey: ["asset", assetId] });
           return;
         }
@@ -384,12 +421,13 @@ export function EditorScreen() {
         source.close();
         sourceRef.current = null;
         setRunId(null);
+        setRunFrameId(null);
+        log("The activity stream closed");
       };
     },
-    [assetId, client, log, update],
+    [assetId, client, log],
   );
 
-  // Rejoin a run that is still going, which is what a page refresh needs.
   useEffect(() => {
     let cancelled = false;
     void api<{ run: { id: string; status: string } | null }>(
@@ -398,14 +436,13 @@ export function EditorScreen() {
       .then((result) => {
         if (cancelled || !result.run) return;
         setRunId(result.run.id);
-        // The frame id arrives with each stroke, so the stream does not need one yet.
+        log("Rejoined a run that was still going");
         listen(result.run.id, "");
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-    // Runs are picked up once per asset.
   }, [assetId]);
 
   useEffect(() => () => sourceRef.current?.close(), []);
@@ -421,9 +458,10 @@ export function EditorScreen() {
       setSelection(action.rect);
       return;
     }
-    if (running) return;
+    if (locked || running) return;
     const current = drafts[frameId];
     if (!current || !activeLayerId) return;
+
     if (selection && "points" in action) {
       const kept = action.points.filter((point) => insideSelection(selection, point));
       if (kept.length === 0) return;
@@ -440,6 +478,7 @@ export function EditorScreen() {
       );
       return;
     }
+
     switch (action.kind) {
       case "paint":
         edit(frameId, current, {
@@ -456,9 +495,6 @@ export function EditorScreen() {
         });
         return;
       case "fill": {
-        // With a selection active the flood seeds from the click, clamped into the
-        // rectangle. Seeding from the rectangle's corner made the fill a no-op
-        // whenever that corner already held the fill colour.
         const seed = selection
           ? {
               x: Math.min(
@@ -487,8 +523,6 @@ export function EditorScreen() {
         return;
       }
       case "line": {
-        // An active selection constrains every tool, so the line is emitted as the
-        // clipped cells rather than the whole drag.
         if (selection) {
           const cells = linePoints(action.from.x, action.from.y, action.to.x, action.to.y)
             .filter((point) => insideSelection(selection, point))
@@ -531,7 +565,7 @@ export function EditorScreen() {
   }
 
   function selectionCommand(mode: "fill" | "clear") {
-    if (running) return;
+    if (running || locked) return;
     if (!frameId || !selection || !activeLayerId) return;
     edit(frameId, drafts[frameId], {
       type: "region",
@@ -567,8 +601,6 @@ export function EditorScreen() {
         });
       } else if (kind === "delete") {
         await api(`/api/assets/${assetId}/frames/${frameId}`, { method: "DELETE" });
-        // The draft for a deleted frame keeps up to 101 buffers alive and would
-        // keep autosaving to a frame that no longer exists.
         flush();
         setDrafts((current) => {
           const next = { ...current };
@@ -581,7 +613,9 @@ export function EditorScreen() {
       }
       await refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That frame change failed.");
+      const text = reason instanceof Error ? reason.message : "That change failed.";
+      setError(text);
+      notify({ title: "Frame change failed", description: text });
     }
   }
 
@@ -595,7 +629,9 @@ export function EditorScreen() {
       (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
       (input.height !== undefined && (input.height < 8 || input.height > 128))
     ) {
-      setError("Canvas size must be a whole number from 8 to 128.");
+      const text = "Canvas size must be a whole number from 8 to 128.";
+      setError(text);
+      notify({ title: "Size refused", description: text });
       return;
     }
     try {
@@ -604,20 +640,22 @@ export function EditorScreen() {
         method: "PATCH",
         body: JSON.stringify(input),
       });
-      // Size and palette changed under the drafts, so every frame is re-seeded
-      // from the server instead of being autosaved back at the old dimensions.
       setDrafts({});
+      fitted.current = null;
       setSelection(null);
       await refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "That asset change failed.");
+      const text = reason instanceof Error ? reason.message : "That change failed.";
+      setError(text);
+      notify({ title: "Asset change failed", description: text });
     }
   }
 
   async function generate() {
-    if (!frameId) return;
+    if (!frameId || locked) return;
     setError(null);
     setMessage("");
+    setActivity([]);
     try {
       await api("/api/preferences", {
         method: "PATCH",
@@ -634,9 +672,13 @@ export function EditorScreen() {
         }),
       });
       setRunId(started.runId);
+      setRunFrameId(frameId);
+      log(`Run ${started.runId.slice(0, 8)} started`);
       listen(started.runId, frameId);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Generation failed.");
+      const text = reason instanceof Error ? reason.message : "Generation failed.";
+      setError(text);
+      notify({ title: "Could not start the run", description: text });
     }
   }
 
@@ -644,8 +686,15 @@ export function EditorScreen() {
     if (!runId) return;
     try {
       await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+      log("Stopped");
+    } catch (reason) {
+      notify({
+        title: "Could not stop the run",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
     } finally {
       setRunId(null);
+      setRunFrameId(null);
       sourceRef.current?.close();
       sourceRef.current = null;
     }
@@ -655,206 +704,246 @@ export function EditorScreen() {
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.reasoningEfforts ?? [];
 
+  const leftPanels = (
+    <>
+      <FramePanel
+        frames={frames}
+        activeId={frameId}
+        playing={playing}
+        locked={running}
+        onSelect={(id) => {
+          setFrameId(id);
+          setSelection(null);
+        }}
+        onTogglePlay={() => setPlaying((value) => !value)}
+        onAdd={() => void frameAction("add")}
+        onDuplicate={() => void frameAction("duplicate")}
+        onRename={(_id, name) => void frameAction("rename", name)}
+        onDelete={() => void frameAction("delete")}
+      />
+      <LayerPanel
+        buffer={buffer}
+        activeId={activeLayerId}
+        locked={locked}
+        onSelect={setActiveLayerId}
+        onToggleVisible={(layerId, visible) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
+        }
+        onAdd={() =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "addLayer",
+            id: crypto.randomUUID(),
+            name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+          })
+        }
+        onRename={(layerId, name) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
+        }
+        onDelete={() =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "removeLayer",
+            layerId: activeLayerId,
+          })
+        }
+      />
+    </>
+  );
+
+  const rightPanels = (
+    <>
+      <PalettePanel
+        palette={buffer?.palette ?? []}
+        color={color}
+        usedColors={usedColors}
+        maxColors={style.maxColors}
+        onPick={setColor}
+        onAdd={(hex) => {
+          if (!buffer) return;
+          if (buffer.palette.includes(hex)) {
+            setColor(buffer.palette.indexOf(hex));
+            return;
+          }
+          void updateAsset({ palette: [...buffer.palette, hex] });
+        }}
+      />
+      <StylePanel
+        style={style}
+        width={asset.data?.width ?? 32}
+        height={asset.data?.height ?? 32}
+        onResize={(width, height) => void updateAsset({ width, height })}
+      />
+    </>
+  );
+
   return (
-    <div className="grid h-screen grid-rows-[auto_1fr_auto] bg-paper">
-      <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2">
-        <a href="/projects" className="font-mono text-xs tracking-[0.18em] text-accent">
+    <div className="grid h-screen min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper">
+      <header className="flex min-w-0 items-center gap-3 border-b border-line px-3 py-2">
+        <a
+          href="/projects"
+          className="font-mono text-xs tracking-[0.18em] text-accent whitespace-nowrap"
+        >
           PIXELAITION
         </a>
-        <p className="truncate text-sm text-muted">
-          {asset.data
-            ? `${asset.data.projectName} / ${asset.data.name}`
-            : "Loading asset"}
+        <p className="min-w-0 truncate text-sm text-muted">
+          {asset.data ? (
+            <>
+              <span className="text-ink">{asset.data.name}</span>
+              <span className="mx-1.5">/</span>
+              {asset.data.projectName}
+            </>
+          ) : (
+            "Loading asset"
+          )}
         </p>
-        <div className="flex items-center gap-2">
+        <span className="ml-auto flex items-center gap-1.5">
           {running ? (
-            <span className="font-mono text-[11px] text-accent">
-              {frame ? `Drawing ${frame.name}` : "Drawing"}
+            <span className="hidden items-center gap-1.5 font-mono text-[10px] text-accent sm:flex">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              drawing
             </span>
           ) : null}
+          <IconButton
+            label="Frames and layers"
+            className="lg:hidden"
+            onClick={() => setLeftSheet(true)}
+          >
+            ☰
+          </IconButton>
+          <IconButton
+            label="Palette and style"
+            className="lg:hidden"
+            onClick={() => setRightSheet(true)}
+          >
+            ◨
+          </IconButton>
           <Button
             tone="ghost"
+            className="px-2.5 py-1.5 text-xs"
+            disabled={!asset.data}
             onClick={() => {
-              // Export renders server state, so a stroke still inside the debounce
-              // window has to be written first.
               flush();
               setExportOpen(true);
             }}
-            disabled={!asset.data}
           >
             Export
           </Button>
-        </div>
+        </span>
       </header>
 
-      <div className="grid min-h-0 lg:grid-cols-[240px_1fr_260px]">
-        <aside className="hidden min-h-0 gap-5 overflow-auto border-r border-line p-3 lg:flex lg:flex-col">
-          <FrameList
-            frames={frames}
-            activeId={frameId}
-            playing={playing}
-            onSelect={(id) => {
-              setFrameId(id);
-              setSelection(null);
-            }}
-            onTogglePlay={() => setPlaying((value) => !value)}
-            onAdd={() => void frameAction("add")}
-            onDuplicate={() => void frameAction("duplicate")}
-            onRename={(_id, name) => void frameAction("rename", name)}
-            onDelete={() => void frameAction("delete")}
-          />
-          <LayerList
-            buffer={buffer}
-            activeId={activeLayerId}
-            locked={running}
-            onSelect={setActiveLayerId}
-            onToggleVisible={(layerId, visible) =>
-              frameId &&
-              edit(frameId, drafts[frameId], {
-                type: "setLayerVisible",
-                layerId,
-                visible,
-              })
-            }
-            onAdd={() =>
-              frameId &&
-              edit(frameId, drafts[frameId], {
-                type: "addLayer",
-                id: crypto.randomUUID(),
-                name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
-              })
-            }
-            onRename={(layerId, name) =>
-              frameId &&
-              edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
-            }
-            onDelete={() =>
-              frameId &&
-              edit(frameId, drafts[frameId], {
-                type: "removeLayer",
-                layerId: activeLayerId,
-              })
-            }
-          />
-        </aside>
+      <div className="grid min-h-0 min-w-0 grid-rows-[1fr_auto]">
+        <div className="grid min-h-0 min-w-0 lg:grid-cols-[280px_1fr_300px]">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r border-line p-3 lg:flex">
+            {leftPanels}
+          </aside>
 
-        <div className="flex min-h-0 flex-col">
-          <div className="flex flex-wrap items-center gap-1 border-b border-line px-2 py-1.5">
-            {toolList.map((item) => {
-              const Icon = item.icon;
-              return (
-                <IconButton
-                  key={item.id}
-                  label={`${item.label} (${item.key})`}
-                  active={tool === item.id}
-                  onClick={() => setTool(item.id)}
-                >
-                  <Icon />
-                </IconButton>
-              );
-            })}
-            <span className="mx-1 h-5 w-px bg-line" />
-            <IconButton
-              label="Brush size 1"
-              active={brushSize === 1}
-              onClick={() => setBrushSize(1)}
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <div className="order-2 min-w-0 sm:order-1">
+              <Toolbar
+                tool={tool}
+                brushSize={brushSize}
+                zoom={camera.zoom}
+                grid={grid}
+                checker={checker}
+                onion={onion}
+                selectionActive={selection !== null}
+                locked={locked}
+                onTool={setTool}
+                onBrush={setBrushSize}
+                onZoom={(direction) =>
+                  setCamera((current) => ({
+                    ...current,
+                    zoom: stepZoom(current.zoom, direction),
+                  }))
+                }
+                onFit={fit}
+                onActualSize={() => {
+                  const rect = viewRef.current?.getBoundingClientRect();
+                  const doc = bufferRef.current;
+                  if (rect && doc) {
+                    setCamera(
+                      centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
+                    );
+                  }
+                }}
+                onGrid={setGrid}
+                onChecker={setChecker}
+                onOnion={setOnion}
+                onSelectionFill={() => selectionCommand("fill")}
+                onSelectionClear={() => selectionCommand("clear")}
+                onDeselect={() => setSelection(null)}
+              />
+            </div>
+            <div
+              ref={viewRef}
+              className="relative order-1 min-h-0 min-w-0 flex-1 sm:order-2"
             >
-              <span className="text-[10px]">1</span>
-            </IconButton>
-            <IconButton
-              label="Brush size 2"
-              active={brushSize === 2}
-              onClick={() => setBrushSize(2)}
-            >
-              <span className="text-[10px]">2</span>
-            </IconButton>
-            <IconButton
-              label="Brush size 3"
-              active={brushSize === 3}
-              onClick={() => setBrushSize(3)}
-            >
-              <span className="text-[10px]">3</span>
-            </IconButton>
-            <span className="mx-1 h-5 w-px bg-line" />
-            <IconButton
-              label="Zoom out"
-              onClick={() => setCamera({ ...camera, zoom: stepZoom(camera.zoom, -1) })}
-            >
-              −
-            </IconButton>
-            <span className="w-12 text-center font-mono text-[11px] text-muted">
-              {Math.round(camera.zoom * 100)}%
-            </span>
-            <IconButton
-              label="Zoom in"
-              onClick={() => setCamera({ ...camera, zoom: stepZoom(camera.zoom, 1) })}
-            >
-              +
-            </IconButton>
-            <IconButton label="Fit to view" onClick={fit}>
-              Fit
-            </IconButton>
-            <IconButton label="Actual size" onClick={actualSize}>
-              1:1
-            </IconButton>
-            <span className="mx-1 h-5 w-px bg-line" />
-            <Toggle label="Grid" checked={grid} onChange={setGrid} />
-            <Toggle label="Checker" checked={checker} onChange={setChecker} />
-            <Toggle label="Onion skin" checked={onion} onChange={setOnion} />
-            {selection ? (
-              <>
-                <span className="mx-1 h-5 w-px bg-line" />
-                <Button tone="ghost" onClick={() => selectionCommand("fill")}>
-                  Fill
-                </Button>
-                <Button tone="ghost" onClick={() => selectionCommand("clear")}>
-                  Clear
-                </Button>
-                <Button tone="ghost" onClick={() => setSelection(null)}>
-                  Deselect
-                </Button>
-              </>
-            ) : null}
+              {asset.isPending ? (
+                <Centered>
+                  <p className="text-sm text-muted">Loading the asset from the server.</p>
+                </Centered>
+              ) : asset.isError ? (
+                <Centered>
+                  <div className="grid max-w-sm gap-3">
+                    <Callout tone="danger">
+                      {asset.error instanceof Error
+                        ? asset.error.message
+                        : "The asset could not be loaded."}
+                    </Callout>
+                    <Button tone="ghost" onClick={() => void asset.refetch()}>
+                      Try again
+                    </Button>
+                  </div>
+                </Centered>
+              ) : frames.length === 0 ? (
+                <Centered>
+                  <div className="max-w-sm">
+                    <EmptyState
+                      title="This asset has no frames"
+                      body="Add a frame on the left to start drawing."
+                      action={
+                        <Button
+                          tone="ghost"
+                          className="lg:hidden"
+                          onClick={() => setLeftSheet(true)}
+                        >
+                          Open frames
+                        </Button>
+                      }
+                    />
+                  </div>
+                </Centered>
+              ) : (
+                <PixelCanvas
+                  buffer={buffer ?? fallbackBuffer}
+                  camera={camera}
+                  tool={tool}
+                  brushSize={brushSize}
+                  grid={grid}
+                  checker={checker}
+                  onionSkin={onionSkin}
+                  selection={selection}
+                  locked={locked}
+                  onAction={onAction}
+                  onCamera={setCamera}
+                />
+              )}
+              {locked ? (
+                <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-md border border-accent/40 bg-paper/90 px-2 py-1 font-mono text-[10px] text-accent">
+                  the agent is drawing on this frame
+                </p>
+              ) : null}
+            </div>
           </div>
-          <div ref={viewRef} className="relative min-h-0 flex-1">
-            <PixelCanvas
-              buffer={buffer ?? FALLBACK_BUFFER}
-              camera={camera}
-              tool={tool}
-              brushSize={brushSize}
-              grid={grid}
-              checker={checker}
-              onionSkin={onionSkin}
-              selection={selection}
-              locked={running}
-              onAction={onAction}
-              onCamera={setCamera}
-            />
-          </div>
+
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-l border-line p-3 lg:flex">
+            {rightPanels}
+          </aside>
         </div>
 
-        <aside className="hidden min-h-0 gap-5 overflow-auto border-l border-line p-3 lg:flex lg:flex-col">
-          <PalettePanel
-            palette={buffer?.palette ?? []}
-            color={color}
-            usedColors={usedColors}
-            width={asset.data?.width ?? 32}
-            height={asset.data?.height ?? 32}
-            onPick={setColor}
-            onAdd={(hex) => {
-              if (!frameId || !buffer) return;
-              if (buffer.palette.includes(hex)) {
-                setColor(buffer.palette.indexOf(hex));
-                return;
-              }
-              void updateAsset({ palette: [...buffer.palette, hex] });
-            }}
-            onResize={(width, height) => void updateAsset({ width, height })}
-          />
-        </aside>
-      </div>
-
-      <footer className="border-t border-line p-3">
         <Composer
           prompt={prompt}
           onPrompt={setPrompt}
@@ -869,10 +958,33 @@ export function EditorScreen() {
           activity={activity}
           message={message}
           error={error}
+          expanded={expanded}
+          onExpanded={setExpanded}
           onGenerate={() => void generate()}
           onStop={() => void stop()}
         />
-      </footer>
+      </div>
+
+      {wide ? null : (
+        <>
+          <Sheet
+            open={leftSheet}
+            onOpenChange={setLeftSheet}
+            title="Frames and layers"
+            side="left"
+          >
+            <div className="grid gap-4">{leftPanels}</div>
+          </Sheet>
+          <Sheet
+            open={rightSheet}
+            onOpenChange={setRightSheet}
+            title="Palette and style"
+            side="right"
+          >
+            <div className="grid gap-4">{rightPanels}</div>
+          </Sheet>
+        </>
+      )}
 
       <ExportDialog
         open={exportOpen}
@@ -882,7 +994,16 @@ export function EditorScreen() {
         frameId={frameId ?? ""}
         frameName={frame?.name ?? ""}
         assetName={asset.data?.name ?? ""}
+        onBeforeExport={flush}
       />
+    </div>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-field p-6">
+      {children}
     </div>
   );
 }
@@ -903,12 +1024,3 @@ function intersect(left: Rect, right: Rect): Rect {
   const bottom = Math.min(left.y + left.height, right.y + right.height);
   return { x, y, width: far - x, height: bottom - y };
 }
-
-// One shared placeholder, so the canvas bitmap cache does not fill with a new
-// offscreen canvas on every render while the asset query is in flight.
-const FALLBACK_BUFFER: FrameBuffer = {
-  width: 8,
-  height: 8,
-  palette: ["#00000000"],
-  layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
-};

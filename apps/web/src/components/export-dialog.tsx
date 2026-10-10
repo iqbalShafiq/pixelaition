@@ -1,10 +1,22 @@
 import { useState } from "react";
-import { Button, Dialog, DialogCloseButton, Field, ModelSelect } from "./ui.js";
+import {
+  Button,
+  Callout,
+  Dialog,
+  DialogClose,
+  Field,
+  SelectControl,
+  TextInput,
+} from "./ui.js";
 
-const scopes = ["frame", "asset", "project"] as const;
-type Scope = (typeof scopes)[number];
+const scopes = [
+  { id: "frame", label: "This frame" },
+  { id: "asset", label: "This asset" },
+  { id: "project", label: "The whole project" },
+] as const;
+type Scope = (typeof scopes)[number]["id"];
 
-const formats = ["pxl", "png", "jpg", "svg", "zip"] as const;
+const formats = ["png", "jpg", "svg", "zip", "pxl"] as const;
 type Format = (typeof formats)[number];
 
 const scales = ["1", "2", "4", "8", "10"] as const;
@@ -17,6 +29,7 @@ export function ExportDialog({
   frameId,
   frameName,
   assetName,
+  onBeforeExport,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,23 +38,24 @@ export function ExportDialog({
   frameId: string;
   frameName: string;
   assetName: string;
+  /** Writes any pending stroke before the server renders the export. */
+  onBeforeExport: () => void;
 }) {
   const [scope, setScope] = useState<Scope>("frame");
   const [format, setFormat] = useState<Format>("png");
   const [scale, setScale] = useState<string>("1");
   const [background, setBackground] = useState("#14120e");
   const [state, setState] = useState<{
-    kind: "idle" | "busy" | "error";
+    kind: "idle" | "busy" | "failed";
     message?: string;
-  }>({
-    kind: "idle",
-  });
+  }>({ kind: "idle" });
 
   const pxlNeedsProject = format === "pxl" && scope !== "project";
   const available = formats.filter((item) => !(item === "pxl" && scope !== "project"));
 
   async function run() {
-    setState({ kind: "busy", message: "Rendering the export on the server." });
+    setState({ kind: "busy", message: "Rendering on the server." });
+    onBeforeExport();
     try {
       const response = await fetch("/api/export", {
         method: "POST",
@@ -70,10 +84,10 @@ export function ExportDialog({
       link.download = fileName(response.headers.get("content-disposition"), format);
       link.click();
       URL.revokeObjectURL(url);
-      setState({ kind: "idle", message: "Export downloaded." });
+      setState({ kind: "idle", message: "Saved to your downloads." });
     } catch (reason) {
       setState({
-        kind: "error",
+        kind: "failed",
         message: reason instanceof Error ? reason.message : "Export failed.",
       });
     }
@@ -86,57 +100,69 @@ export function ExportDialog({
       title="Export"
       description={`${assetName} · ${frameName}`}
     >
-      <Field label="Scope">
-        <ModelSelect
-          label="Scope"
-          value={scope}
-          options={[...scopes]}
-          onChange={(next) => setScope(next as Scope)}
-        />
-      </Field>
-      <Field label="Format">
-        <ModelSelect
-          label="Format"
-          value={available.includes(format) ? format : "png"}
-          options={available}
-          onChange={(next) => setFormat(next as Format)}
-        />
-      </Field>
-      <Field label="Scale">
-        <ModelSelect
-          label="Scale"
-          value={scale}
-          options={[...scales]}
-          onChange={setScale}
-        />
-      </Field>
-      {format === "jpg" || format === "zip" ? (
-        <Field label="Background">
-          <input
-            type="color"
-            value={background}
-            aria-label="Background color"
-            onChange={(event) => setBackground(event.target.value)}
-            className="h-8 w-20 rounded-md border border-line bg-paper"
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Scope">
+          <SelectControl
+            label="Scope"
+            value={scope}
+            options={scopes.map((item) => item.id)}
+            onChange={(next) => setScope(next as Scope)}
           />
         </Field>
-      ) : null}
+        <Field
+          label="Format"
+          hint={scope !== "project" ? ".pxl needs the project" : undefined}
+        >
+          <SelectControl
+            label="Format"
+            value={available.includes(format) ? format : "png"}
+            options={available}
+            onChange={(next) => setFormat(next as Format)}
+          />
+        </Field>
+        <Field label="Scale">
+          <SelectControl
+            label="Scale"
+            value={scale}
+            options={[...scales]}
+            onChange={setScale}
+          />
+        </Field>
+        {format === "jpg" || format === "zip" ? (
+          <Field label="Background">
+            <TextInput
+              type="color"
+              aria-label="Background color"
+              value={background}
+              className="h-8 w-20 p-0"
+              onChange={(event) => setBackground(event.target.value)}
+            />
+          </Field>
+        ) : null}
+      </div>
+
       {pxlNeedsProject ? (
-        <p className="text-xs text-muted">
-          A .pxl document holds a whole project. Pick the project scope for it.
-        </p>
+        <Callout>
+          A .pxl document holds a whole project, so PNG, JPG, SVG, or ZIP is the right
+          choice for one frame.
+        </Callout>
       ) : null}
-      {state.kind === "error" ? (
-        <p className="text-sm text-erase">{state.message}</p>
+      {format === "zip" ? (
+        <Callout>
+          ZIP holds a PNG and an SVG for every frame in scope, at the chosen scale.
+        </Callout>
       ) : null}
-      {state.kind === "idle" && state.message ? (
-        <p className="font-mono text-xs text-muted">{state.message}</p>
+      {state.kind === "failed" ? (
+        <Callout tone="danger">{state.message}</Callout>
+      ) : state.message ? (
+        <p className="font-mono text-[11px] text-muted">{state.message}</p>
       ) : null}
+
       <div className="flex items-center gap-2">
         <Button onClick={() => void run()} disabled={state.kind === "busy"}>
           {state.kind === "busy" ? "Rendering" : "Download"}
         </Button>
-        <DialogCloseButton>Close</DialogCloseButton>
+        <DialogClose>Close</DialogClose>
       </div>
     </Dialog>
   );

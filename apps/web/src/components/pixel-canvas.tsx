@@ -247,7 +247,8 @@ export function PixelCanvas({
       const doc = latest.current.buffer;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.imageSmoothingEnabled = false;
-      context.fillStyle = "#14120e";
+      // The canvas field, per the plan: a lighter plane inside the page.
+      context.fillStyle = "#1c1915";
       context.fillRect(0, 0, rect.width, rect.height);
 
       const cell = cam.zoom;

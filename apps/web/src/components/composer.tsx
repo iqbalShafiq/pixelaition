@@ -1,8 +1,13 @@
 import { StreamMarkdown } from "@anvia/react-ui/stream";
-import { Button, ModelSelect, TextInput } from "./ui.js";
+import { useEffect, useRef } from "react";
+import { Button, Callout, IconButton, SelectControl, Textarea } from "./ui.js";
 
 export type ActivityLine = { id: string; text: string };
 
+/**
+ * The composer is its own 220px band, and it expands. The model and effort
+ * pickers live inside the prompt field, as the plan asks.
+ */
 export function Composer({
   prompt,
   onPrompt,
@@ -17,6 +22,8 @@ export function Composer({
   activity,
   message,
   error,
+  expanded,
+  onExpanded,
   onGenerate,
   onStop,
 }: {
@@ -33,68 +40,120 @@ export function Composer({
   activity: ActivityLine[];
   message: string;
   error: string | null;
+  expanded: boolean;
+  onExpanded: (next: boolean) => void;
   onGenerate: () => void;
   onStop: () => void;
 }) {
-  const options = models.length > 0 ? models : ["No models listed"];
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+  }, [activity, message]);
+
+  const modelOptions = models.length > 0 ? models : ["No models listed"];
   const effortOptions = efforts.length > 0 ? efforts : ["none", "low", "medium", "high"];
-  const recent = activity.slice(-6);
+
   return (
-    <div className="grid gap-2">
-      {recent.length > 0 ? (
-        <ul className="grid gap-0.5">
-          {recent.map((line) => (
-            <li key={line.id} className="font-mono text-[11px] text-muted">
-              {line.text}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {message ? (
-        <div className="max-h-32 overflow-auto text-sm text-ink">
-          <StreamMarkdown content={message} />
-        </div>
-      ) : null}
-      {error ? <p className="text-sm text-erase">{error}</p> : null}
-      {!modelReady ? (
-        <p className="text-xs text-muted">
-          Manual editing works without a model. Add OPENAI_API_KEY on the server to
-          generate.
-        </p>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <TextInput
-          className="min-w-64 flex-1"
-          value={prompt}
-          aria-label="Prompt"
-          placeholder="Describe the pixel asset or a new state"
-          onChange={(event) => onPrompt(event.target.value)}
-        />
-        <ModelSelect
-          label="Model"
-          value={models.includes(modelId) ? modelId : (options[0] ?? "")}
-          options={options}
-          onChange={onModel}
-        />
-        <ModelSelect
-          label="Reasoning effort"
-          value={effortOptions.includes(effort) ? effort : (effortOptions[0] ?? "")}
-          options={effortOptions}
-          onChange={onEffort}
-        />
+    <section
+      className={`grid min-h-0 min-w-0 grid-rows-[auto_1fr] gap-2 border-t border-line bg-paper p-3 transition-[height] duration-200 ease-out ${
+        expanded ? "h-[22rem]" : "h-[13.75rem]"
+      }`}
+      aria-label="Prompt composer"
+    >
+      <header className="flex items-center gap-2">
+        <span className="font-mono text-[10px] tracking-[0.18em] text-muted uppercase">
+          {running ? "Drawing" : "Prompt"}
+        </span>
         {running ? (
-          <Button tone="danger" onClick={onStop}>
-            Stop
-          </Button>
-        ) : (
-          <Button
-            onClick={onGenerate}
-            disabled={!prompt.trim() || !modelReady || !modelId}
+          <span className="flex items-center gap-1 font-mono text-[10px] text-accent">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+            the agent is working
+          </span>
+        ) : null}
+        <span className="ml-auto">
+          <IconButton
+            label={expanded ? "Collapse the composer" : "Expand the composer"}
+            size="sm"
+            onClick={() => onExpanded(!expanded)}
           >
-            Generate
-          </Button>
-        )}
+            {expanded ? "▾" : "▴"}
+          </IconButton>
+        </span>
+      </header>
+
+      <div className="grid min-h-0 min-w-0 gap-2 lg:grid-cols-[1fr_20rem]">
+        <div className="flex min-h-0 min-w-0 flex-col gap-2">
+          <div className="relative flex min-h-0 flex-1 flex-col rounded-lg border border-line bg-panel focus-within:border-accent">
+            <Textarea
+              value={prompt}
+              aria-label="Prompt"
+              placeholder="Describe the pixel asset, or ask for another state of this frame"
+              className="min-h-0 flex-1 border-0 bg-transparent focus:border-0"
+              onChange={(event) => onPrompt(event.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-2 py-1.5">
+              <SelectControl
+                label="Model"
+                value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}
+                options={modelOptions}
+                onChange={onModel}
+                className="max-w-[16rem]"
+              />
+              <SelectControl
+                label="Reasoning effort"
+                value={effortOptions.includes(effort) ? effort : (effortOptions[0] ?? "")}
+                options={effortOptions}
+                onChange={onEffort}
+              />
+              <span className="ml-auto flex gap-1.5">
+                {running ? (
+                  <Button tone="danger" onClick={onStop}>
+                    Stop
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={onGenerate}
+                    disabled={!prompt.trim() || !modelReady || !modelId}
+                  >
+                    Generate
+                  </Button>
+                )}
+              </span>
+            </div>
+          </div>
+          {!modelReady ? (
+            <Callout>
+              Manual editing works without a model. Add OPENAI_API_KEY on the server to
+              generate, or set DECISION_MODEL to route an offline decision.
+            </Callout>
+          ) : null}
+          {error ? <Callout tone="danger">{error}</Callout> : null}
+        </div>
+
+        <div
+          ref={logRef}
+          className="min-h-0 overflow-auto rounded-lg border border-line bg-panel p-2"
+          aria-live="polite"
+        >
+          {activity.length === 0 && !message ? (
+            <p className="font-mono text-[10px] text-muted">
+              The agent&apos;s reasoning and tool calls appear here, one step at a time.
+            </p>
+          ) : null}
+          <ul className="grid gap-1">
+            {activity.slice(-40).map((line) => (
+              <li key={line.id} className="font-mono text-[10px] text-muted">
+                {line.text}
+              </li>
+            ))}
+          </ul>
+          {message ? (
+            <div className="mt-2 border-t border-line pt-2 text-xs text-ink">
+              <StreamMarkdown content={message} />
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

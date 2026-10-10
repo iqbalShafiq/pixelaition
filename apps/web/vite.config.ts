@@ -21,6 +21,9 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // Never drift to another port: the API owns 3001, so a silent fallback would
+    // point the /api proxy at the dev server itself and render a blank page.
+    strictPort: true,
     proxy: {
       "/api": "http://localhost:3001",
     },
