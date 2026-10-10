@@ -1,5 +1,4 @@
 import {
-  Brush,
   Eraser,
   Grid3X3,
   Hand,
@@ -33,6 +32,52 @@ const tools: Array<{
   { id: "rect", label: "Rectangle", key: "R", icon: Square },
   { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
+
+/** A pixel-art dot: round enough to read as a circle, drawn on a square grid. */
+const dotMaps: Record<number, string[]> = {
+  1: [".XXX.", "XXXXX", "XXXXX", "XXXXX", ".XXX."],
+  2: ["..XXX..", ".XXXXX.", "XXXXXXX", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX.."],
+  3: [
+    "...XXX...",
+    ".XXXXXXX.",
+    ".XXXXXXX.",
+    "XXXXXXXXX",
+    "XXXXXXXXX",
+    "XXXXXXXXX",
+    ".XXXXXXX.",
+    ".XXXXXXX.",
+    "...XXX...",
+  ],
+};
+
+function PixelDot({ level }: { level: number }) {
+  const map = dotMaps[level] ?? dotMaps[1] ?? [];
+  const n = map.length;
+  return (
+    <svg
+      aria-hidden
+      width={n * 2}
+      height={n * 2}
+      viewBox={`0 0 ${n} ${n}`}
+      shapeRendering="crispEdges"
+    >
+      {map.flatMap((row, y) =>
+        [...row].map((cell, x) =>
+          cell === "X" ? (
+            <rect
+              key={`${x}-${y}`}
+              x={x}
+              y={y}
+              width={1}
+              height={1}
+              fill="currentColor"
+            />
+          ) : null,
+        ),
+      )}
+    </svg>
+  );
+}
 
 export function Toolbar({
   tool,
@@ -81,7 +126,7 @@ export function Toolbar({
           active={brushSize === value}
           onClick={() => onBrush(value)}
         >
-          <Brush size={value === 1 ? 11 : value === 2 ? 14 : 17} strokeWidth={stroke} />
+          <PixelDot level={value} />
         </IconButton>
       ))}
 
