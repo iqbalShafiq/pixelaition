@@ -94,7 +94,9 @@ Sizes run from 8 to 128. Index 0 in the palette is transparent `#00000000`.
 }
 ```
 
-Tools include `list_projects`, `create_project`, `create_asset`, `get_asset`, and `export_project`.
+Tools: `list_projects`, `create_project`, `get_project`, `list_assets`, `get_asset`, `create_asset`, `get_frame`, `paint_pixels`, `set_palette`, `create_frame`, `duplicate_frame`, `export_asset`, `export_project`.
+
+`get_frame` returns the frame as rows of palette indexes, with `0` meaning transparent. `paint_pixels` takes palette indexes rather than hex and returns what the server actually committed. Writes go through the same `applyCommand` the editor uses, so a bad coordinate or an index outside the palette is refused instead of stored. `export_asset` returns image content, and zips the result when the asset has more than one frame.
 
 ## Checks
 
