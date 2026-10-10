@@ -9,7 +9,21 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL",
+        "WEB_ORIGIN",
+        "OPENAI_*",
+        "EVAL_MODEL",
+        "TYPESAFE_API_KEY",
+        "WORKER_*",
+        "DURABLE_DATABASE_PATH",
+        "LANGFUSE_*",
+        "API_PORT",
+        "NODE_ENV"
+      ]
     }
   }
 }
