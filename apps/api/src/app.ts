@@ -13,11 +13,29 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
-import { decidePrompt, effortsFor, parseModelSpecs } from "@pixelaition/agent";
+import {
+  decidePrompt,
+  DecisionNotConfiguredError,
+  LangfuseTelemetry,
+  traceIdFor,
+  type DrawDecision,
+} from "@pixelaition/agent";
+
+const telemetry =
+  process.env.LANGFUSE_PUBLIC_KEY && process.env.LANGFUSE_SECRET_KEY
+    ? new LangfuseTelemetry({
+        publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+        secretKey: process.env.LANGFUSE_SECRET_KEY,
+        ...(process.env.LANGFUSE_BASE_URL
+          ? { baseUrl: process.env.LANGFUSE_BASE_URL }
+          : {}),
+        serviceName: "pixelaition-api",
+      })
+    : undefined;
 import {
   addFrameRecord,
   createApiKey,
@@ -39,7 +57,7 @@ import {
   updateAssetRecord,
   userIdForToken,
 } from "./store.js";
-import { generationRuns } from "@pixelaition/db";
+import { generationRuns, models } from "@pixelaition/db";
 
 const scaleSchema = z.union([
   z.literal(1),
@@ -312,22 +330,77 @@ export function createApp() {
         "Add OPENAI_API_KEY on the server to generate.",
       );
     }
-    const decision = await decidePrompt(body.prompt, {
-      typesafeApiKey: process.env.TYPESAFE_API_KEY,
-      openaiApiKey: process.env.OPENAI_API_KEY,
-      openaiBaseUrl: process.env.OPENAI_BASE_URL,
-      decisionModel: process.env.DECISION_MODEL,
-    });
-    if (decision.intent === "clarify") {
+    const catalog = await listModels();
+    const pair = catalog.find((model) => model.id === body.modelId);
+    if (!pair || !pair.efforts.includes(body.reasoningEffort)) {
       return fail(
         res,
         422,
-        "PROMPT_NEEDS_DETAIL",
-        decision.question ?? "Add a subject and a size.",
+        "MODEL_NOT_AVAILABLE",
+        "Pick a model and effort from the catalog.",
+      );
+    }
+    const decisionModel = process.env.DECISION_MODEL?.trim();
+    const decisionApi = catalog.find((model) => model.id === decisionModel)?.api;
+    const hasJev = Boolean(process.env.TYPESAFE_API_KEY?.trim());
+    if (!hasJev && (!decisionModel || !decisionApi)) {
+      return fail(
+        res,
+        503,
+        "DECISION_UNCONFIGURED",
+        "Set DECISION_MODEL to a model from the catalog before generating.",
       );
     }
     const thread = await ensureThread(db, res.locals.userId as string, body.assetId);
     const requestId = crypto.randomUUID();
+    const decisionStarted = Date.now();
+    let decided: DrawDecision;
+    try {
+      decided = await decidePrompt(body.prompt, {
+        typesafeApiKey: process.env.TYPESAFE_API_KEY,
+        openaiApiKey: process.env.OPENAI_API_KEY,
+        openaiBaseUrl: process.env.OPENAI_BASE_URL,
+        decisionModel,
+        decisionApi: decisionApi as "chat" | "responses" | undefined,
+      });
+    } catch (reason) {
+      if (reason instanceof DecisionNotConfiguredError) {
+        return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+      }
+      return fail(
+        res,
+        502,
+        "DECISION_FAILED",
+        reason instanceof Error ? reason.message : "The decision provider failed.",
+      );
+    }
+    await telemetry?.recordSpan(
+      {
+        traceId: traceIdFor(requestId),
+        kind: "generation",
+        name: "decide-request",
+        startMs: decisionStarted,
+        endMs: Date.now(),
+        input: body.prompt,
+        output: JSON.stringify(decided),
+        model: decisionModel ?? "jev",
+      },
+      {
+        name: "decide",
+        userId: res.locals.userId as string,
+        sessionId: thread.id,
+        tags: ["pixelaition", "decide"],
+        metadata: { assetId: body.assetId },
+      },
+    );
+    if (decided.intent === "clarify") {
+      return fail(
+        res,
+        422,
+        "PROMPT_NEEDS_DETAIL",
+        decided.question ?? "Add a subject and a size.",
+      );
+    }
     const runId = await insertRun(db, {
       threadId: thread.id,
       requestId,
@@ -559,81 +632,18 @@ async function documentForScope(
   return built;
 }
 
-let providerCache: { at: number; models: Array<{ id: string }> } | undefined;
-
-async function providerModels(): Promise<Array<{ id: string }>> {
-  if (providerCache && Date.now() - providerCache.at < 5 * 60 * 1000) {
-    return providerCache.models;
-  }
-  const base = process.env.OPENAI_BASE_URL?.replace(/\/$/, "");
-  const key = process.env.OPENAI_API_KEY;
-  const fallback = process.env.OPENAI_MODEL ? [{ id: process.env.OPENAI_MODEL }] : [];
-  if (!base || !key) return fallback;
-  try {
-    const response = await fetch(`${base}/models`, {
-      headers: { authorization: `Bearer ${key}` },
-    });
-    if (!response.ok) return fallback;
-    const body = (await response.json()) as { data?: Array<{ id: string }> };
-    const models = (body.data ?? []).map((model) => ({ id: model.id })).slice(0, 200);
-    providerCache = { at: Date.now(), models: models.length > 0 ? models : fallback };
-    return providerCache.models;
-  } catch {
-    return fallback;
-  }
-}
-
-let workerCatalogCache:
-  { at: number; models: Array<{ id: string; efforts: string[] }> } | undefined;
-
-/**
- * The worker owns each model's reasoning-effort options, because only it
- * declares the controls. An unreachable worker returns undefined and the
- * caller falls back to the env catalog, then to the generic set.
- */
-async function workerCatalog(): Promise<
-  Array<{ id: string; efforts: string[] }> | undefined
+async function listModels(): Promise<
+  Array<{ id: string; efforts: string[]; api: string }>
 > {
-  if (workerCatalogCache && Date.now() - workerCatalogCache.at < 5 * 60 * 1000) {
-    return workerCatalogCache.models;
-  }
-  const base = process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002";
-  try {
-    const response = await fetch(`${base}/internal/agents`, {
-      headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
-    });
-    if (!response.ok) return undefined;
-    const body = (await response.json()) as {
-      models?: Array<{ id: string; efforts?: string[] }>;
-    };
-    const models = (body.models ?? [])
-      .filter((model) => model.id)
-      .map((model) => ({ id: model.id, efforts: effortsFor(model.efforts) }));
-    if (models.length === 0) return undefined;
-    workerCatalogCache = { at: Date.now(), models };
-    return models;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * The composer catalog. OPENAI_MODELS pins the list and its order; otherwise
- * the provider's /models list decides. Each entry carries the efforts the
- * worker registered for it.
- */
-async function listModels(): Promise<Array<{ id: string; efforts: string[] }>> {
-  const specs = parseModelSpecs(process.env.OPENAI_MODELS);
-  const ids =
-    specs.length > 0
-      ? specs.map((spec) => spec.id)
-      : (await providerModels()).map((model) => model.id);
-  const reported = await workerCatalog();
-  return ids.map((id) => ({
-    id,
-    efforts:
-      reported?.find((model) => model.id === id)?.efforts ??
-      effortsFor(specs.find((spec) => spec.id === id)?.efforts),
+  const rows = await db
+    .select()
+    .from(models)
+    .where(eq(models.enabled, true))
+    .orderBy(asc(models.position));
+  return rows.map((row) => ({
+    id: row.id,
+    efforts: (row.efforts as string[]) ?? [],
+    api: row.api,
   }));
 }
 

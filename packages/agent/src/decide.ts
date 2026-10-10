@@ -44,7 +44,9 @@ const specificQuestion = check({
 const decisionOutput = z.object({
   intent: z.enum(["draw", "edit", "variant", "clarify"]),
   confidence: z.number().min(0).max(1),
-  question: z.string().min(1).max(300).optional(),
+  // Strict structured outputs require every property in `required`, so the
+  // optional question is expressed as nullable instead of omitted.
+  question: z.string().min(1).max(300).nullable(),
 });
 type DecisionOutput = z.infer<typeof decisionOutput>;
 

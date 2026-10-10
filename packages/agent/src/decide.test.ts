@@ -20,7 +20,9 @@ describe("draw decisions", () => {
   });
 
   it("maps a structured decision onto the draw intent", () => {
-    expect(toDecision({ intent: "variant", confidence: 0.82 }, "model")).toEqual({
+    expect(
+      toDecision({ intent: "variant", confidence: 0.82, question: null }, "model"),
+    ).toEqual({
       intent: "variant",
       confidence: 0.82,
       source: "model",
