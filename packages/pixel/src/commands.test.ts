@@ -205,6 +205,32 @@ describe("pixel commands", () => {
         mode: "fill",
       }),
     ).toMatchObject({ ok: false, code: "OUT_OF_BOUNDS" });
+    // A flood has no per-cell backstop, so the rectangle itself must be rejected.
+    expect(
+      applyCommand(buffer, {
+        type: "region",
+        layerId,
+        x: 6,
+        y: 6,
+        width: 6,
+        height: 6,
+        color: 1,
+        mode: "flood",
+      }),
+    ).toMatchObject({ ok: false, code: "OUT_OF_BOUNDS" });
+    // A rectangle flush against the far edge is still valid.
+    expect(
+      applyCommand(buffer, {
+        type: "region",
+        layerId,
+        x: 5,
+        y: 5,
+        width: 3,
+        height: 3,
+        color: 1,
+        mode: "flood",
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("renames, hides, and removes layers while keeping at least one", () => {

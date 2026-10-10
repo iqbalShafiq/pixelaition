@@ -50,7 +50,8 @@ function paintPoints(
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
 
-function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
+/** Bresenham. Exported so a clipped shape can be previewed and applied the same way. */
+export function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
   const points: Point[] = [];
   let x = x0;
   let y = y0;
@@ -82,13 +83,8 @@ function withinRegion(
   width: number,
   height: number,
 ): boolean {
-  return (
-    inBounds(buffer.width, buffer.height, x, y) &&
-    x < buffer.width &&
-    y < buffer.height &&
-    x + width > 0 &&
-    y + height > 0
-  );
+  if (width < 1 || height < 1) return false;
+  return x >= 0 && y >= 0 && x + width <= buffer.width && y + height <= buffer.height;
 }
 
 function flood(

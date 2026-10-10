@@ -1,6 +1,45 @@
 import type { FrameBuffer } from "@pixelaition/pixel";
+import { useEffect, useState } from "react";
 import { IconButton, Panel, TextInput } from "./ui.js";
 import type { FrameDto } from "../lib/types.js";
+
+/**
+ * Text that writes through on every keystroke makes a request per character and
+ * lets responses land out of order. Commit on blur or Enter instead.
+ */
+function CommitInput({
+  value,
+  label,
+  inputMode,
+  onCommit,
+}: {
+  value: string;
+  label: string;
+  inputMode?: "numeric" | "text";
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  function commit() {
+    const next = draft.trim();
+    if (next && next !== value) onCommit(next);
+    else setDraft(value);
+  }
+  return (
+    <TextInput
+      value={draft}
+      aria-label={label}
+      inputMode={inputMode}
+      className={inputMode === "numeric" ? "w-16 font-mono text-xs" : undefined}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setDraft(value);
+      }}
+    />
+  );
+}
 
 export function FrameList({
   frames,
@@ -58,10 +97,10 @@ export function FrameList({
         ))}
       </ul>
       {active ? (
-        <TextInput
+        <CommitInput
           value={active.name}
-          aria-label="Rename frame"
-          onChange={(event) => onRename(active.id, event.target.value)}
+          label="Rename frame"
+          onCommit={(name) => onRename(active.id, name)}
         />
       ) : null}
       <div className="flex items-center gap-2">
@@ -82,6 +121,7 @@ export function FrameList({
 export function LayerList({
   buffer,
   activeId,
+  locked = false,
   onSelect,
   onToggleVisible,
   onAdd,
@@ -90,6 +130,7 @@ export function LayerList({
 }: {
   buffer: FrameBuffer | undefined;
   activeId: string;
+  locked?: boolean;
   onSelect: (layerId: string) => void;
   onToggleVisible: (layerId: string, visible: boolean) => void;
   onAdd: () => void;
@@ -102,7 +143,11 @@ export function LayerList({
     <Panel
       title="Layers"
       action={
-        <IconButton label="Add layer" onClick={onAdd} disabled={layers.length >= 4}>
+        <IconButton
+          label="Add layer"
+          onClick={onAdd}
+          disabled={locked || layers.length >= 4}
+        >
           +
         </IconButton>
       }
@@ -113,6 +158,7 @@ export function LayerList({
             <input
               type="checkbox"
               checked={layer.visible}
+              disabled={locked}
               aria-label={`Show ${layer.name}`}
               onChange={(event) => onToggleVisible(layer.id, event.target.checked)}
               className="ml-1 h-3.5 w-3.5 accent-[#e8ff6a]"
@@ -130,15 +176,19 @@ export function LayerList({
           </li>
         ))}
       </ul>
-      {active ? (
-        <TextInput
+      {active && !locked ? (
+        <CommitInput
           value={active.name}
-          aria-label="Rename layer"
-          onChange={(event) => onRename(active.id, event.target.value)}
+          label="Rename layer"
+          onCommit={(name) => onRename(active.id, name)}
         />
       ) : null}
       <div>
-        <IconButton label="Delete layer" onClick={onDelete} disabled={layers.length <= 1}>
+        <IconButton
+          label="Delete layer"
+          onClick={onDelete}
+          disabled={locked || layers.length <= 1}
+        >
           −
         </IconButton>
       </div>
@@ -192,24 +242,18 @@ export function PalettePanel({
         <span className="font-mono text-[11px] text-muted">{usedColors} used</span>
       </div>
       <div className="flex items-center gap-2">
-        <input
-          type="number"
-          min={8}
-          max={128}
-          value={width}
-          aria-label="Canvas width"
-          onChange={(event) => onResize(Number(event.target.value) || width, height)}
-          className="w-16 rounded-md border border-line bg-paper px-2 py-1 font-mono text-xs"
+        <CommitInput
+          value={String(width)}
+          label="Canvas width"
+          inputMode="numeric"
+          onCommit={(next) => onResize(Number(next), height)}
         />
         <span className="text-muted">×</span>
-        <input
-          type="number"
-          min={8}
-          max={128}
-          value={height}
-          aria-label="Canvas height"
-          onChange={(event) => onResize(width, Number(event.target.value) || height)}
-          className="w-16 rounded-md border border-line bg-paper px-2 py-1 font-mono text-xs"
+        <CommitInput
+          value={String(height)}
+          label="Canvas height"
+          inputMode="numeric"
+          onCommit={(next) => onResize(width, Number(next))}
         />
       </div>
     </Panel>

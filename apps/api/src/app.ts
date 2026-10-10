@@ -33,6 +33,7 @@ import {
   listProjects,
   renameFrameRecord,
   revokeApiKey,
+  runBelongsTo,
   saveFrame,
   savePreferences,
   updateAssetRecord,
@@ -187,15 +188,21 @@ export function createApp() {
         ),
       })
       .parse(req.body);
-    const asset = await saveFrame(
+    const saved = await saveFrame(
       db,
       res.locals.userId as string,
       req.params.id ?? "",
       req.params.frameId ?? "",
       body.layers,
     );
-    if (!asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
-    res.json(asset);
+    if (!saved.asset)
+      return fail(
+        res,
+        saved.failure?.code === "FRAME_SIZE_MISMATCH" ? 422 : 404,
+        saved.failure?.code ?? "NOT_FOUND",
+        saved.failure?.message ?? "That frame is not available.",
+      );
+    res.json(saved.asset);
   });
 
   app.patch("/api/assets/:id", async (req, res) => {
@@ -294,6 +301,18 @@ export function createApp() {
         reasoningEffort: z.string().min(1),
       })
       .parse(req.body);
+    // Ownership first: the decision call spends the operator's key, so it must
+    // not run on behalf of an asset the caller does not own.
+    const asset = await getAssetRecord(db, res.locals.userId as string, body.assetId);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    if (!process.env.OPENAI_API_KEY?.trim()) {
+      return fail(
+        res,
+        503,
+        "MODEL_UNCONFIGURED",
+        "Add OPENAI_API_KEY on the server to generate.",
+      );
+    }
     const decision = await decidePrompt(body.prompt, {
       typesafeApiKey: process.env.TYPESAFE_API_KEY,
       openaiApiKey: process.env.OPENAI_API_KEY,
@@ -308,16 +327,6 @@ export function createApp() {
         decision.question ?? "Add a subject and a size.",
       );
     }
-    if (!process.env.OPENAI_API_KEY?.trim()) {
-      return fail(
-        res,
-        503,
-        "MODEL_UNCONFIGURED",
-        "Add OPENAI_API_KEY on the server to generate.",
-      );
-    }
-    const asset = await getAssetRecord(db, res.locals.userId as string, body.assetId);
-    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     const thread = await ensureThread(db, res.locals.userId as string, body.assetId);
     const requestId = crypto.randomUUID();
     const runId = await insertRun(db, {
@@ -366,9 +375,13 @@ export function createApp() {
   });
 
   app.get("/api/runs/:id/stream", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
     const after = Number(req.query.after ?? 0);
     const upstream = await fetch(
-      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${req.params.id}/events?after=${after}`,
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/events?after=${after}`,
       { headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` } },
     );
     if (!upstream.ok || !upstream.body)
@@ -387,8 +400,12 @@ export function createApp() {
   });
 
   app.post("/api/runs/:id/cancel", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
     await fetch(
-      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${req.params.id}/cancel`,
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/cancel`,
       {
         method: "POST",
         headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
@@ -437,6 +454,9 @@ export function createApp() {
     if (body.scope === "frame" && !(body.assetId && body.frameId)) {
       return fail(res, 400, "INVALID", "Exporting one frame needs an asset and a frame.");
     }
+    if (body.scope === "asset" && !body.assetId) {
+      return fail(res, 400, "INVALID", "Exporting one asset needs an asset id.");
+    }
     const document = await documentForScope(res.locals.userId as string, {
       projectId: body.projectId,
       assetId: body.scope === "project" ? undefined : body.assetId,
@@ -456,7 +476,7 @@ export function createApp() {
       for (const frame of asset.frames) {
         const buffer = assetFrameBuffer(asset, frame.id);
         if (!buffer) continue;
-        const name = `${slug(asset.name)}-${slug(frame.name)}`;
+        const name = `${slug(asset.name)}-${String(frame.index).padStart(2, "0")}-${slug(frame.name)}`;
         if (body.format === "png" || body.format === "zip")
           files[`${name}.png`] = frameToPng(buffer, body.scale);
         if (body.format === "jpg")

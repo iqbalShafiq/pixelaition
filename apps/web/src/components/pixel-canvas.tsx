@@ -49,6 +49,18 @@ export function normalizeRect(from: Point, to: Point): Rect {
   };
 }
 
+/** A drag that starts in the margin still has to produce a usable selection. */
+function clampRect(rect: Rect, width: number, height: number): Rect {
+  const x = Math.max(0, Math.min(rect.x, width - 1));
+  const y = Math.max(0, Math.min(rect.y, height - 1));
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(rect.width, width - x)),
+    height: Math.max(1, Math.min(rect.height, height - y)),
+  };
+}
+
 /**
  * Palette entries are normalised hex, so a fixed-width parse is enough. Anything
  * unexpected is treated as opaque so a bad colour never silently erases a pixel.
@@ -199,8 +211,6 @@ export function PixelCanvas({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const context = view.getContext("2d");
-    if (!context) return;
 
     // React attaches wheel passively at the root, so preventDefault there is a
     // no-op. The zoom has to own a non-passive listener to stop page scroll.
@@ -213,6 +223,19 @@ export function PixelCanvas({
       latest.current.onCamera(zoomAt(cam, screen.x, screen.y, next));
     };
     view.addEventListener("wheel", onWheel, { passive: false });
+    const observer = new ResizeObserver(() => repaint.current());
+    observer.observe(view);
+    return () => {
+      view.removeEventListener("wheel", onWheel);
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const context = view.getContext("2d");
+    if (!context) return;
 
     const draw = () => {
       const rect = view.getBoundingClientRect();
@@ -337,12 +360,6 @@ export function PixelCanvas({
 
     repaint.current = draw;
     draw();
-    const observer = new ResizeObserver(draw);
-    observer.observe(view);
-    return () => {
-      view.removeEventListener("wheel", onWheel);
-      observer.disconnect();
-    };
   }, [buffer, camera, grid, checker, onionSkin, selection, locked]);
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
@@ -357,6 +374,14 @@ export function PixelCanvas({
   function inside(point: Point) {
     const doc = latest.current.buffer;
     return point.x >= 0 && point.y >= 0 && point.x < doc.width && point.y < doc.height;
+  }
+
+  function resetGesture() {
+    drag.current = null;
+    marquee.current = null;
+    preview.current = null;
+    stroke.current = null;
+    pan.current = null;
   }
 
   function strokeCells(from: Point, to: Point): Point[] {
@@ -392,8 +417,9 @@ export function PixelCanvas({
         const point = localPoint(event);
         event.currentTarget.setPointerCapture(event.pointerId);
         if (active === "select") {
+          const doc = latest.current.buffer;
           drag.current = { from: point, to: point };
-          marquee.current = normalizeRect(point, point);
+          marquee.current = clampRect(normalizeRect(point, point), doc.width, doc.height);
           repaint.current();
           return;
         }
@@ -435,7 +461,14 @@ export function PixelCanvas({
         const start = drag.current;
         if (start) {
           start.to = point;
-          if (marquee.current) marquee.current = normalizeRect(start.from, point);
+          if (marquee.current) {
+            const doc = latest.current.buffer;
+            marquee.current = clampRect(
+              normalizeRect(start.from, point),
+              doc.width,
+              doc.height,
+            );
+          }
           if (preview.current?.kind === "line") {
             preview.current = { kind: "line", from: preview.current.from, to: point };
           } else if (preview.current?.kind === "rect") {
@@ -470,7 +503,7 @@ export function PixelCanvas({
         const start = drag.current;
         if (start) {
           if (marquee.current) {
-            emit({ kind: "select", rect: normalizeRect(start.from, start.to) });
+            emit({ kind: "select", rect: marquee.current });
           } else if (preview.current?.kind === "line") {
             emit({ kind: "line", from: preview.current.from, to: preview.current.to });
           } else if (preview.current?.kind === "rect") {
@@ -481,15 +514,20 @@ export function PixelCanvas({
               filled: preview.current.filled,
             });
           }
-          drag.current = null;
-          marquee.current = null;
-          preview.current = null;
         }
-        stroke.current = null;
-        pan.current = null;
+        resetGesture();
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
+        repaint.current();
+      }}
+      onPointerCancel={() => {
+        // A cancelled gesture must not leave a phantom marquee behind.
+        resetGesture();
+        repaint.current();
+      }}
+      onLostPointerCapture={() => {
+        resetGesture();
         repaint.current();
       }}
       onPointerLeave={() => {

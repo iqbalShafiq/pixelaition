@@ -1,5 +1,5 @@
 export { centerCamera, fitZoom, stepZoom, zoomAt } from "./camera.js";
-export { applyCommand } from "./commands.js";
+export { applyCommand, linePoints } from "./commands.js";
 export { critiqueFrame } from "./critique.js";
 export {
   addFrame,

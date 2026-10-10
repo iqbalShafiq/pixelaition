@@ -8,6 +8,7 @@ import {
   createHistory,
   fitZoom,
   frameToBuffer,
+  linePoints,
   pushHistory,
   redoHistory,
   stepZoom,
@@ -118,6 +119,9 @@ export function EditorScreen() {
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
   const running = runId !== null;
+  // Live values for handlers that must not capture a stale render.
+  const bufferRef = useRef<FrameBuffer | undefined>(buffer);
+  bufferRef.current = buffer;
 
   // Seed a draft for every frame the server knows about, keeping local edits intact.
   useEffect(() => {
@@ -206,26 +210,55 @@ export function EditorScreen() {
   });
 
   const present = history?.present;
+  // A frame the user just left keeps its unsaved buffer in `pending`, so the
+  // debounce can restart without dropping the edit.
+  const pending = useRef(new Map<string, FrameBuffer>());
+  const debounce = useRef<number | null>(null);
+  // The mutation result is a fresh object every render, so it must not be a
+  // dependency of the effects below or they re-arm forever.
+  const mutate = useRef(save.mutateAsync);
+  mutate.current = save.mutateAsync;
+
+  const flush = useCallback(() => {
+    if (debounce.current !== null) {
+      window.clearTimeout(debounce.current);
+      debounce.current = null;
+    }
+    const batch = [...pending.current.entries()];
+    pending.current.clear();
+    for (const [id, buffer] of batch) {
+      void mutate.current({ frameId: id, buffer });
+    }
+  }, []);
+
   useEffect(() => {
     if (!present || !frameId) return;
-    const timer = window.setTimeout(() => {
-      void save.mutateAsync({ frameId, buffer: present });
+    pending.current.set(frameId, present);
+    if (debounce.current !== null) window.clearTimeout(debounce.current);
+    debounce.current = window.setTimeout(() => {
+      debounce.current = null;
+      flush();
     }, 500);
-    return () => window.clearTimeout(timer);
+    return () => undefined;
     // Saving follows the frame's buffer, not the whole history object.
-  }, [present, frameId]);
+  }, [present, frameId, flush]);
+
+  // Leaving the editor must not strand a dirty frame.
+  useEffect(() => () => flush(), [flush]);
 
   function fit() {
     const rect = viewRef.current?.getBoundingClientRect();
-    if (!rect || !buffer) return;
-    const zoom = fitZoom(rect.width, rect.height, buffer.width, buffer.height);
-    setCamera(centerCamera(rect.width, rect.height, buffer.width, buffer.height, zoom));
+    const doc = bufferRef.current;
+    if (!rect || !doc) return;
+    const zoom = fitZoom(rect.width, rect.height, doc.width, doc.height);
+    setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, zoom));
   }
 
   function actualSize() {
     const rect = viewRef.current?.getBoundingClientRect();
-    if (!rect || !buffer) return;
-    setCamera(centerCamera(rect.width, rect.height, buffer.width, buffer.height, 1));
+    const doc = bufferRef.current;
+    if (!rect || !doc) return;
+    setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, 1));
   }
 
   useEffect(() => {
@@ -234,6 +267,7 @@ export function EditorScreen() {
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       if ((event.metaKey || event.ctrlKey) && event.key === "z") {
         event.preventDefault();
+        if (running) return;
         if (frameId) {
           setDrafts((current) => {
             const entry = current[frameId];
@@ -271,12 +305,14 @@ export function EditorScreen() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+    // fit and actualSize read the live camera and buffer through refs below.
+  }, [frameId, running]);
 
   // Playback walks the frame list on an interval and stops on the last frame.
   useEffect(() => {
     if (!playing || frames.length < 2) return;
     const timer = window.setInterval(() => {
+      setSelection(null);
       setFrameId((current) => {
         const index = frames.findIndex((item) => item.id === current);
         const nextIndex = (index + 1) % frames.length;
@@ -291,25 +327,29 @@ export function EditorScreen() {
   }, []);
 
   const listen = useCallback(
-    (id: string, targetFrameId: string) => {
+    (id: string, fallbackFrameId: string) => {
       sourceRef.current?.close();
       const source = new EventSource(`/api/runs/${id}/stream`);
       sourceRef.current = source;
       source.onmessage = (event) => {
         const body = JSON.parse(event.data) as { type: string; data: unknown };
         if (body.type === "canvas-stroke") {
-          const data = body.data as { layers?: FrameDto["layers"] };
-          if (data.layers && targetFrameId) {
+          const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
+          // The payload names the frame being drawn. On a refresh the editor has no
+          // frame yet when the stream attaches, so trusting the captured id would
+          // drop every stroke.
+          const target = data.frameId ?? fallbackFrameId;
+          if (data.layers && target) {
             const layers = data.layers.map((layer) => ({
               ...layer,
               pixels: base64ToBytes(layer.pixels),
             }));
             setDrafts((current) => {
-              const entry = current[targetFrameId];
+              const entry = current[target];
               if (!entry) return current;
               return {
                 ...current,
-                [targetFrameId]: { ...entry, present: { ...entry.present, layers } },
+                [target]: { ...entry, present: { ...entry.present, layers } },
               };
             });
             log("Drawing on the canvas");
@@ -356,9 +396,10 @@ export function EditorScreen() {
       `/api/assets/${assetId}/active-run`,
     )
       .then((result) => {
-        if (cancelled || !result.run || runId) return;
+        if (cancelled || !result.run) return;
         setRunId(result.run.id);
-        listen(result.run.id, frameId ?? "");
+        // The frame id arrives with each stroke, so the stream does not need one yet.
+        listen(result.run.id, "");
       })
       .catch(() => undefined);
     return () => {
@@ -384,20 +425,18 @@ export function EditorScreen() {
     const current = drafts[frameId];
     if (!current || !activeLayerId) return;
     if (selection && "points" in action) {
-      const inside = action.points
-        .filter((point) => insideSelection(selection, point))
-        .map((point) => ({ ...point, color }));
-      if (inside.length === 0) return;
+      const kept = action.points.filter((point) => insideSelection(selection, point));
+      if (kept.length === 0) return;
       edit(
         frameId,
         current,
         action.kind === "erase"
-          ? {
-              type: "erase",
+          ? { type: "erase", layerId: activeLayerId, points: kept }
+          : {
+              type: "paint",
               layerId: activeLayerId,
-              points: action.points.filter((point) => insideSelection(selection, point)),
-            }
-          : { type: "paint", layerId: activeLayerId, points: inside },
+              points: kept.map((point) => ({ ...point, color })),
+            },
       );
       return;
     }
@@ -416,7 +455,22 @@ export function EditorScreen() {
           points: action.points,
         });
         return;
-      case "fill":
+      case "fill": {
+        // With a selection active the flood seeds from the click, clamped into the
+        // rectangle. Seeding from the rectangle's corner made the fill a no-op
+        // whenever that corner already held the fill colour.
+        const seed = selection
+          ? {
+              x: Math.min(
+                Math.max(action.point.x, selection.x),
+                selection.x + selection.width - 1,
+              ),
+              y: Math.min(
+                Math.max(action.point.y, selection.y),
+                selection.y + selection.height - 1,
+              ),
+            }
+          : action.point;
         edit(
           frameId,
           current,
@@ -428,10 +482,25 @@ export function EditorScreen() {
                 color,
                 mode: "flood",
               }
-            : { type: "fill", layerId: activeLayerId, ...action.point, color },
+            : { type: "fill", layerId: activeLayerId, ...seed, color },
         );
         return;
-      case "line":
+      }
+      case "line": {
+        // An active selection constrains every tool, so the line is emitted as the
+        // clipped cells rather than the whole drag.
+        if (selection) {
+          const cells = linePoints(action.from.x, action.from.y, action.to.x, action.to.y)
+            .filter((point) => insideSelection(selection, point))
+            .map((point) => ({ ...point, color }));
+          if (cells.length === 0) return;
+          edit(frameId, current, {
+            type: "paint",
+            layerId: activeLayerId,
+            points: cells,
+          });
+          return;
+        }
         edit(frameId, current, {
           type: "line",
           layerId: activeLayerId,
@@ -442,12 +511,15 @@ export function EditorScreen() {
           color,
         });
         return;
+      }
       case "rect": {
         const box = normalizeRect(action.from, action.to);
+        const shape = selection ? intersect(box, selection) : box;
+        if (shape.width < 1 || shape.height < 1) return;
         edit(frameId, current, {
           type: "rect",
           layerId: activeLayerId,
-          ...box,
+          ...shape,
           color,
           filled: action.filled,
         });
@@ -459,6 +531,7 @@ export function EditorScreen() {
   }
 
   function selectionCommand(mode: "fill" | "clear") {
+    if (running) return;
     if (!frameId || !selection || !activeLayerId) return;
     edit(frameId, drafts[frameId], {
       type: "region",
@@ -494,6 +567,17 @@ export function EditorScreen() {
         });
       } else if (kind === "delete") {
         await api(`/api/assets/${assetId}/frames/${frameId}`, { method: "DELETE" });
+        // The draft for a deleted frame keeps up to 101 buffers alive and would
+        // keep autosaving to a frame that no longer exists.
+        flush();
+        setDrafts((current) => {
+          const next = { ...current };
+          delete next[frameId];
+          return next;
+        });
+        const fallback = frames.find((item) => item.id !== frameId);
+        setFrameId(fallback?.id ?? null);
+        setSelection(null);
       }
       await refresh();
     } catch (reason) {
@@ -507,11 +591,22 @@ export function EditorScreen() {
     height?: number;
     palette?: string[];
   }) {
+    if (
+      (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
+      (input.height !== undefined && (input.height < 8 || input.height > 128))
+    ) {
+      setError("Canvas size must be a whole number from 8 to 128.");
+      return;
+    }
     try {
+      flush();
       await api(`/api/assets/${assetId}`, {
         method: "PATCH",
         body: JSON.stringify(input),
       });
+      // Size and palette changed under the drafts, so every frame is re-seeded
+      // from the server instead of being autosaved back at the old dimensions.
+      setDrafts({});
       setSelection(null);
       await refresh();
     } catch (reason) {
@@ -577,7 +672,16 @@ export function EditorScreen() {
               {frame ? `Drawing ${frame.name}` : "Drawing"}
             </span>
           ) : null}
-          <Button tone="ghost" onClick={() => setExportOpen(true)} disabled={!asset.data}>
+          <Button
+            tone="ghost"
+            onClick={() => {
+              // Export renders server state, so a stroke still inside the debounce
+              // window has to be written first.
+              flush();
+              setExportOpen(true);
+            }}
+            disabled={!asset.data}
+          >
             Export
           </Button>
         </div>
@@ -602,6 +706,7 @@ export function EditorScreen() {
           <LayerList
             buffer={buffer}
             activeId={activeLayerId}
+            locked={running}
             onSelect={setActiveLayerId}
             onToggleVisible={(layerId, visible) =>
               frameId &&
@@ -713,7 +818,7 @@ export function EditorScreen() {
           </div>
           <div ref={viewRef} className="relative min-h-0 flex-1">
             <PixelCanvas
-              buffer={buffer ?? emptyBuffer()}
+              buffer={buffer ?? FALLBACK_BUFFER}
               camera={camera}
               tool={tool}
               brushSize={brushSize}
@@ -791,11 +896,19 @@ function insideSelection(box: Rect, point: Point): boolean {
   );
 }
 
-function emptyBuffer(): FrameBuffer {
-  return {
-    width: 8,
-    height: 8,
-    palette: ["#00000000"],
-    layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
-  };
+function intersect(left: Rect, right: Rect): Rect {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const far = Math.min(left.x + left.width, right.x + right.width);
+  const bottom = Math.min(left.y + left.height, right.y + right.height);
+  return { x, y, width: far - x, height: bottom - y };
 }
+
+// One shared placeholder, so the canvas bitmap cache does not fill with a new
+// offscreen canvas on every render while the asset query is in flight.
+const FALLBACK_BUFFER: FrameBuffer = {
+  width: 8,
+  height: 8,
+  palette: ["#00000000"],
+  layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
+};

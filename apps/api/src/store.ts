@@ -14,6 +14,7 @@ import {
   applyCommand,
   assetFrameBuffer,
   createAsset,
+  decodePixels,
   defaultStyle,
   duplicateFrame,
   writeFrame,
@@ -21,7 +22,7 @@ import {
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -124,15 +125,29 @@ export async function saveFrame(
   assetId: string,
   frameId: string,
   layers: Frame["layers"],
-) {
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const asset = await getAssetRecord(db, userId, assetId);
-  if (!asset) return undefined;
+  if (!asset) return { asset: undefined };
+  // A buffer sized for another canvas would make every later read of this asset
+  // throw, so it is refused here instead of stored.
+  const expected = asset.width * asset.height;
+  try {
+    for (const layer of layers) decodePixels(layer.pixels, expected);
+  } catch {
+    return {
+      asset: undefined,
+      failure: {
+        code: "FRAME_SIZE_MISMATCH",
+        message: `Those pixels are not ${asset.width} by ${asset.height}. Reload the asset and try again.`,
+      },
+    };
+  }
   await db
     .update(frames)
     .set({ layers, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  return getAssetRecord(db, userId, assetId);
+  return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
 type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
@@ -160,6 +175,7 @@ async function persistAsset(
   userId: string,
   assetId: string,
   asset: Asset,
+  before: Asset,
 ): Promise<AssetRecord | undefined> {
   await db
     .update(assets)
@@ -171,7 +187,12 @@ async function persistAsset(
       updatedAt: new Date(),
     })
     .where(eq(assets.id, assetId));
+  // Only the frame rows that actually changed are written, so a rename cannot
+  // clobber a concurrent autosave or a worker stroke on another frame.
   for (const frame of asset.frames) {
+    const previous = before.frames.find((item) => item.id === frame.id);
+    if (previous && JSON.stringify(previous.layers) === JSON.stringify(frame.layers))
+      continue;
     await db
       .update(frames)
       .set({ layers: frame.layers, updatedAt: new Date() })
@@ -277,10 +298,12 @@ export async function updateAssetRecord(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
-  let asset = asPixelAsset(record);
+  const before = asPixelAsset(record);
+  let asset = before;
   const trimmed = input.name?.trim();
   if (trimmed) asset = { ...asset, name: trimmed };
-  if (!asset.frames[0]) return { asset: await persistAsset(db, userId, assetId, asset) };
+  const firstId = asset.frames[0]?.id;
+  if (!firstId) return { asset: await persistAsset(db, userId, assetId, asset, before) };
 
   // Every frame gates the change so a palette cannot shrink past a color another
   // frame still uses. Each frame is checked on its own buffer.
@@ -301,7 +324,9 @@ export async function updateAssetRecord(
     }
   }
 
-  const first = assetFrameBuffer(asset, asset.frames[0].id);
+  // One write, not one per frame: writeFrame reshapes every other frame while
+  // keeping its own pixels. Writing each frame would stamp frame zero over all.
+  const first = assetFrameBuffer(asset, firstId);
   if (first) {
     let next = first;
     if (input.palette) {
@@ -316,19 +341,23 @@ export async function updateAssetRecord(
       });
       if (result.ok) next = result.buffer;
     }
-    for (const frame of asset.frames) asset = writeFrame(asset, frame.id, next);
+    asset = writeFrame(asset, firstId, next);
   }
-  return { asset: await persistAsset(db, userId, assetId, asset) };
+  return { asset: await persistAsset(db, userId, assetId, asset, before) };
 }
 
-export async function listFrameRecords(db: Database, userId: string, assetId: string) {
-  const asset = await getAssetRecord(db, userId, assetId);
-  if (!asset) return undefined;
-  return db
-    .select()
-    .from(frames)
-    .where(eq(frames.assetId, assetId))
-    .orderBy(asc(frames.index));
+/** A run id alone must never be enough to read or cancel somebody else's run. */
+export async function runBelongsTo(
+  db: Database,
+  runId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ userId: generationThreads.userId })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+    .where(eq(generationRuns.id, runId));
+  return row?.userId === userId;
 }
 
 export async function getPreferences(db: Database, userId: string) {

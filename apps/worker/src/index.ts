@@ -38,14 +38,24 @@ const agentPrefix = "pixel-draw";
 
 const events = new Map<string, PublicEvent[]>();
 const listeners = new Map<string, Set<(event: PublicEvent) => void>>();
+// Stroke events carry the whole frame base64-encoded, so an unbounded list would
+// hold megabytes per run for the life of the process.
+const MAX_RETAINED_EVENTS = 200;
 let sequence = 0;
 
 function publish(runId: string, type: string, data: unknown) {
   const event = { sequence: ++sequence, type, data };
   const list = events.get(runId) ?? [];
   list.push(event);
+  if (list.length > MAX_RETAINED_EVENTS)
+    list.splice(0, list.length - MAX_RETAINED_EVENTS);
   events.set(runId, list);
   for (const listener of listeners.get(runId) ?? []) listener(event);
+}
+
+function forgetRun(runId: string) {
+  events.delete(runId);
+  listeners.delete(runId);
 }
 
 const db = createDatabase();
@@ -126,10 +136,12 @@ function agentForEffort(effort: string): Agent | undefined {
 }
 
 // A store that cannot be acquired — usually a second worker on the same file —
-// must surface as a 503 on every endpoint, not as a crash on boot.
+// must surface as a 503 on every endpoint, not as a crash on boot. The promise
+// resolves to undefined rather than rejecting, because a rejection with no
+// handler at module scope is an unhandled rejection and Node exits on it.
 let durableFailure: string | undefined;
 
-const runtimePromise: Promise<DurableRuntime> = DurableRuntime.open({
+const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
     ? {
@@ -150,22 +162,16 @@ const runtimePromise: Promise<DurableRuntime> = DurableRuntime.open({
   .catch((reason: unknown) => {
     durableFailure = reason instanceof Error ? reason.message : String(reason);
     console.error(`durable runtime unavailable: ${durableFailure}`);
-    throw reason;
+    return undefined;
   });
 
 async function runtimeOr503(res: express.Response): Promise<DurableRuntime | undefined> {
-  if (durableFailure) {
-    res.status(503).json({
-      message: `The drawing worker has no durable store: ${durableFailure}`,
-    });
-    return undefined;
-  }
-  try {
-    return await runtimePromise;
-  } catch {
-    res.status(503).json({ message: "The durable runtime failed to open." });
-    return undefined;
-  }
+  const runtime = await runtimePromise;
+  if (runtime) return runtime;
+  res.status(503).json({
+    message: `The drawing worker has no durable store: ${durableFailure ?? "unavailable"}`,
+  });
+  return undefined;
 }
 
 function toolRecovery() {
@@ -220,15 +226,12 @@ app.post("/internal/runs", async (req, res) => {
   const chosen = agentForEffort(body.reasoningEffort);
   if (!chosen || !openai)
     return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
-  if (durableFailure)
-    return res
-      .status(503)
-      .json({ message: `The drawing worker has no durable store: ${durableFailure}` });
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
   const frame = asset.frames.find((item) => item.id === body.frameId) ?? asset.frames[0];
   if (!frame) return res.status(404).json({ message: "Frame was not found." });
-  const runtime = await runtimePromise;
   const effort = efforts.includes(body.reasoningEffort)
     ? body.reasoningEffort
     : (efforts[0] ?? "none");
@@ -278,7 +281,11 @@ app.get("/internal/runs/:id/events", (req, res) => {
   const set = listeners.get(runId) ?? new Set();
   set.add(sink);
   listeners.set(runId, set);
-  req.on("close", () => set.delete(sink));
+  // Drop the whole map entry once the last subscriber leaves, not just the sink.
+  req.on("close", () => {
+    set.delete(sink);
+    if (set.size === 0 && !events.has(runId)) listeners.delete(runId);
+  });
 });
 
 app.post("/internal/runs/:id/cancel", async (req, res) => {
@@ -300,6 +307,7 @@ async function follow(
   effort: string,
 ) {
   let cursor = 0;
+  let finished = false;
   try {
     for (;;) {
       const batch = runtime.events(durableId, cursor);
@@ -328,12 +336,17 @@ async function follow(
           })
           .where(eq(generationRuns.id, publicId));
         publish(publicId, "done", { status: snapshot.run.status, effort });
+        finished = true;
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   } finally {
     releaseRun(durableId);
+    // Give a subscriber a moment to read the tail, then drop the retained events.
+    if (finished) {
+      setTimeout(() => forgetRun(publicId), 60_000).unref?.();
+    }
   }
 }
 
