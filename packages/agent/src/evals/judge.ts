@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   abstention,
   answerRelevancy,
@@ -7,6 +8,7 @@ import {
   runEvalSuite,
 } from "@anvia/core/evals";
 import { OpenAIClient } from "@anvia/openai";
+import { openCodeGoHeaders } from "../models.js";
 
 const key = process.env.OPENAI_API_KEY?.trim();
 if (!key) {
@@ -14,11 +16,22 @@ if (!key) {
   process.exit(1);
 }
 
+const evalModelId = process.env.EVAL_MODEL?.trim();
+if (!evalModelId) {
+  console.error(
+    "EVAL_MODEL is required for judge evaluations. Set it to a model that supports structured outputs.",
+  );
+  process.exit(1);
+}
+
+const evalBaseUrl = process.env.OPENAI_BASE_URL?.trim();
+const evalHeaders = openCodeGoHeaders(evalBaseUrl, randomUUID());
 const model = new OpenAIClient({
   apiKey: key,
-  ...(process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
+  ...(evalBaseUrl ? { baseUrl: evalBaseUrl } : {}),
+  ...(evalHeaders ? { headers: evalHeaders } : {}),
 }).completionModel({
-  modelId: process.env.EVAL_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  modelId: evalModelId,
   api: "chat",
 });
 

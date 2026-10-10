@@ -1,7 +1,6 @@
 import { defineMetric, EvalOutcome, runEvalSuite } from "@anvia/core/evals";
 import { createBuffer, encodePixels } from "@pixelaition/pixel";
 import { describe, expect, it } from "vitest";
-import { decideFromPrompt } from "../decide.js";
 import { bindRun, releaseRun } from "../runs.js";
 import { activeLayerId, createPixelTools } from "../tools.js";
 
@@ -22,11 +21,6 @@ const committedPixels = defineMetric<string, DrawOutput, boolean, unknown>({
 });
 
 describe("generation decisions and tools", () => {
-  it("asks for detail instead of inventing a subject", () => {
-    expect(decideFromPrompt("gambar sesuatu").intent).toBe("clarify");
-    expect(decideFromPrompt("the same knight facing left").intent).toBe("variant");
-  });
-
   it("commits only in-palette strokes", async () => {
     const buffer = createBuffer({ width: 8, height: 8 });
     bindRun("run-1", {

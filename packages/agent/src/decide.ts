@@ -1,35 +1,34 @@
-import { check, choice, decide } from "@anvia/core/decision";
+import { randomUUID } from "node:crypto";
+import { generateCompletion } from "@anvia/core/completion";
+import { choice, check, decide } from "@anvia/core/decision";
 import type { DecisionModel } from "@anvia/core/decision";
 import { JEV_LATEST, JevClient } from "@anvia/jev";
 import { OpenAIClient } from "@anvia/openai";
+import { z } from "zod";
+import { openCodeGoHeaders } from "./models.js";
 
 export type DrawIntent = "draw" | "edit" | "variant" | "clarify";
-
 export type DrawDecision = {
   intent: DrawIntent;
   confidence: number;
   question?: string;
-  /** Which path answered, so a run can be traced back to its decision. */
-  source: "local" | "jev" | "openai";
+  source: "jev" | "model";
 };
 
-/** Below this the prompt is treated as too vague to draw from. */
-export const specificityFloor = 0.7;
-
-const vague =
-  /^(gambar|buat|make|draw)?\s*(sesuatu|something|anything|ini|itu)?[.!?\s]*$/i;
-const variantWords =
-  /\b(kiri|kanan|left|right|lari|jalan|run|walk|idle|hadap|facing|state|varian|variant)\b/i;
+/** Generation refuses to start until a real decision model is configured. */
+export class DecisionNotConfiguredError extends Error {
+  constructor() {
+    super("Set DECISION_MODEL (or TYPESAFE_API_KEY) before generating.");
+    this.name = "DecisionNotConfiguredError";
+  }
+}
 
 const intentOptions = {
   draw: "Draw a new sprite, item, or tile from scratch.",
   edit: "Change pixels or colors that already exist on the frame.",
   variant: "Produce another state, direction, or action of an existing frame.",
   clarify: "The request is too vague, so ask one question instead of drawing.",
-} as const satisfies Record<DrawIntent, string>;
-
-const clarification =
-  "What should the pixel asset show, and about how many pixels wide should it be?";
+} as const;
 
 const intentQuestion = choice({
   instructions:
@@ -42,106 +41,93 @@ const specificQuestion = check({
     "Answer yes when the request names a concrete subject and enough detail to draw it. Answer no when it is a placeholder such as 'draw something'.",
 });
 
-type DecisionModelShape = DecisionModel<unknown>;
+const decisionOutput = z.object({
+  intent: z.enum(["draw", "edit", "variant", "clarify"]),
+  confidence: z.number().min(0).max(1),
+  question: z.string().min(1).max(300).optional(),
+});
+type DecisionOutput = z.infer<typeof decisionOutput>;
 
-function asIntent(value: string): DrawIntent {
-  return value in intentOptions ? (value as DrawIntent) : "draw";
+const decisionInstructions = [
+  "Decide how to handle one pixel-art request.",
+  "Answer draw, edit, or variant when the request is concrete.",
+  "Answer clarify when it is too vague to draw from, and then ask exactly one short question.",
+].join(" ");
+
+export function toDecision(
+  raw: DecisionOutput,
+  source: DrawDecision["source"],
+): DrawDecision {
+  return {
+    intent: raw.intent,
+    confidence: raw.confidence,
+    ...(raw.intent === "clarify" && raw.question ? { question: raw.question } : {}),
+    source,
+  };
 }
 
-/**
- * The offline decision. It is deterministic, costs nothing, and is the path used
- * when no decision model is configured.
- */
-export function decideFromPrompt(prompt: string): DrawDecision {
-  const text = prompt.trim();
-  if (text.length < 8 || vague.test(text)) {
-    return {
-      intent: "clarify",
-      confidence: 0.9,
-      question: clarification,
-      source: "local",
-    };
-  }
-  if (variantWords.test(text)) {
-    return { intent: "variant", confidence: 0.8, source: "local" };
-  }
-  if (/\b(ubah|edit|fix|perbaiki|warnai|recolor)\b/i.test(text)) {
-    return { intent: "edit", confidence: 0.75, source: "local" };
-  }
-  return { intent: "draw", confidence: 0.7, source: "local" };
+function jevModel(apiKey: string): DecisionModel<unknown> {
+  return new JevClient({ apiKey }).decisionModel({
+    modelId: JEV_LATEST,
+  }) as DecisionModel<unknown>;
 }
 
-async function ask(model: DecisionModelShape, prompt: string): Promise<DrawDecision> {
+async function askJev(
+  model: DecisionModel<unknown>,
+  prompt: string,
+): Promise<DrawDecision> {
   const result = await decide({
     model,
     state: { prompt },
     questions: { intent: intentQuestion, specific: specificQuestion },
   });
   const { intent, specific } = result.answers;
-  const chosen = asIntent(intent.choice);
-  if (chosen === "clarify" || specific.probability < specificityFloor) {
+  const chosen = intent.choice;
+  if (chosen === "clarify" || specific.probability < 0.7) {
     return {
       intent: "clarify",
-      confidence: specific.probability,
-      question: clarification,
+      confidence: Math.min(intent.confidence ?? 1, specific.probability),
+      question:
+        "What should the pixel asset show, and about how many pixels wide should it be?",
       source: "jev",
     };
   }
   return {
-    intent: chosen,
+    intent: chosen in intentOptions ? chosen : "draw",
     confidence: intent.confidence ?? specific.probability,
     source: "jev",
   };
 }
 
-function jevModel(apiKey: string): DecisionModelShape {
-  return new JevClient({ apiKey }).decisionModel({ modelId: JEV_LATEST });
-}
-
-function openAiModel(apiKey: string, baseUrl: string | undefined, modelId: string) {
-  const client = new OpenAIClient({ apiKey, ...(baseUrl ? { baseUrl } : {}) });
-  // The decision model is operator-configured through DECISION_MODEL, so the id is
-  // never guessed here.
-  return client.decisionModel({ modelId: modelId as never }) as DecisionModelShape;
-}
-
-/**
- * The semantic decision. Jev answers when TYPESAFE_API_KEY is present; otherwise a
- * DECISION_MODEL on the configured OpenAI-compatible endpoint answers. When neither
- * is available, or the provider call fails, the offline decision stands so a
- * drawing session never dies on a decision.
- */
 export async function decidePrompt(
   prompt: string,
   env: {
-    typesafeApiKey?: string;
-    openaiApiKey?: string;
-    openaiBaseUrl?: string;
-    decisionModel?: string;
-  } = {},
+    typesafeApiKey?: string | undefined;
+    openaiApiKey?: string | undefined;
+    openaiBaseUrl?: string | undefined;
+    decisionModel?: string | undefined;
+    decisionApi?: "chat" | "responses" | undefined;
+  },
 ): Promise<DrawDecision> {
-  const local = decideFromPrompt(prompt);
-  if (local.intent === "clarify") return local;
-
-  let model: DecisionModelShape | undefined;
-  let source: DrawDecision["source"] = "jev";
   if (env.typesafeApiKey?.trim()) {
-    model = jevModel(env.typesafeApiKey.trim());
-  } else if (env.decisionModel?.trim() && env.openaiApiKey?.trim()) {
-    model = openAiModel(
-      env.openaiApiKey.trim(),
-      env.openaiBaseUrl?.trim(),
-      env.decisionModel.trim(),
-    );
-    source = "openai";
+    return askJev(jevModel(env.typesafeApiKey.trim()), prompt);
   }
-  if (!model) return local;
-
-  try {
-    const decided = await ask(model, prompt);
-    return { ...decided, source };
-  } catch {
-    // A decision provider that is down must not stop a drawing session.
-    return local;
-  }
+  const apiKey = env.openaiApiKey?.trim();
+  const modelId = env.decisionModel?.trim();
+  if (!apiKey || !modelId || !env.decisionApi) throw new DecisionNotConfiguredError();
+  const baseUrl = env.openaiBaseUrl?.trim();
+  const headers = openCodeGoHeaders(baseUrl, randomUUID());
+  const client = new OpenAIClient({
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(headers ? { headers } : {}),
+  });
+  const model = client.completionModel({ modelId, api: env.decisionApi });
+  const result = await generateCompletion({
+    model,
+    prompt,
+    instructions: decisionInstructions,
+    outputSchema: decisionOutput,
+  });
+  return toDecision(result.output, "model");
 }

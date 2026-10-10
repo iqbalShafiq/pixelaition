@@ -1,55 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { decideFromPrompt, decidePrompt, specificityFloor } from "./decide.js";
+import { DecisionNotConfiguredError, decidePrompt, toDecision } from "./decide.js";
 
 describe("draw decisions", () => {
-  it("classifies offline without contacting a provider", () => {
-    expect(decideFromPrompt("gambar sesuatu")).toMatchObject({
-      intent: "clarify",
-      source: "local",
-    });
-    expect(decideFromPrompt("the same knight facing left")).toMatchObject({
+  it("refuses to decide without a configured model", async () => {
+    await expect(decidePrompt("a 32x32 potion bottle", {})).rejects.toBeInstanceOf(
+      DecisionNotConfiguredError,
+    );
+  });
+
+  it("propagates provider failures instead of deciding offline", async () => {
+    await expect(
+      decidePrompt("a 32x32 potion bottle", {
+        openaiApiKey: "not-a-real-key",
+        openaiBaseUrl: "http://127.0.0.1:9/v1",
+        decisionModel: "muse-spark-1.3-contributor",
+        decisionApi: "responses",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("maps a structured decision onto the draw intent", () => {
+    expect(toDecision({ intent: "variant", confidence: 0.82 }, "model")).toEqual({
       intent: "variant",
-      source: "local",
+      confidence: 0.82,
+      source: "model",
     });
-    expect(decideFromPrompt("recolor the shield to crimson")).toMatchObject({
-      intent: "edit",
-      source: "local",
+    expect(
+      toDecision({ intent: "clarify", confidence: 0.9, question: "What size?" }, "model"),
+    ).toEqual({
+      intent: "clarify",
+      confidence: 0.9,
+      question: "What size?",
+      source: "model",
     });
-    expect(decideFromPrompt("a 32x32 potion bottle with a cork")).toMatchObject({
-      intent: "draw",
-      source: "local",
-    });
-  });
-
-  it("always carries a question when it asks for detail", () => {
-    expect(decideFromPrompt("gambar sesuatu").question).toMatch(/what should/i);
-  });
-
-  it("uses the offline decision when no decision model is configured", async () => {
-    const decided = await decidePrompt("a 32x32 potion bottle with a cork", {});
-    expect(decided.source).toBe("local");
-    expect(decided.intent).toBe("draw");
-  });
-
-  it("short-circuits a vague prompt without calling a provider", async () => {
-    // An unusable key would throw if the provider were actually reached.
-    const decided = await decidePrompt("gambar sesuatu", {
-      typesafeApiKey: "not-a-real-key",
-    });
-    expect(decided.intent).toBe("clarify");
-    expect(decided.source).toBe("local");
-    expect(decided.question).toBeTruthy();
-  });
-
-  it("falls back to the offline decision when the provider is unreachable", async () => {
-    const decided = await decidePrompt("a 32x32 potion bottle with a cork", {
-      typesafeApiKey: "not-a-real-key",
-    });
-    expect(decided.intent).toBe("draw");
-    expect(decided.source).toBe("local");
-  });
-
-  it("keeps the specificity floor where the plan put it", () => {
-    expect(specificityFloor).toBe(0.7);
   });
 });
