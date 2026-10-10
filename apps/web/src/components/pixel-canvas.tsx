@@ -112,6 +112,25 @@ function checkerStep(cell: number, width: number, height: number): number {
 }
 
 /**
+ * The workspace field behind the artwork: a flat 16px pixel grid, not a solid
+ * fill. The whole editor reads as one tiled screen, so the area around the
+ * sprite is squared too, instead of the sprite floating on a flat colour.
+ */
+function fieldPattern(context: CanvasRenderingContext2D): CanvasPattern | null {
+  const tile = document.createElement("canvas");
+  tile.width = 16;
+  tile.height = 16;
+  const paint = tile.getContext("2d");
+  if (!paint) return null;
+  paint.fillStyle = "#101220";
+  paint.fillRect(0, 0, 16, 16);
+  paint.fillStyle = "rgba(148, 176, 194, 0.12)";
+  paint.fillRect(0, 0, 16, 1);
+  paint.fillRect(0, 0, 1, 16);
+  return context.createPattern(tile, "repeat");
+}
+
+/**
  * The frame is drawn once at 1:1 and then scaled, rather than one fillRect per
  * cell. Per-cell rects leave seams and shimmer once a cell is a single pixel,
  * which is exactly what zooming out exposes.
@@ -235,6 +254,8 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  // The workspace field pattern, built once per canvas context.
+  const field = useRef<CanvasPattern | null>(null);
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
   const bitmaps = useRef(new WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>());
   // Neighbours are cached without the checker so onion skin stays see-through.
@@ -295,8 +316,10 @@ export function PixelCanvas({
       const doc = latest.current.buffer;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.imageSmoothingEnabled = false;
-      // The canvas field, per the plan: a lighter plane inside the page.
-      context.fillStyle = "#101220";
+      // The whole workspace field is a pixel grid, so nothing in the editor is
+      // a flat colour. Cached, because building the tile per frame is wasteful.
+      if (!field.current) field.current = fieldPattern(context);
+      context.fillStyle = field.current ?? "#101220";
       context.fillRect(0, 0, rect.width, rect.height);
 
       const cell = cam.zoom;
