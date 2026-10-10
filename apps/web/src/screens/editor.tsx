@@ -102,9 +102,8 @@ export function EditorScreen() {
     queryKey: ["models"],
     queryFn: () =>
       api<{
-        models: Array<{ id: string }>;
+        models: Array<{ id: string; efforts: string[] }>;
         modelReady: boolean;
-        reasoningEfforts: string[];
       }>("/api/models"),
   });
 
@@ -199,6 +198,20 @@ export function EditorScreen() {
       setEffort(preferences.data.lastReasoningEffort);
     }
   }, [preferences.data]);
+
+  // A stored preference can name a model or effort that is no longer offered;
+  // the composer must always show a selectable pair.
+  useEffect(() => {
+    const options = catalog.data?.models ?? [];
+    if (options.length === 0) return;
+    if (!options.some((item) => item.id === modelId)) setModelId(options[0]?.id ?? "");
+  }, [catalog.data, modelId]);
+
+  useEffect(() => {
+    const options =
+      catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+    if (options.length > 0 && !options.includes(effort)) setEffort(options[0] ?? "");
+  }, [catalog.data, modelId, effort]);
 
   useEffect(() => {
     const layers = buffer?.layers ?? [];
@@ -702,7 +715,7 @@ export function EditorScreen() {
 
   const usedColors = buffer ? usedColorCount(buffer) : 0;
   const models = catalog.data?.models.map((item) => item.id) ?? [];
-  const efforts = catalog.data?.reasoningEfforts ?? [];
+  const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
 
   const leftPanels = (
     <>
