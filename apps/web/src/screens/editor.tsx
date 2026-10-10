@@ -170,6 +170,12 @@ export function EditorScreen() {
   const frame = frames.find((item) => item.id === frameId) ?? null;
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
+  // While playback cycles frames, the layer selection must not blink: fall back
+  // to the first layer of whichever frame the panel is showing.
+  const panelLayerId =
+    buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
+      ? activeLayerId
+      : (buffer?.layers[0]?.id ?? "");
   const running = runId !== null;
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // Only the frame the agent is painting on is locked.
@@ -882,7 +888,7 @@ export function EditorScreen() {
       />
       <LayerPanel
         buffer={buffer}
-        activeId={activeLayerId}
+        activeId={panelLayerId}
         locked={locked}
         onSelect={setActiveLayerId}
         onToggleVisible={(layerId, visible) =>

@@ -72,7 +72,10 @@ function FrameThumb({
   );
 }
 
-function frameRowClass(current: boolean) {
+function frameRowClass(current: boolean, editing = false) {
+  if (editing) {
+    return "flex w-full items-center gap-2 border-2 border-line bg-field px-2 py-1.5 text-left text-[13px] transition-colors duration-150 focus-within:border-accent";
+  }
   return `flex w-full items-center gap-2 border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
     current
       ? "border-accent bg-raised text-accent"
@@ -128,7 +131,7 @@ function FrameRow({
       transition={{ duration: 0.16, ease: "easeOut" }}
       className="relative flex items-center gap-1"
     >
-      <div className={`${frameRowClass(current)} relative min-w-0 flex-1`}>
+      <div className={`${frameRowClass(current, editing)} relative min-w-0 flex-1`}>
         <button
           type="button"
           onClick={onSelect}
@@ -138,13 +141,19 @@ function FrameRow({
           title={frame.name}
           className="absolute -inset-0.5 z-0"
         />
-        <span
-          className={`pointer-events-none shrink-0 transition-opacity duration-150 ${
-            editing ? "opacity-0" : "opacity-100"
-          }`}
+        <motion.span
+          initial={false}
+          animate={{
+            width: editing ? 0 : 36,
+            marginRight: editing ? -8 : 0,
+            opacity: editing ? 0 : 1,
+          }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+          className="pointer-events-none shrink-0 overflow-hidden"
+          style={{ height: 36 }}
         >
           <FrameThumb frame={frame} palette={palette} />
-        </span>
+        </motion.span>
         {editing ? (
           <motion.span
             key="rename"
@@ -157,7 +166,7 @@ function FrameRow({
               autoFocus
               value={draft}
               aria-label="Frame name"
-              className="h-6 w-full min-w-0 border-2 border-line bg-field px-1.5 text-[13px] text-ink transition-colors duration-150 outline-none focus:border-accent"
+              className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
               onChange={(event) => onDraft(event.target.value)}
               onBlur={onCommit}
               onKeyDown={(event) => {
@@ -489,11 +498,19 @@ export function LayerPanel({
                 aria-label={`Select layer ${layer.name}`}
                 className="absolute -inset-0.5 z-0"
               />
-              <span
+              <motion.span
+                initial={false}
+                animate={{
+                  width: editingId === layer.id ? 0 : 18,
+                  marginRight: editingId === layer.id ? -8 : 0,
+                  opacity: editingId === layer.id ? 0 : 1,
+                }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
                 inert={editingId === layer.id ? true : undefined}
-                className={`relative z-10 shrink-0 transition-opacity duration-150 ${
-                  editingId === layer.id ? "pointer-events-none opacity-0" : "opacity-100"
+                className={`relative z-10 shrink-0 overflow-hidden ${
+                  editingId === layer.id ? "pointer-events-none" : ""
                 }`}
+                style={{ height: 18 }}
               >
                 <Checkbox
                   label={`Show ${layer.name}`}
@@ -502,7 +519,7 @@ export function LayerPanel({
                   disabled={locked}
                   onChange={(next) => onToggleVisible(layer.id, next)}
                 />
-              </span>
+              </motion.span>
               {editingId === layer.id ? (
                 <motion.span
                   key="rename"
@@ -515,7 +532,7 @@ export function LayerPanel({
                     autoFocus
                     value={draft}
                     aria-label="Layer name"
-                    className="h-6 w-full min-w-0 border-2 border-line bg-field px-1.5 text-[13px] text-ink transition-colors duration-150 outline-none focus:border-accent"
+                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
                     onChange={(event) => setDraft(event.target.value)}
                     onBlur={commitEdit}
                     onKeyDown={(event) => {
