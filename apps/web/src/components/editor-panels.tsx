@@ -157,7 +157,7 @@ function FrameRow({
               autoFocus
               value={draft}
               aria-label="Frame name"
-              className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+              className="h-6 w-full min-w-0 border-2 border-line bg-field px-1.5 text-[13px] text-ink transition-colors duration-150 outline-none focus:border-accent"
               onChange={(event) => onDraft(event.target.value)}
               onBlur={onCommit}
               onKeyDown={(event) => {
@@ -515,7 +515,7 @@ export function LayerPanel({
                     autoFocus
                     value={draft}
                     aria-label="Layer name"
-                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+                    className="h-6 w-full min-w-0 border-2 border-line bg-field px-1.5 text-[13px] text-ink transition-colors duration-150 outline-none focus:border-accent"
                     onChange={(event) => setDraft(event.target.value)}
                     onBlur={commitEdit}
                     onKeyDown={(event) => {
