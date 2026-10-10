@@ -1,3 +1,4 @@
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Select } from "@base-ui/react/select";
 import { motion } from "motion/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
@@ -27,6 +28,126 @@ export function Button({
     >
       {children}
     </motion.button>
+  );
+}
+
+export function IconButton({
+  label,
+  active = false,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <motion.button
+      {...press}
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`grid h-8 w-8 place-items-center rounded-md border text-xs disabled:opacity-40 ${
+        active
+          ? "border-accent bg-accent text-paper"
+          : "border-transparent text-muted hover:border-line hover:text-ink"
+      }`}
+    >
+      {children}
+    </motion.button>
+  );
+}
+
+export function Toggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-3.5 w-3.5 accent-[#e8ff6a]"
+      />
+      {label}
+    </label>
+  );
+}
+
+export function Panel({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex min-h-0 flex-col gap-2">
+      <header className="flex items-center justify-between gap-2">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+          {title}
+        </h2>
+        {action}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+export function Dialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className="fixed inset-0 bg-paper/80 backdrop-blur-[2px]" />
+        <BaseDialog.Popup className="dialog-popup fixed top-1/2 left-1/2 w-[min(30rem,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-panel p-4">
+          <BaseDialog.Title className="text-sm text-ink">{title}</BaseDialog.Title>
+          {description ? (
+            <BaseDialog.Description className="mt-1 text-xs text-muted">
+              {description}
+            </BaseDialog.Description>
+          ) : null}
+          <div className="mt-4 grid gap-3">{children}</div>
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}
+
+export function DialogCloseButton({ children }: { children: ReactNode }) {
+  return (
+    <BaseDialog.Close
+      render={
+        <Button tone="ghost" className="justify-self-start">
+          {children}
+        </Button>
+      }
+    />
   );
 }
 

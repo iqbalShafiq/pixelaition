@@ -50,7 +50,8 @@ function paintPoints(
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
 
-function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
+/** Bresenham. Exported so a clipped shape can be previewed and applied the same way. */
+export function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
   const points: Point[] = [];
   let x = x0;
   let y = y0;
@@ -75,12 +76,24 @@ function linePoints(x0: number, y0: number, x1: number, y1: number): Point[] {
   return points;
 }
 
+function withinRegion(
+  buffer: FrameBuffer,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): boolean {
+  if (width < 1 || height < 1) return false;
+  return x >= 0 && y >= 0 && x + width <= buffer.width && y + height <= buffer.height;
+}
+
 function flood(
   buffer: FrameBuffer,
   layerId: string,
   x: number,
   y: number,
   color: number,
+  region?: { width: number; height: number },
 ): CommandResult {
   const layer = layerById(buffer, layerId);
   if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
@@ -90,6 +103,20 @@ function flood(
   if (!Number.isInteger(color) || color < 0 || color >= buffer.palette.length) {
     return fail("PALETTE_INDEX", "The fill color is not in the palette.");
   }
+  const limit = region
+    ? {
+        left: x,
+        top: y,
+        right: x + region.width - 1,
+        bottom: y + region.height - 1,
+      }
+    : undefined;
+  const inside = (point: Point) =>
+    !limit ||
+    (point.x >= limit.left &&
+      point.x <= limit.right &&
+      point.y >= limit.top &&
+      point.y <= limit.bottom);
   const target = readCell(layer.pixels, indexOf(buffer.width, x, y));
   if (target === color) return { ok: true, buffer };
   const next = clonePixels(layer.pixels);
@@ -97,6 +124,7 @@ function flood(
   while (stack.length > 0) {
     const point = stack.pop();
     if (!point || !inBounds(buffer.width, buffer.height, point.x, point.y)) continue;
+    if (!inside(point)) continue;
     const index = indexOf(buffer.width, point.x, point.y);
     if (readCell(next, index) !== target) continue;
     next[index] = color;
@@ -145,6 +173,28 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         for (let x = command.x; x <= x1; x += 1) {
           const edge = x === command.x || y === command.y || x === x1 || y === y1;
           if (command.filled || edge) points.push({ x, y, color: command.color });
+        }
+      }
+      return paintPoints(buffer, command.layerId, points, (point) => point.color ?? 0);
+    }
+    case "region": {
+      if (command.width < 1 || command.height < 1) {
+        return fail("SIZE", "A selection needs a positive width and height.");
+      }
+      if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+        return fail("OUT_OF_BOUNDS", "The selection reaches outside the canvas.");
+      }
+      if (command.mode === "flood") {
+        return flood(buffer, command.layerId, command.x, command.y, command.color, {
+          width: command.width,
+          height: command.height,
+        });
+      }
+      const color = command.mode === "clear" ? 0 : command.color;
+      const points: Array<Point & { color: number }> = [];
+      for (let y = command.y; y < command.y + command.height; y += 1) {
+        for (let x = command.x; x < command.x + command.width; x += 1) {
+          points.push({ x, y, color });
         }
       }
       return paintPoints(buffer, command.layerId, points, (point) => point.color ?? 0);
@@ -223,6 +273,48 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
               pixels: new Uint8Array(buffer.width * buffer.height),
             },
           ],
+        },
+      };
+    }
+    case "renameLayer": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      const name = command.name.trim();
+      if (!name) return fail("LAYER_NAME", "A layer needs a name.");
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId ? { ...layer, name } : layer,
+          ),
+        },
+      };
+    }
+    case "setLayerVisible": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId ? { ...layer, visible: command.visible } : layer,
+          ),
+        },
+      };
+    }
+    case "removeLayer": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (buffer.layers.length <= 1) {
+        return fail("LAYER_REQUIRED", "A frame keeps at least one layer.");
+      }
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.filter((layer) => layer.id !== command.layerId),
         },
       };
     }

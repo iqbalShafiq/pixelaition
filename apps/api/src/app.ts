@@ -17,20 +17,26 @@ import { eq } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
-import { decideFromPrompt } from "@pixelaition/agent";
+import { decidePrompt } from "@pixelaition/agent";
 import {
+  addFrameRecord,
   createApiKey,
   createAssetRecord,
   createProjectRecord,
+  deleteFrameRecord,
+  duplicateFrameRecord,
   ensureThread,
   getAssetRecord,
   getPreferences,
   getProjectRecord,
   insertRun,
   listProjects,
+  renameFrameRecord,
   revokeApiKey,
+  runBelongsTo,
   saveFrame,
   savePreferences,
+  updateAssetRecord,
   userIdForToken,
 } from "./store.js";
 import { generationRuns } from "@pixelaition/db";
@@ -97,7 +103,11 @@ export function createApp() {
   });
 
   app.get("/api/models", async (_req, res) => {
-    res.json({ models: await listModels() });
+    res.json({
+      models: await listModels(),
+      modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      reasoningEfforts: await listReasoningEfforts(),
+    });
   });
 
   app.post("/api/api-keys", async (req, res) => {
@@ -178,15 +188,107 @@ export function createApp() {
         ),
       })
       .parse(req.body);
-    const asset = await saveFrame(
+    const saved = await saveFrame(
       db,
       res.locals.userId as string,
       req.params.id ?? "",
       req.params.frameId ?? "",
       body.layers,
     );
+    if (!saved.asset)
+      return fail(
+        res,
+        saved.failure?.code === "FRAME_SIZE_MISMATCH" ? 422 : 404,
+        saved.failure?.code ?? "NOT_FOUND",
+        saved.failure?.message ?? "That frame is not available.",
+      );
+    res.json(saved.asset);
+  });
+
+  app.patch("/api/assets/:id", async (req, res) => {
+    const body = z
+      .object({
+        name: z.string().min(1).max(80).optional(),
+        width: z.number().int().optional(),
+        height: z.number().int().optional(),
+        palette: z.array(z.string()).min(2).max(33).optional(),
+      })
+      .parse(req.body);
+    const result = await updateAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "INVALID",
+        result.failure?.message ?? "That asset is not available.",
+      );
+    res.json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames", async (req, res) => {
+    const body = z.object({ name: z.string().max(80).default("") }).parse(req.body);
+    const result = await addFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.name,
+    );
+    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    res.status(201).json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames/:frameId/duplicate", async (req, res) => {
+    const body = z.object({ name: z.string().max(80).optional() }).parse(req.body);
+    const result = await duplicateFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.name,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        404,
+        "NOT_FOUND",
+        result.failure?.message ?? "That frame is gone.",
+      );
+    res.status(201).json(result.asset);
+  });
+
+  app.patch("/api/assets/:id/frames/:frameId", async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
+    const asset = await renameFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.name,
+    );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
     res.json(asset);
+  });
+
+  app.delete("/api/assets/:id/frames/:frameId", async (req, res) => {
+    const result = await deleteFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+    );
+    if (result.failure)
+      return fail(
+        res,
+        result.failure.code === "FRAME_REQUIRED" ? 422 : 404,
+        result.failure.code,
+        result.failure.message,
+      );
+    res.status(204).end();
   });
 
   app.post("/api/runs", async (req, res) => {
@@ -199,15 +301,10 @@ export function createApp() {
         reasoningEffort: z.string().min(1),
       })
       .parse(req.body);
-    const decision = decideFromPrompt(body.prompt);
-    if (decision.intent === "clarify") {
-      return fail(
-        res,
-        422,
-        "PROMPT_NEEDS_DETAIL",
-        decision.question ?? "Add a subject and a size.",
-      );
-    }
+    // Ownership first: the decision call spends the operator's key, so it must
+    // not run on behalf of an asset the caller does not own.
+    const asset = await getAssetRecord(db, res.locals.userId as string, body.assetId);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     if (!process.env.OPENAI_API_KEY?.trim()) {
       return fail(
         res,
@@ -216,8 +313,20 @@ export function createApp() {
         "Add OPENAI_API_KEY on the server to generate.",
       );
     }
-    const asset = await getAssetRecord(db, res.locals.userId as string, body.assetId);
-    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const decision = await decidePrompt(body.prompt, {
+      typesafeApiKey: process.env.TYPESAFE_API_KEY,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL,
+      decisionModel: process.env.DECISION_MODEL,
+    });
+    if (decision.intent === "clarify") {
+      return fail(
+        res,
+        422,
+        "PROMPT_NEEDS_DETAIL",
+        decision.question ?? "Add a subject and a size.",
+      );
+    }
     const thread = await ensureThread(db, res.locals.userId as string, body.assetId);
     const requestId = crypto.randomUUID();
     const runId = await insertRun(db, {
@@ -266,9 +375,13 @@ export function createApp() {
   });
 
   app.get("/api/runs/:id/stream", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
     const after = Number(req.query.after ?? 0);
     const upstream = await fetch(
-      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${req.params.id}/events?after=${after}`,
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/events?after=${after}`,
       { headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` } },
     );
     if (!upstream.ok || !upstream.body)
@@ -287,8 +400,12 @@ export function createApp() {
   });
 
   app.post("/api/runs/:id/cancel", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
     await fetch(
-      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${req.params.id}/cancel`,
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/cancel`,
       {
         method: "POST",
         headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
@@ -317,30 +434,40 @@ export function createApp() {
   app.post("/api/export", async (req, res) => {
     const body = z
       .object({
+        scope: z.enum(["frame", "asset", "project"]).default("project"),
         projectId: z.string(),
+        assetId: z.string().optional(),
+        frameId: z.string().optional(),
         format: z.enum(["pxl", "png", "jpg", "svg", "zip"]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
       })
       .parse(req.body);
-    const project = await getProjectRecord(
-      db,
-      res.locals.userId as string,
-      body.projectId,
-    );
-    if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
-    const document = await projectDocument(
-      res.locals.userId as string,
-      project.id,
-      project.name,
-      project.description,
-      project.style as StyleGuide,
-    );
+    if (body.scope !== "project" && body.format === "pxl") {
+      return fail(
+        res,
+        422,
+        "INVALID",
+        "A .pxl document holds a whole project. Choose PNG, JPG, SVG, or ZIP.",
+      );
+    }
+    if (body.scope === "frame" && !(body.assetId && body.frameId)) {
+      return fail(res, 400, "INVALID", "Exporting one frame needs an asset and a frame.");
+    }
+    if (body.scope === "asset" && !body.assetId) {
+      return fail(res, 400, "INVALID", "Exporting one asset needs an asset id.");
+    }
+    const document = await documentForScope(res.locals.userId as string, {
+      projectId: body.projectId,
+      assetId: body.scope === "project" ? undefined : body.assetId,
+      frameId: body.scope === "frame" ? body.frameId : undefined,
+    });
+    if (!document) return fail(res, 404, "NOT_FOUND", "That project is not available.");
     if (body.format === "pxl") {
       res.setHeader("content-type", "application/vnd.pixelaition+json");
       res.setHeader(
         "content-disposition",
-        `attachment; filename="${slug(project.name)}.pxl"`,
+        `attachment; filename="${slug(document.project.name)}.pxl"`,
       );
       return res.send(serializeProject(document));
     }
@@ -349,7 +476,7 @@ export function createApp() {
       for (const frame of asset.frames) {
         const buffer = assetFrameBuffer(asset, frame.id);
         if (!buffer) continue;
-        const name = `${slug(asset.name)}-${slug(frame.name)}`;
+        const name = `${slug(asset.name)}-${String(frame.index).padStart(2, "0")}-${slug(frame.name)}`;
         if (body.format === "png" || body.format === "zip")
           files[`${name}.png`] = frameToPng(buffer, body.scale);
         if (body.format === "jpg")
@@ -363,7 +490,7 @@ export function createApp() {
       res.setHeader("content-type", "application/zip");
       res.setHeader(
         "content-disposition",
-        `attachment; filename="${slug(project.name)}.zip"`,
+        `attachment; filename="${slug(document.project.name)}.zip"`,
       );
       return res.send(Buffer.from(zipFiles(files)));
     }
@@ -388,30 +515,40 @@ export function createApp() {
   return app;
 }
 
-async function projectDocument(
+async function documentForScope(
   userId: string,
-  projectId: string,
-  name: string,
-  description: string,
-  style: StyleGuide,
-): Promise<PixelProject> {
-  const project = await getProjectRecord(db, userId, projectId);
+  input: { projectId: string; assetId?: string; frameId?: string },
+): Promise<PixelProject | undefined> {
+  const project = await getProjectRecord(db, userId, input.projectId);
+  if (!project) return undefined;
   const built: PixelProject = {
     format: "pixelaition",
     version: 1,
-    project: { name, description, style },
+    project: {
+      name: project.name,
+      description: project.description,
+      style: project.style as StyleGuide,
+    },
     assets: [],
   };
-  for (const asset of project?.assets ?? []) {
+  const wanted = input.assetId
+    ? project.assets.filter((asset) => asset.id === input.assetId)
+    : project.assets;
+  if (input.assetId && wanted.length === 0) return undefined;
+  for (const asset of wanted) {
     const full = await getAssetRecord(db, userId, asset.id);
     if (!full) continue;
+    const frames = input.frameId
+      ? full.frames.filter((frame) => frame.id === input.frameId)
+      : full.frames;
+    if (frames.length === 0) continue;
     built.assets.push({
       id: full.id,
       name: full.name,
       width: full.width,
       height: full.height,
       palette: full.palette as string[],
-      frames: full.frames.map((frame) =>
+      frames: frames.map((frame) =>
         bufferToFrame(
           frameToBuffer(frame, full.width, full.height, full.palette as string[]),
           frame,
@@ -419,6 +556,7 @@ async function projectDocument(
       ),
     });
   }
+  if (built.assets.length === 0) return undefined;
   return built;
 }
 
@@ -441,6 +579,37 @@ async function listModels(): Promise<Array<{ id: string }>> {
     return modelCache.models;
   } catch {
     return fallback;
+  }
+}
+
+const fallbackEfforts = ["none", "low", "medium", "high"];
+
+let effortCache: { at: number; efforts: string[] } | undefined;
+
+/**
+ * The worker owns the reasoning-effort options, because only it knows which
+ * controls the configured model actually declares. Falls back to the generic
+ * set when the worker is unreachable or the model takes no controls.
+ */
+async function listReasoningEfforts(): Promise<string[]> {
+  if (effortCache && Date.now() - effortCache.at < 5 * 60 * 1000) {
+    return effortCache.efforts;
+  }
+  const base = process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002";
+  try {
+    const response = await fetch(`${base}/internal/agents`, {
+      headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
+    });
+    if (!response.ok) return fallbackEfforts;
+    const body = (await response.json()) as { reasoningEfforts?: string[] };
+    const efforts = body.reasoningEfforts?.filter(Boolean) ?? [];
+    effortCache = {
+      at: Date.now(),
+      efforts: efforts.length > 0 ? efforts : fallbackEfforts,
+    };
+    return effortCache.efforts;
+  } catch {
+    return fallbackEfforts;
   }
 }
 

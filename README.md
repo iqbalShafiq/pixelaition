@@ -28,19 +28,46 @@ pnpm dev
 
 The web app is on port 3000 and proxies `/api` to port 3001. The worker listens on port 4002. One `.env` at the repository root feeds every package through `dotenv-cli`.
 
-Set `OPENAI_BASE_URL` to an OpenAI-compatible endpoint. The sample points at OpenRouter. `OPENAI_API_KEY` and `OPENAI_MODEL` are required before Generate will draw. Manual editing works without them. `TYPESAFE_API_KEY` turns semantic routing over to Jev. Without it, a local prompt check asks for a subject when the request is too vague.
+Set `OPENAI_BASE_URL` to an OpenAI-compatible endpoint. The sample points at OpenRouter. `OPENAI_API_KEY` and `OPENAI_MODEL` are required before Generate will draw. Manual editing works without them. `TYPESAFE_API_KEY` turns semantic routing over to Jev. `DECISION_MODEL` names an OpenAI-compatible model to answer the same question when Jev is not configured. Without either, a local prompt check asks for a subject when the request is too vague.
 
 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` turn tracing on. Leave them empty to run without telemetry. For a local Langfuse, use its official Compose file and point `LANGFUSE_BASE_URL` at that UI.
 
 ## Editor
 
-The canvas uses integer zoom steps and pans with `H`, the space bar, or the middle path of a drag while Pan is selected. `B` draws, `E` erases, `G` fills. Ctrl or Cmd+Z undoes. Ctrl or Cmd+0 fits the sprite. The model and reasoning effort you pick are saved on your account.
+Three columns on a wide screen. The left column holds frames and layers, the middle is the canvas, and the right holds the palette and the canvas size. Below 1100px the side columns hide and the canvas plus the composer stay.
 
-Generate streams activity as the worker thinks and paints. Refreshing the page reloads the pixels already stored and can reconnect to the event stream.
+The toolbar holds the tools, the brush size, the zoom controls, and the grid, checker, and onion-skin switches.
+
+| Key | Tool      | Key | Tool       |
+| --- | --------- | --- | ---------- |
+| `V` | Select    | `G` | Fill       |
+| `B` | Pencil    | `I` | Eyedropper |
+| `E` | Eraser    | `L` | Line       |
+| `R` | Rectangle | `H` | Pan        |
+
+Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the sprite at one to one. The wheel zooms toward the cursor.
+
+Frames get added, duplicated, renamed, and deleted from the left column, and the play button steps through them. Onion skin draws the neighbouring frames underneath the one you are editing, at display opacity only. A frame keeps up to four layers.
+
+Drawing is saved 500ms after you stop. Generate streams activity as the worker thinks and paints. Refreshing the page reloads the pixels already stored and can reconnect to the event stream.
 
 ## Export
 
-`POST /api/export` writes `.pxl`, PNG, JPG, or SVG. More than one file is zipped. `.pxl` is JSON:
+The Export dialog picks a scope of one frame, one asset, or the whole project, then PNG, JPG, SVG, ZIP, or `.pxl`. `.pxl` covers a whole project. More than one file is zipped. Scale runs 1, 2, 4, 8, or 10.
+
+The same work is available over HTTP as `POST /api/export`:
+
+```json
+{
+  "scope": "asset",
+  "projectId": "…",
+  "assetId": "…",
+  "format": "png",
+  "scale": 4
+}
+```
+
+`.pxl` is JSON:
 
 ```json
 { "format": "pixelaition", "version": 1 }
@@ -67,7 +94,9 @@ Sizes run from 8 to 128. Index 0 in the palette is transparent `#00000000`.
 }
 ```
 
-Tools include `list_projects`, `create_project`, `create_asset`, `get_asset`, and `export_project`.
+Tools: `list_projects`, `create_project`, `get_project`, `list_assets`, `get_asset`, `create_asset`, `get_frame`, `paint_pixels`, `set_palette`, `create_frame`, `duplicate_frame`, `export_asset`, `export_project`.
+
+`get_frame` returns the frame as rows of palette indexes, with `0` meaning transparent. `paint_pixels` takes palette indexes rather than hex and returns what the server actually committed. Writes go through the same `applyCommand` the editor uses, so a bad coordinate or an index outside the palette is refused instead of stored. `export_asset` returns image content, and zips the result when the asset has more than one frame.
 
 ## Checks
 
@@ -84,7 +113,9 @@ pnpm eval
 
 `packages/pixel` is the document and the edit commands. `packages/export` writes files. `packages/agent` holds tools, the pixel skill, and evals. `packages/db` is Drizzle. `apps/web`, `apps/api`, `apps/worker`, and `apps/mcp` are the processes.
 
-The worker is the only owner of the Durable SQLite file. Do not run more than one worker replica.
+Inside `apps/web`, `src/components/ui.tsx` holds the shared controls, `src/components/pixel-canvas.tsx` owns all canvas drawing, and the panels, composer, and export dialog live beside them. Screens do not restyle controls themselves.
+
+The worker is the only owner of the Durable SQLite file. Do not run more than one worker replica. It registers one agent per reasoning effort, because a Durable submission carries no model controls.
 
 ## License
 

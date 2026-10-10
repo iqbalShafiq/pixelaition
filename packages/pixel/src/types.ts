@@ -85,9 +85,22 @@ export type Command =
       color: number;
       filled: boolean;
     }
+  | {
+      type: "region";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      color: number;
+      mode: "fill" | "clear" | "flood";
+    }
   | { type: "setPalette"; palette: string[] }
   | { type: "resize"; width: number; height: number }
   | { type: "addLayer"; id: string; name: string }
+  | { type: "renameLayer"; layerId: string; name: string }
+  | { type: "setLayerVisible"; layerId: string; visible: boolean }
+  | { type: "removeLayer"; layerId: string }
   | { type: "mirror" };
 
 export type CommandFailure = { ok: false; code: string; message: string };

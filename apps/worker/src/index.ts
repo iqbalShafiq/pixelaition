@@ -5,7 +5,10 @@ import { DurableRuntime } from "@anvia/durable";
 import { SqliteDurableStore } from "@anvia/durable/sqlite";
 import { LangfuseClient } from "@anvia/langfuse";
 import { OpenAIClient } from "@anvia/openai";
-import { REASONING_EFFORT_CONTROL_ID } from "@anvia/core/completion";
+import {
+  REASONING_EFFORT_CONTROL_ID,
+  defineCompletionModelControls,
+} from "@anvia/core/completion";
 import {
   bindRun,
   createPixelTools,
@@ -31,16 +34,28 @@ type PublicEvent = {
   data: unknown;
 };
 
+const agentPrefix = "pixel-draw";
+
 const events = new Map<string, PublicEvent[]>();
 const listeners = new Map<string, Set<(event: PublicEvent) => void>>();
+// Stroke events carry the whole frame base64-encoded, so an unbounded list would
+// hold megabytes per run for the life of the process.
+const MAX_RETAINED_EVENTS = 200;
 let sequence = 0;
 
 function publish(runId: string, type: string, data: unknown) {
   const event = { sequence: ++sequence, type, data };
   const list = events.get(runId) ?? [];
   list.push(event);
+  if (list.length > MAX_RETAINED_EVENTS)
+    list.splice(0, list.length - MAX_RETAINED_EVENTS);
   events.set(runId, list);
   for (const listener of listeners.get(runId) ?? []) listener(event);
+}
+
+function forgetRun(runId: string) {
+  events.delete(runId);
+  listeners.delete(runId);
 }
 
 const db = createDatabase();
@@ -66,40 +81,98 @@ const openai = apiKey
   : undefined;
 
 const modelId = process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+const genericEfforts = ["none", "low", "medium", "high"];
+
+// The control is declared explicitly so the options survive model ids Anvia does
+// not know, such as an OpenRouter slug. The adapter maps it to the provider field.
 const model = openai?.completionModel({
   modelId,
   api: baseUrl?.includes("openrouter.ai") ? "chat" : "responses",
+  controls: defineCompletionModelControls({
+    [REASONING_EFFORT_CONTROL_ID]: {
+      type: "select",
+      label: "Reasoning effort",
+      options: genericEfforts,
+    },
+  }),
 });
 
-const agent = model
-  ? new Agent({
-      id: "pixel-draw",
-      model,
-      instructions: pixelInstructions,
-      tools: createPixelTools(),
-      maxTurns: 12,
-      ...(langfuse
-        ? {
-            observability: {
-              observers: { langfuse: langfuse.observer({ redactInputs: true }) },
-              primaryTrace: "langfuse",
-              errorPolicy: "ignore" as const,
-            },
-          }
-        : {}),
-    })
-  : undefined;
+const efforts: string[] = [
+  ...(model?.controls?.[REASONING_EFFORT_CONTROL_ID]?.options ?? genericEfforts),
+];
 
-const runtimePromise = DurableRuntime.open({
+const observer = langfuse?.observer({ redactInputs: true });
+
+// Durable submits carry no controls, so one agent is registered per effort level
+// and the run picks the one the user chose in the composer.
+const agents = model
+  ? efforts.map((effort) => ({
+      id: `${agentPrefix}:${effort}`,
+      agent: new Agent({
+        id: `${agentPrefix}:${effort}`,
+        model,
+        instructions: pixelInstructions,
+        tools: createPixelTools(),
+        maxTurns: 12,
+        controls: { reasoningEffort: effort },
+        ...(observer
+          ? {
+              observability: {
+                observers: { langfuse: observer },
+                primaryTrace: "langfuse",
+                errorPolicy: "ignore" as const,
+              },
+            }
+          : {}),
+      }),
+    }))
+  : [];
+
+const agent = agents[0]?.agent;
+
+function agentForEffort(effort: string): Agent | undefined {
+  const match = agents.find((entry) => entry.id === `${agentPrefix}:${effort}`);
+  return match?.agent ?? agent;
+}
+
+// A store that cannot be acquired — usually a second worker on the same file —
+// must surface as a 503 on every endpoint, not as a crash on boot. The promise
+// resolves to undefined rather than rejecting, because a rejection with no
+// handler at module scope is an unhandled rejection and Node exits on it.
+let durableFailure: string | undefined;
+
+const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
-  ...(agent
-    ? { agents: [{ agent, version: "1", stream: true, toolRecovery: toolRecovery() }] }
+  ...(agents.length > 0
+    ? {
+        agents: agents.map((entry) => ({
+          agent: entry.agent,
+          version: "1",
+          stream: true,
+          toolRecovery: toolRecovery(),
+        })),
+      }
     : {}),
   maxConcurrentRuns: 2,
-}).then(async (runtime) => {
-  await runtime.resume();
-  return runtime;
-});
+})
+  .then(async (runtime) => {
+    await runtime.resume();
+    return runtime;
+  })
+  .catch((reason: unknown) => {
+    durableFailure = reason instanceof Error ? reason.message : String(reason);
+    console.error(`durable runtime unavailable: ${durableFailure}`);
+    return undefined;
+  });
+
+async function runtimeOr503(res: express.Response): Promise<DurableRuntime | undefined> {
+  const runtime = await runtimePromise;
+  if (runtime) return runtime;
+  res.status(503).json({
+    message: `The drawing worker has no durable store: ${durableFailure ?? "unavailable"}`,
+  });
+  return undefined;
+}
 
 function toolRecovery() {
   return {
@@ -122,14 +195,21 @@ function authorized(req: express.Request): boolean {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, model: Boolean(model) });
+  res.json({
+    ok: true,
+    model: Boolean(model),
+    durable: durableFailure ? undefined : "ready",
+  });
+});
+
+app.get("/internal/agents", (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  res.json({ reasoningEfforts: efforts, agents: agents.map((entry) => entry.id) });
 });
 
 app.post("/internal/runs", async (req, res) => {
   if (!authorized(req))
     return res.status(401).json({ message: "Unauthorized worker call." });
-  if (!agent || !openai)
-    return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
   const body = z
     .object({
       runId: z.string(),
@@ -143,17 +223,23 @@ app.post("/internal/runs", async (req, res) => {
       threadId: z.string(),
     })
     .parse(req.body);
+  const chosen = agentForEffort(body.reasoningEffort);
+  if (!chosen || !openai)
+    return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
   const frame = asset.frames.find((item) => item.id === body.frameId) ?? asset.frames[0];
   if (!frame) return res.status(404).json({ message: "Frame was not found." });
-  const runtime = await runtimePromise;
-  const effort = body.reasoningEffort;
+  const effort = efforts.includes(body.reasoningEffort)
+    ? body.reasoningEffort
+    : (efforts[0] ?? "none");
   const run = await runtime.submit({
-    agentId: agent.id,
+    agentId: `${agentPrefix}:${effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
-    prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${frame.name}\nReasoning effort: ${effort}`,
+    prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${frame.name}`,
   });
   bindRun(run.id, {
     assetId: body.assetId,
@@ -195,12 +281,17 @@ app.get("/internal/runs/:id/events", (req, res) => {
   const set = listeners.get(runId) ?? new Set();
   set.add(sink);
   listeners.set(runId, set);
-  req.on("close", () => set.delete(sink));
+  // Drop the whole map entry once the last subscriber leaves, not just the sink.
+  req.on("close", () => {
+    set.delete(sink);
+    if (set.size === 0 && !events.has(runId)) listeners.delete(runId);
+  });
 });
 
 app.post("/internal/runs/:id/cancel", async (req, res) => {
   if (!authorized(req)) return res.status(401).end();
-  const runtime = await runtimePromise;
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
   const [row] = await db
     .select()
     .from(generationRuns)
@@ -216,6 +307,7 @@ async function follow(
   effort: string,
 ) {
   let cursor = 0;
+  let finished = false;
   try {
     for (;;) {
       const batch = runtime.events(durableId, cursor);
@@ -244,12 +336,17 @@ async function follow(
           })
           .where(eq(generationRuns.id, publicId));
         publish(publicId, "done", { status: snapshot.run.status, effort });
+        finished = true;
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   } finally {
     releaseRun(durableId);
+    // Give a subscriber a moment to read the tail, then drop the retained events.
+    if (finished) {
+      setTimeout(() => forgetRun(publicId), 60_000).unref?.();
+    }
   }
 }
 
@@ -282,7 +379,7 @@ async function loadAsset(assetId: string) {
 
 const port = Number(process.env.WORKER_PORT ?? 4002);
 app.listen(port, "0.0.0.0", () => {
-  console.log(`worker listening on ${port}`);
+  console.log(
+    `worker listening on ${port}${model ? ` with ${agents.length} drawing agents` : ""}`,
+  );
 });
-
-void REASONING_EFFORT_CONTROL_ID;
