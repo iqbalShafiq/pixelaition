@@ -30,8 +30,14 @@ Panels are 240–280px. The composer sits on the bottom edge. Cards use 16px pad
 
 ## Editor
 
-Wide screens keep frames on the left, the canvas in the center, and the palette on the right. Below 1100px the side panels hide and the canvas plus composer remain. Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32. Pan and zoom aim at the cursor.
+Wide screens keep frames and layers on the left, the canvas in the center, and the palette on the right. Below 1100px the side columns hide and the canvas plus composer remain. Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32, and always aims at the cursor.
+
+## Canvas
+
+The frame is composited once into a 1:1 offscreen bitmap and then scaled with smoothing off. Drawing one rect per cell leaves seams and shimmer as soon as a cell is a single pixel, which is exactly what zooming out exposes. The bitmap is cached per frame buffer, so a stroke costs one redraw, not one per cell.
+
+The transparency checker is tied to the document grid at four pixels per tile and disappears below 2× zoom, where it would only read as noise over the artwork. Onion skin is a display opacity on the neighbouring frames. Grid lines, the selection marquee, and the shape preview are drawn in screen space after the bitmap, so they stay one pixel wide at every zoom.
 
 ## Components
 
-Buttons, fields, cards, and selects live in `apps/web/src/components/ui.tsx`. Screens use those pieces instead of one-off control styles. Scrollbars are thin and use the same ink family.
+Buttons, fields, cards, and selects live in `apps/web/src/components/ui.tsx`. Screens use those pieces instead of one-off control styles. Scrollbars are thin and use the same ink family. Tool glyphs are inline SVG in `tool-icons.tsx`, so the toolbar needs no icon package.

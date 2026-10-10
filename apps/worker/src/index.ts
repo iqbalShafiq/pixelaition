@@ -125,7 +125,11 @@ function agentForEffort(effort: string): Agent | undefined {
   return match?.agent ?? agent;
 }
 
-const runtimePromise = DurableRuntime.open({
+// A store that cannot be acquired — usually a second worker on the same file —
+// must surface as a 503 on every endpoint, not as a crash on boot.
+let durableFailure: string | undefined;
+
+const runtimePromise: Promise<DurableRuntime> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
     ? {
@@ -138,10 +142,31 @@ const runtimePromise = DurableRuntime.open({
       }
     : {}),
   maxConcurrentRuns: 2,
-}).then(async (runtime) => {
-  await runtime.resume();
-  return runtime;
-});
+})
+  .then(async (runtime) => {
+    await runtime.resume();
+    return runtime;
+  })
+  .catch((reason: unknown) => {
+    durableFailure = reason instanceof Error ? reason.message : String(reason);
+    console.error(`durable runtime unavailable: ${durableFailure}`);
+    throw reason;
+  });
+
+async function runtimeOr503(res: express.Response): Promise<DurableRuntime | undefined> {
+  if (durableFailure) {
+    res.status(503).json({
+      message: `The drawing worker has no durable store: ${durableFailure}`,
+    });
+    return undefined;
+  }
+  try {
+    return await runtimePromise;
+  } catch {
+    res.status(503).json({ message: "The durable runtime failed to open." });
+    return undefined;
+  }
+}
 
 function toolRecovery() {
   return {
@@ -164,7 +189,11 @@ function authorized(req: express.Request): boolean {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, model: Boolean(model) });
+  res.json({
+    ok: true,
+    model: Boolean(model),
+    durable: durableFailure ? undefined : "ready",
+  });
 });
 
 app.get("/internal/agents", (req, res) => {
@@ -191,6 +220,10 @@ app.post("/internal/runs", async (req, res) => {
   const chosen = agentForEffort(body.reasoningEffort);
   if (!chosen || !openai)
     return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
+  if (durableFailure)
+    return res
+      .status(503)
+      .json({ message: `The drawing worker has no durable store: ${durableFailure}` });
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
   const frame = asset.frames.find((item) => item.id === body.frameId) ?? asset.frames[0];
@@ -250,7 +283,8 @@ app.get("/internal/runs/:id/events", (req, res) => {
 
 app.post("/internal/runs/:id/cancel", async (req, res) => {
   if (!authorized(req)) return res.status(401).end();
-  const runtime = await runtimePromise;
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
   const [row] = await db
     .select()
     .from(generationRuns)
