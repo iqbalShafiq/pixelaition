@@ -38,7 +38,7 @@ function NotFound() {
       className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4"
     >
       <div className="max-w-sm text-center">
-        <p className="font-mono text-xs tracking-[0.22em] text-accent">404</p>
+        <p className="text-pixel-mono tracking-[0.22em] text-accent">404</p>
         <h1 className="mt-3 text-2xl font-medium text-ink">This square is empty</h1>
         <p className="mt-2 text-[13px] text-muted">
           The page you asked for is not part of this canvas.

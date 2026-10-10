@@ -81,13 +81,11 @@ export function Composer({
           onChange={onEffort}
         />
         {!modelReady ? (
-          <span className="font-mono text-[10px] text-muted">
+          <span className="text-pixel-mono text-muted">
             OPENAI_API_KEY is missing on the server
           </span>
         ) : noCatalog ? (
-          <span className="font-mono text-[10px] text-muted">
-            the model catalog is empty
-          </span>
+          <span className="text-pixel-mono text-muted">the model catalog is empty</span>
         ) : null}
         <span className="ml-auto">
           {running ? (

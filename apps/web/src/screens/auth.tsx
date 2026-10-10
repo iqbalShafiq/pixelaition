@@ -54,9 +54,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             <rect x="0" y="4" width="4" height="4" fill="var(--color-ink)" />
             <rect x="4" y="4" width="4" height="4" fill="var(--color-accent)" />
           </svg>
-          <span className="font-mono text-xs tracking-[0.22em] text-accent">
-            PIXELAITION
-          </span>
+          <span className="text-pixel-display text-accent">PIXELAITION</span>
         </header>
 
         <section className="pixel-corners border-2 border-line bg-panel p-6">
@@ -144,7 +142,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
           </p>
         </section>
 
-        <p className="mt-4 text-center font-mono text-[11px] text-muted">
+        <p className="mt-4 text-center text-pixel-mono text-muted">
           MIT licensed ·{" "}
           <a
             href="https://github.com/iqbalShafiq/pixelaition"

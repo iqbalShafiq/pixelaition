@@ -134,7 +134,7 @@ export function RunConsole({
         type="button"
         onClick={empty ? undefined : () => onOpen(!open)}
         disabled={empty}
-        className={`flex w-full items-center gap-2 px-2 py-1.5 text-left font-mono text-[10px] tracking-[0.16em] text-muted uppercase ${
+        className={`flex w-full items-center gap-2 px-2 py-1.5 text-left text-pixel-mono tracking-[0.16em] text-muted uppercase ${
           empty ? "cursor-default" : "hover:text-ink"
         }`}
       >
@@ -154,17 +154,19 @@ export function RunConsole({
         >
           {prompt ? (
             <div className="mb-2 border-b-2 border-line pb-2">
-              <p className="font-mono text-[10px] tracking-[0.16em] text-accent uppercase">
+              <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
                 you
               </p>
-              <p className="mt-1 text-xs whitespace-pre-wrap text-ink">{prompt}</p>
+              <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
+                {prompt}
+              </p>
             </div>
           ) : null}
           <ul className="grid gap-1">
             {rows.map((row) => (
               <li
                 key={row.id}
-                className="flex items-start gap-1.5 font-mono text-[10px] text-muted"
+                className="flex items-start gap-1.5 text-pixel-mono text-muted"
               >
                 <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
                   {rowIcon(row)}
@@ -190,8 +192,8 @@ export function RunConsole({
             ))}
           </ul>
           {message ? (
-            <div className="mt-2 border-t-2 border-line pt-2 text-xs text-ink">
-              <p className="font-mono text-[10px] tracking-[0.16em] text-accent uppercase">
+            <div className="mt-2 border-t-2 border-line pt-2 text-pixel-body text-ink">
+              <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
                 agent
               </p>
               <div className="mt-1">
@@ -201,12 +203,12 @@ export function RunConsole({
           ) : null}
           {history.length > 0 ? (
             <div className="mt-2 border-t-2 border-line pt-2">
-              <p className="font-mono text-[10px] tracking-[0.16em] text-muted uppercase">
+              <p className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
                 earlier
               </p>
               <ul className="mt-1 grid gap-1.5">
                 {history.map((item) => (
-                  <li key={item.id} className="font-mono text-[10px]">
+                  <li key={item.id} className="text-pixel-mono">
                     <p className="truncate text-muted" title={item.prompt ?? ""}>
                       <span className="text-accent">you</span> {item.prompt ?? "—"}
                     </p>

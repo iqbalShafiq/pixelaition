@@ -159,7 +159,7 @@ export function ExportDialog({
       {state.kind === "failed" ? (
         <Callout tone="danger">{state.message}</Callout>
       ) : state.message ? (
-        <p className="font-mono text-[11px] text-muted">{state.message}</p>
+        <p className="text-pixel-mono text-muted">{state.message}</p>
       ) : null}
 
       <div className="flex items-center gap-2">

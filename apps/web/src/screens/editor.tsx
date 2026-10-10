@@ -958,10 +958,7 @@ export function EditorScreen() {
       className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
     >
       <header className="flex min-w-0 items-center gap-3 px-3 py-2">
-        <a
-          href="/projects"
-          className="font-mono text-xs tracking-[0.18em] text-accent whitespace-nowrap"
-        >
+        <a href="/projects" className="text-pixel-display text-accent whitespace-nowrap">
           PIXELAITION
         </a>
         <p className="min-w-0 truncate text-sm text-muted">
@@ -977,7 +974,7 @@ export function EditorScreen() {
         </p>
         <span className="ml-auto flex items-center gap-1.5">
           {running ? (
-            <span className="hidden items-center gap-1.5 font-mono text-[10px] text-accent sm:flex">
+            <span className="hidden items-center gap-1.5 text-pixel-mono text-accent sm:flex">
               <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
               drawing
             </span>
@@ -1088,12 +1085,12 @@ export function EditorScreen() {
                 />
               )}
               {locked ? (
-                <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 font-mono text-[10px] text-accent">
+                <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 text-pixel-mono text-accent">
                   the agent is drawing on this frame
                 </p>
               ) : null}
               <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
-                <span className="w-full text-center font-mono text-[10px] text-muted">
+                <span className="w-full text-center text-pixel-mono text-muted">
                   {Math.round(camera.zoom * 100)}%
                 </span>
                 <IconButton
@@ -1132,7 +1129,7 @@ export function EditorScreen() {
                     fit();
                     setViewMode("fit");
                   }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 font-mono text-[9px] transition-colors duration-150 ${
+                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
                     viewMode === "fit"
                       ? "border-accent text-accent"
                       : "border-line text-muted hover:text-ink"
@@ -1155,7 +1152,7 @@ export function EditorScreen() {
                     }
                     setViewMode("actual");
                   }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 font-mono text-[9px] transition-colors duration-150 ${
+                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
                     viewMode === "actual"
                       ? "border-accent text-accent"
                       : "border-line text-muted hover:text-ink"

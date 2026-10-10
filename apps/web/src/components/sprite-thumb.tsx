@@ -62,9 +62,7 @@ export function SpriteThumb({
           style={{ width: display - 4, height: display - 4, imageRendering: "pixelated" }}
         />
       ) : (
-        <span className="font-mono text-[10px] text-muted">
-          {asset.isError ? "—" : "…"}
-        </span>
+        <span className="text-pixel-mono text-muted">{asset.isError ? "—" : "…"}</span>
       )}
     </span>
   );

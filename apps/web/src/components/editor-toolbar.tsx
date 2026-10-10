@@ -135,7 +135,7 @@ export function Toolbar({
           <Separator vertical />
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-[11px]"
+            className="px-2 py-1.5 text-xs"
             disabled={locked}
             onClick={onSelectionFill}
           >
@@ -143,13 +143,13 @@ export function Toolbar({
           </Button>
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-[11px]"
+            className="px-2 py-1.5 text-xs"
             disabled={locked}
             onClick={onSelectionClear}
           >
             Clear
           </Button>
-          <Button tone="quiet" className="px-2 py-1.5 text-[11px]" onClick={onDeselect}>
+          <Button tone="quiet" className="px-2 py-1.5 text-xs" onClick={onDeselect}>
             Deselect
           </Button>
         </>

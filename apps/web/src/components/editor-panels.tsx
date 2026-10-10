@@ -129,7 +129,7 @@ function FrameRow({
       onDragEnd={onDragFinished}
       whileDrag={{ zIndex: 2 }}
       transition={{ duration: 0.16, ease: "easeOut" }}
-      className="relative flex items-center gap-1"
+      className="relative flex min-w-0 items-center gap-1"
     >
       <div className={`${frameRowClass(current, editing)} relative min-w-0 flex-1`}>
         <button
@@ -166,7 +166,7 @@ function FrameRow({
               autoFocus
               value={draft}
               aria-label="Frame name"
-              className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+              className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-ink outline-none"
               onChange={(event) => onDraft(event.target.value)}
               onBlur={onCommit}
               onKeyDown={(event) => {
@@ -181,7 +181,7 @@ function FrameRow({
           </span>
         )}
         {current && locked ? (
-          <span className="pointer-events-none font-mono text-[10px]">drawing</span>
+          <span className="pointer-events-none text-pixel-mono">drawing</span>
         ) : null}
         <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
           <AnimatePresence initial={false} mode="popLayout">
@@ -484,7 +484,7 @@ export function LayerPanel({
           return (
             <li
               key={layer.id}
-              className={`relative flex items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+              className={`relative flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
                 current
                   ? "border-accent bg-raised"
                   : "border-transparent hover:border-line hover:bg-raised"
@@ -532,7 +532,7 @@ export function LayerPanel({
                     autoFocus
                     value={draft}
                     aria-label="Layer name"
-                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-ink outline-none"
                     onChange={(event) => setDraft(event.target.value)}
                     onBlur={commitEdit}
                     onKeyDown={(event) => {
@@ -605,9 +605,7 @@ export function LayerPanel({
         })}
       </ul>
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] text-muted">
-          {layers.length} of 4 layers
-        </span>
+        <span className="text-pixel-mono text-muted">{layers.length} of 4 layers</span>
       </div>
 
       <ConfirmDialog
@@ -691,7 +689,7 @@ export function PalettePanel({
     <Panel
       title="Palette"
       action={
-        <span className={`font-mono text-[10px] ${over ? "text-erase" : "text-muted"}`}>
+        <span className={`text-pixel-mono ${over ? "text-erase" : "text-muted"}`}>
           {usedColors}/{maxColors}
         </span>
       }
@@ -713,7 +711,7 @@ export function PalettePanel({
         <Popover
           label="Add a color"
           trigger={
-            <span className="grid aspect-square place-items-center font-mono text-[13px]">
+            <span className="grid aspect-square place-items-center text-pixel-mono">
               +
             </span>
           }
@@ -785,7 +783,6 @@ export function PalettePanel({
             <TextInput
               value={draft}
               aria-label="Hex color"
-              className="font-mono text-[13px]"
               onChange={(event) => setFromHex(event.target.value)}
             />
             <Button
@@ -821,7 +818,7 @@ export function StylePanel({
   useEffect(() => setH(String(height)), [height]);
   return (
     <Panel title="Style guide">
-      <dl className="grid gap-1 font-mono text-[10px]">
+      <dl className="grid gap-1 text-pixel-mono">
         <div className="flex items-baseline justify-between gap-2">
           <dt className="text-muted">max colors</dt>
           <dd className="text-ink">{style.maxColors}</dd>
@@ -852,7 +849,6 @@ export function StylePanel({
             inputMode="numeric"
             aria-label="Canvas width"
             placeholder="32"
-            className="font-mono text-[13px]"
             onChange={(event) => setW(event.target.value)}
             onBlur={() => {
               const next = Number(w);
@@ -864,14 +860,13 @@ export function StylePanel({
               if (event.key === "Escape") setW(String(width));
             }}
           />
-          <span className="font-mono text-muted">×</span>
+          <span className="text-pixel-mono text-muted">×</span>
           <TextInput
             id="canvas-height"
             value={h}
             inputMode="numeric"
             aria-label="Canvas height"
             placeholder="32"
-            className="font-mono text-[13px]"
             onChange={(event) => setH(event.target.value)}
             onBlur={() => {
               const next = Number(h);
@@ -885,7 +880,7 @@ export function StylePanel({
           />
         </div>
       </Field>
-      <p className="text-[11px] text-muted">
+      <p className="text-xs text-muted">
         The style guide belongs to the project, so every asset in it stays related.
       </p>
     </Panel>

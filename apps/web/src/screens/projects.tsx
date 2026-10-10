@@ -52,9 +52,7 @@ export function ProjectsScreen() {
         <header className="flex items-center justify-between gap-4 border-b-2 border-line pb-4">
           <span className="flex items-center gap-2.5">
             <PixelMark />
-            <span className="font-mono text-xs tracking-[0.24em] text-accent">
-              PIXELAITION
-            </span>
+            <span className="text-pixel-display text-accent">PIXELAITION</span>
           </span>
           <Button
             tone="ghost"
@@ -69,7 +67,7 @@ export function ProjectsScreen() {
 
         <section className="grid gap-8 lg:grid-cols-[1fr_24rem] lg:items-end">
           <div>
-            <p className="font-mono text-[10px] tracking-[0.2em] text-muted uppercase">
+            <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
               Workspace
             </p>
             <h1 className="mt-3 text-[2.5rem] leading-[1.05] font-medium tracking-[-0.02em] text-ink text-balance">
@@ -112,16 +110,16 @@ export function ProjectsScreen() {
 
         <section className="grid gap-4">
           <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
-            <h2 className="font-mono text-[11px] tracking-[0.2em] text-muted uppercase">
+            <h2 className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
               Projects
             </h2>
-            <span className="font-mono text-[10px] text-muted">
+            <span className="text-pixel-mono text-muted">
               {list.length.toString().padStart(2, "0")}
             </span>
           </div>
 
           {projects.isPending ? (
-            <p className="font-mono text-[11px] text-muted">
+            <p className="text-pixel-mono text-muted">
               Reading your projects from the server…
             </p>
           ) : projects.isError ? (
@@ -220,11 +218,9 @@ function ProjectCard({ project }: { project: Project }) {
         </p>
         {open ? (
           detail.isPending ? (
-            <p className="mt-3 font-mono text-[11px] text-muted">Loading…</p>
+            <p className="mt-3 text-pixel-mono text-muted">Loading…</p>
           ) : assets.length === 0 ? (
-            <p className="mt-3 font-mono text-[11px] text-muted">
-              Nothing drawn here yet.
-            </p>
+            <p className="mt-3 text-pixel-mono text-muted">Nothing drawn here yet.</p>
           ) : (
             <ul className="mt-3 grid gap-1">
               {assets.map((asset) => (
@@ -236,7 +232,7 @@ function ProjectCard({ project }: { project: Project }) {
                   >
                     <SpriteThumb assetId={asset.id} display={26} />
                     <span className="min-w-0 flex-1 truncate">{asset.name}</span>
-                    <span className="font-mono text-[10px] text-muted">
+                    <span className="text-pixel-mono text-muted">
                       {asset.width}×{asset.height}
                     </span>
                   </Link>

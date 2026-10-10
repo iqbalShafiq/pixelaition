@@ -103,7 +103,7 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner sideOffset={8}>
-          <BaseTooltip.Popup className="z-40 border-2 border-line-strong bg-raised px-2 py-1 font-mono text-[11px] text-ink">
+          <BaseTooltip.Popup className="z-40 border-2 border-line-strong bg-raised px-2 py-1 text-pixel-mono text-ink">
             {label}
           </BaseTooltip.Popup>
         </BaseTooltip.Positioner>
@@ -137,11 +137,11 @@ export function Field({
       <div className="flex items-baseline justify-between gap-2">
         <label
           htmlFor={htmlFor}
-          className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase"
+          className="text-pixel-mono tracking-[0.14em] text-muted uppercase"
         >
           {label}
         </label>
-        {hint ? <span className="font-mono text-[10px] text-muted">{hint}</span> : null}
+        {hint ? <span className="text-pixel-mono text-muted">{hint}</span> : null}
       </div>
       {children}
       {/* Colour is never the only signal: the message carries the meaning. */}
@@ -288,7 +288,7 @@ export function Toggle({
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="border-2 border-line-strong px-1 font-mono text-[10px] text-muted">
+    <kbd className="border-2 border-line-strong px-1 text-pixel-mono text-muted">
       {children}
     </kbd>
   );
@@ -333,7 +333,7 @@ export function Panel({
   return (
     <section className={`flex min-h-0 flex-col gap-2 ${className}`}>
       <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
-        <h2 className="font-mono text-[11px] tracking-[0.16em] text-muted uppercase">
+        <h2 className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
           {title}
         </h2>
         {action}
@@ -536,7 +536,7 @@ export function Dialog({
         >
           <header className="flex items-start justify-between gap-3 border-b-2 border-line pb-2">
             <div>
-              <BaseDialog.Title className="font-mono text-[12px] tracking-[0.16em] text-accent uppercase">
+              <BaseDialog.Title className="text-pixel-title text-accent">
                 {title}
               </BaseDialog.Title>
               {description ? (
@@ -581,7 +581,7 @@ export function ConfirmDialog({
       <BaseDialog.Portal>
         <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-navy/85" />
         <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4">
-          <BaseDialog.Title className="font-mono text-[12px] tracking-[0.16em] text-accent uppercase">
+          <BaseDialog.Title className="text-pixel-title text-accent">
             {title}
           </BaseDialog.Title>
           <BaseDialog.Description className="mt-2 text-[13px] text-muted">
@@ -644,7 +644,7 @@ export function Sheet({
           } border-line-strong`}
         >
           <header className="flex items-center justify-between border-b-2 border-line px-3 py-2">
-            <BaseDialog.Title className="font-mono text-[11px] tracking-[0.16em] text-accent uppercase">
+            <BaseDialog.Title className="text-pixel-title text-accent">
               {title}
             </BaseDialog.Title>
             <DialogClose>
@@ -682,7 +682,7 @@ function ToastList() {
       toast={toast}
       className="toast-popup relative border-2 border-line-strong bg-raised p-3"
     >
-      <BaseToast.Title className="pr-6 font-mono text-[11px] tracking-[0.14em] text-accent uppercase" />
+      <BaseToast.Title className="pr-6 text-pixel-mono tracking-[0.14em] text-accent uppercase" />
       <BaseToast.Description className="mt-1 text-[12px] text-muted" />
       <BaseToast.Close
         aria-label="Dismiss"
@@ -720,9 +720,7 @@ export function EmptyState({
 }) {
   return (
     <div className="pixel-corners-sm grid gap-2 border-2 border-dashed border-line p-4">
-      <p className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase">
-        {title}
-      </p>
+      <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">{title}</p>
       <p className="text-[13px] text-muted">{body}</p>
       {action}
     </div>
