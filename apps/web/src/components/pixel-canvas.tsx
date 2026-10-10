@@ -51,6 +51,62 @@ export function normalizeRect(from: Point, to: Point): Rect {
   };
 }
 
+/**
+ * Palette entries are normalised hex, so a fixed-width parse is enough. Anything
+ * unexpected is treated as opaque so a bad colour never silently erases a pixel.
+ */
+function rgba(hex: string): [number, number, number, number] {
+  const value = hex.replace("#", "");
+  if (value.length === 8) {
+    return [
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16),
+      Number.parseInt(value.slice(6, 8), 16),
+    ];
+  }
+  if (value.length === 6) {
+    return [
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16),
+      255,
+    ];
+  }
+  return [0, 0, 0, 255];
+}
+
+/**
+ * The frame is drawn once at 1:1 and then scaled, rather than one fillRect per
+ * cell. Per-cell rects leave seams and shimmer once a cell is a single pixel,
+ * which is exactly what zooming out exposes.
+ */
+function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasElement>) {
+  const cached = cache.get(doc);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = doc.width;
+  canvas.height = doc.height;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const image = context.createImageData(doc.width, doc.height);
+    const indexes = composite(doc);
+    for (let index = 0; index < indexes.length; index += 1) {
+      const value = indexes[index] ?? 0;
+      if (value === 0) continue;
+      const [r, g, b, a] = rgba(doc.palette[value] ?? "#000000");
+      const offset = index * 4;
+      image.data[offset] = r;
+      image.data[offset + 1] = g;
+      image.data[offset + 2] = b;
+      image.data[offset + 3] = a;
+    }
+    context.putImageData(image, 0, 0);
+  }
+  cache.set(doc, canvas);
+  return canvas;
+}
+
 function brushPoints(point: Point, size: number): Point[] {
   if (size <= 1) return [point];
   const offsets = size === 2 ? [0, 1] : [-1, 0, 1];
@@ -123,6 +179,8 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
+  const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
   const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera });
@@ -165,13 +223,15 @@ export function PixelCanvas({
       const docWidth = doc.width * cell;
       const docHeight = doc.height * cell;
 
-      if (checker) {
-        const tile = Math.max(6, Math.min(14, cell));
+      if (checker && cell >= 2) {
+        // Tied to the document grid so it reads as transparent pixels rather
+        // than as a texture laid over the artwork.
+        const tile = cell * 4;
         context.save();
         context.beginPath();
         context.rect(originX, originY, docWidth, docHeight);
         context.clip();
-        context.fillStyle = "rgba(244, 239, 228, 0.04)";
+        context.fillStyle = "rgba(244, 239, 228, 0.035)";
         const firstX = Math.floor(originX / tile);
         const firstY = Math.floor(originY / tile);
         const lastX = Math.ceil((originX + docWidth) / tile);
@@ -185,34 +245,31 @@ export function PixelCanvas({
         context.restore();
       }
 
+      context.imageSmoothingEnabled = false;
       context.strokeStyle = "rgba(244, 239, 228, 0.1)";
       context.lineWidth = 1;
       context.strokeRect(originX + 0.5, originY + 0.5, docWidth - 1, docHeight - 1);
 
       // Onion skin is display-only: neighbours sit under the frame being edited.
-      context.globalAlpha = 0.28;
+      context.globalAlpha = 0.3;
       for (const neighbor of onionSkin) {
-        const indexes = composite(neighbor);
-        for (let y = 0; y < doc.height; y += 1) {
-          for (let x = 0; x < doc.width; x += 1) {
-            const index = indexes[y * doc.width + x] ?? 0;
-            if (index === 0) continue;
-            context.fillStyle = doc.palette[index] ?? "#000";
-            context.fillRect(originX + x * cell, originY + y * cell, cell, cell);
-          }
-        }
+        context.drawImage(
+          bitmapFor(neighbor, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
       }
       context.globalAlpha = 1;
 
-      const indexes = composite(doc);
-      for (let y = 0; y < doc.height; y += 1) {
-        for (let x = 0; x < doc.width; x += 1) {
-          const index = indexes[y * doc.width + x] ?? 0;
-          if (index === 0) continue;
-          context.fillStyle = doc.palette[index] ?? "#000";
-          context.fillRect(originX + x * cell, originY + y * cell, cell, cell);
-        }
-      }
+      context.drawImage(
+        bitmapFor(doc, bitmaps.current),
+        originX,
+        originY,
+        docWidth,
+        docHeight,
+      );
 
       if (grid && cell >= 8) {
         context.strokeStyle = "rgba(244, 239, 228, 0.08)";
