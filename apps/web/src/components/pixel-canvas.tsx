@@ -26,8 +26,6 @@ type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean };
 
-type ScreenPoint = { clientX: number; clientY: number; currentTarget: HTMLCanvasElement };
-
 type Props = {
   buffer: FrameBuffer;
   camera: Camera;
@@ -204,6 +202,18 @@ export function PixelCanvas({
     const context = view.getContext("2d");
     if (!context) return;
 
+    // React attaches wheel passively at the root, so preventDefault there is a
+    // no-op. The zoom has to own a non-passive listener to stop page scroll.
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = view.getBoundingClientRect();
+      const cam = latest.current.camera;
+      const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      const next = stepZoom(cam.zoom, event.deltaY < 0 ? 1 : -1);
+      latest.current.onCamera(zoomAt(cam, screen.x, screen.y, next));
+    };
+    view.addEventListener("wheel", onWheel, { passive: false });
+
     const draw = () => {
       const rect = view.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
@@ -329,13 +339,11 @@ export function PixelCanvas({
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(view);
-    return () => observer.disconnect();
+    return () => {
+      view.removeEventListener("wheel", onWheel);
+      observer.disconnect();
+    };
   }, [buffer, camera, grid, checker, onionSkin, selection, locked]);
-
-  function screenPoint(event: ScreenPoint) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  }
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;
@@ -368,13 +376,6 @@ export function PixelCanvas({
       className="h-full w-full touch-none"
       style={{
         cursor: tool === "pan" ? "grab" : tool === "picker" ? "copy" : "crosshair",
-      }}
-      onWheel={(event) => {
-        event.preventDefault();
-        const screen = screenPoint(event);
-        const cam = latest.current.camera;
-        const next = stepZoom(cam.zoom, event.deltaY < 0 ? 1 : -1);
-        latest.current.onCamera(zoomAt(cam, screen.x, screen.y, next));
       }}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
