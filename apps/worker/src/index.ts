@@ -15,6 +15,7 @@ import {
   getRun,
   LangfuseTelemetry,
   openCodeGoHeaders,
+  parseModelSpecRow,
   pixelInstructions,
   releaseRun,
   selectRunTarget,
@@ -91,17 +92,14 @@ const openai = apiKey
     })
   : undefined;
 
-// The catalog is the database table, seeded by migrations. No env, no guessing.
+// The catalog is the database table, seeded by migrations. A malformed row
+// fails boot with the row id named; it never becomes a guessed endpoint.
 const modelRows = await db
   .select()
   .from(models)
   .where(eq(models.enabled, true))
   .orderBy(asc(models.position));
-const specs: ModelSpec[] = modelRows.map((row) => ({
-  id: row.id,
-  api: row.api === "chat" ? "chat" : "responses",
-  efforts: (row.efforts as string[]) ?? [],
-}));
+const specs: ModelSpec[] = modelRows.map((row) => parseModelSpecRow(row));
 
 // The control is declared explicitly so the options survive model ids Anvia
 // does not know, such as an OpenRouter slug. The adapter maps it to the
@@ -365,16 +363,6 @@ async function follow(
       const snapshot = runtime.snapshot(durableId);
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
-        if (telemetry) {
-          if (binding) {
-            await telemetry.recordScore({
-              runId: durableId,
-              name: "pixel-critique",
-              value: binding.issues.length === 0 ? 1 : 0,
-            });
-          }
-          await telemetry.flush();
-        }
         await db
           .update(generationRuns)
           .set({
@@ -385,6 +373,18 @@ async function follow(
           .where(eq(generationRuns.id, publicId));
         publish(publicId, "done", { status: snapshot.run.status, effort });
         finished = true;
+        // Telemetry is optional and bounded (5s) so a broken Langfuse cannot
+        // delay the run's terminal state beyond the publish above.
+        if (telemetry) {
+          if (binding) {
+            await telemetry.recordScore({
+              runId: durableId,
+              name: "pixel-critique",
+              value: binding.issues.length === 0 ? 1 : 0,
+            });
+          }
+          await telemetry.flush();
+        }
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));

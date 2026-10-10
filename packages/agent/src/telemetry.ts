@@ -159,12 +159,59 @@ function messageText(value: unknown): string | undefined {
   return JSON.stringify(value);
 }
 
-function usageRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const entries = Object.entries(value as Record<string, unknown>).filter(
-    ([, item]) => typeof item === "number",
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+/** Trace payloads stay readable and bounded; nothing unbounded goes upstream. */
+export const IO_LIMIT = 4000;
+
+/** The token counts Anvia reports; kept structural to stay decoupled. */
+export type UsageLike = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationInputTokens?: number;
+};
+
+export function capped(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  return text.length > IO_LIMIT ? `${text.slice(0, IO_LIMIT)}… (truncated)` : text;
+}
+
+function assistantOutput(
+  choice:
+    | readonly { type?: string; text?: string; toolName?: string; input?: unknown }[]
+    | undefined,
+): string {
+  if (!choice) return "";
+  const parts: string[] = [];
+  for (const part of choice) {
+    if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+      parts.push(part.text);
+    } else if (part.type === "tool-call" && typeof part.toolName === "string") {
+      parts.push(
+        `[tool] ${part.toolName}(${capped(JSON.stringify(part.input ?? {})) ?? ""})`,
+      );
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Langfuse recognises flat usage buckets named input/output/total and wants
+ * them exclusive, so cached input is split out instead of double-counted.
+ */
+export function usageToDetails(
+  usage: UsageLike | undefined,
+): Record<string, number> | undefined {
+  if (!usage) return undefined;
+  const cached =
+    typeof usage.cachedInputTokens === "number" ? usage.cachedInputTokens : 0;
+  const details: Record<string, number> = {
+    input: Math.max(0, usage.inputTokens - cached),
+    output: usage.outputTokens,
+    total: usage.totalTokens,
+  };
+  if (cached > 0) details.input_cached_tokens = cached;
+  return details;
 }
 
 type ActiveRun = {
@@ -232,6 +279,10 @@ export class LangfuseTelemetry {
   }
 
   private startGeneration(run: ActiveRun, generation: AgentGenerationStartArgs) {
+    const history =
+      (generation.request as unknown as { chatHistory?: readonly unknown[] })
+        .chatHistory ?? [];
+    const last = history[history.length - 1];
     const span: TelemetrySpan = {
       traceId: run.traceId,
       spanId: spanId(),
@@ -240,15 +291,27 @@ export class LangfuseTelemetry {
       name: "generate-draw",
       startMs: Date.now(),
       model: generation.modelInfo?.modelId,
-      input: messageText((generation.request as { messages?: unknown }).messages),
+      input: capped(messageText(last)),
     };
     run.spans.push(span);
     run.generations.set(generation.turn, span);
     return {
       end: (end: AgentGenerationEndArgs) => {
         span.endMs = Date.now();
-        span.usage = usageRecord(end.response.usage);
-        span.output = messageText((end.response as { content?: unknown }).content);
+        span.usage = usageToDetails((end.response as { usage?: UsageLike }).usage);
+        const text = assistantOutput(
+          (
+            end.response as {
+              choice?: readonly {
+                type?: string;
+                text?: string;
+                toolName?: string;
+                input?: unknown;
+              }[];
+            }
+          ).choice,
+        );
+        span.output = capped(text.length > 0 ? text : undefined);
       },
     };
   }
@@ -261,14 +324,14 @@ export class LangfuseTelemetry {
       kind: "tool",
       name: tool.toolName,
       startMs: Date.now(),
-      input: tool.args,
+      input: capped(tool.args),
     };
     run.spans.push(span);
     run.tools.set(tool.internalCallId, span);
     return {
       end: (end: AgentToolEndArgs) => {
         span.endMs = Date.now();
-        if (!end.skipped) span.output = end.result;
+        if (!end.skipped) span.output = capped(end.result);
       },
       error: (error: AgentToolErrorArgs) => {
         span.endMs = Date.now();
@@ -383,6 +446,7 @@ export class LangfuseTelemetry {
         "x-langfuse-ingestion-version": "4",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
     }).catch((error: unknown) => {
       console.error("[telemetry] delivery failed", error);
       return undefined;

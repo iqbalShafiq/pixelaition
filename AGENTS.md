@@ -23,7 +23,7 @@ pnpm db:migrate
 - `@anvia/durable` runs in `apps/worker` only, against one SQLite file.
 - A Durable submission carries no model controls. Models and their reasoning efforts live in the `models` table, seeded by migrations. Reasoning effort is set by registering one agent per model and effort and choosing the `agentId`, never by writing the effort into the prompt.
 - When the app cannot do something for real — a missing key, an unknown model or effort, an unreachable provider — it fails with an error naming the cause. Deterministic fallbacks and silent substitutions are forbidden.
-- Langfuse is optional. When it is configured, run traces travel over the OTLP endpoint with user, session, tags, and metadata attached, and secrets are redacted.
+- Langfuse is optional. When it is configured, run traces travel over the OTLP endpoint with user, session, tags, and metadata attached; trace payloads are size-capped and provider keys never travel through telemetry.
 - Canvas drawing lives in `apps/web/src/components/pixel-canvas.tsx`. The frame is drawn as a scaled bitmap; do not go back to one `fillRect` per cell. The transparency checker is baked into that bitmap in whole document pixels, never drawn in screen space.
 - Interface colours come from Sweetie 16 through the tokens in `DESIGN.md`. Do not introduce a colour outside that table, and never use `faint` for copy.
 - Commit messages follow Conventional Commits.

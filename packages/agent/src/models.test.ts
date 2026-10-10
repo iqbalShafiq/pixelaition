@@ -1,7 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { openCodeGoHeaders, selectRunTarget, type ModelSpec } from "./models.js";
+import {
+  openCodeGoHeaders,
+  parseModelSpecRow,
+  selectRunTarget,
+  type ModelSpec,
+} from "./models.js";
 
 describe("model specs", () => {
+  it("validates database rows instead of guessing", () => {
+    expect(parseModelSpecRow({ id: "m", api: "chat", efforts: ["low", "high"] })).toEqual(
+      {
+        id: "m",
+        api: "chat",
+        efforts: ["low", "high"],
+      },
+    );
+    expect(parseModelSpecRow({ id: "m", api: "responses", efforts: ["high"] }).api).toBe(
+      "responses",
+    );
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "respones", efforts: ["low"] }),
+    ).toThrow(/bad/);
+    expect(() => parseModelSpecRow({ id: "bad", api: "", efforts: ["low"] })).toThrow(
+      /bad/,
+    );
+    expect(() => parseModelSpecRow({ id: "bad", api: "chat", efforts: [] })).toThrow(
+      /bad/,
+    );
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low", 7] }),
+    ).toThrow(/bad/);
+  });
   it("selects only exact model and effort pairs", () => {
     const specs: ModelSpec[] = [
       { id: "deepseek-v4.1-flash", api: "chat", efforts: ["low", "high", "max"] },

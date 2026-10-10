@@ -1,6 +1,30 @@
 export type ModelSpec = { id: string; api: "chat" | "responses"; efforts: string[] };
 export type RunTarget = { modelId: string; effort: string };
 
+/**
+ * Validates one `models` row. A malformed row is a configuration error and
+ * must fail loud; it never silently becomes a different endpoint family.
+ */
+export function parseModelSpecRow(row: {
+  id: string;
+  api: unknown;
+  efforts: unknown;
+}): ModelSpec {
+  if (row.api !== "chat" && row.api !== "responses") {
+    throw new Error(`Model ${row.id} declares an invalid api: ${String(row.api)}`);
+  }
+  if (
+    !Array.isArray(row.efforts) ||
+    row.efforts.length === 0 ||
+    row.efforts.some((effort) => typeof effort !== "string" || effort.length === 0)
+  ) {
+    throw new Error(
+      `Model ${row.id} declares invalid efforts: ${JSON.stringify(row.efforts)}`,
+    );
+  }
+  return { id: row.id, api: row.api, efforts: [...(row.efforts as string[])] };
+}
+
 /** Exact match only: an unknown pair returns undefined and the caller fails loud. */
 export function selectRunTarget(
   specs: ModelSpec[],

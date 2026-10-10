@@ -51,7 +51,8 @@ export function Composer({
   }, [activity, message]);
 
   const modelOptions = models.length > 0 ? models : ["No models listed"];
-  const effortOptions = efforts.length > 0 ? efforts : ["none", "low", "medium", "high"];
+  // No invented effort options: an empty list means Generate stays disabled.
+  const effortOptions = efforts;
 
   return (
     <section
@@ -113,7 +114,12 @@ export function Composer({
                 ) : (
                   <Button
                     onClick={onGenerate}
-                    disabled={!prompt.trim() || !modelReady || !modelId}
+                    disabled={
+                      !prompt.trim() ||
+                      !modelReady ||
+                      !modelId ||
+                      effortOptions.length === 0
+                    }
                   >
                     Generate
                   </Button>

@@ -21,8 +21,10 @@ import {
   decidePrompt,
   DecisionNotConfiguredError,
   LangfuseTelemetry,
+  parseModelSpecRow,
   traceIdFor,
   type DrawDecision,
+  type ModelSpec,
 } from "@pixelaition/agent";
 
 const telemetry =
@@ -121,10 +123,19 @@ export function createApp() {
   });
 
   app.get("/api/models", async (_req, res) => {
-    res.json({
-      models: await listModels(),
-      modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
-    });
+    try {
+      res.json({
+        models: await listModels(),
+        modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
+      });
+    } catch (reason) {
+      return fail(
+        res,
+        503,
+        "CATALOG_INVALID",
+        reason instanceof Error ? reason.message : "The model catalog is malformed.",
+      );
+    }
   });
 
   app.post("/api/api-keys", async (req, res) => {
@@ -330,7 +341,17 @@ export function createApp() {
         "Add OPENAI_API_KEY on the server to generate.",
       );
     }
-    const catalog = await listModels();
+    let catalog: ModelSpec[];
+    try {
+      catalog = await listModels();
+    } catch (reason) {
+      return fail(
+        res,
+        503,
+        "CATALOG_INVALID",
+        reason instanceof Error ? reason.message : "The model catalog is malformed.",
+      );
+    }
     const pair = catalog.find((model) => model.id === body.modelId);
     if (!pair || !pair.efforts.includes(body.reasoningEffort)) {
       return fail(
@@ -374,7 +395,7 @@ export function createApp() {
         reason instanceof Error ? reason.message : "The decision provider failed.",
       );
     }
-    await telemetry?.recordSpan(
+    void telemetry?.recordSpan(
       {
         traceId: traceIdFor(requestId),
         kind: "generation",
@@ -632,19 +653,13 @@ async function documentForScope(
   return built;
 }
 
-async function listModels(): Promise<
-  Array<{ id: string; efforts: string[]; api: string }>
-> {
+async function listModels(): Promise<Array<ModelSpec>> {
   const rows = await db
     .select()
     .from(models)
     .where(eq(models.enabled, true))
     .orderBy(asc(models.position));
-  return rows.map((row) => ({
-    id: row.id,
-    efforts: (row.efforts as string[]) ?? [],
-    api: row.api,
-  }));
+  return rows.map((row) => parseModelSpecRow(row));
 }
 
 function slug(value: string): string {
