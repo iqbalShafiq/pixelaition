@@ -199,13 +199,21 @@ export function PasswordInput({
 }
 
 export function Textarea({
+  bare = false,
   className = "",
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  ref?: Ref<HTMLTextAreaElement>;
+  bare?: boolean;
+}) {
   return (
     <textarea
       {...props}
-      className={`${well} resize-none border-line hover:border-line-strong focus:border-accent ${className}`}
+      className={
+        bare
+          ? `w-full resize-none bg-transparent p-0 text-ink outline-none placeholder:text-muted disabled:opacity-50 ${className}`
+          : `${well} resize-none border-line hover:border-line-strong focus:border-accent ${className}`
+      }
     />
   );
 }
@@ -460,7 +468,7 @@ export function MenuItem({
     <BaseMenu.Item
       disabled={disabled}
       onClick={onClick}
-      className="cursor-pointer px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-navy data-[disabled]:opacity-40"
+      className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-navy data-[disabled]:opacity-40"
     >
       {children}
     </BaseMenu.Item>
@@ -543,6 +551,57 @@ export function Dialog({
             </DialogClose>
           </header>
           <div className="mt-4 grid gap-4">{children}</div>
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}
+
+/**
+ * A destructive-action confirmation. Base UI owns the focus trap, Escape and
+ * ARIA wiring; the copy names the consequence before anything is removed.
+ */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = "Delete",
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-navy/85" />
+        <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4">
+          <BaseDialog.Title className="font-mono text-[12px] tracking-[0.16em] text-accent uppercase">
+            {title}
+          </BaseDialog.Title>
+          <BaseDialog.Description className="mt-2 text-[13px] text-muted">
+            {description}
+          </BaseDialog.Description>
+          <div className="mt-4 flex justify-end gap-2">
+            <DialogClose>
+              <X size={16} strokeWidth={2.5} />
+              <span className="sr-only">Cancel</span>
+            </DialogClose>
+            <Button
+              tone="danger"
+              onClick={() => {
+                onConfirm();
+                onOpenChange(false);
+              }}
+            >
+              {confirmLabel}
+            </Button>
+          </div>
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

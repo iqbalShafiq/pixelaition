@@ -100,7 +100,7 @@ The frame is composited once into a 1:1 offscreen bitmap and then scaled with sm
 
 The whole preview is one texture: a checker of **one square per document pixel**, tiled across the canvas and anchored to the document grid at the current zoom. One square per pixel is what makes the hover cell and every drawn pixel cover exactly one square. A fixed screen-size checker looks tidier in the abstract but it drifts against the pixel grid, so a hover outline covers one and a bit squares and nothing reads as a single pixel any more.
 
-There is no separate highlight and no outline around the document. Recolouring or bordering the canvas area makes it read as a small box inside a bigger one, and the canvas then appears to shrink as you zoom out. The document is simply where the artwork is.
+The document edge is drawn as a **2px accent border**, painted just outside the pixel bounds so it never covers a cell. It marks exactly the region the tools and the agent may write to; because it lives outside the document, the artwork does not read as a smaller box inside a bigger one, and nothing shifts as you zoom.
 
 The grid overlay is therefore redundant and **off by default**. When it is on it only appears from 1200% up, and it costs one pixel per cell boundary: measured at 1200% a cell reads one line pixel plus eleven body pixels against a flat twelve with the grid off. Below 1200% a boundary line eats an eighth of every cell and blends against two checker tones, which reads as texture rather than as a grid.
 

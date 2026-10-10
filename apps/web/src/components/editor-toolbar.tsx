@@ -1,20 +1,19 @@
 import {
+  Brush,
   Eraser,
   Grid3X3,
   Hand,
   Layers,
-  Minus,
   PaintBucket,
   Pencil,
   Pipette,
-  Plus,
   Slash,
   Square,
   SquareDashed,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
-import { Button, IconButton, Panel, Separator } from "./ui.js";
+import { Button, IconButton, Panel, Separator, Tooltip } from "./ui.js";
 
 const stroke = 2;
 const size = 16;
@@ -38,28 +37,20 @@ const tools: Array<{
 export function Toolbar({
   tool,
   brushSize,
-  zoom,
   selectionActive,
   locked,
   onTool,
   onBrush,
-  onZoom,
-  onFit,
-  onActualSize,
   onSelectionFill,
   onSelectionClear,
   onDeselect,
 }: {
   tool: Tool;
   brushSize: number;
-  zoom: number;
   selectionActive: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
   onBrush: (size: number) => void;
-  onZoom: (direction: 1 | -1) => void;
-  onFit: () => void;
-  onActualSize: () => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onDeselect: () => void;
@@ -83,6 +74,11 @@ export function Toolbar({
 
       <Separator vertical />
 
+      <Tooltip label="Brush size · press [ or ]">
+        <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center text-muted">
+          <Brush size={size} strokeWidth={stroke} />
+        </span>
+      </Tooltip>
       {[1, 2, 3].map((value) => (
         <IconButton
           key={value}
@@ -91,39 +87,16 @@ export function Toolbar({
           active={brushSize === value}
           onClick={() => onBrush(value)}
         >
-          <span className="font-mono text-[11px]">{value}</span>
+          <span
+            aria-hidden
+            className="bg-current"
+            style={{
+              width: value === 1 ? 4 : value === 2 ? 7 : 10,
+              height: value === 1 ? 4 : value === 2 ? 7 : 10,
+            }}
+          />
         </IconButton>
       ))}
-
-      <Separator vertical />
-
-      <span className="shrink-0 border-2 border-line bg-field px-2 py-1 font-mono text-[11px] text-muted">
-        {Math.round(zoom * 100)}%
-      </span>
-      <IconButton label="Zoom out" onClick={() => onZoom(-1)}>
-        <Minus size={size} strokeWidth={stroke} />
-      </IconButton>
-      <IconButton label="Zoom in" onClick={() => onZoom(1)}>
-        <Plus size={size} strokeWidth={stroke} />
-      </IconButton>
-      <Button
-        tone="ghost"
-        className="px-2 py-1.5 text-[11px]"
-        aria-label="Fit to view"
-        title="Fit to view (Ctrl+0)"
-        onClick={onFit}
-      >
-        Fit
-      </Button>
-      <Button
-        tone="ghost"
-        className="px-2 py-1.5 text-[11px]"
-        aria-label="Actual size"
-        title="Actual size (Ctrl+1)"
-        onClick={onActualSize}
-      >
-        1:1
-      </Button>
 
       {selectionActive ? (
         <>

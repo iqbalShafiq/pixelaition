@@ -47,15 +47,16 @@ export function Composer({
   return (
     <section
       aria-label="Prompt composer"
-      className="pointer-events-auto pixel-corners-sm w-full border-2 border-line-strong bg-field shadow-[0_3px_0_0_var(--color-panel)]"
+      className="pointer-events-auto pixel-corners-sm w-full border-2 border-line-strong bg-field shadow-[0_3px_0_0_var(--color-panel)] transition-colors duration-150 focus-within:border-accent"
       style={{ maxWidth: "40rem" }}
     >
       <Textarea
+        bare
         ref={areaRef}
         value={prompt}
         aria-label="Prompt"
         placeholder="Describe the pixel asset, or ask for another state of this frame"
-        className="min-h-[2.75rem] resize-none border-0 bg-transparent focus:border-0"
+        className="min-h-[2.75rem] px-3 py-2.5"
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
@@ -65,7 +66,7 @@ export function Composer({
         }}
         onChange={(event) => onPrompt(event.target.value)}
       />
-      <div className="flex flex-wrap items-center gap-1.5 border-t-2 border-line px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
         <SelectControl
           label="Model"
           value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}

@@ -1,16 +1,17 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
-import { Copy, Play, Plus, Square, Trash2 } from "lucide-react";
+import { Copy, Menu as MenuIcon, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { Reorder, useDragControls } from "motion/react";
 import {
   Button,
   Checkbox,
+  ConfirmDialog,
   EmptyState,
   Field,
   IconButton,
   Menu,
   MenuItem,
-  MenuSeparator,
   Panel,
   Popover,
   TextInput,
@@ -18,51 +19,6 @@ import {
 import { hexToRgba } from "../lib/color.js";
 import { hexToHsv, hsvToHex } from "../lib/hsv.js";
 import { base64ToBytes, type FrameDto } from "../lib/types.js";
-
-/**
- * Text that writes through on every keystroke issues a request per character and
- * lets responses land out of order. Commit on blur or Enter instead.
- */
-export function CommitInput({
-  value,
-  label,
-  inputMode,
-  className,
-  onCommit,
-}: {
-  value: string;
-  label: string;
-  inputMode?: "numeric" | "text";
-  className?: string;
-  onCommit: (next: string) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  function commit() {
-    const next = draft.trim();
-    if (next && next !== value) onCommit(next);
-    else setDraft(value);
-  }
-  return (
-    <label className="grid gap-1">
-      <span className="font-mono text-[10px] tracking-[0.14em] text-muted uppercase">
-        {label}
-      </span>
-      <TextInput
-        value={draft}
-        inputMode={inputMode}
-        placeholder={label}
-        className={className}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") setDraft(value);
-        }}
-      />
-    </label>
-  );
-}
 
 /* ------------------------------------------------------------------ frames */
 
@@ -107,6 +63,139 @@ function FrameThumb({
   );
 }
 
+function frameRowClass(current: boolean) {
+  return `flex w-full items-center gap-2 border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
+    current
+      ? "border-accent bg-raised text-accent"
+      : "border-transparent text-ink hover:border-line hover:bg-raised"
+  }`;
+}
+
+function FrameRow({
+  frame,
+  index,
+  count,
+  palette,
+  current,
+  locked,
+  editing,
+  draft,
+  onDraft,
+  onCommit,
+  onCancel,
+  onSelect,
+  onStartEdit,
+  onDuplicate,
+  onDelete,
+  onKeyboardMove,
+  onDragFinished,
+}: {
+  frame: FrameDto;
+  index: number;
+  count: number;
+  palette: string[];
+  current: boolean;
+  locked: boolean;
+  editing: boolean;
+  draft: string;
+  onDraft: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  onSelect: () => void;
+  onStartEdit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onKeyboardMove: (toIndex: number) => void;
+  onDragFinished: () => void;
+}) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={frame}
+      dragListener={false}
+      dragControls={controls}
+      onDragEnd={onDragFinished}
+      whileDrag={{ zIndex: 2 }}
+      transition={{ duration: 0.16, ease: "easeOut" }}
+      className="relative flex items-center gap-1"
+    >
+      <div className={`${frameRowClass(current)} min-w-0 flex-1`}>
+        <FrameThumb frame={frame} palette={palette} />
+        {editing ? (
+          <TextInput
+            autoFocus
+            value={draft}
+            aria-label="Frame name"
+            className="min-w-0 flex-1 px-1 py-0.5 text-[13px]"
+            onChange={(event) => onDraft(event.target.value)}
+            onBlur={onCommit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") onCancel();
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={onSelect}
+            aria-current={current}
+            title={frame.name}
+            className="min-w-0 flex-1 truncate text-left"
+          >
+            {frame.name}
+          </button>
+        )}
+        {current && locked ? (
+          <span className="font-mono text-[10px]">drawing</span>
+        ) : null}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+          <IconButton
+            label={`Rename ${frame.name}`}
+            size="sm"
+            disabled={locked}
+            onClick={onStartEdit}
+          >
+            <Pencil size={13} strokeWidth={2} />
+          </IconButton>
+          <Menu label={`Actions for ${frame.name}`}>
+            <MenuItem disabled={locked} onClick={onDuplicate}>
+              <Copy size={13} strokeWidth={2} /> Duplicate
+            </MenuItem>
+            <MenuItem disabled={locked} onClick={onDelete}>
+              <Trash2 size={13} strokeWidth={2} /> Delete
+            </MenuItem>
+          </Menu>
+        </span>
+      </div>
+      <button
+        type="button"
+        disabled={locked}
+        aria-label={`Reorder ${frame.name}`}
+        title="Drag to reorder, or use the arrow keys"
+        onPointerDown={(event) => {
+          if (locked) return;
+          event.preventDefault();
+          controls.start(event);
+        }}
+        onKeyDown={(event) => {
+          if (locked) return;
+          if (event.key === "ArrowUp" && index > 0) {
+            event.preventDefault();
+            onKeyboardMove(index - 1);
+          }
+          if (event.key === "ArrowDown" && index < count - 1) {
+            event.preventDefault();
+            onKeyboardMove(index + 1);
+          }
+        }}
+        className="grid h-6 w-5 shrink-0 cursor-grab place-items-center text-muted hover:text-ink disabled:cursor-default disabled:opacity-50"
+      >
+        <MenuIcon size={14} strokeWidth={2} />
+      </button>
+    </Reorder.Item>
+  );
+}
+
 export function FramePanel({
   frames,
   palette,
@@ -119,6 +208,7 @@ export function FramePanel({
   onDuplicate,
   onRename,
   onDelete,
+  onReorder,
 }: {
   frames: FrameDto[];
   palette: string[];
@@ -128,18 +218,87 @@ export function FramePanel({
   onSelect: (frameId: string) => void;
   onTogglePlay: () => void;
   onAdd: () => void;
-  onDuplicate: () => void;
+  onDuplicate: (frameId: string) => void;
   onRename: (frameId: string, name: string) => void;
-  onDelete: () => void;
+  onDelete: (frameId: string) => void;
+  onReorder: (frameId: string, toIndex: number) => Promise<boolean>;
 }) {
-  const active = frames.find((frame) => frame.id === activeId);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<FrameDto | null>(null);
+  const [orderDraft, setOrderDraft] = useState<FrameDto[] | null>(null);
+  const draftOrderRef = useRef<FrameDto[] | null>(null);
+  const list = orderDraft ?? frames;
+
+  function startEdit(frame: FrameDto) {
+    setEditingId(frame.id);
+    setDraft(frame.name);
+  }
+  function commitEdit() {
+    const next = draft.trim();
+    const original = frames.find((frame) => frame.id === editingId)?.name;
+    if (editingId && next && next !== original) onRename(editingId, next);
+    setEditingId(null);
+  }
+
+  // Live preview while dragging: the list shows the new order immediately and
+  // falls back to the server order once the reorder is stored (or instantly
+  // when the drag ends where it started).
+  function previewOrder(next: FrameDto[]) {
+    const caughtUp =
+      next.length === frames.length &&
+      next.every((frame, index) => frame.id === frames[index]?.id);
+    if (caughtUp) {
+      draftOrderRef.current = null;
+      setOrderDraft(null);
+      return;
+    }
+    draftOrderRef.current = next;
+    setOrderDraft(next);
+  }
+
+  useEffect(() => {
+    if (!orderDraft) return;
+    const caughtUp =
+      frames.length === orderDraft.length &&
+      frames.every((frame, index) => frame.id === orderDraft[index]?.id);
+    if (caughtUp) {
+      draftOrderRef.current = null;
+      setOrderDraft(null);
+    }
+  }, [frames, orderDraft]);
+
+  function persistOrder(id: string) {
+    const next = draftOrderRef.current ?? frames;
+    const index = next.findIndex((frame) => frame.id === id);
+    draftOrderRef.current = null;
+    if (index === -1) return;
+    void onReorder(id, index).then((ok) => {
+      if (!ok) setOrderDraft(null);
+    });
+  }
+
   return (
     <Panel
-      title="Frames"
+      title={`${frames.length} frame${frames.length === 1 ? "" : "s"}`}
       action={
-        <IconButton label="Add frame" size="sm" disabled={locked} onClick={onAdd}>
-          <Plus size={14} strokeWidth={2.5} />
-        </IconButton>
+        <div className="flex items-center gap-1">
+          <IconButton
+            label={playing ? "Stop playback" : "Play frames"}
+            size="sm"
+            disabled={frames.length < 2}
+            onClick={onTogglePlay}
+          >
+            {playing ? (
+              <Square size={13} strokeWidth={2.5} />
+            ) : (
+              <Play size={13} strokeWidth={2.5} />
+            )}
+          </IconButton>
+          <IconButton label="Add frame" size="sm" disabled={locked} onClick={onAdd}>
+            <Plus size={14} strokeWidth={2.5} />
+          </IconButton>
+        </div>
       }
     >
       {frames.length === 0 ? (
@@ -148,72 +307,56 @@ export function FramePanel({
           body="A frame holds the pixels for one state of this asset."
         />
       ) : (
-        <ul className="grid gap-1">
-          {frames.map((frame, index) => {
+        <Reorder.Group
+          axis="y"
+          values={list}
+          onReorder={previewOrder}
+          className="grid gap-1"
+        >
+          {list.map((frame, index) => {
             const current = frame.id === activeId;
             return (
-              <li key={frame.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(frame.id)}
-                  aria-current={current}
-                  className={`flex w-full items-center gap-2 border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
-                    current
-                      ? "border-accent bg-raised text-accent"
-                      : "border-transparent text-ink hover:border-line hover:bg-raised"
-                  }`}
-                >
-                  <FrameThumb frame={frame} palette={palette} />
-                  <span className="font-mono text-[10px] text-muted">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="truncate">{frame.name}</span>
-                  {current && locked ? (
-                    <span className="ml-auto font-mono text-[10px]">drawing</span>
-                  ) : null}
-                </button>
-              </li>
+              <FrameRow
+                key={frame.id}
+                frame={frame}
+                index={index}
+                count={list.length}
+                palette={palette}
+                current={current}
+                locked={locked}
+                editing={editingId === frame.id}
+                draft={draft}
+                onDraft={setDraft}
+                onCommit={commitEdit}
+                onCancel={() => setEditingId(null)}
+                onSelect={() => onSelect(frame.id)}
+                onStartEdit={() => startEdit(frame)}
+                onDuplicate={() => onDuplicate(frame.id)}
+                onDelete={() => setPendingDelete(frame)}
+                onKeyboardMove={(to) => void onReorder(frame.id, to)}
+                onDragFinished={() => persistOrder(frame.id)}
+              />
             );
           })}
-        </ul>
+        </Reorder.Group>
       )}
 
-      {active && !locked ? (
-        <CommitInput
-          value={active.name}
-          label="Rename frame"
-          onCommit={(name) => onRename(active.id, name)}
-        />
-      ) : null}
-
-      <div className="flex items-center gap-1">
-        <IconButton
-          label={playing ? "Stop playback" : "Play frames"}
-          size="sm"
-          disabled={frames.length < 2}
-          onClick={onTogglePlay}
-        >
-          {playing ? (
-            <Square size={13} strokeWidth={2.5} />
-          ) : (
-            <Play size={13} strokeWidth={2.5} />
-          )}
-        </IconButton>
-        <span className="font-mono text-[10px] text-muted">
-          {frames.length} frame{frames.length === 1 ? "" : "s"}
-        </span>
-        <span className="ml-auto">
-          <Menu label="Frame actions">
-            <MenuItem disabled={locked || !active} onClick={onDuplicate}>
-              <Copy size={13} strokeWidth={2} /> Duplicate
-            </MenuItem>
-            <MenuSeparator className="my-1 h-0.5 bg-line" />
-            <MenuItem disabled={locked || !active} onClick={onDelete}>
-              <Trash2 size={13} strokeWidth={2} /> Delete
-            </MenuItem>
-          </Menu>
-        </span>
-      </div>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null);
+        }}
+        title="Delete this frame?"
+        description={
+          pendingDelete
+            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            : ""
+        }
+        onConfirm={() => {
+          if (pendingDelete) onDelete(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+      />
     </Panel>
   );
 }
@@ -237,10 +380,26 @@ export function LayerPanel({
   onToggleVisible: (layerId: string, visible: boolean) => void;
   onAdd: () => void;
   onRename: (layerId: string, name: string) => void;
-  onDelete: () => void;
+  onDelete: (layerId: string) => void;
 }) {
   const layers = buffer?.layers ?? [];
-  const active = layers.find((layer) => layer.id === activeId);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+
+  function startEdit(layerId: string, name: string) {
+    setEditingId(layerId);
+    setDraft(name);
+  }
+  function commitEdit() {
+    const next = draft.trim();
+    const original = layers.find((layer) => layer.id === editingId)?.name;
+    if (editingId && next && next !== original) onRename(editingId, next);
+    setEditingId(null);
+  }
+
   return (
     <Panel
       title="Layers"
@@ -259,48 +418,93 @@ export function LayerPanel({
         {layers.map((layer) => {
           const current = layer.id === activeId;
           return (
-            <li key={layer.id} className="flex items-center gap-2">
-              <Checkbox
-                label={`Show ${layer.name}`}
-                hideLabel
-                checked={layer.visible}
-                disabled={locked}
-                onChange={(next) => onToggleVisible(layer.id, next)}
-              />
-              <button
-                type="button"
-                onClick={() => onSelect(layer.id)}
-                aria-current={current}
-                aria-label={`Select layer ${layer.name}`}
-                className={`min-w-0 flex-1 truncate border-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 ${
-                  current
-                    ? "border-accent bg-raised text-accent"
-                    : "border-transparent text-ink hover:border-line hover:bg-raised"
-                } ${layer.visible ? "" : "opacity-55"}`}
-              >
-                {layer.name}
-              </button>
+            <li
+              key={layer.id}
+              className={`flex items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                current
+                  ? "border-accent bg-raised"
+                  : "border-transparent hover:border-line hover:bg-raised"
+              } ${layer.visible ? "" : "opacity-55"}`}
+            >
+              <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+                <Checkbox
+                  label={`Show ${layer.name}`}
+                  hideLabel
+                  checked={layer.visible}
+                  disabled={locked}
+                  onChange={(next) => onToggleVisible(layer.id, next)}
+                />
+              </span>
+              {editingId === layer.id ? (
+                <TextInput
+                  autoFocus
+                  value={draft}
+                  aria-label="Layer name"
+                  className="min-w-0 flex-1 px-1 py-0.5 text-[13px]"
+                  onChange={(event) => setDraft(event.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") setEditingId(null);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelect(layer.id)}
+                  aria-current={current}
+                  aria-label={`Select layer ${layer.name}`}
+                  className={`min-w-0 flex-1 truncate text-left text-[13px] ${
+                    current ? "text-accent" : "text-ink"
+                  }`}
+                >
+                  {layer.name}
+                </button>
+              )}
+              <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                <IconButton
+                  label={`Rename ${layer.name}`}
+                  size="sm"
+                  disabled={locked}
+                  onClick={() => startEdit(layer.id, layer.name)}
+                >
+                  <Pencil size={13} strokeWidth={2} />
+                </IconButton>
+                <Menu label={`Actions for ${layer.name}`}>
+                  <MenuItem
+                    disabled={locked || layers.length <= 1}
+                    onClick={() => setPendingDelete({ id: layer.id, name: layer.name })}
+                  >
+                    <Trash2 size={13} strokeWidth={2} /> Delete
+                  </MenuItem>
+                </Menu>
+              </span>
             </li>
           );
         })}
       </ul>
-      {active && !locked ? (
-        <CommitInput
-          value={active.name}
-          label="Rename layer"
-          onCommit={(name) => onRename(active.id, name)}
-        />
-      ) : null}
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] text-muted">
           {layers.length} of 4 layers
         </span>
-        <Menu label="Layer actions">
-          <MenuItem disabled={locked || layers.length <= 1} onClick={onDelete}>
-            <Trash2 size={13} strokeWidth={2} /> Delete layer
-          </MenuItem>
-        </Menu>
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingDelete(null);
+        }}
+        title="Delete this layer?"
+        description={
+          pendingDelete
+            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            : ""
+        }
+        onConfirm={() => {
+          if (pendingDelete) onDelete(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+      />
     </Panel>
   );
 }

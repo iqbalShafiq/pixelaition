@@ -20,7 +20,7 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { Composer } from "../components/composer.js";
-import { RunConsole } from "../components/run-console.js";
+import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import {
@@ -30,6 +30,7 @@ import {
   StylePanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
+import { Minus, Plus } from "lucide-react";
 import {
   normalizeRect,
   PixelCanvas,
@@ -84,6 +85,19 @@ const fallbackBuffer: FrameBuffer = {
   layers: [{ id: "empty", name: "pixels", visible: true, pixels: new Uint8Array(64) }],
 };
 
+type ActiveRunResponse = {
+  run: { id: string; status: string } | null;
+  lastRun: {
+    id: string;
+    status: string;
+    prompt: string | null;
+    events: Array<{ sequence: number; type: string; data: unknown }>;
+    text: string;
+    durationMs: number | null;
+  } | null;
+  history: HistoryRun[];
+};
+
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
   const client = useQueryClient();
@@ -116,6 +130,7 @@ export function EditorScreen() {
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
+  const [viewMode, setViewMode] = useState<"fit" | "actual" | "free">("fit");
   const [selection, setSelection] = useState<Rect | null>(null);
   const [grid, setGrid] = useState(false);
   const [checker, setChecker] = useState(true);
@@ -131,8 +146,12 @@ export function EditorScreen() {
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
   const runFrameIdRef = useRef<string | null>(null);
   runFrameIdRef.current = runFrameId;
+  const displayedRunIdRef = useRef<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [restoredMs, setRestoredMs] = useState<number | null>(null);
+  const [runPrompt, setRunPrompt] = useState("");
+  const [runHistory, setRunHistory] = useState<HistoryRun[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
@@ -175,6 +194,7 @@ export function EditorScreen() {
     if (!rect || rect.width === 0) return;
     fitted.current = key;
     fit();
+    setViewMode("fit");
   }, [assetId, asset.data, buffer, fit]);
 
   // Seed a draft for every frame the server knows about, keeping local edits.
@@ -353,6 +373,7 @@ export function EditorScreen() {
       if ((event.metaKey || event.ctrlKey) && event.key === "0") {
         event.preventDefault();
         fit();
+        setViewMode("fit");
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key === "1") {
@@ -362,6 +383,7 @@ export function EditorScreen() {
         if (rect && doc) {
           setCamera(centerCamera(rect.width, rect.height, doc.width, doc.height, 1));
         }
+        setViewMode("actual");
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -464,6 +486,21 @@ export function EditorScreen() {
             });
           }
           void client.invalidateQueries({ queryKey: ["asset", assetId] });
+          // The finished run is on screen already; only the earlier list needs
+          // a refresh, and it is scoped to the frame the agent painted.
+          const shown = runFrameIdRef.current;
+          if (shown) {
+            void api<ActiveRunResponse>(
+              `/api/assets/${assetId}/active-run?frameId=${encodeURIComponent(shown)}`,
+            )
+              .catch(() => null)
+              .then((result) => {
+                if (!result || sourceRef.current) return;
+                setRunHistory(
+                  result.history.filter((item) => item.id !== result.lastRun?.id),
+                );
+              });
+          }
           return;
         }
         // Other events are already reflected in the row list above.
@@ -495,14 +532,16 @@ export function EditorScreen() {
   useEffect(() => {
     let cancelled = false;
     async function check() {
-      const result = await api<{ run: { id: string; status: string } | null }>(
+      const result = await api<ActiveRunResponse>(
         `/api/assets/${assetId}/active-run`,
-      ).catch(() => ({ run: null }));
-      if (cancelled || !result.run || sourceRef.current) return;
-      setRunId(result.run.id);
-      setConsoleOpen(true);
-      log("Rejoined a run that was still going");
-      listen(result.run.id, "", 0);
+      ).catch(() => ({ run: null, lastRun: null, history: [] }));
+      if (cancelled || sourceRef.current) return;
+      if (result.run) {
+        setRunId(result.run.id);
+        setConsoleOpen(true);
+        log("Rejoined a run that was still going");
+        listen(result.run.id, "", 0);
+      }
     }
     void check();
     window.addEventListener("focus", check);
@@ -511,6 +550,34 @@ export function EditorScreen() {
       window.removeEventListener("focus", check);
     };
   }, [assetId, listen, log]);
+
+  // Switching frames rewinds the console to that frame's story: its last run's
+  // steps and answer, plus the prompts and answers of the runs before it.
+  useEffect(() => {
+    if (!frameId) return;
+    let cancelled = false;
+    void (async () => {
+      const result = await api<ActiveRunResponse>(
+        `/api/assets/${assetId}/active-run?frameId=${encodeURIComponent(frameId)}`,
+      ).catch(() => null);
+      if (cancelled || !result || sourceRef.current || result.run) return;
+      const latest = result.lastRun;
+      setRunHistory(result.history.filter((item) => item.id !== latest?.id));
+      if (latest?.id === displayedRunIdRef.current) return;
+      let restored: RunRow[] = [];
+      for (const event of latest?.events ?? []) {
+        restored = applyRunEvent(restored, event.sequence, event.type, event.data);
+      }
+      setRows(restored);
+      setMessage(latest?.text ?? "");
+      setRestoredMs(latest?.durationMs ?? null);
+      setRunPrompt(latest?.prompt ?? "");
+      displayedRunIdRef.current = latest?.id ?? null;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [frameId, assetId]);
 
   useEffect(() => () => sourceRef.current?.close(), []);
 
@@ -648,8 +715,10 @@ export function EditorScreen() {
   async function frameAction(
     kind: "add" | "duplicate" | "rename" | "delete",
     value?: string,
+    targetId?: string,
   ) {
     if (!frameId) return;
+    const target = targetId ?? frameId;
     try {
       if (kind === "add") {
         await api(`/api/assets/${assetId}/frames`, {
@@ -657,24 +726,24 @@ export function EditorScreen() {
           body: JSON.stringify({ name: value ?? "" }),
         });
       } else if (kind === "duplicate") {
-        await api(`/api/assets/${assetId}/frames/${frameId}/duplicate`, {
+        await api(`/api/assets/${assetId}/frames/${target}/duplicate`, {
           method: "POST",
-          body: JSON.stringify({ name: value }),
+          body: JSON.stringify({}),
         });
       } else if (kind === "rename" && value !== undefined) {
-        await api(`/api/assets/${assetId}/frames/${frameId}`, {
+        await api(`/api/assets/${assetId}/frames/${target}`, {
           method: "PATCH",
           body: JSON.stringify({ name: value }),
         });
       } else if (kind === "delete") {
-        await api(`/api/assets/${assetId}/frames/${frameId}`, { method: "DELETE" });
+        await api(`/api/assets/${assetId}/frames/${target}`, { method: "DELETE" });
         flush();
         setDrafts((current) => {
           const next = { ...current };
-          delete next[frameId];
+          delete next[target];
           return next;
         });
-        const fallback = frames.find((item) => item.id !== frameId);
+        const fallback = frames.find((item) => item.id !== target);
         setFrameId(fallback?.id ?? null);
         setSelection(null);
       }
@@ -683,6 +752,23 @@ export function EditorScreen() {
       const text = reason instanceof Error ? reason.message : "That change failed.";
       setError(text);
       notify({ title: "Frame change failed", description: text });
+    }
+  }
+
+  async function frameReorder(id: string, index: number): Promise<boolean> {
+    if (running) return false;
+    try {
+      await api(`/api/assets/${assetId}/frames/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ index }),
+      });
+      await refresh();
+      return true;
+    } catch (reason) {
+      const text = reason instanceof Error ? reason.message : "That change failed.";
+      setError(text);
+      notify({ title: "Frame change failed", description: text });
+      return false;
     }
   }
 
@@ -724,6 +810,9 @@ export function EditorScreen() {
     setMessage("");
     setRows([]);
     setConsoleOpen(true);
+    setRestoredMs(null);
+    setRunPrompt(prompt);
+    setRunHistory([]);
     try {
       // Local edits made before the run must land before the agent starts.
       await flush();
@@ -742,6 +831,7 @@ export function EditorScreen() {
         }),
       });
       setRunId(started.runId);
+      displayedRunIdRef.current = started.runId;
       setRunFrameId(frameId);
       log(`Run ${started.runId.slice(0, 8)} started`);
       listen(started.runId, frameId);
@@ -785,9 +875,10 @@ export function EditorScreen() {
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
         onAdd={() => void frameAction("add")}
-        onDuplicate={() => void frameAction("duplicate")}
-        onRename={(_id, name) => void frameAction("rename", name)}
-        onDelete={() => void frameAction("delete")}
+        onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
+        onRename={(id, name) => void frameAction("rename", name, id)}
+        onDelete={(id) => void frameAction("delete", undefined, id)}
+        onReorder={(id, index) => frameReorder(id, index)}
       />
       <LayerPanel
         buffer={buffer}
@@ -810,11 +901,11 @@ export function EditorScreen() {
           frameId &&
           edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
         }
-        onDelete={() =>
+        onDelete={(layerId) =>
           frameId &&
           edit(frameId, drafts[frameId], {
             type: "removeLayer",
-            layerId: activeLayerId,
+            layerId,
           })
         }
       />
@@ -860,7 +951,7 @@ export function EditorScreen() {
       id="content"
       className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
     >
-      <header className="flex min-w-0 items-center gap-3 border-b-2 border-line px-3 py-2">
+      <header className="flex min-w-0 items-center gap-3 px-3 py-2">
         <a
           href="/projects"
           className="font-mono text-xs tracking-[0.18em] text-accent whitespace-nowrap"
@@ -915,36 +1006,19 @@ export function EditorScreen() {
 
       <div className="grid min-h-0 min-w-0 grid-rows-[1fr]">
         <div className="grid min-h-0 min-w-0 lg:grid-cols-[280px_1fr_300px]">
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r border-line p-3 lg:flex">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-3 lg:flex">
             {leftPanels}
           </aside>
 
-          <div className="relative flex min-h-0 min-w-0 flex-col">
+          <div className="relative flex min-h-0 min-w-0 flex-col lg:border-x lg:border-line">
             <div className="order-2 min-w-0 sm:order-1">
               <Toolbar
                 tool={tool}
                 brushSize={brushSize}
-                zoom={camera.zoom}
                 selectionActive={selection !== null}
                 locked={locked}
                 onTool={setTool}
                 onBrush={setBrushSize}
-                onZoom={(direction) =>
-                  setCamera((current) => ({
-                    ...current,
-                    zoom: stepZoom(current.zoom, direction),
-                  }))
-                }
-                onFit={fit}
-                onActualSize={() => {
-                  const rect = viewRef.current?.getBoundingClientRect();
-                  const doc = bufferRef.current;
-                  if (rect && doc) {
-                    setCamera(
-                      centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
-                    );
-                  }
-                }}
                 onSelectionFill={() => selectionCommand("fill")}
                 onSelectionClear={() => selectionCommand("clear")}
                 onDeselect={() => setSelection(null)}
@@ -1001,7 +1075,10 @@ export function EditorScreen() {
                   selection={selection}
                   locked={locked}
                   onAction={onAction}
-                  onCamera={setCamera}
+                  onCamera={(next) => {
+                    setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
+                    setCamera(next);
+                  }}
                 />
               )}
               {locked ? (
@@ -1009,6 +1086,78 @@ export function EditorScreen() {
                   the agent is drawing on this frame
                 </p>
               ) : null}
+              <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
+                <span className="w-full text-center font-mono text-[10px] text-muted">
+                  {Math.round(camera.zoom * 100)}%
+                </span>
+                <IconButton
+                  label="Zoom out"
+                  size="sm"
+                  onClick={() => {
+                    setViewMode("free");
+                    setCamera((current) => ({
+                      ...current,
+                      zoom: stepZoom(current.zoom, -1),
+                    }));
+                  }}
+                >
+                  <Minus size={14} strokeWidth={2} />
+                </IconButton>
+                <IconButton
+                  label="Zoom in"
+                  size="sm"
+                  onClick={() => {
+                    setViewMode("free");
+                    setCamera((current) => ({
+                      ...current,
+                      zoom: stepZoom(current.zoom, 1),
+                    }));
+                  }}
+                >
+                  <Plus size={14} strokeWidth={2} />
+                </IconButton>
+                <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                <button
+                  type="button"
+                  aria-label="Fit to view"
+                  aria-pressed={viewMode === "fit"}
+                  title="Fit to view (Ctrl+0)"
+                  onClick={() => {
+                    fit();
+                    setViewMode("fit");
+                  }}
+                  className={`flex h-7 w-7 items-center justify-center border-2 font-mono text-[9px] transition-colors duration-150 ${
+                    viewMode === "fit"
+                      ? "border-accent text-accent"
+                      : "border-line text-muted hover:text-ink"
+                  }`}
+                >
+                  Fit
+                </button>
+                <button
+                  type="button"
+                  aria-label="Actual size"
+                  aria-pressed={viewMode === "actual"}
+                  title="Actual size (Ctrl+1)"
+                  onClick={() => {
+                    const rect = viewRef.current?.getBoundingClientRect();
+                    const doc = bufferRef.current;
+                    if (rect && doc) {
+                      setCamera(
+                        centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
+                      );
+                    }
+                    setViewMode("actual");
+                  }}
+                  className={`flex h-7 w-7 items-center justify-center border-2 font-mono text-[9px] transition-colors duration-150 ${
+                    viewMode === "actual"
+                      ? "border-accent text-accent"
+                      : "border-line text-muted hover:text-ink"
+                  }`}
+                >
+                  1:1
+                </button>
+              </div>
             </div>
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center gap-2 overflow-y-auto px-3">
               <RunConsole
@@ -1017,6 +1166,9 @@ export function EditorScreen() {
                 open={consoleOpen}
                 onOpen={setConsoleOpen}
                 message={message || (error ?? "")}
+                prompt={runPrompt}
+                history={runHistory}
+                restoredMs={restoredMs}
               />
               <Composer
                 prompt={prompt}
@@ -1035,7 +1187,7 @@ export function EditorScreen() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-l border-line p-3 lg:flex">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-3 lg:flex">
             {rightPanels}
           </aside>
         </div>

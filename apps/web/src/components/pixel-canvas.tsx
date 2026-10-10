@@ -291,8 +291,7 @@ export function PixelCanvas({
       const docHeight = doc.height * cell;
 
       // One texture across the whole preview, anchored to the document grid, so
-      // one square always equals one pixel. The document is not recoloured and
-      // not outlined: nothing in the preview is a highlighted box.
+      // one square always equals one pixel.
       const tile = Math.max(1, Math.round(cell)) * 2;
       const offsetX = ((originX % tile) + tile) % tile;
       const offsetY = ((originY % tile) + tile) % tile;
@@ -330,6 +329,15 @@ export function PixelCanvas({
         docWidth,
         docHeight,
       );
+
+      // The writable area is the document: an accent border marks exactly the
+      // region the tools and the agent may touch.
+      const edge = 2;
+      context.fillStyle = "#a7f070";
+      context.fillRect(originX - edge, originY - edge, docWidth + edge * 2, edge);
+      context.fillRect(originX - edge, originY + docHeight, docWidth + edge * 2, edge);
+      context.fillRect(originX - edge, originY, edge, docHeight);
+      context.fillRect(originX + docWidth, originY, edge, docHeight);
 
       // The grid only appears once a cell is wide enough that a boundary line
       // adds information. Below that it eats a pixel out of every cell, so an
