@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
-import { Button, IconButton, Panel, Separator, Tooltip } from "./ui.js";
+import { Button, IconButton, Panel, Separator } from "./ui.js";
 
 const stroke = 2;
 const size = 16;
@@ -72,29 +72,16 @@ export function Toolbar({
         );
       })}
 
-      <Separator vertical />
-
-      <Tooltip label="Brush size · press [ or ]">
-        <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center text-muted">
-          <Brush size={size} strokeWidth={stroke} />
-        </span>
-      </Tooltip>
       {[1, 2, 3].map((value) => (
         <IconButton
           key={value}
           label={`Brush size ${value}`}
+          hint="[ or ]"
           subtle
           active={brushSize === value}
           onClick={() => onBrush(value)}
         >
-          <span
-            aria-hidden
-            className="bg-current"
-            style={{
-              width: value === 1 ? 4 : value === 2 ? 7 : 10,
-              height: value === 1 ? 4 : value === 2 ? 7 : 10,
-            }}
-          />
+          <Brush size={value === 1 ? 11 : value === 2 ? 14 : 17} strokeWidth={stroke} />
         </IconButton>
       ))}
 
