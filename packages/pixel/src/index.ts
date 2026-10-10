@@ -8,6 +8,7 @@ export {
   createProject,
   duplicateFrame,
   mirrorFrame,
+  moveFrame,
   writeFrame,
 } from "./document.js";
 export { createHistory, pushHistory, redoHistory, undoHistory } from "./history.js";

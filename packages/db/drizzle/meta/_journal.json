@@ -15,6 +15,20 @@
       "when": 1791637584840,
       "tag": "0001_watery_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791643839356,
+      "tag": "0002_slow_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791644966746,
+      "tag": "0003_nice_maverick",
+      "breakpoints": true
     }
   ]
 }

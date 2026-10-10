@@ -154,7 +154,11 @@ export const generationRuns = pgTable("generation_runs", {
   status: text("status").notNull(),
   modelId: text("model_id").notNull(),
   reasoningEffort: text("reasoning_effort").notNull(),
+  frameId: text("frame_id"),
+  prompt: text("prompt"),
+  answer: text("answer"),
   errorCode: text("error_code"),
+  events: jsonb("events"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });

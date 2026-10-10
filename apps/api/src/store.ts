@@ -17,12 +17,13 @@ import {
   decodePixels,
   defaultStyle,
   duplicateFrame,
+  moveFrame,
   writeFrame,
   type Asset,
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -251,6 +252,41 @@ export async function duplicateFrameRecord(
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
+export async function moveFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  toIndex: number,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  const before = asPixelAsset(record);
+  const next = moveFrame(before, frameId, toIndex);
+  if (!next)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is gone." },
+    };
+  await db.transaction(async (tx) => {
+    // A unique index guards (asset, index), so a direct renumber might collide
+    // with a row that has not moved yet. Park every frame far above the final
+    // range first, then write the dense 0..n-1 order.
+    await tx
+      .update(frames)
+      .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+      .where(eq(frames.assetId, assetId));
+    for (const frame of next.frames) {
+      await tx
+        .update(frames)
+        .set({ index: frame.index, updatedAt: new Date() })
+        .where(and(eq(frames.id, frame.id), eq(frames.assetId, assetId)));
+    }
+    await tx.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  });
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
 export async function renameFrameRecord(
   db: Database,
   userId: string,
@@ -278,14 +314,27 @@ export async function deleteFrameRecord(
 ): Promise<{ ok: boolean; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { ok: false };
-  if (record.frames.length <= 1) {
-    return {
-      ok: false,
-      failure: { code: "FRAME_REQUIRED", message: "An asset keeps at least one frame." },
-    };
-  }
   if (!record.frames.some((frame) => frame.id === frameId)) return { ok: false };
   await db.delete(frames).where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+  // An asset keeps at least one frame: removing the last one replaces it with a
+  // fresh blank frame instead of refusing, so delete always means delete.
+  if (record.frames.length <= 1) {
+    const previous = asPixelAsset(record);
+    const next = addFrame(
+      { ...previous, frames: previous.frames.filter((frame) => frame.id !== frameId) },
+      "",
+    );
+    const added = next.frames.at(-1);
+    if (added) {
+      await db.insert(frames).values({
+        id: added.id,
+        assetId,
+        name: added.name,
+        index: added.index,
+        layers: added.layers,
+      });
+    }
+  }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   return { ok: true };
 }
@@ -436,6 +485,8 @@ export async function insertRun(
     requestId: string;
     modelId: string;
     reasoningEffort: string;
+    frameId?: string;
+    prompt?: string;
     durableRunId?: string;
     status: string;
   },

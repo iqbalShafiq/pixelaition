@@ -345,6 +345,63 @@ app.post("/internal/runs/:id/cancel", async (req, res) => {
   res.status(204).end();
 });
 
+/** Only the events the run console needs, and only the fields it reads. */
+function consoleEvents(runId: string) {
+  const kept = [
+    "model_started",
+    "model_completed",
+    "tool_started",
+    "tool_completed",
+    "status",
+    "done",
+  ];
+  return (events.get(runId) ?? [])
+    .filter((event) => kept.includes(event.type))
+    .slice(-160)
+    .map((event) => ({
+      sequence: event.sequence,
+      type: event.type,
+      data: sanitizeEvent(event.type, event.data),
+    }));
+}
+
+function sanitizeEvent(type: string, raw: unknown): unknown {
+  const data = raw as Record<string, unknown> | undefined;
+  const operationId =
+    typeof data?.operationId === "string" ? data.operationId : undefined;
+  if (type === "model_started" || type === "model_completed") return { operationId };
+  if (type === "tool_started") {
+    const input = data?.input as
+      { toolCall?: { toolName?: unknown; input?: unknown } } | undefined;
+    return {
+      operationId,
+      input: {
+        toolCall: { toolName: input?.toolCall?.toolName, input: input?.toolCall?.input },
+      },
+    };
+  }
+  if (type === "tool_completed") {
+    const result = data?.result as { failed?: unknown; error?: unknown } | undefined;
+    return {
+      operationId,
+      result: {
+        failed: result?.failed === true,
+        error: typeof result?.error === "string" ? result.error : undefined,
+      },
+    };
+  }
+  if (type === "status") {
+    const outcome = data?.outcome as { text?: unknown } | undefined;
+    return {
+      status: data?.status,
+      error: typeof data?.error === "string" ? data.error : undefined,
+      ...(typeof outcome?.text === "string" ? { outcome: { text: outcome.text } } : {}),
+    };
+  }
+  if (type === "done") return { status: data?.status };
+  return {};
+}
+
 async function follow(
   runtime: DurableRuntime,
   durableId: string,
@@ -363,12 +420,19 @@ async function follow(
       const snapshot = runtime.snapshot(durableId);
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
+        const stored = consoleEvents(publicId);
+        const outcome = (
+          stored.find((event) => event.type === "status")?.data as
+            { outcome?: { text?: string } } | undefined
+        )?.outcome;
         await db
           .update(generationRuns)
           .set({
             status:
               snapshot.run.status === "completed" ? "succeeded" : snapshot.run.status,
             finishedAt: new Date(),
+            events: stored,
+            answer: typeof outcome?.text === "string" ? outcome.text : null,
           })
           .where(eq(generationRuns.id, publicId));
         publish(publicId, "done", { status: snapshot.run.status, effort });

@@ -13,7 +13,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, notInArray } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
@@ -51,6 +51,7 @@ import {
   getProjectRecord,
   insertRun,
   listProjects,
+  moveFrameRecord,
   renameFrameRecord,
   revokeApiKey,
   runBelongsTo,
@@ -311,14 +312,30 @@ export function createApp() {
   });
 
   app.patch("/api/assets/:id/frames/:frameId", async (req, res) => {
-    const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
-    const asset = await renameFrameRecord(
-      db,
-      res.locals.userId as string,
-      req.params.id ?? "",
-      req.params.frameId ?? "",
-      body.name,
-    );
+    const body = z
+      .object({
+        name: z.string().min(1).max(80).optional(),
+        index: z.number().int().min(0).optional(),
+      })
+      .refine((value) => value.name !== undefined || value.index !== undefined, {
+        message: "Send a name or an index.",
+      })
+      .parse(req.body);
+    const userId = res.locals.userId as string;
+    const assetId = req.params.id ?? "";
+    const frameId = req.params.frameId ?? "";
+    if (body.index !== undefined) {
+      const result = await moveFrameRecord(db, userId, assetId, frameId, body.index);
+      if (!result.asset)
+        return fail(
+          res,
+          404,
+          result.failure?.code ?? "NOT_FOUND",
+          result.failure?.message ?? "That frame is not available.",
+        );
+      return res.json(result.asset);
+    }
+    const asset = await renameFrameRecord(db, userId, assetId, frameId, body.name ?? "");
     if (!asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
     res.json(asset);
   });
@@ -448,6 +465,8 @@ export function createApp() {
       requestId,
       modelId: body.modelId,
       reasoningEffort: body.reasoningEffort,
+      frameId: body.frameId,
+      prompt: body.prompt,
       status: "queued",
     });
     const worker = await fetch(
@@ -536,14 +555,89 @@ export function createApp() {
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     const thread = await ensureThread(db, res.locals.userId as string, asset.id);
+    const frameId =
+      typeof req.query.frameId === "string" && req.query.frameId
+        ? req.query.frameId
+        : undefined;
     const [run] = await db
       .select()
       .from(generationRuns)
       .where(eq(generationRuns.threadId, thread.id))
       .orderBy(desc(generationRuns.createdAt))
       .limit(1);
+    const active = run && (run.status === "queued" || run.status === "running");
+    type StoredEvent = {
+      sequence: number;
+      type: string;
+      data?: { outcome?: { text?: string } };
+    };
+    // The console's history is scoped to one frame when the editor asks for it;
+    // without a frame it falls back to the whole asset.
+    const finishedScope = and(
+      eq(generationRuns.threadId, thread.id),
+      notInArray(generationRuns.status, ["queued", "running"]),
+      ...(frameId ? [eq(generationRuns.frameId, frameId)] : []),
+    );
+    let lastRow: typeof run;
+    let historyRows: Array<{
+      id: string;
+      status: string;
+      prompt: string | null;
+      answer: string | null;
+      createdAt: Date;
+      finishedAt: Date | null;
+    }> = [];
+    if (!active) {
+      [lastRow] = await db
+        .select()
+        .from(generationRuns)
+        .where(finishedScope)
+        .orderBy(desc(generationRuns.createdAt))
+        .limit(1);
+      historyRows = await db
+        .select({
+          id: generationRuns.id,
+          status: generationRuns.status,
+          prompt: generationRuns.prompt,
+          answer: generationRuns.answer,
+          createdAt: generationRuns.createdAt,
+          finishedAt: generationRuns.finishedAt,
+        })
+        .from(generationRuns)
+        .where(finishedScope)
+        .orderBy(desc(generationRuns.createdAt))
+        .limit(10);
+    }
+    const events = (lastRow?.events as StoredEvent[] | null) ?? [];
+    const text =
+      lastRow?.answer ??
+      events.find((event) => event.type === "status" && event.data?.outcome?.text)?.data
+        ?.outcome?.text ??
+      "";
     res.json({
-      run: run && (run.status === "queued" || run.status === "running") ? run : null,
+      run: active ? run : null,
+      lastRun: lastRow
+        ? {
+            id: lastRow.id,
+            status: lastRow.status,
+            prompt: lastRow.prompt,
+            events,
+            text,
+            durationMs: lastRow.finishedAt
+              ? new Date(lastRow.finishedAt).getTime() -
+                new Date(lastRow.createdAt).getTime()
+              : null,
+          }
+        : null,
+      history: historyRows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        prompt: row.prompt,
+        answer: row.answer,
+        durationMs: row.finishedAt
+          ? new Date(row.finishedAt).getTime() - new Date(row.createdAt).getTime()
+          : null,
+      })),
     });
   });
 
