@@ -96,9 +96,17 @@ A sheet is unmounted at desktop widths rather than hidden with `display: none`. 
 
 ## Canvas
 
-The frame is composited once into a 1:1 offscreen bitmap and then scaled with smoothing off, and the draw origin is snapped to whole pixels so every cell is exactly the same width instead of drifting between 16px and 17px in one row. Drawing one rect per cell leaves seams and shimmer as soon as a cell is a single pixel, which is exactly what zooming out exposes. The bitmap is cached per frame buffer, so a stroke costs one redraw, not one per cell.
+The frame is composited once into a 1:1 offscreen bitmap and then scaled with smoothing off. Drawing one rect per cell leaves seams and shimmer as soon as a cell is a single pixel, which is exactly what zooming out exposes. The bitmap is cached per frame buffer, so a stroke costs one redraw, not one per cell. The draw origin is snapped to whole pixels, so every cell is exactly the same width instead of drifting between 16px and 17px in one row.
 
-The canvas field is `panel`, one step above the page, so the artwork sits on a raised plane. The transparency checker is tied to the document grid at four pixels per tile and disappears below 2× zoom, where it would only read as noise over the artwork. Onion skin is a display opacity on the neighbouring frames. Grid lines, the selection marquee, and the shape preview are drawn in screen space after the bitmap, so they stay one pixel wide at every zoom.
+The canvas field is `screen`, a darker plane than the chrome around it, so the artwork sits in a well the way a handheld console does.
+
+The transparency checker is **baked into that bitmap in whole document pixels**, so it scales with the artwork and can never drift against the pixel grid. The step is chosen so a square lands near 10 screen pixels, and capped at a quarter of the shorter side so a small sprite cannot end up with a part square at its edge � a 32px sprite takes 8, which is exactly four squares across.
+
+A checker drawn in screen space leaves half squares along the document edge, because its tiles are anchored to the viewport rather than to the pixel grid. A one-pixel checker averages into a flat smudge when a pixel is only a screen pixel wide. Both were measured and rejected.
+
+Because the checker already shows the pixel grid exactly, the grid overlay is **off by default**. When it is on it only appears from 1200% up, and it costs one pixel per cell boundary: measured at 1200% the cells read one line pixel plus eleven body pixels, and with the grid off every cell is exactly 12px. Below 1200% a boundary line eats an eighth of every cell and blends against two different checker tones, which reads as texture rather than as a grid.
+
+Onion skin is a display opacity on the neighbouring frames, drawn from a second cache that leaves their transparent pixels alone so the checker stays visible underneath. The selection marquee, the shape preview, and the hover cell are drawn in screen space after the bitmap, so they stay one pixel wide at every zoom.
 
 The wheel listener is attached with `{ passive: false }` on the canvas rather than through React's `onWheel`, which is passive at the root and would let the page scroll while zooming.
 

@@ -116,7 +116,7 @@ export function EditorScreen() {
   const [activeLayerId, setActiveLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
   const [selection, setSelection] = useState<Rect | null>(null);
-  const [grid, setGrid] = useState(true);
+  const [grid, setGrid] = useState(false);
   const [checker, setChecker] = useState(true);
   const [onion, setOnion] = useState(false);
   const [playing, setPlaying] = useState(false);

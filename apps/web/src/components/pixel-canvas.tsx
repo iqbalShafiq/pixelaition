@@ -89,15 +89,26 @@ function rgba(hex: string): [number, number, number, number] {
 const CHECKER_DARK: [number, number, number] = [21, 24, 38];
 const CHECKER_LIGHT: [number, number, number] = [33, 39, 63];
 
+function greatestCommonDivisor(a: number, b: number): number {
+  return b === 0 ? a : greatestCommonDivisor(b, a % b);
+}
+
 /**
- * How many document pixels make one checker square, chosen so a square lands
- * near 10 screen pixels. Baked into the bitmap as whole document pixels, so it
- * scales with the artwork: a screen-space checker drifts against the pixel grid
- * and leaves half squares along the document edge, and a one-pixel checker
- * averages into a flat smudge once a pixel is only one or two screen pixels.
+ * How many document pixels make one checker square.
+ *
+ * The step is always a divisor of both sides, so the checker tiles the document
+ * exactly and there is never a part square at an edge — a part square is the
+ * same defect as the screen-space checker, just at a different scale. Within
+ * that constraint it aims for squares near 10 screen pixels.
  */
-function checkerStep(cell: number): number {
-  return Math.max(1, Math.round(10 / cell));
+function checkerStep(cell: number, width: number, height: number): number {
+  const desired = Math.max(1, Math.round(10 / cell));
+  const common = greatestCommonDivisor(width, height);
+  let best = 1;
+  for (let candidate = 1; candidate <= common; candidate += 1) {
+    if (common % candidate === 0 && candidate <= desired) best = candidate;
+  }
+  return best;
 }
 
 /**
@@ -314,7 +325,11 @@ export function PixelCanvas({
       context.globalAlpha = 1;
 
       context.drawImage(
-        bitmapFor(doc, bitmaps.current, checker ? checkerStep(cell) : 0),
+        bitmapFor(
+          doc,
+          bitmaps.current,
+          checker ? checkerStep(cell, doc.width, doc.height) : 0,
+        ),
         originX,
         originY,
         docWidth,
@@ -326,8 +341,14 @@ export function PixelCanvas({
       context.lineWidth = 1;
       context.strokeRect(originX - 0.5, originY - 0.5, docWidth + 1, docHeight + 1);
 
-      if (grid && cell >= 8) {
-        context.strokeStyle = "rgba(148, 176, 194, 0.2)";
+      // The grid only appears once a cell is wide enough that a boundary line
+      // adds information. Below that it eats a pixel out of every cell, so an
+      // 8px cell becomes 1px line plus 7px body, and over a two-tone checker the
+      // line blends two different colours — three tones per cell, which reads as
+      // texture rather than as a pixel grid. The checker already shows the grid
+      // at those zooms.
+      if (grid && cell >= 12) {
+        context.strokeStyle = "rgba(148, 176, 194, 0.22)";
         context.beginPath();
         for (let x = 1; x < doc.width; x += 1) {
           const px = Math.round(originX + x * cell) + 0.5;
