@@ -3,54 +3,123 @@
 @import "@fontsource/ibm-plex-sans/500.css";
 @import "@fontsource/ibm-plex-mono/400.css";
 
+/*
+ * Surface ramp. Dark interfaces signal elevation with lightness, because a
+ * shadow cannot be darker than an already near-black surface. Each step up is
+ * a small, even lift:
+ *
+ *   paper   page base
+ *   panel   raised: side rails, cards
+ *   raised  overlay: menus, dialogs, toasts
+ *   field   inset: input wells, one step *down* from the surface they sit on
+ *
+ * Accent is for state only. DESIGN.md allows exactly one large accent fill, the
+ * primary button, and its label must be `paper` so the pair stays readable.
+ */
 @theme {
   --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --color-ink: #f4efe4;
+
   --color-paper: #14120e;
   --color-panel: #1c1915;
-  --color-field: #1c1915;
+  --color-raised: #241f19;
+  --color-field: #0f0d0a;
+
+  --color-ink: #f4efe4;
   --color-muted: #9a917f;
+  --color-faint: #6e675b;
+
   --color-accent: #e8ff6a;
   --color-erase: #ff5d3a;
-  --color-line: rgba(244, 239, 228, 0.12);
+
+  /* Two weights: structural hairlines, and a stronger edge for inputs. */
+  --color-line: rgba(244, 239, 228, 0.14);
+  --color-line-strong: rgba(244, 239, 228, 0.28);
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #3a342c transparent;
+/*
+ * Every base rule lives in @layer base. Unlayered CSS beats Tailwind utilities
+ * in the cascade, so an unlayered `button { color: inherit }` silently defeats
+ * every text-* utility in the app — which is what turned solid accent buttons
+ * into light-on-lime at 1.03:1 contrast.
+ */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3a342c transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #3a342c;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  html {
+    /* Anchors must not jump. */
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * 16px keeps iOS Safari from zooming the viewport when a field is focused.
+   * Anything smaller is a layout bug on a real phone, not a style choice.
+   */
+  input,
+  textarea,
+  select {
+    font: inherit;
+    font-size: 1rem;
+    color: inherit;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Replaces the default ring rather than removing it. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--color-faint);
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-paper);
+  }
 }
 
-/* DESIGN.md: thin scrollbars, token colours, no native arrows. */
-*::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-*::-webkit-scrollbar-thumb {
-  background: #3a342c;
-  border-radius: 999px;
-}
-*::-webkit-scrollbar-button {
-  display: none;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--color-paper);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+@utility panel-grid {
+  /* A faint pixel grid: brand texture without competing with the form. */
+  background-image:
+    linear-gradient(to right, rgba(244, 239, 228, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(244, 239, 228, 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 /* Swatch for palette index 0, which is transparent. */

@@ -11,7 +11,7 @@ import type {
   ReactNode,
   TextareaHTMLAttributes,
 } from "react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 /** DESIGN.md: 140-200ms, ease-out, transform and opacity only. */
 export const motionToken = { duration: 0.16, ease: "easeOut" as const };
@@ -103,7 +103,7 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner sideOffset={6}>
-          <BaseTooltip.Popup className="z-40 rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-ink">
+          <BaseTooltip.Popup className="z-40 rounded-md border border-line bg-raised px-2 py-1 font-mono text-[11px] text-ink">
             {label}
           </BaseTooltip.Popup>
         </BaseTooltip.Positioner>
@@ -114,35 +114,109 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
 
 /* ----------------------------------------------------------------- inputs */
 
+/**
+ * The label is associated by `htmlFor`, never by wrapping. A wrapped label also
+ * absorbs any button inside it, which is how a password field silently becomes
+ * "Password Show password" for a screen reader.
+ */
 export function Field({
   label,
+  htmlFor,
   hint,
+  error,
   children,
 }: {
   label: string;
+  htmlFor: string;
   hint?: string;
+  error?: string;
   children: ReactNode;
 }) {
   return (
-    <label className="grid gap-1 text-sm">
-      <span className="flex items-baseline justify-between gap-2 text-muted">
-        <span>{label}</span>
-        {hint ? <span className="font-mono text-[10px]">{hint}</span> : null}
-      </span>
+    <div className="grid gap-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <label htmlFor={htmlFor} className="text-[13px] font-medium text-ink">
+          {label}
+        </label>
+        {hint ? <span className="font-mono text-[10px] text-muted">{hint}</span> : null}
+      </div>
       {children}
-    </label>
+      {/* Colour is never the only signal: the message carries the meaning. */}
+      {error ? (
+        <span role="alert" className="text-[12px] text-erase">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
+/**
+ * The input is an inset well: darker than the surface it sits on, with a border
+ * strong enough to read as an edge. `--color-line` alone measures about 1.6:1
+ * against the panel, which is nowhere near the 3:1 a UI boundary needs.
+ */
 export function TextInput({
   className = "",
+  invalid = false,
   ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
+}: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
   return (
     <input
       {...props}
-      className={`w-full rounded-md border border-line bg-paper px-2.5 py-2 text-sm outline-none placeholder:text-muted/70 focus:border-accent ${className}`}
+      aria-invalid={invalid || undefined}
+      className={`w-full rounded-md border bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none ${
+        invalid ? "border-erase" : "border-line-strong"
+      } hover:border-muted/60 focus:border-accent focus:ring-1 focus:ring-accent/40 disabled:opacity-50 ${className}`}
     />
+  );
+}
+
+/** Same well as TextInput, with the password visibility toggle the plan asks for. */
+export function PasswordInput({
+  className = "",
+  invalid = false,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="relative block">
+      <input
+        {...props}
+        type={shown ? "text" : "password"}
+        aria-invalid={invalid || undefined}
+        className={`w-full rounded-md border bg-field px-3 py-2.5 pr-11 text-ink transition-colors duration-150 outline-none ${
+          invalid ? "border-erase" : "border-line-strong"
+        } hover:border-muted/60 focus:border-accent focus:ring-1 focus:ring-accent/40 ${className}`}
+      />
+      <button
+        type="button"
+        aria-label={shown ? "Hide password" : "Show password"}
+        aria-pressed={shown}
+        onClick={() => setShown((value) => !value)}
+        className="absolute inset-y-0 right-1 my-auto grid h-7 w-7 place-items-center rounded text-muted hover:text-ink"
+      >
+        <EyeIcon open={shown} />
+      </button>
+    </span>
+  );
+}
+
+function EyeIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      aria-hidden
+    >
+      <path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4-6.5-4-6.5-4z" />
+      <circle cx="8" cy="8" r="1.8" />
+      {open ? null : <path d="M2.5 13.5l11-11" />}
+    </svg>
   );
 }
 
@@ -153,7 +227,7 @@ export function Textarea({
   return (
     <textarea
       {...props}
-      className={`w-full resize-none rounded-md border border-line bg-paper px-2.5 py-2 text-sm outline-none placeholder:text-muted/70 focus:border-accent ${className}`}
+      className={`w-full resize-none rounded-md border border-line bg-field px-3 py-2.5 text-ink placeholder:text-faint transition-colors duration-150 outline-none border-line-strong hover:border-muted/60 focus:border-accent ${className}`}
     />
   );
 }
@@ -287,6 +361,7 @@ export function Separator({ vertical = false }: { vertical?: boolean }) {
 /* ----------------------------------------------------------------- select */
 
 export function SelectControl({
+  id,
   value,
   options,
   onChange,
@@ -294,6 +369,7 @@ export function SelectControl({
   placeholder = "Select",
   className = "",
 }: {
+  id?: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
@@ -304,8 +380,9 @@ export function SelectControl({
   return (
     <Select.Root value={value} onValueChange={(next) => onChange(next ?? value)}>
       <Select.Trigger
+        id={id}
         aria-label={label}
-        className={`flex items-center justify-between gap-2 rounded-md border border-line bg-paper px-2 py-1.5 text-xs whitespace-nowrap text-ink ${className}`}
+        className={`flex items-center justify-between gap-2 rounded-md border border-line-strong bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink transition-colors duration-150 hover:border-muted/60 focus:border-accent ${className}`}
       >
         <Select.Value placeholder={placeholder} />
         <span aria-hidden className="text-muted">
@@ -352,7 +429,7 @@ export function Menu({
       </BaseMenu.Trigger>
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={6} align={align} className="z-40">
-          <BaseMenu.Popup className="min-w-[9rem] rounded-md border border-line bg-panel p-1 text-xs">
+          <BaseMenu.Popup className="min-w-[9rem] rounded-md border border-line bg-raised p-1 text-xs">
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -410,7 +487,7 @@ export function Dialog({
         <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-paper/80" />
         <BaseDialog.Popup
           style={{ width: `min(${width}, 94vw)` }}
-          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-panel p-4"
+          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-raised p-4"
         >
           <BaseDialog.Title className="text-sm text-ink">{title}</BaseDialog.Title>
           {description ? (
@@ -454,7 +531,7 @@ export function Sheet({
         <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-paper/70" />
         <BaseDialog.Popup
           data-side={side}
-          className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col border-line bg-panel ${
+          className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col border-line bg-raised ${
             side === "left" ? "left-0 border-r" : "right-0 border-l"
           }`}
         >
@@ -495,7 +572,7 @@ function ToastList() {
     <BaseToast.Root
       key={toast.id}
       toast={toast}
-      className="toast-popup rounded-md border border-line bg-panel p-3"
+      className="toast-popup rounded-md border border-line bg-raised p-3"
     >
       <BaseToast.Title className="text-sm text-ink" />
       <BaseToast.Description className="mt-0.5 font-mono text-[11px] text-muted" />

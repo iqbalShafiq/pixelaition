@@ -780,7 +780,10 @@ export function EditorScreen() {
   );
 
   return (
-    <div className="grid h-screen min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper">
+    <main
+      id="content"
+      className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
+    >
       <header className="flex min-w-0 items-center gap-3 border-b border-line px-3 py-2">
         <a
           href="/projects"
@@ -996,7 +999,7 @@ export function EditorScreen() {
         assetName={asset.data?.name ?? ""}
         onBeforeExport={flush}
       />
-    </div>
+    </main>
   );
 }
 

@@ -101,8 +101,9 @@ export function ExportDialog({
       description={`${assetName} · ${frameName}`}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Scope">
+        <Field label="Scope" htmlFor="export-scope">
           <SelectControl
+            id="export-scope"
             label="Scope"
             value={scope}
             options={scopes.map((item) => item.id)}
@@ -111,17 +112,20 @@ export function ExportDialog({
         </Field>
         <Field
           label="Format"
+          htmlFor="export-format"
           hint={scope !== "project" ? ".pxl needs the project" : undefined}
         >
           <SelectControl
+            id="export-format"
             label="Format"
             value={available.includes(format) ? format : "png"}
             options={available}
             onChange={(next) => setFormat(next as Format)}
           />
         </Field>
-        <Field label="Scale">
+        <Field label="Scale" htmlFor="export-scale">
           <SelectControl
+            id="export-scale"
             label="Scale"
             value={scale}
             options={[...scales]}
@@ -129,12 +133,12 @@ export function ExportDialog({
           />
         </Field>
         {format === "jpg" || format === "zip" ? (
-          <Field label="Background">
+          <Field label="Background" htmlFor="export-background">
             <TextInput
+              id="export-background"
               type="color"
-              aria-label="Background color"
               value={background}
-              className="h-8 w-20 p-0"
+              className="h-9 w-20 p-0"
               onChange={(event) => setBackground(event.target.value)}
             />
           </Field>

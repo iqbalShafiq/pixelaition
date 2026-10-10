@@ -2,6 +2,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Link,
   Outlet,
   redirect,
 } from "@tanstack/react-router";
@@ -10,13 +11,48 @@ import { AuthScreen } from "./screens/auth.js";
 import { EditorScreen } from "./screens/editor.js";
 import { ProjectsScreen } from "./screens/projects.js";
 
-const rootRoute = createRootRoute({
-  component: () => (
-    <div className="min-h-screen">
+function Layout() {
+  return (
+    <div className="min-h-dvh">
+      {/* Keyboard users should not have to tab through the chrome. */}
+      <a
+        href="#content"
+        className="sr-only rounded-md bg-accent px-3 py-2 text-sm text-paper focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+      >
+        Skip to content
+      </a>
       <Outlet />
     </div>
-  ),
+  );
+}
+
+const rootRoute = createRootRoute({
+  component: Layout,
+  notFoundComponent: NotFound,
 });
+
+function NotFound() {
+  return (
+    <main
+      id="content"
+      className="panel-grid grid min-h-dvh place-items-center bg-paper px-4"
+    >
+      <div className="max-w-sm text-center">
+        <p className="font-mono text-xs tracking-[0.22em] text-accent">404</p>
+        <h1 className="mt-3 text-2xl font-medium text-ink">This square is empty</h1>
+        <p className="mt-2 text-[13px] text-muted">
+          The page you asked for is not part of this canvas.
+        </p>
+        <Link
+          to="/projects"
+          className="mt-6 inline-block min-h-11 rounded-md bg-accent px-4 py-2.5 text-sm text-paper"
+        >
+          Back to projects
+        </Link>
+      </div>
+    </main>
+  );
+}
 
 async function requireSession() {
   const session = await authClient.getSession();
@@ -66,7 +102,7 @@ const routeTree = rootRoute.addChildren([
   editorRoute,
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({ routeTree, defaultNotFoundComponent: NotFound });
 
 declare module "@tanstack/react-router" {
   interface Register {

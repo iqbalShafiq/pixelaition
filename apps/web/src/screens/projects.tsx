@@ -44,7 +44,7 @@ export function ProjectsScreen() {
   const list = projects.data?.projects ?? [];
 
   return (
-    <main className="mx-auto grid max-w-5xl gap-8 px-6 py-10">
+    <main id="content" className="mx-auto grid max-w-5xl gap-8 px-6 py-10">
       <header className="flex items-end justify-between gap-4">
         <div>
           <p className="font-mono text-xs tracking-[0.2em] text-accent">PIXELAITION</p>
@@ -72,8 +72,9 @@ export function ProjectsScreen() {
         }}
       >
         <span className="min-w-56 flex-1">
-          <Field label="New project">
+          <Field label="New project" htmlFor="project-name">
             <TextInput
+              id="project-name"
               value={name}
               placeholder="Sprite family, tileset, icons…"
               onChange={(event) => setName(event.target.value)}

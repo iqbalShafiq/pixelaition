@@ -308,14 +308,14 @@ export function PalettePanel({
         {usedColors} of {maxColors} colors used
         {over ? " · over the style guide limit" : ""}
       </p>
-      <Field label="Add a color">
+      <Field label="Add a color" htmlFor="palette-new-color">
         <div className="flex gap-1">
           <input
+            id="palette-new-color"
             type="color"
-            aria-label="Pick a color to add"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            className="h-8 w-10 shrink-0 rounded-md border border-line bg-paper"
+            className="h-9 w-11 shrink-0 rounded-md border border-line-strong bg-field"
           />
           <Button
             tone="ghost"
@@ -372,13 +372,14 @@ export function StylePanel({
         </div>
       </dl>
       {style.notes ? <p className="text-[11px] text-muted">{style.notes}</p> : null}
-      <Field label="Canvas size" hint="8 to 128">
+      <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 128">
         <div className="flex items-center gap-1.5">
           <TextInput
+            id="canvas-width"
             value={w}
             inputMode="numeric"
             aria-label="Canvas width"
-            className="font-mono text-xs"
+            className="font-mono text-[13px]"
             onChange={(event) => setW(event.target.value)}
             onBlur={() => {
               const next = Number(w);
@@ -395,7 +396,7 @@ export function StylePanel({
             value={h}
             inputMode="numeric"
             aria-label="Canvas height"
-            className="font-mono text-xs"
+            className="font-mono text-[13px]"
             onChange={(event) => setH(event.target.value)}
             onBlur={() => {
               const next = Number(h);
