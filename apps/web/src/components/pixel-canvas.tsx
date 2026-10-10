@@ -86,47 +86,33 @@ function rgba(hex: string): [number, number, number, number] {
   return [0, 0, 0, 255];
 }
 
-const CHECKER_DARK: [number, number, number] = [21, 24, 38];
-const CHECKER_LIGHT: [number, number, number] = [33, 39, 63];
-
-function greatestCommonDivisor(a: number, b: number): number {
-  return b === 0 ? a : greatestCommonDivisor(b, a % b);
-}
+const FIELD_DARK = "#1c2136";
+const FIELD_LIGHT = "#262c45";
 
 /**
- * How many document pixels make one checker square.
+ * The workspace texture is a checker of one square per document pixel, tiled
+ * across the whole preview and anchored to the document origin.
  *
- * The step is always a divisor of both sides, so the checker tiles the document
- * exactly and there is never a part square at an edge — a part square is the
- * same defect as the screen-space checker, just at a different scale. Within
- * that constraint it aims for squares near 10 screen pixels.
+ * One square per pixel is what makes the hover cell and every drawn pixel line
+ * up with exactly one square. A fixed screen-size checker is prettier in the
+ * abstract but it drifts against the pixel grid, so a hover outline covers one
+ * and a bit squares and nothing reads as a single pixel any more.
  */
-function checkerStep(cell: number, width: number, height: number): number {
-  const desired = Math.max(1, Math.round(10 / cell));
-  const common = greatestCommonDivisor(width, height);
-  let best = 1;
-  for (let candidate = 1; candidate <= common; candidate += 1) {
-    if (common % candidate === 0 && candidate <= desired) best = candidate;
-  }
-  return best;
-}
-
-/**
- * The workspace field behind the artwork: a flat 16px pixel grid, not a solid
- * fill. The whole editor reads as one tiled screen, so the area around the
- * sprite is squared too, instead of the sprite floating on a flat colour.
- */
-function fieldPattern(context: CanvasRenderingContext2D): CanvasPattern | null {
+function pixelCheckerPattern(
+  context: CanvasRenderingContext2D,
+  cell: number,
+): CanvasPattern | null {
+  const half = Math.max(1, Math.round(cell));
   const tile = document.createElement("canvas");
-  tile.width = 16;
-  tile.height = 16;
+  tile.width = half * 2;
+  tile.height = half * 2;
   const paint = tile.getContext("2d");
   if (!paint) return null;
-  paint.fillStyle = "#101220";
-  paint.fillRect(0, 0, 16, 16);
-  paint.fillStyle = "rgba(148, 176, 194, 0.12)";
-  paint.fillRect(0, 0, 16, 1);
-  paint.fillRect(0, 0, 1, 16);
+  paint.fillStyle = FIELD_DARK;
+  paint.fillRect(0, 0, half * 2, half * 2);
+  paint.fillStyle = FIELD_LIGHT;
+  paint.fillRect(0, 0, half, half);
+  paint.fillRect(half, half, half, half);
   return context.createPattern(tile, "repeat");
 }
 
@@ -135,14 +121,8 @@ function fieldPattern(context: CanvasRenderingContext2D): CanvasPattern | null {
  * cell. Per-cell rects leave seams and shimmer once a cell is a single pixel,
  * which is exactly what zooming out exposes.
  */
-function bitmapFor(
-  doc: FrameBuffer,
-  cache: WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>,
-  checkerStepPixels: number,
-) {
-  const perDoc = cache.get(doc) ?? new Map<number, HTMLCanvasElement>();
-  cache.set(doc, perDoc);
-  const cached = perDoc.get(checkerStepPixels);
+function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasElement>) {
+  const cached = cache.get(doc);
   if (cached) return cached;
   const canvas = document.createElement("canvas");
   canvas.width = doc.width;
@@ -151,25 +131,12 @@ function bitmapFor(
   if (context) {
     const image = context.createImageData(doc.width, doc.height);
     const indexes = composite(doc);
-    const step = checkerStepPixels;
     for (let index = 0; index < indexes.length; index += 1) {
       const value = indexes[index] ?? 0;
       const offset = index * 4;
-      if (value === 0) {
-        // Onion-skin neighbours ask for step 0 and stay fully transparent.
-        if (step < 1) continue;
-        const x = index % doc.width;
-        const y = Math.floor(index / doc.width);
-        const tone =
-          (Math.floor(x / step) + Math.floor(y / step)) % 2 === 0
-            ? CHECKER_DARK
-            : CHECKER_LIGHT;
-        image.data[offset] = tone[0];
-        image.data[offset + 1] = tone[1];
-        image.data[offset + 2] = tone[2];
-        image.data[offset + 3] = 255;
-        continue;
-      }
+      // Transparent pixels stay transparent: the field pattern drawn behind the
+      // bitmap is what shows through as the checker.
+      if (value === 0) continue;
       const [r, g, b, a] = rgba(doc.palette[value] ?? "#000000");
       image.data[offset] = r;
       image.data[offset + 1] = g;
@@ -178,7 +145,7 @@ function bitmapFor(
     }
     context.putImageData(image, 0, 0);
   }
-  perDoc.set(checkerStepPixels, canvas);
+  cache.set(doc, canvas);
   return canvas;
 }
 
@@ -254,12 +221,10 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
-  // The workspace field pattern, built once per canvas context.
-  const field = useRef<CanvasPattern | null>(null);
+  // The workspace texture, cached per cell size because it scales with the zoom.
+  const field = useRef(new Map<number, CanvasPattern | null>());
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
-  const bitmaps = useRef(new WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>());
-  // Neighbours are cached without the checker so onion skin stays see-through.
-  const plainBitmaps = useRef(new WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>());
+  const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
   const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera });
@@ -316,12 +281,6 @@ export function PixelCanvas({
       const doc = latest.current.buffer;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.imageSmoothingEnabled = false;
-      // The whole workspace field is a pixel grid, so nothing in the editor is
-      // a flat colour. Cached, because building the tile per frame is wasteful.
-      if (!field.current) field.current = fieldPattern(context);
-      context.fillStyle = field.current ?? "#101220";
-      context.fillRect(0, 0, rect.width, rect.height);
-
       const cell = cam.zoom;
       // Snapped to whole pixels so every cell is exactly the same width. A
       // fractional origin makes nearest-neighbour scaling produce 16px and 17px
@@ -331,14 +290,31 @@ export function PixelCanvas({
       const docWidth = doc.width * cell;
       const docHeight = doc.height * cell;
 
+      // One texture across the whole preview, anchored to the document grid, so
+      // one square always equals one pixel. The document is not recoloured and
+      // not outlined: nothing in the preview is a highlighted box.
+      const tile = Math.max(1, Math.round(cell)) * 2;
+      const offsetX = ((originX % tile) + tile) % tile;
+      const offsetY = ((originY % tile) + tile) % tile;
+      let pattern = field.current.get(cell);
+      if (pattern === undefined) {
+        pattern = pixelCheckerPattern(context, cell);
+        field.current.set(cell, pattern);
+      }
+      context.save();
+      context.translate(offsetX, offsetY);
+      context.fillStyle = pattern ?? FIELD_DARK;
+      context.fillRect(-offsetX, -offsetY, rect.width + offsetX, rect.height + offsetY);
+      context.restore();
+
       context.imageSmoothingEnabled = false;
 
       // Onion skin is display-only: neighbours sit under the frame being edited,
-      // with their transparent pixels left alone so the checker stays visible.
+      // with their transparent pixels left alone so the texture stays visible.
       context.globalAlpha = 0.3;
       for (const neighbor of onionSkin) {
         context.drawImage(
-          bitmapFor(neighbor, plainBitmaps.current, 0),
+          bitmapFor(neighbor, bitmaps.current),
           originX,
           originY,
           docWidth,
@@ -348,21 +324,12 @@ export function PixelCanvas({
       context.globalAlpha = 1;
 
       context.drawImage(
-        bitmapFor(
-          doc,
-          bitmaps.current,
-          checker ? checkerStep(cell, doc.width, doc.height) : 0,
-        ),
+        bitmapFor(doc, bitmaps.current),
         originX,
         originY,
         docWidth,
         docHeight,
       );
-
-      // Snapped so the document edge is a crisp pixel line, not a blurry half one.
-      context.strokeStyle = "rgba(167, 240, 112, 0.5)";
-      context.lineWidth = 1;
-      context.strokeRect(originX - 0.5, originY - 0.5, docWidth + 1, docHeight + 1);
 
       // The grid only appears once a cell is wide enough that a boundary line
       // adds information. Below that it eats a pixel out of every cell, so an
