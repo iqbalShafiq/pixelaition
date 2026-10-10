@@ -64,11 +64,29 @@ export function applyRunEvent(
     );
   }
   if (type === "tool_call" || type === "tool_started") {
-    if (rows.some((row) => row.id === id)) return rows;
-    const name = typeof body?.name === "string" ? body.name : "tool";
+    const name =
+      typeof body?.name === "string" && body.name.length > 0 ? body.name : undefined;
+    const existing = rows.find((row) => row.id === id);
+    if (existing && existing.kind === "tool") {
+      if (name && existing.name === "tool") {
+        return rows.map((row) =>
+          row.id === id && row.kind === "tool"
+            ? { ...row, name, summary: toolSummary(name, body) ?? row.summary }
+            : row,
+        );
+      }
+      return rows;
+    }
+    const finalName = name ?? "tool";
     return [
       ...rows,
-      { id, kind: "tool", name, summary: toolSummary(name, body), state: "running" },
+      {
+        id,
+        kind: "tool",
+        name: finalName,
+        summary: toolSummary(finalName, body),
+        state: "running",
+      },
     ];
   }
   if (type === "tool_completed") {

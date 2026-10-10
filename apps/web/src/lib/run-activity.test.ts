@@ -60,6 +60,27 @@ describe("run activity rows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "status", state: "failed" });
   });
 
+  it("merges the tool name when the second event carries it", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(rows, 5, "tool_started", { operationId: "0:tool:5" });
+    expect(rows[0]).toMatchObject({ kind: "tool", name: "tool" });
+    rows = applyRunEvent(rows, 6, "tool_call", {
+      operationId: "0:tool:5",
+      name: "paint_stroke",
+      input: {
+        points: [
+          { x: 1, y: 1 },
+          { x: 2, y: 1 },
+        ],
+      },
+    });
+    expect(rows[0]).toMatchObject({
+      kind: "tool",
+      name: "paint_stroke",
+      summary: "2 px",
+    });
+  });
+
   it("ignores unknown events", () => {
     expect(applyRunEvent([], 1, "heartbeat", {})).toEqual([]);
   });
