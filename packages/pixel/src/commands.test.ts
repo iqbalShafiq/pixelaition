@@ -107,4 +107,132 @@ describe("pixel commands", () => {
     const beforeX = (30 - 10) / 2;
     expect((30 - next.x) / next.zoom).toBe(beforeX);
   });
+
+  it("confines a selection flood to the selection rectangle", () => {
+    const { buffer, layerId } = paint();
+    const wall = applyCommand(buffer, {
+      type: "line",
+      layerId,
+      x0: 3,
+      y0: 0,
+      x1: 3,
+      y1: 7,
+      color: 1,
+    });
+    expect(wall.ok).toBe(true);
+    if (!wall.ok) return;
+    const flooded = applyCommand(wall.buffer, {
+      type: "region",
+      layerId,
+      x: 0,
+      y: 0,
+      width: 3,
+      height: 8,
+      color: 2,
+      mode: "flood",
+    });
+    expect(flooded.ok).toBe(true);
+    if (!flooded.ok) return;
+    const pixels = flooded.buffer.layers[0]?.pixels ?? new Uint8Array();
+    // Inside the selection the flood reaches the wall but not past it.
+    expect(pixels[indexOf(8, 2, 4)]).toBe(2);
+    // Past the wall is untouched even though it is the same connected region.
+    expect(pixels[indexOf(8, 4, 4)]).toBe(0);
+    expect(pixels[indexOf(8, 3, 4)]).toBe(1);
+  });
+
+  it("fills and clears a selection rectangle and rejects one off the canvas", () => {
+    const { buffer, layerId } = paint();
+    const filled = applyCommand(buffer, {
+      type: "region",
+      layerId,
+      x: 1,
+      y: 1,
+      width: 2,
+      height: 2,
+      color: 3,
+      mode: "fill",
+    });
+    expect(filled.ok).toBe(true);
+    if (!filled.ok) return;
+    const filledPixels = filled.buffer.layers[0]?.pixels ?? new Uint8Array();
+    expect(filledPixels[indexOf(8, 1, 1)]).toBe(3);
+    expect(filledPixels[indexOf(8, 2, 2)]).toBe(3);
+    expect(filledPixels[indexOf(8, 3, 3)]).toBe(0);
+
+    const cleared = applyCommand(filled.buffer, {
+      type: "region",
+      layerId,
+      x: 1,
+      y: 1,
+      width: 2,
+      height: 2,
+      color: 3,
+      mode: "clear",
+    });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.buffer.layers[0]?.pixels[indexOf(8, 1, 1)]).toBe(0);
+
+    expect(
+      applyCommand(buffer, {
+        type: "region",
+        layerId,
+        x: 6,
+        y: 0,
+        width: 4,
+        height: 2,
+        color: 1,
+        mode: "fill",
+      }),
+    ).toMatchObject({ ok: false, code: "OUT_OF_BOUNDS" });
+  });
+
+  it("renames, hides, and removes layers while keeping at least one", () => {
+    const { buffer, layerId } = paint();
+    const added = applyCommand(buffer, {
+      type: "addLayer",
+      id: "layer-2",
+      name: "shade",
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.buffer.layers.map((layer) => layer.name)).toEqual(["pixels", "shade"]);
+
+    const renamed = applyCommand(added.buffer, {
+      type: "renameLayer",
+      layerId: "layer-2",
+      name: "  shadow  ",
+    });
+    expect(renamed.ok).toBe(true);
+    if (!renamed.ok) return;
+    expect(renamed.buffer.layers[1]?.name).toBe("shadow");
+    expect(
+      applyCommand(renamed.buffer, { type: "renameLayer", layerId, name: "   " }),
+    ).toMatchObject({ ok: false, code: "LAYER_NAME" });
+
+    const hidden = applyCommand(renamed.buffer, {
+      type: "setLayerVisible",
+      layerId,
+      visible: false,
+    });
+    expect(hidden.ok).toBe(true);
+    if (!hidden.ok) return;
+    expect(hidden.buffer.layers[0]?.visible).toBe(false);
+
+    const removed = applyCommand(hidden.buffer, {
+      type: "removeLayer",
+      layerId: "layer-2",
+    });
+    expect(removed.ok).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.buffer.layers).toHaveLength(1);
+    expect(applyCommand(removed.buffer, { type: "removeLayer", layerId })).toMatchObject({
+      ok: false,
+      code: "LAYER_REQUIRED",
+    });
+    expect(
+      applyCommand(removed.buffer, { type: "removeLayer", layerId: "ghost" }),
+    ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
+  });
 });
