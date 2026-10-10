@@ -287,3 +287,19 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+@utility hue-strip {
+  appearance: none;
+  height: 14px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+@layer base {
+  .hue-strip::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 14px;
+    background: var(--color-ink);
+    border: 2px solid var(--color-paper);
+  }
+}

@@ -1,5 +1,6 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
+import { Popover as BasePopover } from "@base-ui/react/popover";
 import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import { Select } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
@@ -467,6 +468,38 @@ export function MenuItem({
 }
 
 export const MenuSeparator = BaseMenu.Separator;
+
+/* ----------------------------------------------------------------- popover */
+
+export function Popover({
+  trigger,
+  label,
+  children,
+  align = "end",
+}: {
+  trigger: ReactNode;
+  label: string;
+  children: ReactNode;
+  align?: "start" | "end";
+}) {
+  return (
+    <BasePopover.Root>
+      <BasePopover.Trigger
+        aria-label={label}
+        className="border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent"
+      >
+        {trigger}
+      </BasePopover.Trigger>
+      <BasePopover.Portal>
+        <BasePopover.Positioner sideOffset={6} align={align} className="z-40">
+          <BasePopover.Popup className="w-64 border-2 border-line-strong bg-raised p-2 text-[13px]">
+            {children}
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
+  );
+}
 
 /* ---------------------------------------------------------------- overlays */
 

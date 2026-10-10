@@ -1,6 +1,7 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
-import { Check, Copy, Play, Plus, Square, Trash2 } from "lucide-react";
+import { Copy, Play, Plus, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   Button,
   Checkbox,
@@ -11,8 +12,10 @@ import {
   MenuItem,
   MenuSeparator,
   Panel,
+  Popover,
   TextInput,
 } from "./ui.js";
+import { hexToHsv, hsvToHex } from "../lib/hsv.js";
 import type { FrameDto } from "../lib/types.js";
 
 /**
@@ -275,9 +278,54 @@ export function PalettePanel({
   onAdd: (hex: string) => void;
 }) {
   const [draft, setDraft] = useState("#a7f070");
+  const [hsv, setHsv] = useState(() => hexToHsv("#a7f070"));
   const over = usedColors > maxColors;
+  const valid = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(draft);
+  const exists = palette.includes(draft.toLowerCase());
+
+  const sweetie16 = [
+    "#1a1c2c",
+    "#5d275d",
+    "#b13e53",
+    "#ef7d57",
+    "#ffcd75",
+    "#a7f070",
+    "#38b764",
+    "#257179",
+    "#29366f",
+    "#3b5dc9",
+    "#41a6f6",
+    "#73eff7",
+    "#f4f4f4",
+    "#94b0c2",
+    "#566c86",
+    "#333c57",
+  ];
+
+  function setFromHex(hex: string) {
+    setDraft(hex);
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) setHsv(hexToHsv(hex));
+  }
+  function setFromHsv(next: { h: number; s: number; v: number }) {
+    setHsv(next);
+    setDraft(hsvToHex(next.h, next.s, next.v));
+  }
+  function squareHandlers(event: ReactPointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const s = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const v = 1 - Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    setFromHsv({ ...hsv, s, v });
+  }
+
   return (
-    <Panel title="Palette">
+    <Panel
+      title="Palette"
+      action={
+        <span className={`font-mono text-[10px] ${over ? "text-erase" : "text-muted"}`}>
+          {usedColors}/{maxColors}
+        </span>
+      }
+    >
       <div className="grid grid-cols-8 gap-1">
         {palette.map((swatch, index) => (
           <button
@@ -292,36 +340,77 @@ export function PalettePanel({
             style={index === 0 ? undefined : { background: swatch }}
           />
         ))}
+        <Popover
+          label="Add a color"
+          trigger={
+            <span className="grid aspect-square place-items-center font-mono text-[13px]">
+              +
+            </span>
+          }
+        >
+          <div className="grid gap-2">
+            <div
+              role="slider"
+              aria-label="Saturation and brightness"
+              tabIndex={0}
+              className="relative h-24 cursor-pointer border-2 border-line-strong"
+              style={{
+                background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${hsvToHex(hsv.h, 1, 1)})`,
+              }}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                squareHandlers(event);
+              }}
+              onPointerMove={(event) => {
+                if (event.buttons === 1) squareHandlers(event);
+              }}
+            >
+              <span
+                aria-hidden
+                className="pointer-events-none absolute h-2 w-2 border-2 border-ink"
+                style={{
+                  left: `calc(${hsv.s * 100}% - 4px)`,
+                  top: `calc(${(1 - hsv.v) * 100}% - 4px)`,
+                }}
+              />
+            </div>
+            <input
+              aria-label="Hue"
+              type="range"
+              min={0}
+              max={359}
+              value={Math.round(hsv.h)}
+              onChange={(event) => setFromHsv({ ...hsv, h: Number(event.target.value) })}
+              className="hue-strip w-full border-2 border-line-strong bg-transparent"
+            />
+            <div className="grid grid-cols-8 gap-1">
+              {sweetie16.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  aria-label={`Preset ${preset}`}
+                  onClick={() => setFromHex(preset)}
+                  className="aspect-square border-2 border-line hover:border-line-strong"
+                  style={{ background: preset }}
+                />
+              ))}
+            </div>
+            <TextInput
+              value={draft}
+              aria-label="Hex color"
+              className="font-mono text-[13px]"
+              onChange={(event) => setFromHex(event.target.value)}
+            />
+            <Button
+              tone="solid"
+              disabled={!valid || exists || palette.length >= 33}
+              onClick={() => onAdd(draft.toLowerCase())}
+            >
+              {exists ? "In palette" : "Add color"}
+            </Button>
+          </div>
+        </Popover>
       </div>
-      <p className={`font-mono text-[10px] ${over ? "text-erase" : "text-muted"}`}>
-        {usedColors} of {maxColors} colors used
-        {over ? " · over the limit" : ""}
-      </p>
-      <Field label="Add color" htmlFor="palette-new-color">
-        <div className="flex gap-1.5">
-          <input
-            id="palette-new-color"
-            type="color"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            className="h-10 w-12 shrink-0 border-2 border-line bg-field"
-          />
-          <Button
-            tone="ghost"
-            className="flex-1 px-2 py-1.5 text-[11px]"
-            disabled={palette.length >= 33 || palette.includes(draft)}
-            onClick={() => onAdd(draft)}
-          >
-            {palette.includes(draft) ? (
-              <>
-                <Check size={13} strokeWidth={2.5} /> In palette
-              </>
-            ) : (
-              "Add"
-            )}
-          </Button>
-        </div>
-      </Field>
     </Panel>
   );
 }
