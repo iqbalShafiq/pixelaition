@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
 import { DurableRuntime } from "@anvia/durable";
 import { SqliteDurableStore } from "@anvia/durable/sqlite";
-import { LangfuseClient } from "@anvia/langfuse";
 import { OpenAIClient } from "@anvia/openai";
 import {
   REASONING_EFFORT_CONTROL_ID,
@@ -13,18 +12,16 @@ import {
 import {
   bindRun,
   createPixelTools,
-  defaultApiFor,
-  effortsFor,
   getRun,
+  LangfuseTelemetry,
   openCodeGoHeaders,
-  parseModelSpecs,
   pixelInstructions,
   releaseRun,
   selectRunTarget,
   type ModelSpec,
   type RunTarget,
 } from "@pixelaition/agent";
-import { createDatabase, frames, generationRuns } from "@pixelaition/db";
+import { createDatabase, frames, generationRuns, models } from "@pixelaition/db";
 import {
   bufferToFrame,
   defaultStyle,
@@ -32,7 +29,7 @@ import {
   frameToBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
 
@@ -70,15 +67,15 @@ const db = createDatabase();
 const durablePath = process.env.DURABLE_DATABASE_PATH ?? "./data/anvia-runs.sqlite";
 mkdirSync(dirname(durablePath), { recursive: true });
 
-const langfuse =
+const telemetry =
   process.env.LANGFUSE_PUBLIC_KEY && process.env.LANGFUSE_SECRET_KEY
-    ? new LangfuseClient({
+    ? new LangfuseTelemetry({
         publicKey: process.env.LANGFUSE_PUBLIC_KEY,
         secretKey: process.env.LANGFUSE_SECRET_KEY,
         ...(process.env.LANGFUSE_BASE_URL
           ? { baseUrl: process.env.LANGFUSE_BASE_URL }
           : {}),
-        environment: process.env.NODE_ENV,
+        serviceName: "pixelaition-worker",
       })
     : undefined;
 
@@ -94,12 +91,17 @@ const openai = apiKey
     })
   : undefined;
 
-const fallbackModelId = process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
-const parsedSpecs = parseModelSpecs(process.env.OPENAI_MODELS);
-// One configured model is enough; this fallback keeps single-model setups,
-// which only set OPENAI_MODEL, working unchanged.
-const specs: ModelSpec[] =
-  parsedSpecs.length > 0 ? parsedSpecs : [{ id: fallbackModelId }];
+// The catalog is the database table, seeded by migrations. No env, no guessing.
+const modelRows = await db
+  .select()
+  .from(models)
+  .where(eq(models.enabled, true))
+  .orderBy(asc(models.position));
+const specs: ModelSpec[] = modelRows.map((row) => ({
+  id: row.id,
+  api: row.api === "chat" ? "chat" : "responses",
+  efforts: (row.efforts as string[]) ?? [],
+}));
 
 // The control is declared explicitly so the options survive model ids Anvia
 // does not know, such as an OpenRouter slug. The adapter maps it to the
@@ -109,24 +111,24 @@ const completions = openai
       spec,
       model: openai.completionModel({
         modelId: spec.id,
-        api: spec.api ?? defaultApiFor(baseUrl),
+        api: spec.api,
         controls: defineCompletionModelControls({
           [REASONING_EFFORT_CONTROL_ID]: {
             type: "select",
             label: "Reasoning effort",
-            options: effortsFor(spec.efforts),
+            options: spec.efforts,
           },
         }),
       }),
     }))
   : [];
 
-const observer = langfuse?.observer({ redactInputs: true });
+const observer = telemetry?.observer();
 
 // Durable submits carry no model controls, so one agent is registered per
 // model and reasoning effort and the run picks the pair the composer chose.
 const agents = completions.flatMap(({ spec, model }) =>
-  effortsFor(spec.efforts).map((effort) => ({
+  spec.efforts.map((effort) => ({
     id: `${agentPrefix}:${spec.id}:${effort}`,
     agent: new Agent({
       id: `${agentPrefix}:${spec.id}:${effort}`,
@@ -224,7 +226,7 @@ app.get("/health", (_req, res) => {
 app.get("/internal/agents", (req, res) => {
   if (!authorized(req)) return res.status(401).end();
   res.json({
-    models: specs.map((spec) => ({ id: spec.id, efforts: effortsFor(spec.efforts) })),
+    models: specs.map((spec) => ({ id: spec.id, efforts: spec.efforts })),
     agents: agents.map((entry) => entry.id),
   });
 });
@@ -246,6 +248,11 @@ app.post("/internal/runs", async (req, res) => {
     })
     .parse(req.body);
   const target = selectRunTarget(specs, body.modelId, body.reasoningEffort);
+  if (!target) {
+    return res.status(422).json({
+      message: `Unknown model or effort: ${body.modelId} / ${body.reasoningEffort}.`,
+    });
+  }
   const chosen = agentForTarget(target);
   if (!chosen || !openai)
     return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
@@ -260,6 +267,18 @@ app.post("/internal/runs", async (req, res) => {
     sessionId: body.threadId,
     requestId: body.requestId,
     prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${frame.name}`,
+  });
+  telemetry?.setTraceContext(run.id, {
+    name: "draw-sprite",
+    userId: body.userId,
+    sessionId: body.threadId,
+    tags: ["pixelaition", "draw"],
+    metadata: {
+      assetId: body.assetId,
+      frameId: frame.id,
+      modelId: target.modelId,
+      reasoningEffort: target.effort,
+    },
   });
   bindRun(run.id, {
     assetId: body.assetId,
@@ -338,14 +357,15 @@ async function follow(
       const snapshot = runtime.snapshot(durableId);
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
-        if (langfuse && binding) {
-          await langfuse.score({
-            traceId: snapshot.run.id,
-            name: "pixel-critique",
-            value: binding.issues.length === 0 ? 1 : 0,
-            dataType: "NUMERIC",
-          });
-          await langfuse.flush();
+        if (telemetry) {
+          if (binding) {
+            await telemetry.recordScore({
+              runId: durableId,
+              name: "pixel-critique",
+              value: binding.issues.length === 0 ? 1 : 0,
+            });
+          }
+          await telemetry.flush();
         }
         await db
           .update(generationRuns)
