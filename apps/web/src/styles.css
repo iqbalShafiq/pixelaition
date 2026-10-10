@@ -1,7 +1,18 @@
 @import "tailwindcss";
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/silkscreen/400.css";
+@import "@fontsource/silkscreen/700.css";
+@import "@fontsource/pixelify-sans/400.css";
+@import "@fontsource/pixelify-sans/500.css";
+@import "@fontsource/pixelify-sans/600.css";
+@import "@fontsource/pixelify-sans/700.css";
+
+@font-face {
+  font-family: "Departure Mono";
+  src: url("./assets/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
 /*
  * Colour comes from Sweetie 16, the 16-colour palette by GrafxKid that ships as
@@ -24,8 +35,13 @@
  * chrome around it, the way a handheld console does.
  */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: "Pixelify Sans", ui-sans-serif, sans-serif;
+  --font-body: "Pixelify Sans", ui-sans-serif, sans-serif;
+  --font-mono: "Departure Mono", ui-monospace, monospace;
+  --font-display: "Silkscreen", "Pixelify Sans", ui-sans-serif, sans-serif;
+  --ease-pixel-2: steps(2, end);
+  --ease-pixel-3: steps(3, end);
+  --ease-pixel-4: steps(4, end);
 
   /* Sweetie 16 direct */
   --color-navy: #1a1c2c;
@@ -96,7 +112,7 @@
     background: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
+    -webkit-font-smoothing: none;
   }
 
   /*
@@ -203,6 +219,45 @@
     linear-gradient(to right, rgba(148, 176, 194, 0.09) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(148, 176, 194, 0.09) 1px, transparent 1px);
   background-size: 32px 32px;
+}
+
+/* The type scale. Sizes sit on each face's design grid: Silkscreen 16/24,
+   Departure Mono 11/22, Pixelify >= 12. Never introduce fractional sizes. */
+@layer components {
+  .text-pixel-display {
+    font-family: var(--font-display);
+    font-size: 1.5rem; /* 24px, multiple of 8 */
+    line-height: 2rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  .text-pixel-title {
+    font-family: var(--font-display);
+    font-size: 1rem; /* 16px */
+    line-height: 1.5rem;
+    letter-spacing: 0.04em;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  .text-pixel-label {
+    font-family: var(--font-sans);
+    font-size: 0.75rem; /* 12px */
+    line-height: 1rem;
+  }
+  .text-pixel-body {
+    font-family: var(--font-sans);
+    font-size: 1rem; /* 16px */
+    line-height: 1.5rem;
+  }
+  .text-pixel-mono {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem; /* 11px */
+    line-height: 1rem;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
 }
 
 /* Swatch for palette index 0, which is transparent. */
