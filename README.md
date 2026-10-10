@@ -28,7 +28,7 @@ pnpm dev
 
 The web app is on port 3000 and proxies `/api` to port 3001. The worker listens on port 4002. One `.env` at the repository root feeds every package through `dotenv-cli`.
 
-Set `OPENAI_BASE_URL` to an OpenAI-compatible endpoint. The sample points at OpenRouter. `OPENAI_API_KEY` and `OPENAI_MODEL` are required before Generate will draw. Set `OPENAI_MODELS` to a JSON array of `{ id, api, efforts }` to pin the composer's model choices and each model's reasoning-effort options; without it, the provider's model list is shown with a generic effort set. Manual editing works without them. `TYPESAFE_API_KEY` turns semantic routing over to Jev. `DECISION_MODEL` names an OpenAI-compatible model to answer the same question when Jev is not configured. Without either, a local prompt check asks for a subject when the request is too vague.
+Set `OPENAI_BASE_URL` to an OpenAI-compatible endpoint (the sample points at OpenRouter; OpenCode Go is `https://opencode.ai/zen/go/v1`) and `OPENAI_API_KEY` to its key. The drawing models and their reasoning-effort options live in the `models` table, seeded by migrations, and the composer reads them from there. `DECISION_MODEL` is required before Generate will draw and must name a model from that table; the prompt decision is a real model call, never a local heuristic. Manual editing works without any of them. `TYPESAFE_API_KEY` turns semantic routing over to Jev instead, and `pnpm eval:judge` requires `EVAL_MODEL`.
 
 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` turn tracing on. Leave them empty to run without telemetry. For a local Langfuse, use its official Compose file and point `LANGFUSE_BASE_URL` at that UI.
 
@@ -115,7 +115,7 @@ pnpm eval
 
 Inside `apps/web`, `src/components/ui.tsx` holds the shared controls, `src/components/pixel-canvas.tsx` owns all canvas drawing, and the panels, composer, and export dialog live beside them. Screens do not restyle controls themselves.
 
-The worker is the only owner of the Durable SQLite file. Do not run more than one worker replica. It registers one agent per model and reasoning effort, because a Durable submission carries no model controls.
+The worker is the only owner of the Durable SQLite file. Do not run more than one worker replica. It registers one agent per model and reasoning effort from the `models` table, because a Durable submission carries no model controls.
 
 ## License
 
