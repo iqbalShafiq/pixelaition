@@ -10,13 +10,18 @@ import {
   type Database,
 } from "@pixelaition/db";
 import {
+  addFrame,
+  applyCommand,
+  assetFrameBuffer,
   createAsset,
   defaultStyle,
+  duplicateFrame,
+  writeFrame,
   type Asset,
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -127,6 +132,202 @@ export async function saveFrame(
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   return getAssetRecord(db, userId, assetId);
+}
+
+type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
+
+export type StoreFailure = { code: string; message: string };
+
+function asPixelAsset(record: AssetRecord): Asset {
+  return {
+    id: record.id,
+    name: record.name,
+    width: record.width,
+    height: record.height,
+    palette: record.palette as string[],
+    frames: record.frames.map((frame) => ({
+      id: frame.id,
+      name: frame.name,
+      index: frame.index,
+      layers: frame.layers,
+    })),
+  };
+}
+
+async function persistAsset(
+  db: Database,
+  userId: string,
+  assetId: string,
+  asset: Asset,
+): Promise<AssetRecord | undefined> {
+  await db
+    .update(assets)
+    .set({
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+      updatedAt: new Date(),
+    })
+    .where(eq(assets.id, assetId));
+  for (const frame of asset.frames) {
+    await db
+      .update(frames)
+      .set({ layers: frame.layers, updatedAt: new Date() })
+      .where(and(eq(frames.id, frame.id), eq(frames.assetId, assetId)));
+  }
+  return getAssetRecord(db, userId, assetId);
+}
+
+export async function addFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  name: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  const next = addFrame(asPixelAsset(record), name);
+  const added = next.frames.at(-1);
+  if (!added) return { asset: undefined };
+  await db.insert(frames).values({
+    id: added.id,
+    assetId,
+    name: added.name,
+    index: added.index,
+    layers: added.layers,
+  });
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function duplicateFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  name?: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  const next = duplicateFrame(asPixelAsset(record), frameId, name ?? "");
+  if (!next)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is gone." },
+    };
+  const added = next.frames.at(-1);
+  if (!added) return { asset: undefined };
+  await db.insert(frames).values({
+    id: added.id,
+    assetId,
+    name: added.name,
+    index: added.index,
+    layers: added.layers,
+  });
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function renameFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  name: string,
+): Promise<AssetRecord | undefined> {
+  const trimmed = name.trim();
+  if (!trimmed) return undefined;
+  const asset = await getAssetRecord(db, userId, assetId);
+  if (!asset?.frames.some((frame) => frame.id === frameId)) return undefined;
+  await db
+    .update(frames)
+    .set({ name: trimmed, updatedAt: new Date() })
+    .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return getAssetRecord(db, userId, assetId);
+}
+
+export async function deleteFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+): Promise<{ ok: boolean; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { ok: false };
+  if (record.frames.length <= 1) {
+    return {
+      ok: false,
+      failure: { code: "FRAME_REQUIRED", message: "An asset keeps at least one frame." },
+    };
+  }
+  if (!record.frames.some((frame) => frame.id === frameId)) return { ok: false };
+  await db.delete(frames).where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return { ok: true };
+}
+
+export async function updateAssetRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  input: { name?: string; width?: number; height?: number; palette?: string[] },
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  let asset = asPixelAsset(record);
+  const trimmed = input.name?.trim();
+  if (trimmed) asset = { ...asset, name: trimmed };
+  if (!asset.frames[0]) return { asset: await persistAsset(db, userId, assetId, asset) };
+
+  // Every frame gates the change so a palette cannot shrink past a color another
+  // frame still uses. Each frame is checked on its own buffer.
+  for (const frame of asset.frames) {
+    const buffer = assetFrameBuffer(asset, frame.id);
+    if (!buffer) continue;
+    if (input.palette) {
+      const result = applyCommand(buffer, { type: "setPalette", palette: input.palette });
+      if (!result.ok) return { asset: undefined, failure: result };
+    }
+    if (input.width !== undefined || input.height !== undefined) {
+      const result = applyCommand(buffer, {
+        type: "resize",
+        width: input.width ?? buffer.width,
+        height: input.height ?? buffer.height,
+      });
+      if (!result.ok) return { asset: undefined, failure: result };
+    }
+  }
+
+  const first = assetFrameBuffer(asset, asset.frames[0].id);
+  if (first) {
+    let next = first;
+    if (input.palette) {
+      const result = applyCommand(next, { type: "setPalette", palette: input.palette });
+      if (result.ok) next = result.buffer;
+    }
+    if (input.width !== undefined || input.height !== undefined) {
+      const result = applyCommand(next, {
+        type: "resize",
+        width: input.width ?? next.width,
+        height: input.height ?? next.height,
+      });
+      if (result.ok) next = result.buffer;
+    }
+    for (const frame of asset.frames) asset = writeFrame(asset, frame.id, next);
+  }
+  return { asset: await persistAsset(db, userId, assetId, asset) };
+}
+
+export async function listFrameRecords(db: Database, userId: string, assetId: string) {
+  const asset = await getAssetRecord(db, userId, assetId);
+  if (!asset) return undefined;
+  return db
+    .select()
+    .from(frames)
+    .where(eq(frames.assetId, assetId))
+    .orderBy(asc(frames.index));
 }
 
 export async function getPreferences(db: Database, userId: string) {

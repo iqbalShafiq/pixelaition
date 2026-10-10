@@ -19,18 +19,23 @@ import { z } from "zod";
 import { auth, db } from "./auth.js";
 import { decideFromPrompt } from "@pixelaition/agent";
 import {
+  addFrameRecord,
   createApiKey,
   createAssetRecord,
   createProjectRecord,
+  deleteFrameRecord,
+  duplicateFrameRecord,
   ensureThread,
   getAssetRecord,
   getPreferences,
   getProjectRecord,
   insertRun,
   listProjects,
+  renameFrameRecord,
   revokeApiKey,
   saveFrame,
   savePreferences,
+  updateAssetRecord,
   userIdForToken,
 } from "./store.js";
 import { generationRuns } from "@pixelaition/db";
@@ -189,6 +194,92 @@ export function createApp() {
     res.json(asset);
   });
 
+  app.patch("/api/assets/:id", async (req, res) => {
+    const body = z
+      .object({
+        name: z.string().min(1).max(80).optional(),
+        width: z.number().int().optional(),
+        height: z.number().int().optional(),
+        palette: z.array(z.string()).min(2).max(33).optional(),
+      })
+      .parse(req.body);
+    const result = await updateAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "INVALID",
+        result.failure?.message ?? "That asset is not available.",
+      );
+    res.json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames", async (req, res) => {
+    const body = z.object({ name: z.string().max(80).default("") }).parse(req.body);
+    const result = await addFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.name,
+    );
+    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    res.status(201).json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames/:frameId/duplicate", async (req, res) => {
+    const body = z.object({ name: z.string().max(80).optional() }).parse(req.body);
+    const result = await duplicateFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.name,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        404,
+        "NOT_FOUND",
+        result.failure?.message ?? "That frame is gone.",
+      );
+    res.status(201).json(result.asset);
+  });
+
+  app.patch("/api/assets/:id/frames/:frameId", async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
+    const asset = await renameFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.name,
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
+    res.json(asset);
+  });
+
+  app.delete("/api/assets/:id/frames/:frameId", async (req, res) => {
+    const result = await deleteFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+    );
+    if (result.failure)
+      return fail(
+        res,
+        result.failure.code === "FRAME_REQUIRED" ? 422 : 404,
+        result.failure.code,
+        result.failure.message,
+      );
+    res.status(204).end();
+  });
+
   app.post("/api/runs", async (req, res) => {
     const body = z
       .object({
@@ -317,30 +408,37 @@ export function createApp() {
   app.post("/api/export", async (req, res) => {
     const body = z
       .object({
+        scope: z.enum(["frame", "asset", "project"]).default("project"),
         projectId: z.string(),
+        assetId: z.string().optional(),
+        frameId: z.string().optional(),
         format: z.enum(["pxl", "png", "jpg", "svg", "zip"]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
       })
       .parse(req.body);
-    const project = await getProjectRecord(
-      db,
-      res.locals.userId as string,
-      body.projectId,
-    );
-    if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
-    const document = await projectDocument(
-      res.locals.userId as string,
-      project.id,
-      project.name,
-      project.description,
-      project.style as StyleGuide,
-    );
+    if (body.scope !== "project" && body.format === "pxl") {
+      return fail(
+        res,
+        422,
+        "INVALID",
+        "A .pxl document holds a whole project. Choose PNG, JPG, SVG, or ZIP.",
+      );
+    }
+    if (body.scope === "frame" && !(body.assetId && body.frameId)) {
+      return fail(res, 400, "INVALID", "Exporting one frame needs an asset and a frame.");
+    }
+    const document = await documentForScope(res.locals.userId as string, {
+      projectId: body.projectId,
+      assetId: body.scope === "project" ? undefined : body.assetId,
+      frameId: body.scope === "frame" ? body.frameId : undefined,
+    });
+    if (!document) return fail(res, 404, "NOT_FOUND", "That project is not available.");
     if (body.format === "pxl") {
       res.setHeader("content-type", "application/vnd.pixelaition+json");
       res.setHeader(
         "content-disposition",
-        `attachment; filename="${slug(project.name)}.pxl"`,
+        `attachment; filename="${slug(document.project.name)}.pxl"`,
       );
       return res.send(serializeProject(document));
     }
@@ -363,7 +461,7 @@ export function createApp() {
       res.setHeader("content-type", "application/zip");
       res.setHeader(
         "content-disposition",
-        `attachment; filename="${slug(project.name)}.zip"`,
+        `attachment; filename="${slug(document.project.name)}.zip"`,
       );
       return res.send(Buffer.from(zipFiles(files)));
     }
@@ -388,30 +486,40 @@ export function createApp() {
   return app;
 }
 
-async function projectDocument(
+async function documentForScope(
   userId: string,
-  projectId: string,
-  name: string,
-  description: string,
-  style: StyleGuide,
-): Promise<PixelProject> {
-  const project = await getProjectRecord(db, userId, projectId);
+  input: { projectId: string; assetId?: string; frameId?: string },
+): Promise<PixelProject | undefined> {
+  const project = await getProjectRecord(db, userId, input.projectId);
+  if (!project) return undefined;
   const built: PixelProject = {
     format: "pixelaition",
     version: 1,
-    project: { name, description, style },
+    project: {
+      name: project.name,
+      description: project.description,
+      style: project.style as StyleGuide,
+    },
     assets: [],
   };
-  for (const asset of project?.assets ?? []) {
+  const wanted = input.assetId
+    ? project.assets.filter((asset) => asset.id === input.assetId)
+    : project.assets;
+  if (input.assetId && wanted.length === 0) return undefined;
+  for (const asset of wanted) {
     const full = await getAssetRecord(db, userId, asset.id);
     if (!full) continue;
+    const frames = input.frameId
+      ? full.frames.filter((frame) => frame.id === input.frameId)
+      : full.frames;
+    if (frames.length === 0) continue;
     built.assets.push({
       id: full.id,
       name: full.name,
       width: full.width,
       height: full.height,
       palette: full.palette as string[],
-      frames: full.frames.map((frame) =>
+      frames: frames.map((frame) =>
         bufferToFrame(
           frameToBuffer(frame, full.width, full.height, full.palette as string[]),
           frame,
@@ -419,6 +527,7 @@ async function projectDocument(
       ),
     });
   }
+  if (built.assets.length === 0) return undefined;
   return built;
 }
 

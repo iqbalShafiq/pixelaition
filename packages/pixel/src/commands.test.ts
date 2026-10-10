@@ -5,6 +5,7 @@ import { critiqueFrame } from "./critique.js";
 import { zoomAt } from "./camera.js";
 import { createHistory, pushHistory, redoHistory, undoHistory } from "./history.js";
 import {
+  addFrame,
   assetFrameBuffer,
   createAsset,
   duplicateFrame,
@@ -12,6 +13,7 @@ import {
   writeFrame,
 } from "./document.js";
 import { indexOf } from "./pixels.js";
+import type { Asset } from "./types.js";
 
 function paint(buffer = createBuffer({ width: 8, height: 8 })) {
   const layerId = buffer.layers[0]?.id ?? "";
@@ -75,6 +77,23 @@ describe("pixel commands", () => {
     expect(copy?.frames).toHaveLength(2);
     expect(copy?.frames[1]?.name).toBe("left");
     expect(copy?.frames[1]?.id).not.toBe(frameId);
+  });
+
+  it("keeps frame indexes unique after a middle frame is dropped", () => {
+    const asset = createAsset({ name: "hero", width: 8, height: 8 });
+    const first = asset.frames[0]?.id ?? "";
+    const second = addFrame(asset, "walk");
+    const third = addFrame(second, "run");
+    // Drop the middle frame, which leaves a gap in the index sequence.
+    const withoutMiddle: Asset = {
+      ...third,
+      frames: third.frames.filter((frame) => frame.index !== 1),
+    };
+    expect(withoutMiddle.frames.map((frame) => frame.index)).toEqual([0, 2]);
+    const appended = addFrame(withoutMiddle, "idle-again");
+    expect(appended.frames.map((frame) => frame.index)).toEqual([0, 2, 3]);
+    const copied = duplicateFrame(appended, first, "left");
+    expect(copied?.frames.map((frame) => frame.index)).toEqual([0, 2, 3, 4]);
   });
 
   it("flags an empty frame and accepts an outlined sprite", () => {

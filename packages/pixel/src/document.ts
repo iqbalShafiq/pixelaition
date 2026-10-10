@@ -82,7 +82,6 @@ function samePalette(left: string[], right: string[]): boolean {
 }
 
 export function addFrame(asset: Asset, name: string): Asset {
-  const source = asset.frames[0];
   const width = asset.width;
   const height = asset.height;
   const blank = createBuffer({
@@ -94,10 +93,14 @@ export function addFrame(asset: Asset, name: string): Asset {
   const frame = bufferToFrame(blank, {
     id: createId(),
     name: name.trim() || `frame-${asset.frames.length + 1}`,
-    index: asset.frames.length,
+    index: nextIndex(asset),
   });
-  if (!source) return { ...asset, frames: [frame] };
+  if (asset.frames.length === 0) return { ...asset, frames: [frame] };
   return { ...asset, frames: [...asset.frames, frame] };
+}
+
+function nextIndex(asset: Asset): number {
+  return asset.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
 }
 
 export function duplicateFrame(
@@ -112,7 +115,7 @@ export function duplicateFrame(
     {
       id: createId(),
       name: name.trim() || `${source.name} copy`,
-      index: asset.frames.length,
+      index: nextIndex(asset),
     },
   );
   copy.layers = copy.layers.map((layer) => ({ ...layer, id: createId() }));
