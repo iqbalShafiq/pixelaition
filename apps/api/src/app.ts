@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
-import { decidePrompt } from "@pixelaition/agent";
+import { decidePrompt, effortsFor, parseModelSpecs } from "@pixelaition/agent";
 import {
   addFrameRecord,
   createApiKey,
@@ -106,7 +106,6 @@ export function createApp() {
     res.json({
       models: await listModels(),
       modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
-      reasoningEfforts: await listReasoningEfforts(),
     });
   });
 
@@ -560,10 +559,12 @@ async function documentForScope(
   return built;
 }
 
-let modelCache: { at: number; models: Array<{ id: string }> } | undefined;
+let providerCache: { at: number; models: Array<{ id: string }> } | undefined;
 
-async function listModels(): Promise<Array<{ id: string }>> {
-  if (modelCache && Date.now() - modelCache.at < 5 * 60 * 1000) return modelCache.models;
+async function providerModels(): Promise<Array<{ id: string }>> {
+  if (providerCache && Date.now() - providerCache.at < 5 * 60 * 1000) {
+    return providerCache.models;
+  }
   const base = process.env.OPENAI_BASE_URL?.replace(/\/$/, "");
   const key = process.env.OPENAI_API_KEY;
   const fallback = process.env.OPENAI_MODEL ? [{ id: process.env.OPENAI_MODEL }] : [];
@@ -575,42 +576,65 @@ async function listModels(): Promise<Array<{ id: string }>> {
     if (!response.ok) return fallback;
     const body = (await response.json()) as { data?: Array<{ id: string }> };
     const models = (body.data ?? []).map((model) => ({ id: model.id })).slice(0, 200);
-    modelCache = { at: Date.now(), models: models.length > 0 ? models : fallback };
-    return modelCache.models;
+    providerCache = { at: Date.now(), models: models.length > 0 ? models : fallback };
+    return providerCache.models;
   } catch {
     return fallback;
   }
 }
 
-const fallbackEfforts = ["none", "low", "medium", "high"];
-
-let effortCache: { at: number; efforts: string[] } | undefined;
+let workerCatalogCache:
+  { at: number; models: Array<{ id: string; efforts: string[] }> } | undefined;
 
 /**
- * The worker owns the reasoning-effort options, because only it knows which
- * controls the configured model actually declares. Falls back to the generic
- * set when the worker is unreachable or the model takes no controls.
+ * The worker owns each model's reasoning-effort options, because only it
+ * declares the controls. An unreachable worker returns undefined and the
+ * caller falls back to the env catalog, then to the generic set.
  */
-async function listReasoningEfforts(): Promise<string[]> {
-  if (effortCache && Date.now() - effortCache.at < 5 * 60 * 1000) {
-    return effortCache.efforts;
+async function workerCatalog(): Promise<
+  Array<{ id: string; efforts: string[] }> | undefined
+> {
+  if (workerCatalogCache && Date.now() - workerCatalogCache.at < 5 * 60 * 1000) {
+    return workerCatalogCache.models;
   }
   const base = process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002";
   try {
     const response = await fetch(`${base}/internal/agents`, {
       headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
     });
-    if (!response.ok) return fallbackEfforts;
-    const body = (await response.json()) as { reasoningEfforts?: string[] };
-    const efforts = body.reasoningEfforts?.filter(Boolean) ?? [];
-    effortCache = {
-      at: Date.now(),
-      efforts: efforts.length > 0 ? efforts : fallbackEfforts,
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as {
+      models?: Array<{ id: string; efforts?: string[] }>;
     };
-    return effortCache.efforts;
+    const models = (body.models ?? [])
+      .filter((model) => model.id)
+      .map((model) => ({ id: model.id, efforts: effortsFor(model.efforts) }));
+    if (models.length === 0) return undefined;
+    workerCatalogCache = { at: Date.now(), models };
+    return models;
   } catch {
-    return fallbackEfforts;
+    return undefined;
   }
+}
+
+/**
+ * The composer catalog. OPENAI_MODELS pins the list and its order; otherwise
+ * the provider's /models list decides. Each entry carries the efforts the
+ * worker registered for it.
+ */
+async function listModels(): Promise<Array<{ id: string; efforts: string[] }>> {
+  const specs = parseModelSpecs(process.env.OPENAI_MODELS);
+  const ids =
+    specs.length > 0
+      ? specs.map((spec) => spec.id)
+      : (await providerModels()).map((model) => model.id);
+  const reported = await workerCatalog();
+  return ids.map((id) => ({
+    id,
+    efforts:
+      reported?.find((model) => model.id === id)?.efforts ??
+      effortsFor(specs.find((spec) => spec.id === id)?.efforts),
+  }));
 }
 
 function slug(value: string): string {
