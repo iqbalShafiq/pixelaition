@@ -1,8 +1,17 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
-import { Copy, Menu as MenuIcon, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Menu as MenuIcon,
+  Pencil,
+  Play,
+  Plus,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Reorder, useDragControls } from "motion/react";
+import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import {
   Button,
   Checkbox,
@@ -119,52 +128,95 @@ function FrameRow({
       transition={{ duration: 0.16, ease: "easeOut" }}
       className="relative flex items-center gap-1"
     >
-      <div className={`${frameRowClass(current)} min-w-0 flex-1`}>
-        <FrameThumb frame={frame} palette={palette} />
+      <div className={`${frameRowClass(current)} relative min-w-0 flex-1`}>
+        <button
+          type="button"
+          onClick={onSelect}
+          disabled={editing}
+          aria-current={current}
+          aria-label={`Select ${frame.name}`}
+          title={frame.name}
+          className="absolute -inset-0.5 z-0"
+        />
+        <span
+          className={`pointer-events-none shrink-0 transition-opacity duration-150 ${
+            editing ? "opacity-0" : "opacity-100"
+          }`}
+        >
+          <FrameThumb frame={frame} palette={palette} />
+        </span>
         {editing ? (
-          <TextInput
-            autoFocus
-            value={draft}
-            aria-label="Frame name"
-            className="min-w-0 flex-1 px-1 py-0.5 text-[13px]"
-            onChange={(event) => onDraft(event.target.value)}
-            onBlur={onCommit}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") onCancel();
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={onSelect}
-            aria-current={current}
-            title={frame.name}
-            className="min-w-0 flex-1 truncate text-left"
+          <motion.span
+            key="rename"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.12 }}
+            className="relative z-10 flex min-w-0 flex-1"
           >
+            <input
+              autoFocus
+              value={draft}
+              aria-label="Frame name"
+              className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+              onChange={(event) => onDraft(event.target.value)}
+              onBlur={onCommit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") onCancel();
+              }}
+            />
+          </motion.span>
+        ) : (
+          <span className="pointer-events-none min-w-0 flex-1 truncate leading-5">
             {frame.name}
-          </button>
+          </span>
         )}
         {current && locked ? (
-          <span className="font-mono text-[10px]">drawing</span>
+          <span className="pointer-events-none font-mono text-[10px]">drawing</span>
         ) : null}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5">
-          <IconButton
-            label={`Rename ${frame.name}`}
-            size="sm"
-            disabled={locked}
-            onClick={onStartEdit}
-          >
-            <Pencil size={13} strokeWidth={2} />
-          </IconButton>
-          <Menu label={`Actions for ${frame.name}`}>
-            <MenuItem disabled={locked} onClick={onDuplicate}>
-              <Copy size={13} strokeWidth={2} /> Duplicate
-            </MenuItem>
-            <MenuItem disabled={locked} onClick={onDelete}>
-              <Trash2 size={13} strokeWidth={2} /> Delete
-            </MenuItem>
-          </Menu>
+        <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
+          <AnimatePresence initial={false} mode="popLayout">
+            {editing ? (
+              <motion.span
+                key="save"
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.85 }}
+                transition={{ duration: 0.12 }}
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                <IconButton label={`Save ${frame.name}`} size="sm" onClick={onCommit}>
+                  <Check size={13} strokeWidth={2.5} />
+                </IconButton>
+              </motion.span>
+            ) : (
+              <motion.span
+                key="actions"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.12 }}
+                className="flex items-center gap-0.5"
+              >
+                <IconButton
+                  label={`Rename ${frame.name}`}
+                  size="sm"
+                  disabled={locked}
+                  onClick={onStartEdit}
+                >
+                  <Pencil size={13} strokeWidth={2} />
+                </IconButton>
+                <Menu label={`Actions for ${frame.name}`}>
+                  <MenuItem disabled={locked} onClick={onDuplicate}>
+                    <Copy size={13} strokeWidth={2} /> Duplicate
+                  </MenuItem>
+                  <MenuItem disabled={locked} onClick={onDelete}>
+                    <Trash2 size={13} strokeWidth={2} /> Delete
+                  </MenuItem>
+                </Menu>
+              </motion.span>
+            )}
+          </AnimatePresence>
         </span>
       </div>
       <button
@@ -269,9 +321,12 @@ export function FramePanel({
   }, [frames, orderDraft]);
 
   function persistOrder(id: string) {
-    const next = draftOrderRef.current ?? frames;
-    const index = next.findIndex((frame) => frame.id === id);
+    // Only a drag that actually moved something has a preview to store; a drag
+    // that ended where it started must not write anything.
+    const next = draftOrderRef.current;
     draftOrderRef.current = null;
+    if (!next) return;
+    const index = next.findIndex((frame) => frame.id === id);
     if (index === -1) return;
     void onReorder(id, index).then((ok) => {
       if (!ok) setOrderDraft(null);
@@ -420,13 +475,26 @@ export function LayerPanel({
           return (
             <li
               key={layer.id}
-              className={`flex items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+              className={`relative flex items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
                 current
                   ? "border-accent bg-raised"
                   : "border-transparent hover:border-line hover:bg-raised"
               } ${layer.visible ? "" : "opacity-55"}`}
             >
-              <span className="shrink-0" onClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => onSelect(layer.id)}
+                disabled={editingId === layer.id}
+                aria-current={current}
+                aria-label={`Select layer ${layer.name}`}
+                className="absolute -inset-0.5 z-0"
+              />
+              <span
+                inert={editingId === layer.id ? true : undefined}
+                className={`relative z-10 shrink-0 transition-opacity duration-150 ${
+                  editingId === layer.id ? "pointer-events-none opacity-0" : "opacity-100"
+                }`}
+              >
                 <Checkbox
                   label={`Show ${layer.name}`}
                   hideLabel
@@ -436,48 +504,84 @@ export function LayerPanel({
                 />
               </span>
               {editingId === layer.id ? (
-                <TextInput
-                  autoFocus
-                  value={draft}
-                  aria-label="Layer name"
-                  className="min-w-0 flex-1 px-1 py-0.5 text-[13px]"
-                  onChange={(event) => setDraft(event.target.value)}
-                  onBlur={commitEdit}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                    if (event.key === "Escape") setEditingId(null);
-                  }}
-                />
+                <motion.span
+                  key="rename"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.12 }}
+                  className="relative z-10 flex min-w-0 flex-1"
+                >
+                  <input
+                    autoFocus
+                    value={draft}
+                    aria-label="Layer name"
+                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-[13px] text-ink outline-none"
+                    onChange={(event) => setDraft(event.target.value)}
+                    onBlur={commitEdit}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                      if (event.key === "Escape") setEditingId(null);
+                    }}
+                  />
+                </motion.span>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => onSelect(layer.id)}
-                  aria-current={current}
-                  aria-label={`Select layer ${layer.name}`}
-                  className={`min-w-0 flex-1 truncate text-left text-[13px] ${
+                <span
+                  className={`pointer-events-none min-w-0 flex-1 truncate text-[13px] leading-5 ${
                     current ? "text-accent" : "text-ink"
                   }`}
                 >
                   {layer.name}
-                </button>
+                </span>
               )}
-              <span className="ml-auto flex shrink-0 items-center gap-0.5">
-                <IconButton
-                  label={`Rename ${layer.name}`}
-                  size="sm"
-                  disabled={locked}
-                  onClick={() => startEdit(layer.id, layer.name)}
-                >
-                  <Pencil size={13} strokeWidth={2} />
-                </IconButton>
-                <Menu label={`Actions for ${layer.name}`}>
-                  <MenuItem
-                    disabled={locked || layers.length <= 1}
-                    onClick={() => setPendingDelete({ id: layer.id, name: layer.name })}
-                  >
-                    <Trash2 size={13} strokeWidth={2} /> Delete
-                  </MenuItem>
-                </Menu>
+              <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
+                <AnimatePresence initial={false} mode="popLayout">
+                  {editingId === layer.id ? (
+                    <motion.span
+                      key="save"
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ duration: 0.12 }}
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      <IconButton
+                        label={`Save ${layer.name}`}
+                        size="sm"
+                        onClick={commitEdit}
+                      >
+                        <Check size={13} strokeWidth={2.5} />
+                      </IconButton>
+                    </motion.span>
+                  ) : (
+                    <motion.span
+                      key="actions"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.12 }}
+                      className="flex items-center gap-0.5"
+                    >
+                      <IconButton
+                        label={`Rename ${layer.name}`}
+                        size="sm"
+                        disabled={locked}
+                        onClick={() => startEdit(layer.id, layer.name)}
+                      >
+                        <Pencil size={13} strokeWidth={2} />
+                      </IconButton>
+                      <Menu label={`Actions for ${layer.name}`}>
+                        <MenuItem
+                          disabled={locked || layers.length <= 1}
+                          onClick={() =>
+                            setPendingDelete({ id: layer.id, name: layer.name })
+                          }
+                        >
+                          <Trash2 size={13} strokeWidth={2} /> Delete
+                        </MenuItem>
+                      </Menu>
+                    </motion.span>
+                  )}
+                </AnimatePresence>
               </span>
             </li>
           );
