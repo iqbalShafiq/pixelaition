@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
 import { DurableRuntime } from "@anvia/durable";
@@ -15,6 +16,7 @@ import {
   defaultApiFor,
   effortsFor,
   getRun,
+  openCodeGoHeaders,
   parseModelSpecs,
   pixelInstructions,
   releaseRun,
@@ -82,8 +84,14 @@ const langfuse =
 
 const apiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
 const baseUrl = process.env.OPENAI_BASE_URL?.trim();
+// OpenCode Go requires a stable session header on every request.
+const headers = openCodeGoHeaders(baseUrl, randomUUID());
 const openai = apiKey
-  ? new OpenAIClient({ apiKey, ...(baseUrl ? { baseUrl } : {}) })
+  ? new OpenAIClient({
+      apiKey,
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(headers ? { headers } : {}),
+    })
   : undefined;
 
 const fallbackModelId = process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
@@ -125,7 +133,7 @@ const agents = completions.flatMap(({ spec, model }) =>
       model,
       instructions: pixelInstructions,
       tools: createPixelTools(),
-      maxTurns: 12,
+      maxTurns: 24,
       controls: { reasoningEffort: effort },
       ...(observer
         ? {

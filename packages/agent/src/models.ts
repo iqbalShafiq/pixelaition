@@ -52,6 +52,19 @@ export function defaultApiFor(baseUrl: string | undefined): ModelApi {
 }
 
 /**
+ * The OpenCode Go endpoint rejects requests that carry no stable session id
+ * and asks its clients to identify themselves instead of looking like a
+ * plain SDK. Only requests to that endpoint get these headers.
+ */
+export function openCodeGoHeaders(
+  baseUrl: string | undefined,
+  sessionId: string,
+): Record<string, string> | undefined {
+  if (!baseUrl?.includes("opencode.ai")) return undefined;
+  return { "x-opencode-session": sessionId, "user-agent": "pixelaition/0.1" };
+}
+
+/**
  * Resolves one run's model and effort against the configured specs. Unknown
  * values fall back to the first model, then to the model's first effort,
  * because a Durable submission only carries an agent id.

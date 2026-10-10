@@ -3,6 +3,7 @@ import {
   defaultApiFor,
   effortsFor,
   genericEfforts,
+  openCodeGoHeaders,
   parseModelSpecs,
   selectRunTarget,
 } from "./models.js";
@@ -77,5 +78,16 @@ describe("model specs", () => {
     expect(() => selectRunTarget([], "deepseek-v4.1-flash", "low")).toThrow(
       /at least one model spec/,
     );
+  });
+
+  it("sends the OpenCode Go session contract headers", () => {
+    expect(openCodeGoHeaders("https://opencode.ai/zen/go/v1", "session-1")).toEqual({
+      "x-opencode-session": "session-1",
+      "user-agent": "pixelaition/0.1",
+    });
+    expect(
+      openCodeGoHeaders("https://openrouter.ai/api/v1", "session-1"),
+    ).toBeUndefined();
+    expect(openCodeGoHeaders(undefined, "session-1")).toBeUndefined();
   });
 });

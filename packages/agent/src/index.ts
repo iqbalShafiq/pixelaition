@@ -5,6 +5,7 @@ export {
   defaultApiFor,
   effortsFor,
   genericEfforts,
+  openCodeGoHeaders,
   parseModelSpecs,
   selectRunTarget,
 } from "./models.js";
