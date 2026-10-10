@@ -39,7 +39,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <main className="panel-grid grid min-h-dvh place-items-center bg-paper px-4 py-10">
+    <main className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4 py-10">
       <div className="w-full max-w-[26rem]">
         <header className="mb-6 flex items-center gap-2.5">
           <svg
@@ -59,7 +59,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
           </span>
         </header>
 
-        <section className="rounded-xl border border-line bg-panel p-6">
+        <section className="pixel-corners border-2 border-line bg-panel p-6">
           <h1 className="text-[1.75rem] leading-tight font-medium tracking-[-0.01em] text-ink text-balance">
             {login ? "Sign in" : "Create your studio"}
           </h1>
@@ -118,7 +118,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             {error ? (
               <p
                 role="alert"
-                className="rounded-md border border-erase/40 bg-erase/10 px-3 py-2 text-[13px] text-erase"
+                className="border-2 border-erase/60 bg-erase/10 px-3 py-2 text-[13px] text-erase"
               >
                 {error}
               </p>
@@ -134,7 +134,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             </Button>
           </form>
 
-          <p className="mt-5 border-t border-line pt-4 text-[13px] text-muted">
+          <p className="mt-5 border-t-2 border-line pt-4 text-[13px] text-muted">
             {login ? "No account yet? " : "Already registered? "}
             <Link
               to={login ? "/register" : "/login"}

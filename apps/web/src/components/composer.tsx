@@ -55,7 +55,7 @@ export function Composer({
 
   return (
     <section
-      className={`grid min-h-0 min-w-0 grid-rows-[auto_1fr] gap-2 border-t border-line bg-paper p-3 transition-[height] duration-200 ease-out ${
+      className={`grid min-h-0 min-w-0 grid-rows-[auto_1fr] gap-2 border-t-2 border-line bg-paper p-3 transition-[height] duration-200 ease-out ${
         expanded ? "h-[22rem]" : "h-[13.75rem]"
       }`}
       aria-label="Prompt composer"
@@ -66,7 +66,7 @@ export function Composer({
         </span>
         {running ? (
           <span className="flex items-center gap-1 font-mono text-[10px] text-accent">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse bg-accent" />
             the agent is working
           </span>
         ) : null}
@@ -83,7 +83,7 @@ export function Composer({
 
       <div className="grid min-h-0 min-w-0 gap-2 lg:grid-cols-[1fr_20rem]">
         <div className="flex min-h-0 min-w-0 flex-col gap-2">
-          <div className="relative flex min-h-0 flex-1 flex-col rounded-lg border border-line bg-panel focus-within:border-accent">
+          <div className="relative flex min-h-0 flex-1 flex-col border-2 border-line bg-field focus-within:border-accent">
             <Textarea
               value={prompt}
               aria-label="Prompt"
@@ -91,7 +91,7 @@ export function Composer({
               className="min-h-0 flex-1 border-0 bg-transparent focus:border-0"
               onChange={(event) => onPrompt(event.target.value)}
             />
-            <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-1.5 border-t-2 border-line px-2 py-1.5">
               <SelectControl
                 label="Model"
                 value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}
@@ -132,7 +132,7 @@ export function Composer({
 
         <div
           ref={logRef}
-          className="min-h-0 overflow-auto rounded-lg border border-line bg-panel p-2"
+          className="min-h-0 overflow-auto border-2 border-line bg-field p-2"
           aria-live="polite"
         >
           {activity.length === 0 && !message ? (
@@ -148,7 +148,7 @@ export function Composer({
             ))}
           </ul>
           {message ? (
-            <div className="mt-2 border-t border-line pt-2 text-xs text-ink">
+            <div className="mt-2 border-t-2 border-line pt-2 text-xs text-ink">
               <StreamMarkdown content={message} />
             </div>
           ) : null}

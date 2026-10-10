@@ -4,44 +4,43 @@ import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import { Select } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { motion } from "motion/react";
-import type {
-  ButtonHTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  TextareaHTMLAttributes,
-} from "react";
+import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
+import { motion, type HTMLMotionProps } from "motion/react";
+import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
 
 /** DESIGN.md: 140-200ms, ease-out, transform and opacity only. */
 export const motionToken = { duration: 0.16, ease: "easeOut" as const };
 const press = { whileTap: { scale: 0.98 }, transition: motionToken };
 
-/* ---------------------------------------------------------------- buttons */
+/* ------------------------------------------------------------------ buttons */
+
+type Tone = "solid" | "ghost" | "danger" | "quiet";
+
+const buttonTones: Record<Tone, string> = {
+  // A pixel button is a flat block lifted by a solid bar, not a soft shadow.
+  solid:
+    "bg-accent text-navy border-accent-deep shadow-[0_3px_0_0_var(--color-accent-deep)] active:shadow-none active:translate-y-[3px]",
+  ghost:
+    "bg-panel text-ink border-line-strong shadow-[0_3px_0_0_rgba(148,176,194,0.28)] active:shadow-none active:translate-y-[3px] hover:bg-raised",
+  danger:
+    "bg-erase text-navy border-erase shadow-[0_3px_0_0_#b13e53] active:shadow-none active:translate-y-[3px]",
+  quiet: "bg-transparent text-muted border-transparent hover:text-ink",
+};
 
 export function Button({
   children,
   tone = "solid",
   className = "",
   type = "button",
-  disabled,
-  onClick,
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  tone?: "solid" | "ghost" | "danger" | "quiet";
-}) {
-  const tones = {
-    solid: "bg-accent text-paper hover:brightness-105",
-    ghost: "border border-line text-ink hover:bg-panel",
-    danger: "bg-erase text-paper",
-    quiet: "text-muted hover:text-ink",
-  };
+  ...props
+}: Omit<HTMLMotionProps<"button">, "ref"> & { tone?: Tone }) {
   return (
     <motion.button
       {...press}
       type={type}
-      disabled={disabled}
-      onClick={onClick}
-      className={`rounded-md px-3 py-2 text-sm whitespace-nowrap disabled:opacity-40 ${tones[tone]} ${className}`}
+      {...props}
+      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
     >
       {children}
     </motion.button>
@@ -66,7 +65,7 @@ export function IconButton({
   label: string;
   hint?: string;
   active?: boolean;
-  /** Active state shown as accent text rather than an accent fill. */
+  /** Active state shown as an accent edge rather than a solid fill. */
   subtle?: boolean;
   disabled?: boolean;
   size?: "sm" | "md";
@@ -74,12 +73,12 @@ export function IconButton({
   children: ReactNode;
   className?: string;
 }) {
-  const box = size === "sm" ? "h-7 w-7" : "h-8 w-8";
+  const box = size === "sm" ? "h-7 w-7" : "h-9 w-9";
   const state = !active
-    ? "border-transparent text-muted hover:border-line hover:bg-panel hover:text-ink"
+    ? "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
     : subtle
-      ? "border-line bg-panel text-accent"
-      : "border-accent bg-accent text-paper";
+      ? "border-accent bg-accent/15 text-accent"
+      : "border-accent bg-accent text-navy";
   return (
     <Tooltip label={hint ? `${label} · ${hint}` : label}>
       <motion.button
@@ -89,7 +88,7 @@ export function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`grid ${box} shrink-0 place-items-center rounded-md border text-xs disabled:opacity-35 ${state} ${className}`}
+        className={`grid ${box} shrink-0 place-items-center border-2 transition-colors duration-150 disabled:opacity-40 ${state} ${className}`}
       >
         {children}
       </motion.button>
@@ -102,8 +101,8 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
     <BaseTooltip.Root>
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner sideOffset={6}>
-          <BaseTooltip.Popup className="z-40 rounded-md border border-line bg-raised px-2 py-1 font-mono text-[11px] text-ink">
+        <BaseTooltip.Positioner sideOffset={8}>
+          <BaseTooltip.Popup className="z-40 border-2 border-line-strong bg-raised px-2 py-1 font-mono text-[11px] text-ink">
             {label}
           </BaseTooltip.Popup>
         </BaseTooltip.Positioner>
@@ -112,12 +111,12 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
   );
 }
 
-/* ----------------------------------------------------------------- inputs */
+/* ------------------------------------------------------------------- inputs */
 
 /**
  * The label is associated by `htmlFor`, never by wrapping. A wrapped label also
  * absorbs any button inside it, which is how a password field silently becomes
- * "Password Show password" for a screen reader.
+ * "Password Show password" to a screen reader.
  */
 export function Field({
   label,
@@ -135,7 +134,10 @@ export function Field({
   return (
     <div className="grid gap-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <label htmlFor={htmlFor} className="text-[13px] font-medium text-ink">
+        <label
+          htmlFor={htmlFor}
+          className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase"
+        >
           {label}
         </label>
         {hint ? <span className="font-mono text-[10px] text-muted">{hint}</span> : null}
@@ -151,11 +153,9 @@ export function Field({
   );
 }
 
-/**
- * The input is an inset well: darker than the surface it sits on, with a border
- * strong enough to read as an edge. `--color-line` alone measures about 1.6:1
- * against the panel, which is nowhere near the 3:1 a UI boundary needs.
- */
+const well =
+  "w-full border-2 bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none placeholder:text-muted disabled:opacity-50";
+
 export function TextInput({
   className = "",
   invalid = false,
@@ -165,14 +165,11 @@ export function TextInput({
     <input
       {...props}
       aria-invalid={invalid || undefined}
-      className={`w-full rounded-md border bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none ${
-        invalid ? "border-erase" : "border-line-strong"
-      } hover:border-muted/60 focus:border-accent focus:ring-1 focus:ring-accent/40 disabled:opacity-50 ${className}`}
+      className={`${well} ${invalid ? "border-erase" : "border-line hover:border-line-strong focus:border-accent"} ${className}`}
     />
   );
 }
 
-/** Same well as TextInput, with the password visibility toggle the plan asks for. */
 export function PasswordInput({
   className = "",
   invalid = false,
@@ -185,38 +182,18 @@ export function PasswordInput({
         {...props}
         type={shown ? "text" : "password"}
         aria-invalid={invalid || undefined}
-        className={`w-full rounded-md border bg-field px-3 py-2.5 pr-11 text-ink transition-colors duration-150 outline-none ${
-          invalid ? "border-erase" : "border-line-strong"
-        } hover:border-muted/60 focus:border-accent focus:ring-1 focus:ring-accent/40 ${className}`}
+        className={`${well} pr-12 ${invalid ? "border-erase" : "border-line hover:border-line-strong focus:border-accent"} ${className}`}
       />
       <button
         type="button"
         aria-label={shown ? "Hide password" : "Show password"}
         aria-pressed={shown}
         onClick={() => setShown((value) => !value)}
-        className="absolute inset-y-0 right-1 my-auto grid h-7 w-7 place-items-center rounded text-muted hover:text-ink"
+        className="absolute inset-y-0 right-1.5 my-auto grid h-8 w-8 place-items-center border-2 border-transparent text-muted hover:border-line-strong hover:text-ink"
       >
-        <EyeIcon open={shown} />
+        {shown ? <EyeOff size={16} strokeWidth={2} /> : <Eye size={16} strokeWidth={2} />}
       </button>
     </span>
-  );
-}
-
-function EyeIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.3"
-      aria-hidden
-    >
-      <path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4-6.5-4-6.5-4z" />
-      <circle cx="8" cy="8" r="1.8" />
-      {open ? null : <path d="M2.5 13.5l11-11" />}
-    </svg>
   );
 }
 
@@ -227,8 +204,60 @@ export function Textarea({
   return (
     <textarea
       {...props}
-      className={`w-full resize-none rounded-md border border-line bg-field px-3 py-2.5 text-ink placeholder:text-faint transition-colors duration-150 outline-none border-line-strong hover:border-muted/60 focus:border-accent ${className}`}
+      className={`${well} resize-none border-line hover:border-line-strong focus:border-accent ${className}`}
     />
+  );
+}
+
+/* ---------------------------------------------------------------- selection */
+
+/**
+ * A pixel checkbox: a flat square that fills with the accent and takes a chunky
+ * check. The native input stays in the DOM for the keyboard and the a11y tree.
+ */
+export function Checkbox({
+  label,
+  hideLabel = false,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hideLabel?: boolean;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label
+      className={`group inline-flex items-center gap-2 text-[12px] ${
+        disabled ? "cursor-not-allowed opacity-45" : ""
+      }`}
+    >
+      <input
+        type="checkbox"
+        className="sr-only"
+        aria-label={hideLabel ? label : undefined}
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span
+        aria-hidden
+        className={`grid h-[18px] w-[18px] shrink-0 place-items-center border-2 transition-colors duration-150 ${
+          checked
+            ? "border-accent bg-accent text-navy"
+            : "border-line-strong bg-field text-transparent group-hover:border-muted"
+        }`}
+      >
+        <Check size={13} strokeWidth={4} strokeLinecap="square" />
+      </span>
+      {hideLabel ? (
+        <span className="sr-only">{label}</span>
+      ) : (
+        <span className={checked ? "text-ink" : "text-muted"}>{label}</span>
+      )}
+    </label>
   );
 }
 
@@ -244,34 +273,13 @@ export function Toggle({
   onChange: (next: boolean) => void;
 }) {
   return (
-    <label
-      className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-[11px] ${
-        checked ? "bg-panel text-ink" : "text-muted"
-      } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-        className="sr-only"
-      />
-      <span
-        aria-hidden
-        className={`grid h-3 w-3 place-items-center rounded-[3px] border ${
-          checked ? "border-accent text-accent" : "border-muted/50"
-        }`}
-      >
-        {checked ? "✓" : ""}
-      </span>
-      {label}
-    </label>
+    <Checkbox label={label} checked={checked} disabled={disabled} onChange={onChange} />
   );
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="rounded border border-line px-1 font-mono text-[10px] text-muted">
+    <kbd className="border-2 border-line-strong px-1 font-mono text-[10px] text-muted">
       {children}
     </kbd>
   );
@@ -293,8 +301,8 @@ export function Card({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={motionToken}
-      className={`rounded-lg border border-line bg-panel p-4 ${
-        interactive ? "transition-colors hover:border-muted/40" : ""
+      className={`pixel-corners border-2 border-line bg-panel p-5 ${
+        interactive ? "transition-colors duration-150 hover:border-line-strong" : ""
       } ${className}`}
     >
       {children}
@@ -315,8 +323,8 @@ export function Panel({
 }) {
   return (
     <section className={`flex min-h-0 flex-col gap-2 ${className}`}>
-      <header className="flex items-center justify-between gap-2">
-        <h2 className="font-mono text-[11px] tracking-[0.18em] text-muted uppercase">
+      <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
+        <h2 className="font-mono text-[11px] tracking-[0.16em] text-muted uppercase">
           {title}
         </h2>
         {action}
@@ -340,9 +348,9 @@ export function ScrollArea({
       </BaseScrollArea.Viewport>
       <BaseScrollArea.Scrollbar
         orientation="vertical"
-        className="flex w-1.5 touch-none select-none p-px"
+        className="flex w-2 touch-none select-none"
       >
-        <BaseScrollArea.Thumb className="flex-1 rounded-full bg-[#3a342c]" />
+        <BaseScrollArea.Thumb className="flex-1 bg-steel" />
       </BaseScrollArea.Scrollbar>
       <BaseScrollArea.Corner />
     </BaseScrollArea.Root>
@@ -353,12 +361,14 @@ export function Separator({ vertical = false }: { vertical?: boolean }) {
   return (
     <span
       aria-hidden
-      className={vertical ? "mx-1 h-5 w-px shrink-0 bg-line" : "my-1 h-px w-full bg-line"}
+      className={
+        vertical ? "mx-1 h-5 w-0.5 shrink-0 bg-line" : "my-1 h-0.5 w-full bg-line"
+      }
     />
   );
 }
 
-/* ----------------------------------------------------------------- select */
+/* ------------------------------------------------------------------- select */
 
 export function SelectControl({
   id,
@@ -382,21 +392,19 @@ export function SelectControl({
       <Select.Trigger
         id={id}
         aria-label={label}
-        className={`flex items-center justify-between gap-2 rounded-md border border-line-strong bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink transition-colors duration-150 hover:border-muted/60 focus:border-accent ${className}`}
+        className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink transition-colors duration-150 hover:border-line-strong focus:border-accent ${className}`}
       >
         <Select.Value placeholder={placeholder} />
-        <span aria-hidden className="text-muted">
-          ▾
-        </span>
+        <ChevronDown size={14} strokeWidth={2.5} className="shrink-0 text-muted" />
       </Select.Trigger>
       <Select.Portal>
         <Select.Positioner sideOffset={4} className="z-40">
-          <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto rounded-md border border-line bg-panel p-1 text-xs shadow-none">
+          <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto border-2 border-line-strong bg-raised p-1 text-[13px]">
             {options.map((option) => (
               <Select.Item
                 key={option}
                 value={option}
-                className="cursor-pointer truncate rounded px-2 py-1.5 text-ink data-[highlighted]:bg-paper"
+                className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-navy"
               >
                 <Select.ItemText>{option}</Select.ItemText>
               </Select.Item>
@@ -408,7 +416,7 @@ export function SelectControl({
   );
 }
 
-/* ------------------------------------------------------------------ menus */
+/* -------------------------------------------------------------------- menus */
 
 export function Menu({
   label,
@@ -423,13 +431,13 @@ export function Menu({
     <BaseMenu.Root>
       <BaseMenu.Trigger
         aria-label={label}
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-transparent text-muted hover:border-line hover:bg-panel hover:text-ink"
+        className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
       >
         ⋯
       </BaseMenu.Trigger>
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={6} align={align} className="z-40">
-          <BaseMenu.Popup className="min-w-[9rem] rounded-md border border-line bg-raised p-1 text-xs">
+          <BaseMenu.Popup className="min-w-[10rem] border-2 border-line-strong bg-raised p-1 text-[13px]">
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -451,7 +459,7 @@ export function MenuItem({
     <BaseMenu.Item
       disabled={disabled}
       onClick={onClick}
-      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-paper data-[disabled]:opacity-40"
+      className="cursor-pointer px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-navy data-[disabled]:opacity-40"
     >
       {children}
     </BaseMenu.Item>
@@ -462,10 +470,6 @@ export const MenuSeparator = BaseMenu.Separator;
 
 /* ---------------------------------------------------------------- overlays */
 
-/**
- * Side sheets and modals. The plan asks that a panel never hides the canvas
- * without a clear way back, so every overlay renders a labelled Close.
- */
 export function Dialog({
   open,
   onOpenChange,
@@ -484,18 +488,28 @@ export function Dialog({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-paper/80" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/85" />
         <BaseDialog.Popup
           style={{ width: `min(${width}, 94vw)` }}
-          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-raised p-4"
+          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4"
         >
-          <BaseDialog.Title className="text-sm text-ink">{title}</BaseDialog.Title>
-          {description ? (
-            <BaseDialog.Description className="mt-1 text-xs text-muted">
-              {description}
-            </BaseDialog.Description>
-          ) : null}
-          <div className="mt-4 grid gap-3">{children}</div>
+          <header className="flex items-start justify-between gap-3 border-b-2 border-line pb-2">
+            <div>
+              <BaseDialog.Title className="font-mono text-[12px] tracking-[0.16em] text-accent uppercase">
+                {title}
+              </BaseDialog.Title>
+              {description ? (
+                <BaseDialog.Description className="mt-1 text-[12px] text-muted">
+                  {description}
+                </BaseDialog.Description>
+              ) : null}
+            </div>
+            <DialogClose>
+              <X size={16} strokeWidth={2.5} />
+              <span className="sr-only">Close</span>
+            </DialogClose>
+          </header>
+          <div className="mt-4 grid gap-4">{children}</div>
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>
@@ -505,9 +519,11 @@ export function Dialog({
 export function DialogClose({ children }: { children: ReactNode }) {
   return (
     <BaseDialog.Close
-      render={<Button tone="ghost">{children}</Button>}
-      aria-label={typeof children === "string" ? children : "Close"}
-    />
+      aria-label="Close"
+      className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted hover:border-line-strong hover:text-ink"
+    >
+      {children}
+    </BaseDialog.Close>
   );
 }
 
@@ -528,19 +544,19 @@ export function Sheet({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-paper/70" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/80" />
         <BaseDialog.Popup
           data-side={side}
-          className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col border-line bg-raised ${
-            side === "left" ? "left-0 border-r" : "right-0 border-l"
-          }`}
+          className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col bg-raised ${
+            side === "left" ? "left-0 border-r-2" : "right-0 border-l-2"
+          } border-line-strong`}
         >
-          <header className="flex items-center justify-between border-b border-line px-3 py-2">
-            <BaseDialog.Title className="font-mono text-[11px] tracking-[0.18em] text-muted uppercase">
+          <header className="flex items-center justify-between border-b-2 border-line px-3 py-2">
+            <BaseDialog.Title className="font-mono text-[11px] tracking-[0.16em] text-accent uppercase">
               {title}
             </BaseDialog.Title>
             <DialogClose>
-              <span aria-hidden>×</span>
+              <X size={16} strokeWidth={2.5} />
               <span className="sr-only">Close {title}</span>
             </DialogClose>
           </header>
@@ -551,14 +567,14 @@ export function Sheet({
   );
 }
 
-/* ----------------------------------------------------------------- toasts */
+/* ------------------------------------------------------------------- toasts */
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <BaseToast.Provider>
       {children}
       <BaseToast.Portal>
-        <BaseToast.Viewport className="fixed right-4 bottom-4 z-50 flex w-[min(22rem,90vw)] flex-col gap-2">
+        <BaseToast.Viewport className="fixed right-4 bottom-4 z-50 flex w-[min(24rem,90vw)] flex-col gap-2">
           <ToastList />
         </BaseToast.Viewport>
       </BaseToast.Portal>
@@ -572,15 +588,15 @@ function ToastList() {
     <BaseToast.Root
       key={toast.id}
       toast={toast}
-      className="toast-popup rounded-md border border-line bg-raised p-3"
+      className="toast-popup relative border-2 border-line-strong bg-raised p-3"
     >
-      <BaseToast.Title className="text-sm text-ink" />
-      <BaseToast.Description className="mt-0.5 font-mono text-[11px] text-muted" />
+      <BaseToast.Title className="pr-6 font-mono text-[11px] tracking-[0.14em] text-accent uppercase" />
+      <BaseToast.Description className="mt-1 text-[12px] text-muted" />
       <BaseToast.Close
         aria-label="Dismiss"
-        className="absolute top-2 right-2 text-muted hover:text-ink"
+        className="absolute top-2 right-2 grid h-6 w-6 place-items-center border-2 border-line text-muted hover:border-line-strong hover:text-ink"
       >
-        ×
+        <X size={13} strokeWidth={2.5} />
       </BaseToast.Close>
     </BaseToast.Root>
   ));
@@ -611,9 +627,11 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="grid gap-2 rounded-lg border border-dashed border-line p-4">
-      <p className="text-sm text-ink">{title}</p>
-      <p className="text-xs text-muted">{body}</p>
+    <div className="pixel-corners-sm grid gap-2 border-2 border-dashed border-line p-4">
+      <p className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase">
+        {title}
+      </p>
+      <p className="text-[13px] text-muted">{body}</p>
       {action}
     </div>
   );
@@ -628,8 +646,10 @@ export function Callout({
 }) {
   return (
     <p
-      className={`rounded-md border border-line px-2.5 py-2 text-xs ${
-        tone === "danger" ? "text-erase" : "text-muted"
+      className={`border-2 px-3 py-2 text-[12px] ${
+        tone === "danger"
+          ? "border-erase/60 bg-erase/10 text-erase"
+          : "border-line bg-field text-muted"
       }`}
     >
       {children}

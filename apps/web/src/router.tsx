@@ -17,7 +17,7 @@ function Layout() {
       {/* Keyboard users should not have to tab through the chrome. */}
       <a
         href="#content"
-        className="sr-only rounded-md bg-accent px-3 py-2 text-sm text-paper focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+        className="sr-only bg-accent px-3 py-2 text-sm text-navy focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
       >
         Skip to content
       </a>
@@ -35,7 +35,7 @@ function NotFound() {
   return (
     <main
       id="content"
-      className="panel-grid grid min-h-dvh place-items-center bg-paper px-4"
+      className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4"
     >
       <div className="max-w-sm text-center">
         <p className="font-mono text-xs tracking-[0.22em] text-accent">404</p>
@@ -45,7 +45,7 @@ function NotFound() {
         </p>
         <Link
           to="/projects"
-          className="mt-6 inline-block min-h-11 rounded-md bg-accent px-4 py-2.5 text-sm text-paper"
+          className="mt-6 inline-block min-h-11 border-2 border-accent-deep bg-accent px-4 py-2.5 text-sm text-navy"
         >
           Back to projects
         </Link>

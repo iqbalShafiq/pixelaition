@@ -1,31 +1,36 @@
-import type { ComponentType, SVGProps } from "react";
-import type { Tool } from "./pixel-canvas.js";
 import {
-  EraserIcon,
-  FillIcon,
-  LineIcon,
-  PanIcon,
-  PencilIcon,
-  PickerIcon,
-  RectIcon,
-  SelectIcon,
-} from "./tool-icons.js";
+  Eraser,
+  Hand,
+  Minus,
+  PaintBucket,
+  Pencil,
+  Pipette,
+  Plus,
+  Slash,
+  Square,
+  SquareDashed,
+} from "lucide-react";
+import type { ComponentType } from "react";
+import type { Tool } from "./pixel-canvas.js";
 import { Button, IconButton, Separator, Toggle } from "./ui.js";
+
+const stroke = 2;
+const size = 16;
 
 const tools: Array<{
   id: Tool;
   label: string;
   key: string;
-  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  icon: ComponentType<{ size?: number; strokeWidth?: number }>;
 }> = [
-  { id: "select", label: "Select", key: "V", icon: SelectIcon },
-  { id: "pencil", label: "Pencil", key: "B", icon: PencilIcon },
-  { id: "eraser", label: "Eraser", key: "E", icon: EraserIcon },
-  { id: "fill", label: "Fill", key: "G", icon: FillIcon },
-  { id: "picker", label: "Eyedropper", key: "I", icon: PickerIcon },
-  { id: "line", label: "Line", key: "L", icon: LineIcon },
-  { id: "rect", label: "Rectangle", key: "R", icon: RectIcon },
-  { id: "pan", label: "Pan", key: "H", icon: PanIcon },
+  { id: "select", label: "Select", key: "V", icon: SquareDashed },
+  { id: "pencil", label: "Pencil", key: "B", icon: Pencil },
+  { id: "eraser", label: "Eraser", key: "E", icon: Eraser },
+  { id: "fill", label: "Fill", key: "G", icon: PaintBucket },
+  { id: "picker", label: "Eyedropper", key: "I", icon: Pipette },
+  { id: "line", label: "Line", key: "L", icon: Slash },
+  { id: "rect", label: "Rectangle", key: "R", icon: Square },
+  { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
 
 export function Toolbar({
@@ -70,7 +75,7 @@ export function Toolbar({
   onDeselect: () => void;
 }) {
   return (
-    <div className="relative flex items-center gap-0.5 overflow-x-auto border-b border-line bg-paper px-2 py-1.5">
+    <div className="relative flex items-center gap-1 overflow-x-auto border-b-2 border-line bg-paper px-2 py-2">
       {tools.map((entry) => {
         const Icon = entry.icon;
         return (
@@ -81,43 +86,54 @@ export function Toolbar({
             active={tool === entry.id}
             onClick={() => onTool(entry.id)}
           >
-            <Icon />
+            <Icon size={size} strokeWidth={stroke} />
           </IconButton>
         );
       })}
 
       <Separator vertical />
 
-      <span className="shrink-0 px-1 font-mono text-[10px] text-muted">brush</span>
-      {[1, 2, 3].map((size) => (
+      {[1, 2, 3].map((value) => (
         <IconButton
-          key={size}
-          label={`Brush size ${size}`}
+          key={value}
+          label={`Brush size ${value}`}
           subtle
-          active={brushSize === size}
-          onClick={() => onBrush(size)}
+          active={brushSize === value}
+          onClick={() => onBrush(value)}
         >
-          <span className="text-[11px]">{size}</span>
+          <span className="font-mono text-[11px]">{value}</span>
         </IconButton>
       ))}
 
       <Separator vertical />
 
       <IconButton label="Zoom out" onClick={() => onZoom(-1)}>
-        −
+        <Minus size={size} strokeWidth={stroke} />
       </IconButton>
-      <span className="w-12 shrink-0 text-center font-mono text-[11px] text-muted">
+      <span className="w-14 shrink-0 border-2 border-line bg-field py-1 text-center font-mono text-[11px] text-muted">
         {Math.round(zoom * 100)}%
       </span>
       <IconButton label="Zoom in" onClick={() => onZoom(1)}>
-        +
+        <Plus size={size} strokeWidth={stroke} />
       </IconButton>
-      <IconButton label="Fit to view" hint="Ctrl+0" onClick={onFit}>
+      <Button
+        tone="ghost"
+        className="px-2 py-1.5 text-[11px]"
+        aria-label="Fit to view"
+        title="Fit to view (Ctrl+0)"
+        onClick={onFit}
+      >
         Fit
-      </IconButton>
-      <IconButton label="Actual size" hint="Ctrl+1" onClick={onActualSize}>
+      </Button>
+      <Button
+        tone="ghost"
+        className="px-2 py-1.5 text-[11px]"
+        aria-label="Actual size"
+        title="Actual size (Ctrl+1)"
+        onClick={onActualSize}
+      >
         1:1
-      </IconButton>
+      </Button>
 
       <Separator vertical />
 
@@ -130,25 +146,21 @@ export function Toolbar({
           <Separator vertical />
           <Button
             tone="ghost"
-            className="px-2 py-1 text-xs"
+            className="px-2 py-1.5 text-[11px]"
             disabled={locked}
             onClick={onSelectionFill}
           >
-            Fill selection
+            Fill
           </Button>
           <Button
             tone="ghost"
-            className="px-2 py-1 text-xs"
+            className="px-2 py-1.5 text-[11px]"
             disabled={locked}
             onClick={onSelectionClear}
           >
             Clear
           </Button>
-          <Button
-            tone="quiet"
-            className="px-2 py-1 text-xs text-muted"
-            onClick={onDeselect}
-          >
+          <Button tone="quiet" className="px-2 py-1.5 text-[11px]" onClick={onDeselect}>
             Deselect
           </Button>
         </>

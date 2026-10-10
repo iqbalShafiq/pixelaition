@@ -784,7 +784,7 @@ export function EditorScreen() {
       id="content"
       className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
     >
-      <header className="flex min-w-0 items-center gap-3 border-b border-line px-3 py-2">
+      <header className="flex min-w-0 items-center gap-3 border-b-2 border-line px-3 py-2">
         <a
           href="/projects"
           className="font-mono text-xs tracking-[0.18em] text-accent whitespace-nowrap"
@@ -935,7 +935,7 @@ export function EditorScreen() {
                 />
               )}
               {locked ? (
-                <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-md border border-accent/40 bg-paper/90 px-2 py-1 font-mono text-[10px] text-accent">
+                <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 font-mono text-[10px] text-accent">
                   the agent is drawing on this frame
                 </p>
               ) : null}
@@ -1005,7 +1005,7 @@ export function EditorScreen() {
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 grid place-items-center bg-field p-6">
+    <div className="absolute inset-0 grid place-items-center bg-screen p-6">
       {children}
     </div>
   );

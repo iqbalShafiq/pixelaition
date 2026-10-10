@@ -86,13 +86,33 @@ function rgba(hex: string): [number, number, number, number] {
   return [0, 0, 0, 255];
 }
 
+const CHECKER_DARK: [number, number, number] = [21, 24, 38];
+const CHECKER_LIGHT: [number, number, number] = [33, 39, 63];
+
+/**
+ * How many document pixels make one checker square, chosen so a square lands
+ * near 10 screen pixels. Baked into the bitmap as whole document pixels, so it
+ * scales with the artwork: a screen-space checker drifts against the pixel grid
+ * and leaves half squares along the document edge, and a one-pixel checker
+ * averages into a flat smudge once a pixel is only one or two screen pixels.
+ */
+function checkerStep(cell: number): number {
+  return Math.max(1, Math.round(10 / cell));
+}
+
 /**
  * The frame is drawn once at 1:1 and then scaled, rather than one fillRect per
  * cell. Per-cell rects leave seams and shimmer once a cell is a single pixel,
  * which is exactly what zooming out exposes.
  */
-function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasElement>) {
-  const cached = cache.get(doc);
+function bitmapFor(
+  doc: FrameBuffer,
+  cache: WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>,
+  checkerStepPixels: number,
+) {
+  const perDoc = cache.get(doc) ?? new Map<number, HTMLCanvasElement>();
+  cache.set(doc, perDoc);
+  const cached = perDoc.get(checkerStepPixels);
   if (cached) return cached;
   const canvas = document.createElement("canvas");
   canvas.width = doc.width;
@@ -101,11 +121,26 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
   if (context) {
     const image = context.createImageData(doc.width, doc.height);
     const indexes = composite(doc);
+    const step = checkerStepPixels;
     for (let index = 0; index < indexes.length; index += 1) {
       const value = indexes[index] ?? 0;
-      if (value === 0) continue;
-      const [r, g, b, a] = rgba(doc.palette[value] ?? "#000000");
       const offset = index * 4;
+      if (value === 0) {
+        // Onion-skin neighbours ask for step 0 and stay fully transparent.
+        if (step < 1) continue;
+        const x = index % doc.width;
+        const y = Math.floor(index / doc.width);
+        const tone =
+          (Math.floor(x / step) + Math.floor(y / step)) % 2 === 0
+            ? CHECKER_DARK
+            : CHECKER_LIGHT;
+        image.data[offset] = tone[0];
+        image.data[offset + 1] = tone[1];
+        image.data[offset + 2] = tone[2];
+        image.data[offset + 3] = 255;
+        continue;
+      }
+      const [r, g, b, a] = rgba(doc.palette[value] ?? "#000000");
       image.data[offset] = r;
       image.data[offset + 1] = g;
       image.data[offset + 2] = b;
@@ -113,7 +148,7 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
     }
     context.putImageData(image, 0, 0);
   }
-  cache.set(doc, canvas);
+  perDoc.set(checkerStepPixels, canvas);
   return canvas;
 }
 
@@ -190,7 +225,9 @@ export function PixelCanvas({
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
-  const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
+  const bitmaps = useRef(new WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>());
+  // Neighbours are cached without the checker so onion skin stays see-through.
+  const plainBitmaps = useRef(new WeakMap<FrameBuffer, Map<number, HTMLCanvasElement>>());
 
   // Handlers read the latest props without re-binding listeners on every render.
   const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera });
@@ -248,47 +285,26 @@ export function PixelCanvas({
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.imageSmoothingEnabled = false;
       // The canvas field, per the plan: a lighter plane inside the page.
-      context.fillStyle = "#1c1915";
+      context.fillStyle = "#101220";
       context.fillRect(0, 0, rect.width, rect.height);
 
       const cell = cam.zoom;
-      const originX = cam.x;
-      const originY = cam.y;
+      // Snapped to whole pixels so every cell is exactly the same width. A
+      // fractional origin makes nearest-neighbour scaling produce 16px and 17px
+      // blocks in the same row.
+      const originX = Math.round(cam.x);
+      const originY = Math.round(cam.y);
       const docWidth = doc.width * cell;
       const docHeight = doc.height * cell;
 
-      if (checker && cell >= 2) {
-        // Tied to the document grid so it reads as transparent pixels rather
-        // than as a texture laid over the artwork.
-        const tile = cell * 4;
-        context.save();
-        context.beginPath();
-        context.rect(originX, originY, docWidth, docHeight);
-        context.clip();
-        context.fillStyle = "rgba(244, 239, 228, 0.035)";
-        const firstX = Math.floor(originX / tile);
-        const firstY = Math.floor(originY / tile);
-        const lastX = Math.ceil((originX + docWidth) / tile);
-        const lastY = Math.ceil((originY + docHeight) / tile);
-        for (let gy = firstY; gy < lastY; gy += 1) {
-          for (let gx = firstX; gx < lastX; gx += 1) {
-            if ((gx + gy) % 2 !== 0) continue;
-            context.fillRect(gx * tile, gy * tile, tile, tile);
-          }
-        }
-        context.restore();
-      }
-
       context.imageSmoothingEnabled = false;
-      context.strokeStyle = "rgba(244, 239, 228, 0.1)";
-      context.lineWidth = 1;
-      context.strokeRect(originX + 0.5, originY + 0.5, docWidth - 1, docHeight - 1);
 
-      // Onion skin is display-only: neighbours sit under the frame being edited.
+      // Onion skin is display-only: neighbours sit under the frame being edited,
+      // with their transparent pixels left alone so the checker stays visible.
       context.globalAlpha = 0.3;
       for (const neighbor of onionSkin) {
         context.drawImage(
-          bitmapFor(neighbor, bitmaps.current),
+          bitmapFor(neighbor, plainBitmaps.current, 0),
           originX,
           originY,
           docWidth,
@@ -298,15 +314,20 @@ export function PixelCanvas({
       context.globalAlpha = 1;
 
       context.drawImage(
-        bitmapFor(doc, bitmaps.current),
+        bitmapFor(doc, bitmaps.current, checker ? checkerStep(cell) : 0),
         originX,
         originY,
         docWidth,
         docHeight,
       );
 
+      // Snapped so the document edge is a crisp pixel line, not a blurry half one.
+      context.strokeStyle = "rgba(167, 240, 112, 0.5)";
+      context.lineWidth = 1;
+      context.strokeRect(originX - 0.5, originY - 0.5, docWidth + 1, docHeight + 1);
+
       if (grid && cell >= 8) {
-        context.strokeStyle = "rgba(244, 239, 228, 0.08)";
+        context.strokeStyle = "rgba(148, 176, 194, 0.2)";
         context.beginPath();
         for (let x = 1; x < doc.width; x += 1) {
           const px = Math.round(originX + x * cell) + 0.5;
@@ -327,7 +348,7 @@ export function PixelCanvas({
           shape.kind === "line"
             ? lineCells(shape.from, shape.to)
             : rectCells(normalizeRect(shape.from, shape.to), shape.filled);
-        context.fillStyle = "rgba(232, 255, 106, 0.45)";
+        context.fillStyle = "rgba(167, 240, 112, 0.55)";
         for (const item of cells) {
           context.fillRect(originX + item.x * cell, originY + item.y * cell, cell, cell);
         }
@@ -335,7 +356,7 @@ export function PixelCanvas({
 
       const box = selection ?? marquee.current;
       if (box) {
-        context.strokeStyle = "#e8ff6a";
+        context.strokeStyle = "#a7f070";
         context.lineWidth = 1;
         context.setLineDash([4, 3]);
         context.strokeRect(
@@ -349,7 +370,7 @@ export function PixelCanvas({
 
       const pointed = hover.current;
       if (pointed && !locked) {
-        context.strokeStyle = "rgba(232, 255, 106, 0.6)";
+        context.strokeStyle = "rgba(167, 240, 112, 0.85)";
         context.strokeRect(
           originX + pointed.x * cell + 0.5,
           originY + pointed.y * cell + 0.5,

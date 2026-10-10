@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ArrowRight, FolderOpen, Plus } from "lucide-react";
 import { useState } from "react";
+import { SpriteThumb } from "../components/sprite-thumb.js";
 import {
   Button,
   Callout,
@@ -14,6 +16,7 @@ import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
 
 type Project = { id: string; name: string; description: string };
+type Asset = { id: string; name: string; width: number; height: number };
 
 export function ProjectsScreen() {
   const queryClient = useQueryClient();
@@ -44,71 +47,117 @@ export function ProjectsScreen() {
   const list = projects.data?.projects ?? [];
 
   return (
-    <main id="content" className="mx-auto grid max-w-5xl gap-8 px-6 py-10">
-      <header className="flex items-end justify-between gap-4">
-        <div>
-          <p className="font-mono text-xs tracking-[0.2em] text-accent">PIXELAITION</p>
-          <h1 className="mt-2 text-3xl">Projects</h1>
-          <p className="mt-1 text-sm text-muted">
-            One project keeps one palette and one style guide, so the assets inside it
-            stay related.
-          </p>
-        </div>
-        <Button
-          tone="ghost"
-          onClick={() => {
-            void authClient.signOut().then(() => window.location.assign("/login"));
-          }}
-        >
-          Sign out
-        </Button>
-      </header>
+    <main id="content" className="pixel-grid-lg min-h-dvh bg-paper">
+      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-8">
+        <header className="flex items-center justify-between gap-4 border-b-2 border-line pb-4">
+          <span className="flex items-center gap-2.5">
+            <PixelMark />
+            <span className="font-mono text-xs tracking-[0.24em] text-accent">
+              PIXELAITION
+            </span>
+          </span>
+          <Button
+            tone="ghost"
+            className="px-3 py-1.5 text-[12px]"
+            onClick={() => {
+              void authClient.signOut().then(() => window.location.assign("/login"));
+            }}
+          >
+            Sign out
+          </Button>
+        </header>
 
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (name.trim()) create.mutate();
-        }}
-      >
-        <span className="min-w-56 flex-1">
-          <Field label="New project" htmlFor="project-name">
-            <TextInput
-              id="project-name"
-              value={name}
-              placeholder="Sprite family, tileset, icons…"
-              onChange={(event) => setName(event.target.value)}
+        <section className="grid gap-8 lg:grid-cols-[1fr_24rem] lg:items-end">
+          <div>
+            <p className="font-mono text-[10px] tracking-[0.2em] text-muted uppercase">
+              Workspace
+            </p>
+            <h1 className="mt-3 text-[2.5rem] leading-[1.05] font-medium tracking-[-0.02em] text-ink text-balance">
+              Your sprite families
+            </h1>
+            <p className="mt-3 max-w-[46ch] text-[14px] leading-relaxed text-muted">
+              One project keeps one palette and one style guide, so every asset you draw
+              inside it stays recognisably related.
+            </p>
+          </div>
+
+          <Card className="grid gap-3">
+            <form
+              className="grid gap-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (name.trim()) create.mutate();
+              }}
+            >
+              <Field label="New project" htmlFor="project-name">
+                <TextInput
+                  id="project-name"
+                  value={name}
+                  placeholder="Knights, potions, dungeon tiles…"
+                  autoComplete="off"
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </Field>
+              <Button
+                type="submit"
+                disabled={!name.trim() || create.isPending}
+                className="w-full"
+              >
+                {create.isPending ? "Creating" : "Create project"}
+                <ArrowRight size={15} strokeWidth={2.5} />
+              </Button>
+            </form>
+          </Card>
+        </section>
+
+        <section className="grid gap-4">
+          <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
+            <h2 className="font-mono text-[11px] tracking-[0.2em] text-muted uppercase">
+              Projects
+            </h2>
+            <span className="font-mono text-[10px] text-muted">
+              {list.length.toString().padStart(2, "0")}
+            </span>
+          </div>
+
+          {projects.isPending ? (
+            <p className="font-mono text-[11px] text-muted">
+              Reading your projects from the server…
+            </p>
+          ) : projects.isError ? (
+            <Callout tone="danger">
+              {projects.error instanceof Error
+                ? projects.error.message
+                : "The project list could not be loaded."}
+            </Callout>
+          ) : list.length === 0 ? (
+            <EmptyState
+              title="No projects yet"
+              body="Create one above. Every asset inside it inherits the same palette and style guide."
             />
-          </Field>
-        </span>
-        <Button type="submit" disabled={!name.trim() || create.isPending}>
-          {create.isPending ? "Creating" : "Create project"}
-        </Button>
-      </form>
-
-      {projects.isPending ? (
-        <p className="text-sm text-muted">Loading your projects from the server.</p>
-      ) : projects.isError ? (
-        <Callout tone="danger">
-          {projects.error instanceof Error
-            ? projects.error.message
-            : "The project list could not be loaded."}
-        </Callout>
-      ) : list.length === 0 ? (
-        <EmptyState
-          title="No projects yet"
-          body="Create one above. Every asset inside it inherits the same palette and style guide."
-        />
-      ) : (
-        <ul className="grid gap-3 sm:grid-cols-2">
-          {list.map((project) => (
-            <li key={project.id}>
-              <ProjectCard project={project} />
-            </li>
-          ))}
-        </ul>
-      )}
+          ) : (
+            <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+              {list.map((project) => (
+                <li key={project.id}>
+                  <ProjectCard project={project} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </main>
+  );
+}
+
+function PixelMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 8 8" shapeRendering="crispEdges" aria-hidden>
+      <rect x="0" y="0" width="4" height="4" fill="var(--color-accent)" />
+      <rect x="4" y="0" width="4" height="4" fill="var(--color-ink)" />
+      <rect x="0" y="4" width="4" height="4" fill="var(--color-ink)" />
+      <rect x="4" y="4" width="4" height="4" fill="var(--color-accent)" />
+    </svg>
   );
 }
 
@@ -116,13 +165,10 @@ function ProjectCard({ project }: { project: Project }) {
   const notify = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const assets = useQuery({
+  const detail = useQuery({
     queryKey: ["project-assets", project.id],
-    enabled: open,
-    queryFn: () =>
-      api<{ assets: Array<{ id: string; name: string; width: number; height: number }> }>(
-        `/api/projects/${project.id}`,
-      ),
+    // Loaded eagerly so the shelf can show a real sprite instead of a folder.
+    queryFn: () => api<{ assets: Asset[] }>(`/api/projects/${project.id}`),
   });
   const createAsset = useMutation({
     mutationFn: () =>
@@ -141,52 +187,82 @@ function ProjectCard({ project }: { project: Project }) {
       }),
   });
 
-  const list = assets.data?.assets ?? [];
+  const assets = detail.data?.assets ?? [];
+  const newest = assets.at(-1);
 
   return (
-    <Card className="flex h-full flex-col">
-      <h2 className="text-lg">{project.name}</h2>
-      <p className="mt-1 flex-1 text-sm text-muted">
-        {project.description || "No description yet."}
-      </p>
-
-      {open ? (
-        assets.isPending ? (
-          <p className="mt-3 font-mono text-[11px] text-muted">Loading assets…</p>
-        ) : list.length === 0 ? (
-          <p className="mt-3 font-mono text-[11px] text-muted">
-            No assets yet in this project.
-          </p>
+    <Card interactive className="grid h-full grid-rows-[auto_auto_auto] gap-4">
+      <div className="flex items-start gap-3">
+        {newest ? (
+          <SpriteThumb assetId={newest.id} />
         ) : (
-          <ul className="mt-3 grid gap-0.5">
-            {list.map((asset) => (
-              <li key={asset.id}>
-                <Link
-                  to="/projects/$projectId/assets/$assetId"
-                  params={{ projectId: project.id, assetId: asset.id }}
-                  className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm text-ink hover:bg-paper"
-                >
-                  <span className="truncate">{asset.name}</span>
-                  <span className="font-mono text-[10px] text-muted">
-                    {asset.width}×{asset.height}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )
-      ) : null}
+          <span className="grid h-12 w-12 shrink-0 place-items-center border-2 border-dashed border-line text-muted">
+            <FolderOpen size={16} strokeWidth={2} />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-[17px] leading-tight font-medium text-ink">
+            {project.name}
+          </h3>
+          <p className="mt-1 text-[12px] text-muted">
+            {detail.isPending
+              ? "Loading…"
+              : assets.length === 0
+                ? "Nothing drawn yet"
+                : `${assets.length} asset${assets.length === 1 ? "" : "s"}`}
+          </p>
+        </div>
+      </div>
 
-      <div className="mt-4 flex items-center gap-2">
-        <Button onClick={() => createAsset.mutate()} disabled={createAsset.isPending}>
-          {createAsset.isPending ? "Opening" : "New asset"}
+      <div className="min-h-0">
+        <p className="text-[13px] leading-relaxed text-muted">
+          {project.description || "No description yet."}
+        </p>
+        {open ? (
+          detail.isPending ? (
+            <p className="mt-3 font-mono text-[11px] text-muted">Loading…</p>
+          ) : assets.length === 0 ? (
+            <p className="mt-3 font-mono text-[11px] text-muted">
+              Nothing drawn here yet.
+            </p>
+          ) : (
+            <ul className="mt-3 grid gap-1">
+              {assets.map((asset) => (
+                <li key={asset.id}>
+                  <Link
+                    to="/projects/$projectId/assets/$assetId"
+                    params={{ projectId: project.id, assetId: asset.id }}
+                    className="flex items-center gap-2 border-2 border-transparent px-2 py-1.5 text-[13px] text-ink transition-colors duration-150 hover:border-line hover:bg-raised"
+                  >
+                    <SpriteThumb assetId={asset.id} display={26} />
+                    <span className="min-w-0 flex-1 truncate">{asset.name}</span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {asset.width}×{asset.height}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : null}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button
+          className="flex-1 px-3 py-1.5 text-[12px]"
+          disabled={createAsset.isPending}
+          onClick={() => createAsset.mutate()}
+        >
+          <Plus size={14} strokeWidth={3} />
+          New asset
         </Button>
         <Button
           tone="ghost"
-          onClick={() => setOpen((value) => !value)}
+          className="px-3 py-1.5 text-[12px]"
           aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
         >
-          {open ? "Hide assets" : "Browse assets"}
+          {open ? "Hide" : `Browse ${assets.length > 0 ? `(${assets.length})` : ""}`}
         </Button>
       </div>
     </Card>

@@ -4,54 +4,74 @@
 @import "@fontsource/ibm-plex-mono/400.css";
 
 /*
- * Surface ramp. Dark interfaces signal elevation with lightness, because a
- * shadow cannot be darker than an already near-black surface. Each step up is
- * a small, even lift:
+ * Colour comes from Sweetie 16, the 16-colour palette by GrafxKid that ships as
+ * the TIC-80 default and is one of the most used palettes on Lospec. Using a
+ * published pixel-art palette keeps the chrome and any sprite drawn in the
+ * editor speaking the same language, instead of inventing brand colours and
+ * hoping they sit together.
  *
- *   paper   page base
- *   panel   raised: side rails, cards
- *   raised  overlay: menus, dialogs, toasts
- *   field   inset: input wells, one step *down* from the surface they sit on
+ *   Sweetie 16 slots used here:
+ *     #1a1c2c  slot 0   deepest navy
+ *     #333c57  slot 15  slate
+ *     #566c86  slot 14  mid slate
+ *     #f4f4f4  slot 12  white
+ *     #a7f070  slot 5   green
+ *     #38b764  slot 6   deep green
+ *     #ef7d57  slot 3   coral
  *
- * Accent is for state only. DESIGN.md allows exactly one large accent fill, the
- * primary button, and its label must be `paper` so the pair stays readable.
+ * Surfaces are flat blocks, one step apart, because a shadow cannot be darker
+ * than a near-black page. The canvas sits in a darker "screen" well than the
+ * chrome around it, the way a handheld console does.
  */
 @theme {
   --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  --color-paper: #14120e;
-  --color-panel: #1c1915;
-  --color-raised: #241f19;
-  --color-field: #0f0d0a;
+  /* Sweetie 16 direct */
+  --color-navy: #1a1c2c;
+  --color-slate: #333c57;
+  --color-steel: #566c86;
+  --color-paperwhite: #f4f4f4;
+  --color-green: #a7f070;
+  --color-green-deep: #38b764;
+  --color-coral: #ef7d57;
 
-  --color-ink: #f4efe4;
-  --color-muted: #9a917f;
-  --color-faint: #6e675b;
+  /* Roles */
+  --color-paper: #1a1c2c;
+  --color-panel: #252a40;
+  --color-raised: #333c57;
+  --color-field: #101220;
+  --color-screen: #101220;
 
-  --color-accent: #e8ff6a;
-  --color-erase: #ff5d3a;
+  --color-ink: #f4f4f4;
+  --color-muted: #94b0c2;
+  --color-faint: #566c86;
 
-  /* Two weights: structural hairlines, and a stronger edge for inputs. */
-  --color-line: rgba(244, 239, 228, 0.14);
-  --color-line-strong: rgba(244, 239, 228, 0.28);
+  --color-accent: #a7f070;
+  --color-accent-deep: #38b764;
+  --color-erase: #ef7d57;
+
+  --color-line: rgba(148, 176, 194, 0.28);
+  --color-line-strong: rgba(148, 176, 194, 0.55);
+
+  --radius-pixel: 0px;
 }
 
 /*
  * Every base rule lives in @layer base. Unlayered CSS beats Tailwind utilities
  * in the cascade, so an unlayered `button { color: inherit }` silently defeats
- * every text-* utility in the app — which is what turned solid accent buttons
- * into light-on-lime at 1.03:1 contrast.
+ * every text-* utility in the app — which is what turned a solid accent button
+ * into light-on-light at 1.03:1 contrast.
  */
 @layer base {
   * {
     scrollbar-width: thin;
-    scrollbar-color: #3a342c transparent;
+    scrollbar-color: #566c86 transparent;
   }
 
   *::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   *::-webkit-scrollbar-track {
@@ -59,8 +79,7 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #3a342c;
-    border-radius: 999px;
+    background: #566c86;
   }
 
   *::-webkit-scrollbar-button {
@@ -68,7 +87,6 @@
   }
 
   html {
-    /* Anchors must not jump. */
     scroll-behavior: smooth;
   }
 
@@ -98,38 +116,103 @@
     color: inherit;
   }
 
-  /* Replaces the default ring rather than removing it. */
+  /*
+   * Anything the pointer can act on says so. Buttons, summaries, labels that
+   * wrap a control, and every custom control the app draws.
+   */
+  button,
+  [role="button"],
+  [role="option"],
+  [role="menuitem"],
+  [role="tab"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  summary,
+  label:has(input),
+  label:has(select),
+  select,
+  [data-base-ui-tooltip-trigger],
+  [data-clickable] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"],
+  label:has(input:disabled),
+  input:disabled {
+    cursor: not-allowed;
+  }
+
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
 
   ::placeholder {
-    color: var(--color-faint);
+    color: var(--color-muted);
+    opacity: 1;
   }
 
   ::selection {
-    background: var(--color-accent);
-    color: var(--color-paper);
+    background: var(--color-green);
+    color: var(--color-navy);
+  }
+
+  /* Pixel art is never smoothed. */
+  img,
+  canvas {
+    image-rendering: pixelated;
   }
 }
 
-@utility panel-grid {
-  /* A faint pixel grid: brand texture without competing with the form. */
+/* The stepped corner: the signature of a pixel window frame. */
+@utility pixel-corners {
+  clip-path: polygon(
+    0 6px,
+    6px 0,
+    100% 0,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    0 100%
+  );
+}
+
+@utility pixel-corners-sm {
+  clip-path: polygon(
+    0 4px,
+    4px 0,
+    100% 0,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    0 100%
+  );
+}
+
+/* A flat pixel grid, used as the page substrate. */
+@utility pixel-grid {
   background-image:
-    linear-gradient(to right, rgba(244, 239, 228, 0.045) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(244, 239, 228, 0.045) 1px, transparent 1px);
-  background-size: 24px 24px;
+    linear-gradient(to right, rgba(148, 176, 194, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 176, 194, 0.1) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* Coarser grid for large empty areas, so the texture reads at a distance. */
+@utility pixel-grid-lg {
+  background-image:
+    linear-gradient(to right, rgba(148, 176, 194, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 176, 194, 0.09) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
 /* Swatch for palette index 0, which is transparent. */
 .checkerboard {
-  background-color: #241f19;
+  background-color: #252a40;
   background-image:
-    linear-gradient(45deg, #3a342c 25%, transparent 25%),
-    linear-gradient(-45deg, #3a342c 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #3a342c 75%),
-    linear-gradient(-45deg, transparent 75%, #3a342c 75%);
+    linear-gradient(45deg, #333c57 25%, transparent 25%),
+    linear-gradient(-45deg, #333c57 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333c57 75%),
+    linear-gradient(-45deg, transparent 75%, #333c57 75%);
   background-position:
     0 0,
     0 6px,
@@ -138,7 +221,6 @@
   background-size: 12px 12px;
 }
 
-/* Overlays grow from their own origin; transform and opacity only. */
 @keyframes overlay-enter {
   from {
     opacity: 0;
