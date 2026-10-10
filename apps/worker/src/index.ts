@@ -12,9 +12,15 @@ import {
 import {
   bindRun,
   createPixelTools,
+  defaultApiFor,
+  effortsFor,
   getRun,
+  parseModelSpecs,
   pixelInstructions,
   releaseRun,
+  selectRunTarget,
+  type ModelSpec,
+  type RunTarget,
 } from "@pixelaition/agent";
 import { createDatabase, frames, generationRuns } from "@pixelaition/db";
 import {
@@ -80,59 +86,64 @@ const openai = apiKey
   ? new OpenAIClient({ apiKey, ...(baseUrl ? { baseUrl } : {}) })
   : undefined;
 
-const modelId = process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
-const genericEfforts = ["none", "low", "medium", "high"];
+const fallbackModelId = process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+const parsedSpecs = parseModelSpecs(process.env.OPENAI_MODELS);
+// One configured model is enough; this fallback keeps single-model setups,
+// which only set OPENAI_MODEL, working unchanged.
+const specs: ModelSpec[] =
+  parsedSpecs.length > 0 ? parsedSpecs : [{ id: fallbackModelId }];
 
-// The control is declared explicitly so the options survive model ids Anvia does
-// not know, such as an OpenRouter slug. The adapter maps it to the provider field.
-const model = openai?.completionModel({
-  modelId,
-  api: baseUrl?.includes("openrouter.ai") ? "chat" : "responses",
-  controls: defineCompletionModelControls({
-    [REASONING_EFFORT_CONTROL_ID]: {
-      type: "select",
-      label: "Reasoning effort",
-      options: genericEfforts,
-    },
-  }),
-});
-
-const efforts: string[] = [
-  ...(model?.controls?.[REASONING_EFFORT_CONTROL_ID]?.options ?? genericEfforts),
-];
-
-const observer = langfuse?.observer({ redactInputs: true });
-
-// Durable submits carry no controls, so one agent is registered per effort level
-// and the run picks the one the user chose in the composer.
-const agents = model
-  ? efforts.map((effort) => ({
-      id: `${agentPrefix}:${effort}`,
-      agent: new Agent({
-        id: `${agentPrefix}:${effort}`,
-        model,
-        instructions: pixelInstructions,
-        tools: createPixelTools(),
-        maxTurns: 12,
-        controls: { reasoningEffort: effort },
-        ...(observer
-          ? {
-              observability: {
-                observers: { langfuse: observer },
-                primaryTrace: "langfuse",
-                errorPolicy: "ignore" as const,
-              },
-            }
-          : {}),
+// The control is declared explicitly so the options survive model ids Anvia
+// does not know, such as an OpenRouter slug. The adapter maps it to the
+// provider field.
+const completions = openai
+  ? specs.map((spec) => ({
+      spec,
+      model: openai.completionModel({
+        modelId: spec.id,
+        api: spec.api ?? defaultApiFor(baseUrl),
+        controls: defineCompletionModelControls({
+          [REASONING_EFFORT_CONTROL_ID]: {
+            type: "select",
+            label: "Reasoning effort",
+            options: effortsFor(spec.efforts),
+          },
+        }),
       }),
     }))
   : [];
 
-const agent = agents[0]?.agent;
+const observer = langfuse?.observer({ redactInputs: true });
 
-function agentForEffort(effort: string): Agent | undefined {
-  const match = agents.find((entry) => entry.id === `${agentPrefix}:${effort}`);
-  return match?.agent ?? agent;
+// Durable submits carry no model controls, so one agent is registered per
+// model and reasoning effort and the run picks the pair the composer chose.
+const agents = completions.flatMap(({ spec, model }) =>
+  effortsFor(spec.efforts).map((effort) => ({
+    id: `${agentPrefix}:${spec.id}:${effort}`,
+    agent: new Agent({
+      id: `${agentPrefix}:${spec.id}:${effort}`,
+      model,
+      instructions: pixelInstructions,
+      tools: createPixelTools(),
+      maxTurns: 12,
+      controls: { reasoningEffort: effort },
+      ...(observer
+        ? {
+            observability: {
+              observers: { langfuse: observer },
+              primaryTrace: "langfuse",
+              errorPolicy: "ignore" as const,
+            },
+          }
+        : {}),
+    }),
+  })),
+);
+
+function agentForTarget(target: RunTarget): Agent | undefined {
+  return agents.find(
+    (entry) => entry.id === `${agentPrefix}:${target.modelId}:${target.effort}`,
+  )?.agent;
 }
 
 // A store that cannot be acquired — usually a second worker on the same file —
@@ -197,14 +208,17 @@ function authorized(req: express.Request): boolean {
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    model: Boolean(model),
+    model: completions.length > 0,
     durable: durableFailure ? undefined : "ready",
   });
 });
 
 app.get("/internal/agents", (req, res) => {
   if (!authorized(req)) return res.status(401).end();
-  res.json({ reasoningEfforts: efforts, agents: agents.map((entry) => entry.id) });
+  res.json({
+    models: specs.map((spec) => ({ id: spec.id, efforts: effortsFor(spec.efforts) })),
+    agents: agents.map((entry) => entry.id),
+  });
 });
 
 app.post("/internal/runs", async (req, res) => {
@@ -223,7 +237,8 @@ app.post("/internal/runs", async (req, res) => {
       threadId: z.string(),
     })
     .parse(req.body);
-  const chosen = agentForEffort(body.reasoningEffort);
+  const target = selectRunTarget(specs, body.modelId, body.reasoningEffort);
+  const chosen = agentForTarget(target);
   if (!chosen || !openai)
     return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
   const runtime = await runtimeOr503(res);
@@ -232,11 +247,8 @@ app.post("/internal/runs", async (req, res) => {
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
   const frame = asset.frames.find((item) => item.id === body.frameId) ?? asset.frames[0];
   if (!frame) return res.status(404).json({ message: "Frame was not found." });
-  const effort = efforts.includes(body.reasoningEffort)
-    ? body.reasoningEffort
-    : (efforts[0] ?? "none");
   const run = await runtime.submit({
-    agentId: `${agentPrefix}:${effort}`,
+    agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
     prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${frame.name}`,
@@ -262,7 +274,7 @@ app.post("/internal/runs", async (req, res) => {
         .where(eq(frames.id, frame.id));
     },
   });
-  void follow(runtime, run.id, body.runId, effort);
+  void follow(runtime, run.id, body.runId, target.effort);
   res.status(202).json({ durableRunId: run.id });
 });
 
@@ -380,6 +392,6 @@ async function loadAsset(assetId: string) {
 const port = Number(process.env.WORKER_PORT ?? 4002);
 app.listen(port, "0.0.0.0", () => {
   console.log(
-    `worker listening on ${port}${model ? ` with ${agents.length} drawing agents` : ""}`,
+    `worker listening on ${port}${completions.length > 0 ? ` with ${agents.length} drawing agents` : ""}`,
   );
 });
