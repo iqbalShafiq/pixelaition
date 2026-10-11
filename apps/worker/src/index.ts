@@ -68,6 +68,7 @@ import {
 } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
+import { sanitizeEvent } from "./events.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
 
 type PublicEvent = {
@@ -618,62 +619,8 @@ function sanitizeInteraction(request: AgentInteractionRequest): SanitizedInterac
   };
 }
 
-function sanitizeEvent(type: string, raw: unknown): unknown {
-  // Interaction payloads were already reduced to the console's fields when
-  // they were published; the resolved marker is just `{ id }`. Nothing to
-  // strip from either.
-  if (type === "interaction" || type === "interaction-resolved") return raw;
-  const data = raw as Record<string, unknown> | undefined;
-  const operationId =
-    typeof data?.operationId === "string" ? data.operationId : undefined;
-  if (type === "model_started" || type === "model_completed") return { operationId };
-  if (type === "tool_started") {
-    const input = data?.input as
-      { toolCall?: { toolName?: unknown; input?: unknown } } | undefined;
-    return {
-      operationId,
-      input: {
-        toolCall: { toolName: input?.toolCall?.toolName, input: input?.toolCall?.input },
-      },
-    };
-  }
-  if (type === "tool_completed") {
-    const result = data?.result as
-      { failed?: unknown; error?: unknown; output?: unknown } | undefined;
-    const output = result?.output as { pairs?: unknown; flags?: unknown } | undefined;
-    return {
-      operationId,
-      result: {
-        failed: result?.failed === true,
-        error: typeof result?.error === "string" ? result.error : undefined,
-        // check_animation's report is large; the console row prints only the
-        // pair and flag counts, so only those travel through the stream.
-        ...(Array.isArray(output?.pairs) && Array.isArray(output?.flags)
-          ? { output: { pairs: output.pairs.length, flags: output.flags.length } }
-          : {}),
-      },
-    };
-  }
-  if (type === "status") {
-    const outcome = data?.outcome as { text?: unknown } | undefined;
-    return {
-      status: data?.status,
-      error: typeof data?.error === "string" ? data.error : undefined,
-      ...(typeof outcome?.text === "string" ? { outcome: { text: outcome.text } } : {}),
-    };
-  }
-  if (type === "done") return { status: data?.status };
-  // The console links a workspace run to the asset it created; the event is
-  // small and worth restoring after a refresh.
-  if (type === "asset-created") {
-    return {
-      assetId: typeof data?.assetId === "string" ? data.assetId : undefined,
-      projectId: typeof data?.projectId === "string" ? data.projectId : undefined,
-      name: typeof data?.name === "string" ? data.name : undefined,
-    };
-  }
-  return {};
-}
+// The sanitizer lives in its own module so its idempotence is unit-testable
+// without importing this file's database and runtime side effects.
 
 async function follow(
   runtime: DurableRuntime,
