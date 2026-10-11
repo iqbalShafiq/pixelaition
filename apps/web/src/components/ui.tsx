@@ -19,13 +19,10 @@ const press = { whileTap: { scale: 0.98 }, transition: motionToken };
 type Tone = "solid" | "ghost" | "danger" | "quiet";
 
 const buttonTones: Record<Tone, string> = {
-  // A pixel button is a flat block lifted by a solid bar, not a soft shadow.
-  solid:
-    "bg-accent text-navy border-accent-deep shadow-[0_3px_0_0_var(--color-accent-deep)] active:shadow-none active:translate-y-[3px]",
-  ghost:
-    "bg-panel text-ink border-line-strong shadow-[0_3px_0_0_rgba(148,176,194,0.28)] active:shadow-none active:translate-y-[3px] hover:bg-raised",
-  danger:
-    "bg-erase text-navy border-erase shadow-[0_3px_0_0_#b13e53] active:shadow-none active:translate-y-[3px]",
+  // A pixel button is a flat block; the hard shadow on the root lifts it.
+  solid: "bg-accent text-navy border-accent-deep",
+  ghost: "bg-panel text-ink border-line-strong hover:bg-raised",
+  danger: "bg-erase text-navy border-erase",
   quiet: "bg-transparent text-muted border-transparent hover:text-ink",
 };
 
@@ -41,7 +38,7 @@ export function Button({
       {...press}
       type={type}
       {...props}
-      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
     >
       {children}
     </motion.button>
@@ -89,7 +86,7 @@ export function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`grid ${box} shrink-0 place-items-center border-2 transition-colors duration-150 disabled:opacity-40 ${state} ${className}`}
+        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
       >
         {children}
       </motion.button>
