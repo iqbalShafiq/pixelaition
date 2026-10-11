@@ -30,7 +30,14 @@ import {
   type RunTarget,
   type StagedPlanOverride,
 } from "@pixelaition/agent";
-import { createDatabase, assets, frames, generationRuns, models } from "@pixelaition/db";
+import {
+  createDatabase,
+  assets,
+  frames,
+  generationRuns,
+  generationThreads,
+  models,
+} from "@pixelaition/db";
 import {
   bufferToFrame,
   defaultStyle,
@@ -39,7 +46,7 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { asc, and, eq, sql } from "drizzle-orm";
+import { asc, and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
 
@@ -213,6 +220,7 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
 })
   .then(async (runtime) => {
     await runtime.resume();
+    await recoverInterruptedRuns(runtime);
     return runtime;
   })
   .catch((reason: unknown) => {
@@ -314,31 +322,8 @@ app.post("/internal/runs", async (req, res) => {
   if (!runtime) return;
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
-  const framesById = new Map(
-    asset.frames.map((item) => [
-      item.id,
-      { id: item.id, name: item.name, index: item.index },
-    ]),
-  );
-  const originFrame = framesById.get(body.frameId);
+  const originFrame = asset.frames.find((frame) => frame.id === body.frameId);
   if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
-
-  /** Insert one frames row, exactly like store.ts's addFrameRecord does. */
-  const insertFrameRow = async (frame: {
-    id: string;
-    name: string;
-    index: number;
-    buffer: FrameBuffer;
-  }) => {
-    await db.insert(frames).values({
-      id: frame.id,
-      assetId: body.assetId,
-      name: frame.name,
-      index: frame.index,
-      layers: bufferToFrame(frame.buffer, frame).layers,
-    });
-    framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
-  };
 
   const run = await runtime.submit({
     agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
@@ -358,109 +343,12 @@ app.post("/internal/runs", async (req, res) => {
       reasoningEffort: target.effort,
     },
   });
-  bindRun(run.id, {
+  bindAssetRun({
+    durableRunId: run.id,
+    publicRunId: body.runId,
     assetId: body.assetId,
+    asset,
     originFrameId: originFrame.id,
-    currentFrameId: originFrame.id,
-    frames: new Map(
-      asset.frames.map((item) => [
-        item.id,
-        {
-          name: item.name,
-          index: item.index,
-          buffer: frameToBuffer(item, asset.width, asset.height, asset.palette),
-        },
-      ]),
-    ),
-    palette: [...asset.palette],
-    width: asset.width,
-    height: asset.height,
-    style: asset.style,
-    approvedScope: new Set([originFrame.id]),
-    strokes: [],
-    issues: [],
-    onStroke: (_stroke, buffer, editedFrameId) => {
-      publish(body.runId, "canvas-stroke", {
-        frameId: editedFrameId,
-        layers: buffer.layers.map((layer) => ({
-          ...layer,
-          pixels: encodePixels(layer.pixels),
-        })),
-      });
-      // A stroke always targets a frame the binding knows: the origin frame
-      // from loadAsset, or one a frame tool inserted and registered below.
-      const edited = framesById.get(editedFrameId);
-      if (!edited) {
-        console.error(`[onStroke] no frame row for ${editedFrameId}`);
-        return;
-      }
-      // Drizzle query promises are lazy: without awaiting or then-ing, the
-      // update never executes. Persist explicitly and surface any failure.
-      void (async () => {
-        try {
-          await db
-            .update(frames)
-            .set({ layers: bufferToFrame(buffer, edited).layers, updatedAt: new Date() })
-            .where(eq(frames.id, editedFrameId));
-        } catch (error) {
-          console.error("[onStroke] frame persist failed", error);
-        }
-      })();
-    },
-    // Frame CRUD tools await this before committing their in-memory change, so
-    // a row exists before any later stroke targets it. A failed save is logged
-    // and rethrown as a bounded cause: the tool call fails and the binding
-    // stays put instead of diverging from the database.
-    onFrameChange: async (change) => {
-      try {
-        if (change.type === "add") {
-          await insertFrameRow(change.frame);
-        } else if (change.type === "delete") {
-          await db
-            .delete(frames)
-            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, body.assetId)));
-          framesById.delete(change.frameId);
-          // The tool replaced the last frame; the row must go before the
-          // replacement takes the same (asset, index) slot.
-          if (change.replacement) await insertFrameRow(change.replacement);
-        } else if (change.type === "rename") {
-          await db
-            .update(frames)
-            .set({ name: change.name, updatedAt: new Date() })
-            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, body.assetId)));
-          const row = framesById.get(change.frameId);
-          if (row) row.name = change.name;
-        } else {
-          await db.transaction(async (tx) => {
-            // A unique index guards (asset, index), so a direct renumber might
-            // collide with a row that has not moved yet. Park every frame far
-            // above the final range first, then write the dense order — the
-            // same rule store.ts uses for the editor's reorder.
-            await tx
-              .update(frames)
-              .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
-              .where(eq(frames.assetId, body.assetId));
-            for (const item of change.order) {
-              await tx
-                .update(frames)
-                .set({ index: item.index, updatedAt: new Date() })
-                .where(and(eq(frames.id, item.id), eq(frames.assetId, body.assetId)));
-            }
-          });
-          for (const item of change.order) {
-            const row = framesById.get(item.id);
-            if (row) row.index = item.index;
-          }
-        }
-        await db
-          .update(assets)
-          .set({ updatedAt: new Date() })
-          .where(eq(assets.id, body.assetId));
-      } catch (error) {
-        console.error("[onFrameChange] frame persist failed", error);
-        throw new Error("The frame change could not be saved.");
-      }
-    },
   });
   void follow(runtime, run.id, body.runId, target.effort);
   res.status(202).json({ durableRunId: run.id });
@@ -839,6 +727,218 @@ async function loadAsset(assetId: string) {
       }>,
     })),
   };
+}
+
+type LoadedAsset = NonNullable<Awaited<ReturnType<typeof loadAsset>>>;
+
+/** A durable error message that fits one log line. */
+function boundedReason(reason: unknown): string {
+  const text = reason instanceof Error ? reason.message : String(reason);
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
+/**
+ * Bind a durable run to its asset. Submission and boot recovery share this so a
+ * recovered run persists strokes and frame changes exactly like a fresh one.
+ */
+function bindAssetRun(options: {
+  durableRunId: string;
+  publicRunId: string;
+  assetId: string;
+  asset: LoadedAsset;
+  originFrameId: string;
+}): void {
+  const { durableRunId, publicRunId, assetId, asset, originFrameId } = options;
+  const framesById = new Map(
+    asset.frames.map((item) => [
+      item.id,
+      { id: item.id, name: item.name, index: item.index },
+    ]),
+  );
+
+  /** Insert one frames row, exactly like store.ts's addFrameRecord does. */
+  const insertFrameRow = async (frame: {
+    id: string;
+    name: string;
+    index: number;
+    buffer: FrameBuffer;
+  }) => {
+    await db.insert(frames).values({
+      id: frame.id,
+      assetId,
+      name: frame.name,
+      index: frame.index,
+      layers: bufferToFrame(frame.buffer, frame).layers,
+    });
+    framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
+  };
+
+  bindRun(durableRunId, {
+    assetId,
+    originFrameId,
+    currentFrameId: originFrameId,
+    frames: new Map(
+      asset.frames.map((item) => [
+        item.id,
+        {
+          name: item.name,
+          index: item.index,
+          buffer: frameToBuffer(item, asset.width, asset.height, asset.palette),
+        },
+      ]),
+    ),
+    palette: [...asset.palette],
+    width: asset.width,
+    height: asset.height,
+    style: asset.style,
+    approvedScope: new Set([originFrameId]),
+    strokes: [],
+    issues: [],
+    onStroke: (_stroke, buffer, editedFrameId) => {
+      publish(publicRunId, "canvas-stroke", {
+        frameId: editedFrameId,
+        layers: buffer.layers.map((layer) => ({
+          ...layer,
+          pixels: encodePixels(layer.pixels),
+        })),
+      });
+      // A stroke always targets a frame the binding knows: the origin frame
+      // from loadAsset, or one a frame tool inserted and registered below.
+      const edited = framesById.get(editedFrameId);
+      if (!edited) {
+        console.error(`[onStroke] no frame row for ${editedFrameId}`);
+        return;
+      }
+      // Drizzle query promises are lazy: without awaiting or then-ing, the
+      // update never executes. Persist explicitly and surface any failure.
+      void (async () => {
+        try {
+          await db
+            .update(frames)
+            .set({ layers: bufferToFrame(buffer, edited).layers, updatedAt: new Date() })
+            .where(eq(frames.id, editedFrameId));
+        } catch (error) {
+          console.error("[onStroke] frame persist failed", error);
+        }
+      })();
+    },
+    // Frame CRUD tools await this before committing their in-memory change, so
+    // a row exists before any later stroke targets it. A failed save is logged
+    // and rethrown as a bounded cause: the tool call fails and the binding
+    // stays put instead of diverging from the database.
+    onFrameChange: async (change) => {
+      try {
+        if (change.type === "add") {
+          await insertFrameRow(change.frame);
+        } else if (change.type === "delete") {
+          await db
+            .delete(frames)
+            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
+          framesById.delete(change.frameId);
+          // The tool replaced the last frame; the row must go before the
+          // replacement takes the same (asset, index) slot.
+          if (change.replacement) await insertFrameRow(change.replacement);
+        } else if (change.type === "rename") {
+          await db
+            .update(frames)
+            .set({ name: change.name, updatedAt: new Date() })
+            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
+          const row = framesById.get(change.frameId);
+          if (row) row.name = change.name;
+        } else {
+          await db.transaction(async (tx) => {
+            // A unique index guards (asset, index), so a direct renumber might
+            // collide with a row that has not moved yet. Park every frame far
+            // above the final range first, then write the dense order — the
+            // same rule store.ts uses for the editor's reorder.
+            await tx
+              .update(frames)
+              .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+              .where(eq(frames.assetId, assetId));
+            for (const item of change.order) {
+              await tx
+                .update(frames)
+                .set({ index: item.index, updatedAt: new Date() })
+                .where(and(eq(frames.id, item.id), eq(frames.assetId, assetId)));
+            }
+          });
+          for (const item of change.order) {
+            const row = framesById.get(item.id);
+            if (row) row.index = item.index;
+          }
+        }
+        await db
+          .update(assets)
+          .set({ updatedAt: new Date() })
+          .where(eq(assets.id, assetId));
+      } catch (error) {
+        console.error("[onFrameChange] frame persist failed", error);
+        throw new Error("The frame change could not be saved.");
+      }
+    },
+  });
+}
+
+/**
+ * Re-attach the runs the previous process left behind. The durable store holds
+ * their continuations, but `follow()` and the tool bindings live in memory, so
+ * after a restart a waiting run would never re-publish its card and a resumed
+ * run's tools would have no binding. Rebuild both from the database; a row
+ * that cannot be recovered is logged and skipped, never a boot failure.
+ */
+async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
+  let rows: Array<{ run: typeof generationRuns.$inferSelect; assetId: string }>;
+  try {
+    rows = await db
+      .select({ run: generationRuns, assetId: generationThreads.assetId })
+      .from(generationRuns)
+      .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+      .where(
+        and(
+          inArray(generationRuns.status, ["queued", "running", "waiting"]),
+          isNotNull(generationRuns.durableRunId),
+        ),
+      );
+  } catch (reason) {
+    console.error(`[recovery] could not list interrupted runs: ${boundedReason(reason)}`);
+    return;
+  }
+  for (const { run, assetId } of rows) {
+    const durableRunId = run.durableRunId;
+    if (!durableRunId) continue;
+    // Idempotent: a run this process already follows is left alone.
+    if (getRun(durableRunId)) continue;
+    try {
+      const asset = await loadAsset(assetId);
+      if (!asset) {
+        console.error(
+          `[recovery] asset ${assetId} for run ${run.id} was not found; leaving the run unrecovered`,
+        );
+        continue;
+      }
+      const originFrameId =
+        run.frameId && asset.frames.some((frame) => frame.id === run.frameId)
+          ? run.frameId
+          : asset.frames[0]?.id;
+      if (!originFrameId) {
+        console.error(
+          `[recovery] asset ${assetId} for run ${run.id} has no frames; leaving the run unrecovered`,
+        );
+        continue;
+      }
+      bindAssetRun({ durableRunId, publicRunId: run.id, assetId, asset, originFrameId });
+      void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
+        (reason: unknown) => {
+          console.error(`[recovery] run ${run.id} stopped: ${boundedReason(reason)}`);
+        },
+      );
+      console.log(`[recovery] re-attached run ${run.id} (${run.status})`);
+    } catch (reason) {
+      console.error(
+        `[recovery] run ${run.id} could not be recovered: ${boundedReason(reason)}`,
+      );
+    }
+  }
 }
 
 const port = Number(process.env.WORKER_PORT ?? 4002);
