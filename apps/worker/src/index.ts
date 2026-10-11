@@ -265,18 +265,19 @@ function toolRecovery(vision: boolean) {
     dither_rect: "idempotent" as const,
     resize_canvas: "idempotent" as const,
     set_palette: "idempotent" as const,
-    add_layer: "idempotent" as const,
     rename_layer: "idempotent" as const,
     set_layer_visible: "idempotent" as const,
-    remove_layer: "idempotent" as const,
     mirror_frame: "idempotent" as const,
     rename_frame: "idempotent" as const,
     move_frame: "idempotent" as const,
-    // Adding and deleting frames are not idempotent: a replay would add a
-    // second frame or delete a frame that is already gone, so an interruption
-    // after the intent is committed needs reconciliation, not a retry.
+    // Adding and deleting frames and layers are not idempotent: a replay
+    // would add a second frame or layer, or delete one that is already gone,
+    // so an interruption after the intent is committed needs reconciliation,
+    // not a retry.
     add_frame: "manual" as const,
     delete_frame: "manual" as const,
+    add_layer: "manual" as const,
+    remove_layer: "manual" as const,
   };
 }
 
