@@ -5,7 +5,7 @@ import {
   type Camera,
   type FrameBuffer,
 } from "@pixelaition/pixel";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
@@ -221,6 +221,9 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  // Pan is a ref because the gesture must not re-render; the cursor still has
+  // to switch to grabbing, so the fact of panning is mirrored into state.
+  const [panning, setPanning] = useState(false);
   // The workspace texture, cached per cell size because it scales with the zoom.
   const field = useRef(new Map<number, CanvasPattern | null>());
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
@@ -423,7 +426,19 @@ export function PixelCanvas({
     preview.current = null;
     stroke.current = null;
     pan.current = null;
+    setPanning(false);
   }
+
+  // The paint tools all share the pixel cross; pan and select keep the cursors
+  // that say what they do. A pan started with space or the middle button shows
+  // grabbing whatever tool is selected.
+  const cursorClass = panning
+    ? "cursor-grabbing"
+    : tool === "pan"
+      ? "cursor-grab"
+      : tool === "select"
+        ? "cursor-default"
+        : "cursor-pixel-cross";
 
   function strokeCells(from: Point, to: Point): Point[] {
     const doc = latest.current.buffer;
@@ -439,10 +454,7 @@ export function PixelCanvas({
   return (
     <canvas
       ref={viewRef}
-      className="h-full w-full touch-none"
-      style={{
-        cursor: tool === "pan" ? "grab" : tool === "picker" ? "copy" : "crosshair",
-      }}
+      className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
         if (event.button === 1 || active === "pan" || space.current) {
@@ -451,6 +463,7 @@ export function PixelCanvas({
             y: event.clientY,
             camera: latest.current.camera,
           };
+          setPanning(true);
           event.currentTarget.setPointerCapture(event.pointerId);
           return;
         }
