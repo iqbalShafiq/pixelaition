@@ -16,6 +16,7 @@ import {
 } from "@anvia/core/completion";
 import {
   bindRun,
+  clearGateOutcomes,
   createPixelTools,
   getRun,
   LangfuseTelemetry,
@@ -75,11 +76,16 @@ type PublicEvent = {
   data: unknown;
 };
 
-/** What the console needs to answer: no toolCallId, internalCallId, or reason. */
+/**
+ * What the console needs to answer: no toolCallId or internalCallId. The
+ * reason is kept when one exists — the Jev request check puts its verdict
+ * there, and the human deciding a review is the one who needs it.
+ */
 type SanitizedInteraction = {
   id: string;
   type: "tool-approval" | "tool-question";
   toolName: string;
+  reason?: string;
   questions?: readonly AgentQuestionPrompt[];
   input?: unknown;
 };
@@ -424,6 +430,7 @@ app.post("/internal/runs", async (req, res) => {
       assetId: asset.id,
       asset,
       originFrameId,
+      request: body.prompt,
     });
   } else if (body.scope === "workspace") {
     // A workspace run starts with no asset; its tools bind one lazily.
@@ -432,6 +439,7 @@ app.post("/internal/runs", async (req, res) => {
       publicRunId: body.runId,
       userId: body.userId,
       style,
+      request: body.prompt,
     });
   }
   void follow(runtime, run.id, body.runId, target.effort);
@@ -603,6 +611,7 @@ function sanitizeInteraction(request: AgentInteractionRequest): SanitizedInterac
       id: request.id,
       type: request.type,
       toolName: request.toolName,
+      ...(request.reason ? { reason: request.reason } : {}),
       input: request.input,
     };
   }
@@ -763,6 +772,7 @@ async function follow(
     }
   } finally {
     releaseRun(durableId);
+    clearGateOutcomes(durableId);
     // Give a subscriber a moment to read the tail, then drop the retained events.
     if (finished) {
       setTimeout(() => forgetRun(publicId), 60_000).unref?.();
@@ -1063,8 +1073,10 @@ function bindAssetRun(options: {
   assetId: string;
   asset: LoadedAsset;
   originFrameId: string;
+  /** The user's own words; absent when the row never recorded them. */
+  request?: string;
 }): void {
-  const { durableRunId, publicRunId, assetId, asset, originFrameId } = options;
+  const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
   const writes = frameWrites({
     durableRunId,
     publicRunId,
@@ -1074,6 +1086,7 @@ function bindAssetRun(options: {
   bindRun(durableRunId, {
     assetId,
     assetName: asset.name,
+    request,
     originFrameId,
     currentFrameId: originFrameId,
     frames: new Map(
@@ -1111,8 +1124,10 @@ function bindWorkspaceRun(options: {
   publicRunId: string;
   userId: string;
   style: StyleGuide;
+  /** The user's own words; absent when the row never recorded them. */
+  request?: string;
 }): void {
-  const { durableRunId, publicRunId, userId, style } = options;
+  const { durableRunId, publicRunId, userId, style, request } = options;
   let writes: ReturnType<typeof frameWrites> | undefined;
 
   // The single choke point where a workspace run acquires an asset, used by
@@ -1159,6 +1174,7 @@ function bindWorkspaceRun(options: {
   };
 
   bindRun(durableRunId, {
+    request,
     frames: new Map(),
     palette: [],
     style,
@@ -1343,6 +1359,7 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
           publicRunId: run.id,
           userId,
           style: project.style,
+          request: run.prompt ?? undefined,
         });
         void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
           (reason: unknown) => {
@@ -1369,7 +1386,14 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
         );
         continue;
       }
-      bindAssetRun({ durableRunId, publicRunId: run.id, assetId, asset, originFrameId });
+      bindAssetRun({
+        durableRunId,
+        publicRunId: run.id,
+        assetId,
+        asset,
+        originFrameId,
+        request: run.prompt ?? undefined,
+      });
       void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
         (reason: unknown) => {
           console.error(`[recovery] run ${run.id} stopped: ${boundedReason(reason)}`);

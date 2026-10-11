@@ -20,6 +20,7 @@ pnpm db:migrate
 - Provider keys, Better Auth secrets, and the worker token stay on the server. Nothing secret uses a `VITE_` prefix.
 - Anvia agents are constructed with `new Agent`. Do not use the v0 builder API.
 - The drawing agent may change a canvas only through its tools. Tool handlers reject colors and coordinates the document refuses.
+- Destructive frame tools (`clear_region`, `replace_color`, `set_palette`, `remove_layer`) pass a Jev request check before they run: a clearly supported call proceeds, a clearly unsupported one is refused to the model, and an unclear one pauses through the normal durable approval. The check reads the run's recorded user request; a missing key or an unreachable provider fails with a named cause.
 - `@anvia/durable` runs in `apps/worker` only, against one SQLite file.
 - A Durable submission carries no model controls. Models and their reasoning efforts live in the `models` table, seeded by migrations. Reasoning effort is set by registering one agent per model and effort and choosing the `agentId`, never by writing the effort into the prompt.
 - When the app cannot do something for real — a missing key, an unknown model or effort, an unreachable provider — it fails with an error naming the cause. Deterministic fallbacks and silent substitutions are forbidden.

@@ -21,6 +21,12 @@ import {
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
+  gateToolCall,
+  rememberGateOutcome,
+  takeGateOutcome,
+  type ToolGateOutcome,
+} from "./gate.js";
+import {
   bindRunAsset,
   frameBuffer,
   getRun,
@@ -30,6 +36,7 @@ import {
   replaceFrameBuffer,
   requireAsset,
   requireRun,
+  runIdFromOperation,
   stagedOverrideSchema,
   type BoundRunBinding,
   type RunAsset,
@@ -217,15 +224,53 @@ function changeFrame(id: string, frame: RunFrame) {
  * binding the answer fails closed, because an unknown scope must not write.
  */
 function frameNeedsApproval(
-  args: { frameId?: string },
-  context: ToolApprovalContext<{ frameId?: string }>,
+  args: Record<string, unknown>,
+  context: ToolApprovalContext<Record<string, unknown>>,
 ): boolean {
   const run = getRun(context.run.runId);
   if (!run) return true;
   // An unbound run has no current frame; an unknown frame always asks first.
-  const frameId = args.frameId ?? run.currentFrameId;
+  const named = typeof args.frameId === "string" ? args.frameId : undefined;
+  const frameId = named ?? run.currentFrameId;
   if (frameId === undefined) return true;
   return !run.approvedScope.has(frameId);
+}
+
+/**
+ * Destructive tools pass Jev's request check before they run: a clearly
+ * supported call proceeds, a clearly unsupported one is refused to the model,
+ * and an unclear one pauses for the human through the normal approval flow.
+ * The scope rule runs first — a frame the user has not approved always asks.
+ */
+function gatedApproval<Args extends Record<string, unknown>>(
+  toolName: string,
+  description: string,
+  base: (args: Args, context: ToolApprovalContext<Args>) => boolean,
+) {
+  return async (
+    args: Args,
+    context: ToolApprovalContext<Args>,
+  ): Promise<boolean | { reason: string }> => {
+    if (base(args, context)) return true;
+    const run = getRun(context.run.runId);
+    if (!run) return true;
+    const outcome = await gateToolCall(run, toolName, description, args);
+    rememberGateOutcome(context.run.runId, toolName, outcome);
+    if (outcome.outcome === "review") return { reason: `Jev: ${outcome.reason}` };
+    return false;
+  };
+}
+
+/**
+ * A call Jev blocked is refused to the model as a result instead of touching
+ * the frame. Anything else (an approval, or no verdict at all) executes.
+ */
+function gateRefusal(
+  operationId: string | undefined,
+  toolName: string,
+): ToolGateOutcome | undefined {
+  const outcome = takeGateOutcome(runIdFromOperation(operationId), toolName);
+  return outcome?.outcome === "block" ? outcome : undefined;
 }
 
 /** Normalize a palette the way set_palette does, or fail with the same cause. */
@@ -526,10 +571,11 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const clearRegionDescription =
+    "Clear a rectangle on a layer of the current frame to transparency. Pass frameId to clear another frame.";
   const clearRegion = createTool({
     name: "clear_region",
-    description:
-      "Clear a rectangle on a layer of the current frame to transparency. Pass frameId to clear another frame.",
+    description: clearRegionDescription,
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -538,8 +584,14 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       width: z.number().int().positive(),
       height: z.number().int().positive(),
     }),
-    requiresApproval: frameNeedsApproval,
+    requiresApproval: gatedApproval(
+      "clear_region",
+      clearRegionDescription,
+      frameNeedsApproval,
+    ),
     execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "clear_region");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const { frameId, ...region } = input;
@@ -554,18 +606,25 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const replaceColorDescription =
+    "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given, every layer otherwise.";
   const replaceColorTool = createTool({
     name: "replace_color",
-    description:
-      "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given, every layer otherwise.",
+    description: replaceColorDescription,
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
       from: z.number().int().nonnegative(),
       to: z.number().int().nonnegative(),
     }),
-    requiresApproval: frameNeedsApproval,
+    requiresApproval: gatedApproval(
+      "replace_color",
+      replaceColorDescription,
+      frameNeedsApproval,
+    ),
     execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "replace_color");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const { frameId, ...swap } = input;
@@ -666,15 +725,23 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const setPaletteDescription =
+    "Replace the palette of the current frame. Index 0 must stay #00000000.";
   const setPalette = createTool({
     name: "set_palette",
-    description: "Replace the palette of the current frame. Index 0 must stay #00000000.",
+    description: setPaletteDescription,
     inputSchema: z.object({
       frameId: z.string().optional(),
       palette: z.array(z.string()).min(2).max(33),
     }),
-    requiresApproval: frameNeedsApproval,
+    requiresApproval: gatedApproval(
+      "set_palette",
+      setPaletteDescription,
+      frameNeedsApproval,
+    ),
     execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "set_palette");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const edited = editFrame(run, input.frameId, {
@@ -754,12 +821,20 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const removeLayerDescription =
+    "Remove a layer from the current frame. A frame keeps at least one layer, so the last layer cannot be removed.";
   const removeLayerTool = createTool({
     name: "remove_layer",
-    description:
-      "Remove a layer from the current frame. A frame keeps at least one layer, so the last layer cannot be removed.",
+    description: removeLayerDescription,
     inputSchema: z.object({ layerId: z.string() }),
+    requiresApproval: gatedApproval(
+      "remove_layer",
+      removeLayerDescription,
+      frameNeedsApproval,
+    ),
     execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "remove_layer");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const edited = editFrame(run, undefined, {

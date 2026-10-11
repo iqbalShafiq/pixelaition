@@ -108,6 +108,8 @@ export type RunBinding = {
   /** The asset the run draws on; absent until a workspace run chooses or creates one. */
   assetId?: string;
   assetName?: string;
+  /** The user's own words for this run; the Jev request check judges calls against it. */
+  request?: string;
   originFrameId?: string;
   currentFrameId?: string;
   frames: Map<string, RunFrame>;

@@ -1,6 +1,6 @@
 import { normalizeToolResultOutput } from "@anvia/core/tool";
 import { createBuffer, type FrameBuffer } from "@pixelaition/pixel";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bindRun,
   getRun,
@@ -98,12 +98,21 @@ type Tool = {
 };
 
 /** Run a tool's approval predicate against the live binding for `run-1`. */
-function approval(name: string, args: { frameId?: string }, runId = "run-1"): boolean {
+async function approval(
+  name: string,
+  args: { frameId?: string },
+  runId = "run-1",
+): Promise<boolean | { reason: string }> {
   const requirement = tool(name).requiresApproval;
   if (typeof requirement !== "function") {
     throw new Error(`${name} does not gate approval dynamically.`);
   }
-  return (requirement as (args: unknown, context: unknown) => boolean)(args, {
+  return (
+    requirement as (
+      args: unknown,
+      context: unknown,
+    ) => boolean | Promise<boolean | { reason: string }>
+  )(args, {
     toolName: name,
     args,
     rawArgs: JSON.stringify(args),
@@ -112,6 +121,32 @@ function approval(name: string, args: { frameId?: string }, runId = "run-1"): bo
     run: { agentId: "pixel-draw:test:low", runId },
   });
 }
+
+/** Stub Jev's Decisions API so both request-check answers land on `noul`. */
+function stubJev(noul: number): void {
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.JEV_MODEL = "typesafe/jev-1.13";
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(
+        JSON.stringify({
+          answers: {
+            supported: { type: "noul", noul },
+            proportionate: { type: "noul", noul },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+}
+
+/** The gate reads the process env; leave the suite's env as it found it. */
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.JEV_MODEL;
+});
 
 /**
  * An 8×8 run for the frame tools. createBuffer refuses canvases under 8, so
@@ -1253,8 +1288,10 @@ describe("workspace tools", () => {
 });
 
 describe("drawing approval", () => {
-  it("gates every pixel-mutating tool on the live approved scope", () => {
+  it("gates every pixel-mutating tool on the live approved scope", async () => {
     boundRun();
+    // The four destructive tools also pass Jev's request check; approve it.
+    stubJev(0.97);
     const run = getRun("run-1")!;
     run.approvedScope = new Set(["frame-2"]);
     const stroke = {
@@ -1263,42 +1300,42 @@ describe("drawing approval", () => {
       label: "dot",
       points: [{ x: 1, y: 1, color: 2 }],
     };
-    expect(approval("paint_stroke", stroke)).toBe(false);
-    expect(approval("paint_stroke", { ...stroke, frameId: "frame-3" })).toBe(true);
-    expect(approval("fill_rect", { frameId: "frame-2" })).toBe(false);
-    expect(approval("fill_rect", { frameId: "frame-3" })).toBe(true);
-    expect(approval("erase_stroke", { frameId: "frame-2" })).toBe(false);
-    expect(approval("erase_stroke", { frameId: "frame-3" })).toBe(true);
-    expect(approval("draw_line", { frameId: "frame-2" })).toBe(false);
-    expect(approval("draw_line", { frameId: "frame-3" })).toBe(true);
-    expect(approval("flood_fill", { frameId: "frame-2" })).toBe(false);
-    expect(approval("flood_fill", { frameId: "frame-3" })).toBe(true);
-    expect(approval("fill_region", { frameId: "frame-2" })).toBe(false);
-    expect(approval("fill_region", { frameId: "frame-3" })).toBe(true);
-    expect(approval("clear_region", { frameId: "frame-2" })).toBe(false);
-    expect(approval("clear_region", { frameId: "frame-3" })).toBe(true);
-    expect(approval("replace_color", { frameId: "frame-2" })).toBe(false);
-    expect(approval("replace_color", { frameId: "frame-3" })).toBe(true);
-    expect(approval("apply_outline", { frameId: "frame-2" })).toBe(false);
-    expect(approval("apply_outline", { frameId: "frame-3" })).toBe(true);
-    expect(approval("dither_rect", { frameId: "frame-2" })).toBe(false);
-    expect(approval("dither_rect", { frameId: "frame-3" })).toBe(true);
-    expect(approval("set_palette", { frameId: "frame-2" })).toBe(false);
-    expect(approval("mirror_frame", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("paint_stroke", stroke)).toBe(false);
+    expect(await approval("paint_stroke", { ...stroke, frameId: "frame-3" })).toBe(true);
+    expect(await approval("fill_rect", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("fill_rect", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("erase_stroke", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("erase_stroke", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("draw_line", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("draw_line", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("flood_fill", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("flood_fill", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("fill_region", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("fill_region", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("clear_region", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("clear_region", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("replace_color", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("replace_color", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("apply_outline", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("apply_outline", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("dither_rect", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("dither_rect", { frameId: "frame-3" })).toBe(true);
+    expect(await approval("set_palette", { frameId: "frame-2" })).toBe(false);
+    expect(await approval("mirror_frame", { frameId: "frame-3" })).toBe(true);
     releaseRun("run-1");
   });
 
-  it("gates a call without a frame id on the current frame", () => {
+  it("gates a call without a frame id on the current frame", async () => {
     boundRun();
     const run = getRun("run-1")!;
     run.approvedScope = new Set(["frame-2"]);
-    expect(approval("paint_stroke", {})).toBe(true);
+    expect(await approval("paint_stroke", {})).toBe(true);
     run.currentFrameId = "frame-2";
-    expect(approval("paint_stroke", {})).toBe(false);
+    expect(await approval("paint_stroke", {})).toBe(false);
     releaseRun("run-1");
   });
 
-  it("reads the binding live, so a frame approved later stops asking", () => {
+  it("reads the binding live, so a frame approved later stops asking", async () => {
     boundRun();
     const stroke = {
       frameId: "frame-2",
@@ -1306,15 +1343,41 @@ describe("drawing approval", () => {
       label: "dot",
       points: [{ x: 1, y: 1, color: 2 }],
     };
-    expect(approval("paint_stroke", stroke)).toBe(true);
+    expect(await approval("paint_stroke", stroke)).toBe(true);
     getRun("run-1")!.approvedScope.add("frame-2");
-    expect(approval("paint_stroke", stroke)).toBe(false);
+    expect(await approval("paint_stroke", stroke)).toBe(false);
     releaseRun("run-1");
   });
 
-  it("asks for approval when no binding is live", () => {
+  it("asks for approval when no binding is live", async () => {
     boundRun();
-    expect(approval("paint_stroke", { frameId: "frame-1" }, "run-9")).toBe(true);
+    expect(await approval("paint_stroke", { frameId: "frame-1" }, "run-9")).toBe(true);
+    releaseRun("run-1");
+  });
+
+  it("refuses a call Jev blocks instead of touching the frame", async () => {
+    boundRun();
+    stubJev(0.02);
+    expect(await approval("clear_region", { frameId: "frame-1" })).toBe(false);
+    const result = await tool("clear_region").call(
+      { layerId: "layer-base", x: 0, y: 0, width: 4, height: 4 },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({
+      refused: expect.stringContaining("not supported"),
+    });
+    const layer = getRun("run-1")!.frames.get("frame-1")!.buffer.layers[0]!;
+    expect([...layer.pixels]).toEqual([...basePixels]);
+    releaseRun("run-1");
+  });
+
+  it("pauses a call Jev cannot call clearly, with its verdict as the reason", async () => {
+    boundRun();
+    stubJev(0.6);
+    const verdict = await approval("replace_color", { frameId: "frame-1" });
+    expect(verdict).toMatchObject({
+      reason: expect.stringContaining("Jev: the request check is not clear"),
+    });
     releaseRun("run-1");
   });
 

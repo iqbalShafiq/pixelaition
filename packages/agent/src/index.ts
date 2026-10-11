@@ -1,5 +1,7 @@
 export { DecisionNotConfiguredError, decidePrompt, toDecision } from "./decide.js";
 export type { DrawDecision, DrawIntent } from "./decide.js";
+export { clearGateOutcomes, gateToolCall, toGateOutcome } from "./gate.js";
+export type { ToolGateOutcome } from "./gate.js";
 export { pixelInstructions } from "./instructions.js";
 export { parseModelSpecRow, selectRunTarget } from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";

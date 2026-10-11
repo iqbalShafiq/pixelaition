@@ -13,14 +13,16 @@ export type InteractionQuestion = {
 };
 
 /**
- * The pending card as the worker publishes it: no call ids, no model reason.
- * An approval carries the tool arguments as `input`; a question carries its
- * prompts. The card is the only place either type is answered.
+ * The pending card as the worker publishes it: no call ids. An approval
+ * carries the tool arguments as `input` and, when one produced it, the reason
+ * (the Jev request check's verdict). A question carries its prompts. The card
+ * is the only place either type is answered.
  */
 export type PendingInteraction = {
   id: string;
   type: "tool-approval" | "tool-question";
   toolName: string;
+  reason?: string;
   questions?: InteractionQuestion[];
   input?: unknown;
 };
@@ -181,6 +183,9 @@ function ApprovalBody({
       <h3 className="text-pixel-title text-accent">
         {plan ? "Confirm the plan" : `Confirm ${interaction.toolName}`}
       </h3>
+      {!plan && interaction.reason ? (
+        <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
+      ) : null}
       {plan?.summary ? (
         <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
       ) : null}

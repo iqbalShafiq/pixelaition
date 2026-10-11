@@ -42,6 +42,8 @@ type Props = {
   onPreview: (preview: VersionPreview | null) => void;
   /** The server now holds restored pixels; the editor reloads its drafts. */
   onRestore: () => void;
+  /** Desktop passes `min-h-0 flex-1` so only the list scrolls. */
+  className?: string;
 };
 
 type VersionsResponse = { versions: VersionRow[]; nextCursor: string | null };
@@ -56,6 +58,7 @@ export function HistoryPanel({
   previewingId,
   onPreview,
   onRestore,
+  className = "",
 }: Props) {
   const client = useQueryClient();
   const notify = useToast();
@@ -171,90 +174,95 @@ export function HistoryPanel({
   return (
     <Panel
       title="History"
+      className={className}
       action={
         <span className="text-pixel-mono text-muted">
           {versions.isPending ? "…" : rows.length}
         </span>
       }
     >
-      <div
-        role="tablist"
-        aria-label="History scope"
-        className="grid grid-cols-2 border-2 border-line"
-      >
-        {(["frame", "asset"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            onClick={() => setTab(value)}
-            className={`px-2 py-1.5 text-pixel-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
-              tab === value
-                ? "bg-accent text-navy"
-                : "text-muted hover:bg-raised hover:text-ink"
-            }`}
-          >
-            {value === "frame" ? "Frame" : "Asset"}
-          </button>
-        ))}
-      </div>
-
-      {versions.isError ? (
-        <EmptyState
-          title="History unavailable"
-          body={
-            versions.error instanceof Error
-              ? versions.error.message
-              : "The versions could not be loaded."
-          }
-        />
-      ) : tab === "frame" ? (
-        frameId === null ? (
-          <EmptyState
-            title="No frame selected"
-            body="Pick a frame to see its timeline."
-          />
-        ) : frameRows.length === 0 ? (
-          <EmptyState
-            title="No versions yet"
-            body="Edits, runs, and restores on this frame will land here."
-          />
-        ) : (
-          <ul className="grid gap-1">{frameRows.map(entry)}</ul>
-        )
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title="No versions yet"
-          body="Every change to this asset lands here, newest first."
-        />
-      ) : (
-        <div className="grid gap-3">
-          {runGroups.map((group) => (
-            <section key={group.runId} className="grid gap-1">
-              <header className="flex items-baseline justify-between gap-2 border-b-2 border-line pb-1">
-                <span className="truncate text-pixel-mono uppercase tracking-[0.14em] text-accent">
-                  {group.authorLabel}
-                </span>
-                <span className="shrink-0 text-pixel-mono text-muted">
-                  {group.rows.length} frame{group.rows.length === 1 ? "" : "s"}
-                </span>
-              </header>
-              <ul className="grid gap-1">{group.rows.map(entry)}</ul>
-            </section>
+      <div className="flex min-h-0 flex-1 flex-col gap-2">
+        <div
+          role="tablist"
+          aria-label="History scope"
+          className="grid grid-cols-2 border-2 border-line"
+        >
+          {(["frame", "asset"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              className={`px-2 py-1.5 text-pixel-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
+                tab === value
+                  ? "bg-accent text-navy"
+                  : "text-muted hover:bg-raised hover:text-ink"
+              }`}
+            >
+              {value === "frame" ? "Frame" : "Asset"}
+            </button>
           ))}
-          {assetRows.length > 0 ? (
-            <section className="grid gap-1">
-              <header className="flex items-baseline justify-between gap-2 border-b-2 border-line pb-1">
-                <span className="text-pixel-mono uppercase tracking-[0.14em] text-muted">
-                  Asset
-                </span>
-              </header>
-              <ul className="grid gap-1">{assetRows.map(entry)}</ul>
-            </section>
-          ) : null}
         </div>
-      )}
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {versions.isError ? (
+            <EmptyState
+              title="History unavailable"
+              body={
+                versions.error instanceof Error
+                  ? versions.error.message
+                  : "The versions could not be loaded."
+              }
+            />
+          ) : tab === "frame" ? (
+            frameId === null ? (
+              <EmptyState
+                title="No frame selected"
+                body="Pick a frame to see its timeline."
+              />
+            ) : frameRows.length === 0 ? (
+              <EmptyState
+                title="No versions yet"
+                body="Edits, runs, and restores on this frame will land here."
+              />
+            ) : (
+              <ul className="grid gap-1">{frameRows.map(entry)}</ul>
+            )
+          ) : rows.length === 0 ? (
+            <EmptyState
+              title="No versions yet"
+              body="Every change to this asset lands here, newest first."
+            />
+          ) : (
+            <div className="grid gap-3">
+              {runGroups.map((group) => (
+                <section key={group.runId} className="grid gap-1">
+                  <header className="flex items-baseline justify-between gap-2 border-b-2 border-line pb-1">
+                    <span className="truncate text-pixel-mono uppercase tracking-[0.14em] text-accent">
+                      {group.authorLabel}
+                    </span>
+                    <span className="shrink-0 text-pixel-mono text-muted">
+                      {group.rows.length} frame{group.rows.length === 1 ? "" : "s"}
+                    </span>
+                  </header>
+                  <ul className="grid gap-1">{group.rows.map(entry)}</ul>
+                </section>
+              ))}
+              {assetRows.length > 0 ? (
+                <section className="grid gap-1">
+                  <header className="flex items-baseline justify-between gap-2 border-b-2 border-line pb-1">
+                    <span className="text-pixel-mono uppercase tracking-[0.14em] text-muted">
+                      Asset
+                    </span>
+                  </header>
+                  <ul className="grid gap-1">{assetRows.map(entry)}</ul>
+                </section>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
 
       <ConfirmDialog
         open={pendingRestore !== null}

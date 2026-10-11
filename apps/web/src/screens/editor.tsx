@@ -1036,7 +1036,9 @@ export function EditorScreen() {
     </>
   );
 
-  const rightPanels = (
+  // The upper panels keep their height; only the history list scrolls, so the
+  // desktop column never turns into one long scroll surface.
+  const topPanels = (
     <>
       <PalettePanel
         palette={buffer?.palette ?? []}
@@ -1067,18 +1069,22 @@ export function EditorScreen() {
         height={asset.data?.height ?? 32}
         onResize={(width, height) => void updateAsset({ width, height })}
       />
-      <HistoryPanel
-        assetId={assetId}
-        frameId={frameId}
-        palette={buffer?.palette ?? asset.data?.palette ?? []}
-        width={asset.data?.width ?? buffer?.width ?? 32}
-        height={asset.data?.height ?? buffer?.height ?? 32}
-        runModels={runModelMap}
-        previewingId={preview?.versionId ?? null}
-        onPreview={setPreview}
-        onRestore={reloadAfterRestore}
-      />
     </>
+  );
+
+  const historyPanel = (className?: string) => (
+    <HistoryPanel
+      className={className}
+      assetId={assetId}
+      frameId={frameId}
+      palette={buffer?.palette ?? asset.data?.palette ?? []}
+      width={asset.data?.width ?? buffer?.width ?? 32}
+      height={asset.data?.height ?? buffer?.height ?? 32}
+      runModels={runModelMap}
+      previewingId={preview?.versionId ?? null}
+      onPreview={setPreview}
+      onRestore={reloadAfterRestore}
+    />
   );
 
   return (
@@ -1347,8 +1353,9 @@ export function EditorScreen() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-3 lg:flex">
-            {rightPanels}
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden p-3 lg:flex">
+            <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
+            {historyPanel("min-h-0 flex-1")}
           </aside>
         </div>
       </div>
@@ -1369,7 +1376,10 @@ export function EditorScreen() {
             title="Palette, style, and history"
             side="right"
           >
-            <div className="grid gap-4">{rightPanels}</div>
+            <div className="grid gap-4">
+              {topPanels}
+              {historyPanel()}
+            </div>
           </Sheet>
         </>
       )}
