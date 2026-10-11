@@ -1,3 +1,4 @@
+export { checkAnimation, frameStats } from "./animation.js";
 export { centerCamera, fitZoom, stepZoom, zoomAt } from "./camera.js";
 export { applyCommand, linePoints } from "./commands.js";
 export { critiqueFrame } from "./critique.js";
@@ -34,6 +35,7 @@ export {
   TRANSPARENT,
   zoomSteps,
 } from "./types.js";
+export type { AnimationReport, FrameStats, PairReport, Rect } from "./animation.js";
 export type { History } from "./history.js";
 export type {
   Asset,

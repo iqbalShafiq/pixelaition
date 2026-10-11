@@ -55,6 +55,12 @@ function toolSummary(name: string, input: unknown): string | undefined {
   return undefined;
 }
 
+/** `3 pairs · clean` when nothing is flagged, otherwise the flag count. */
+function animationSummary(pairs: number, flags: number): string {
+  if (flags > 0) return `${flags} flag${flags === 1 ? "" : "s"}`;
+  return `${pairs} pair${pairs === 1 ? "" : "s"} · clean`;
+}
+
 /**
  * Folds one worker stream event into the console rows. Unknown events are
  * ignored on purpose: the console shows what the run really did, never a guess.
@@ -107,16 +113,32 @@ export function applyRunEvent(
     ];
   }
   if (type === "tool_completed") {
-    const result = body?.result as { failed?: boolean; error?: string } | undefined;
+    const result = body?.result as
+      | {
+          failed?: boolean;
+          error?: string;
+          output?: { pairs?: unknown; flags?: unknown };
+        }
+      | undefined;
     const detail =
       typeof result?.error === "string"
         ? result.error
         : typeof body?.error === "string"
           ? body.error
           : undefined;
+    const summary =
+      typeof result?.output?.pairs === "number" &&
+      typeof result?.output?.flags === "number"
+        ? animationSummary(result.output.pairs, result.output.flags)
+        : undefined;
     return rows.map((row) =>
       row.id === id && row.kind === "tool"
-        ? { ...row, state: result?.failed ? "error" : "ok", detail }
+        ? {
+            ...row,
+            state: result?.failed ? "error" : "ok",
+            detail,
+            ...(row.name === "check_animation" && summary ? { summary } : {}),
+          }
         : row,
     );
   }

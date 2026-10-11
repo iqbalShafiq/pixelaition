@@ -11,6 +11,7 @@ import {
   Folder,
   Palette,
   Pencil,
+  Play,
   Select,
   Square,
   Wrench,
@@ -27,6 +28,7 @@ const toolIcons: Record<string, ComponentType<IconProps>> = {
   preview_frame: Eye,
   read_project: Folder,
   critique_frame: Clipboard,
+  check_animation: Play,
   mirror_frame: Flip,
 };
 

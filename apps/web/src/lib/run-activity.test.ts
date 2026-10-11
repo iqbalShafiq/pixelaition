@@ -87,6 +87,41 @@ describe("run activity rows", () => {
     });
   });
 
+  it("summarizes check_animation with its pair count when nothing is flagged", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(
+      rows,
+      7,
+      "tool_started",
+      toolStarted("0:tool:7", "check_animation", {}),
+    );
+    rows = applyRunEvent(rows, 8, "tool_completed", {
+      operationId: "0:tool:7",
+      result: { failed: false, output: { pairs: 3, flags: 0 } },
+    });
+    expect(rows[0]).toMatchObject({
+      kind: "tool",
+      name: "check_animation",
+      state: "ok",
+      summary: "3 pairs · clean",
+    });
+  });
+
+  it("summarizes flagged drift by count", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(
+      rows,
+      9,
+      "tool_started",
+      toolStarted("0:tool:9", "check_animation", { frameIds: ["a", "b"] }),
+    );
+    rows = applyRunEvent(rows, 10, "tool_completed", {
+      operationId: "0:tool:9",
+      result: { failed: false, output: { pairs: 2, flags: 2 } },
+    });
+    expect(rows[0]).toMatchObject({ summary: "2 flags" });
+  });
+
   it("marks a reasoning phase without inventing text", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(rows, 9, "model_started", { operationId: "0:model:1" });

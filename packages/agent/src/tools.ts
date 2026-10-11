@@ -5,8 +5,10 @@ import {
   addFrame,
   applyCommand,
   bufferToFrame,
+  checkAnimation,
   composite,
   duplicateFrame,
+  frameStats,
   frameToBuffer,
   moveFrame,
   type Asset,
@@ -354,6 +356,35 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const checkAnimationTool = createTool({
+    name: "check_animation",
+    description:
+      "Measure animation continuity across the frames: changed pixels, diff box, centroid shift, and silhouette drift for every consecutive pair and for the loop back to the first frame. Flags mark identical distinct frames, centroid moves over two pixels, and a loop that jumps further than any internal pair. Fix flagged drift before finishing.",
+    inputSchema: z.object({ frameIds: z.array(z.string()).optional() }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const ids =
+        input.frameIds ??
+        [...run.frames]
+          .sort(([, left], [, right]) => left.index - right.index)
+          .map(([id]) => id);
+      const frames = ids.map((id) => {
+        const frame = run.frames.get(id);
+        if (!frame) throw new Error(`Frame ${id} is not part of this asset.`);
+        return { id, name: frame.name, buffer: frame.buffer };
+      });
+      const report = checkAnimation(frames);
+      return {
+        ...report,
+        frames: frames.map(({ id, name, buffer }) => ({
+          id,
+          name,
+          ...frameStats(buffer),
+        })),
+      };
+    },
+  });
+
   const mirror = createTool({
     name: "mirror_frame",
     description:
@@ -565,6 +596,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     fillRect,
     setPalette,
     critique,
+    checkAnimationTool,
     mirror,
     useFrame,
     addFrameTool,

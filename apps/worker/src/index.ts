@@ -201,6 +201,7 @@ function toolRecovery(vision: boolean) {
     read_frame: "safe" as const,
     read_region: "safe" as const,
     critique_frame: "safe" as const,
+    check_animation: "safe" as const,
     // Only vision agents register preview_frame, and the durable runtime
     // rejects a recovery entry for a tool the agent does not have.
     ...(vision ? { preview_frame: "safe" as const } : {}),
@@ -498,12 +499,19 @@ function sanitizeEvent(type: string, raw: unknown): unknown {
     };
   }
   if (type === "tool_completed") {
-    const result = data?.result as { failed?: unknown; error?: unknown } | undefined;
+    const result = data?.result as
+      { failed?: unknown; error?: unknown; output?: unknown } | undefined;
+    const output = result?.output as { pairs?: unknown; flags?: unknown } | undefined;
     return {
       operationId,
       result: {
         failed: result?.failed === true,
         error: typeof result?.error === "string" ? result.error : undefined,
+        // check_animation's report is large; the console row prints only the
+        // pair and flag counts, so only those travel through the stream.
+        ...(Array.isArray(output?.pairs) && Array.isArray(output?.flags)
+          ? { output: { pairs: output.pairs.length, flags: output.flags.length } }
+          : {}),
       },
     };
   }

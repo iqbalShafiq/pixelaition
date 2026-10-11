@@ -652,6 +652,56 @@ describe("frame tools", () => {
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+describe("check_animation", () => {
+  it("measures every pair in index order and the loop back to the first frame", async () => {
+    boundRun();
+    const result = (await tool("check_animation").call({}, { operationId: "run-1" })) as {
+      pairs: Array<{ from: string; to: string; centroidShift: number }>;
+      loop: { from: string; to: string };
+      flags: string[];
+      frames: Array<{ id: string; name: string; opaquePixels: number }>;
+    };
+    expect(result.pairs.map((pair) => [pair.from, pair.to])).toEqual([
+      ["frame-1", "frame-2"],
+    ]);
+    expect(result.loop).toMatchObject({ from: "frame-2", to: "frame-1" });
+    expect(
+      result.frames.map((frame) => [frame.id, frame.name, frame.opaquePixels]),
+    ).toEqual([
+      ["frame-1", "idle", 8],
+      ["frame-2", "hop", 1],
+    ]);
+    // idle's centroid sits at (1.5, 1.5) and hop's at (0, 3): every pair
+    // moves more than two pixels, so the report flags the centroid.
+    expect(result.flags.some((flag) => flag.includes("centroid"))).toBe(true);
+    releaseRun("run-1");
+  });
+
+  it("measures only the named frames, in the order given", async () => {
+    boundRun();
+    const result = (await tool("check_animation").call(
+      { frameIds: ["frame-2", "frame-1"] },
+      { operationId: "run-1" },
+    )) as {
+      pairs: Array<{ from: string; to: string }>;
+      loop: { from: string; to: string };
+    };
+    expect(result.pairs.map((pair) => [pair.from, pair.to])).toEqual([
+      ["frame-2", "frame-1"],
+    ]);
+    expect(result.loop).toMatchObject({ from: "frame-1", to: "frame-2" });
+    releaseRun("run-1");
+  });
+
+  it("refuses a frame that is not part of the asset", async () => {
+    boundRun();
+    await expect(
+      tool("check_animation").call({ frameIds: ["frame-9"] }, { operationId: "run-1" }),
+    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    releaseRun("run-1");
+  });
+});
+
 describe("preview_frame", () => {
   it("is registered only for models with verified vision", () => {
     const names = (tools: ReturnType<typeof createPixelTools>) =>
