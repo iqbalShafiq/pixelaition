@@ -43,6 +43,9 @@ function toolSummary(name: string, input: unknown): string | undefined {
   if (name === "set_palette" && Array.isArray(value.palette)) {
     return `${value.palette.length} colors`;
   }
+  if (name === "plan" && Array.isArray(value.steps)) {
+    return `${value.steps.length} steps`;
+  }
   if (name === "fill_rect") {
     return `${value.width}×${value.height}`;
   }

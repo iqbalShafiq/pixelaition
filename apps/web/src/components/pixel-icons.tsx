@@ -1,6 +1,7 @@
 import {
   ArrowRight as RawArrowRight,
   Check as RawCheck,
+  CheckboxOn as RawCheckboxOn,
   ChevronDown as RawChevronDown,
   Clipboard as RawClipboard,
   Close as RawClose,
@@ -57,6 +58,7 @@ import type { ComponentType, SVGProps } from "react";
  * Flip              FlipHorizontal      FlipHorizontal2        exact export is FlipHorizontal2
  * Wrench            Wrench              Tools                  substitution: no wrench glyph
  * Brain             Brain               Robot                  substitution: no brain glyph
+ * Checklist         (plan rows)         CheckboxOn             substitution: no checklist glyph
  * Check             Check               Check
  * Close             X                   Close
  * Grid              Grid3X3             Grid3x3                exact export is Grid3x3 (lower x)
@@ -109,6 +111,7 @@ export const Clipboard = crisp(RawClipboard);
 export const Flip = crisp(RawFlipHorizontal2);
 export const Wrench = crisp(RawTools);
 export const Brain = crisp(RawRobot);
+export const Checklist = crisp(RawCheckboxOn);
 export const Check = crisp(RawCheck);
 export const Close = crisp(RawClose);
 export const Grid = crisp(RawGrid3x3);

@@ -202,6 +202,7 @@ function toolRecovery(vision: boolean) {
     read_region: "safe" as const,
     critique_frame: "safe" as const,
     check_animation: "safe" as const,
+    plan: "safe" as const,
     // Only vision agents register preview_frame, and the durable runtime
     // rejects a recovery entry for a tool the agent does not have.
     ...(vision ? { preview_frame: "safe" as const } : {}),

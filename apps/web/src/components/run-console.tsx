@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   Check,
+  Checklist,
   Clipboard,
   Close,
   Eye,
@@ -29,6 +30,7 @@ const toolIcons: Record<string, ComponentType<IconProps>> = {
   read_project: Folder,
   critique_frame: Clipboard,
   check_animation: Play,
+  plan: Checklist,
   mirror_frame: Flip,
 };
 

@@ -68,6 +68,20 @@ describe("run activity rows", () => {
     });
   });
 
+  it("summarizes the plan tool by its step count", () => {
+    const rows = applyRunEvent(
+      [],
+      1,
+      "tool_started",
+      toolStarted("0:tool:1", "plan", { steps: ["sketch", "outline", "color"] }),
+    );
+    expect(rows[0]).toMatchObject({
+      kind: "tool",
+      name: "plan",
+      summary: "3 steps",
+    });
+  });
+
   it("keeps the provider error on a failed tool", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(

@@ -650,6 +650,19 @@ describe("frame tools", () => {
   });
 });
 
+describe("plan", () => {
+  it("returns the steps and stores them on the run", async () => {
+    boundRun();
+    const steps = ["outline the slime", "paint the body", "critique"];
+    const result = (await tool("plan").call({ steps }, { operationId: "run-1" })) as {
+      steps: string[];
+    };
+    expect(result.steps).toEqual(steps);
+    expect(getRun("run-1")?.plan).toEqual(steps);
+    releaseRun("run-1");
+  });
+});
+
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 describe("check_animation", () => {

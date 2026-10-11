@@ -345,6 +345,20 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const plan = createTool({
+    name: "plan",
+    description:
+      "Write the steps you will take before painting. The plan is shown in the run console; revise it by calling plan again.",
+    inputSchema: z.object({
+      steps: z.array(z.string().min(1).max(200)).min(1).max(20),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      run.plan = [...input.steps];
+      return { steps: input.steps };
+    },
+  });
+
   const critique = createTool({
     name: "critique_frame",
     description:
@@ -595,6 +609,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     paint,
     fillRect,
     setPalette,
+    plan,
     critique,
     checkAnimationTool,
     mirror,
