@@ -69,19 +69,21 @@ import type { ComponentType, SVGProps } from "react";
  * ChevronDown       ChevronDown         ChevronDown
  * Minus             Minus               Minus
  *
- * custom (the free set has no equivalent; Task 10 adds the SVGs to this
- * module, no substitution is allowed here):
- *   Fill          replaces PaintBucket
- *   Line          replaces Slash
- *   Select        replaces SquareDashed (also the Transparency toggle)
- *   Layers        replaces Layers (onion skin)
- *   Transparency  replaces SquareDashed
+ * custom (the free set has no equivalent; drawn below on the same 24x24 grid
+ * with 2x2 cells, no substitution is allowed here):
+ *   Fill          replaces PaintBucket   bucket with a drip
+ *   Line          replaces Slash         45-degree diagonal
+ *   Select        replaces SquareDashed  dashed square
+ *   Layers        replaces Layers        onion skin: stacked sheets
+ *   Transparency  replaces SquareDashed  checker square
  *
  * Every pixelarticons component draws on 24x24 with fill="currentColor"
  * already; `crisp` fixes the render size and puts every edge on the grid.
+ * The custom glyphs match that weight and render at 24 (2px cells) or 12
+ * (1px cells); never 16 or 20, which would land edges off the device grid.
  */
 
-type IconProps = SVGProps<SVGSVGElement>;
+export type IconProps = SVGProps<SVGSVGElement>;
 
 /** Pixelarticons are 24x24; crispEdges keeps every edge on the grid. */
 function crisp(Component: ComponentType<IconProps>) {
@@ -118,3 +120,118 @@ export const Palette = crisp(RawColorsSwatch);
 export const ArrowRight = crisp(RawArrowRight);
 export const ChevronDown = crisp(RawChevronDown);
 export const Minus = crisp(RawMinus);
+
+/**
+ * Draws a glyph from a bitmap: one character per 2x2 cell on the 24x24 grid,
+ * so the stroke weight matches the pixelarticons next to it. "X" fills a cell.
+ */
+function glyph(rows: readonly string[]) {
+  const unit = 2;
+  return function Glyph({ width = 24, height = 24, ...props }: IconProps) {
+    return (
+      <svg
+        aria-hidden
+        width={width}
+        height={height}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        shapeRendering="crispEdges"
+        {...props}
+      >
+        {rows.flatMap((row, y) =>
+          [...row].map((cell, x) =>
+            cell === "X" ? (
+              <rect
+                key={`${x}-${y}`}
+                x={x * unit}
+                y={y * unit}
+                width={unit}
+                height={unit}
+              />
+            ) : null,
+          ),
+        )}
+      </svg>
+    );
+  };
+}
+
+/** Paint bucket: handle, tapering body, and a drip below. */
+export const Fill = glyph([
+  "............",
+  "....XXXX....",
+  "...X....X...",
+  "...X....X...",
+  "..XXXXXXXX..",
+  "..XXXXXXXX..",
+  "..XXXXXXXX..",
+  "...XXXXXX...",
+  "...XXXXXX...",
+  "....XXXX....",
+  "............",
+  ".....XX.....",
+]);
+
+/** A 45-degree diagonal, the Line tool. */
+export const Line = glyph([
+  "..........XX",
+  ".........XX.",
+  "........XX..",
+  ".......XX...",
+  "......XX....",
+  ".....XX.....",
+  "....XX......",
+  "...XX.......",
+  "..XX........",
+  ".XX.........",
+  "XX..........",
+  "............",
+]);
+
+/** Marching-ants dashed square, the Select tool. */
+export const Select = glyph([
+  "............",
+  ".XX..XX..XX.",
+  ".X........X.",
+  "............",
+  "............",
+  ".X........X.",
+  ".X........X.",
+  "............",
+  "............",
+  ".X........X.",
+  ".XX..XX..XX.",
+  "............",
+]);
+
+/** Stacked sheets: a diamond over two chevrons, the onion-skin toggle. */
+export const Layers = glyph([
+  "............",
+  ".....XX.....",
+  "....XXXX....",
+  "...XXXXXX...",
+  "....XXXX....",
+  ".....XX.....",
+  "..XXXXXXXX..",
+  "...XXXXXX...",
+  "....XXXX....",
+  "..XXXXXXXX..",
+  "...XXXXXX...",
+  "....XXXX....",
+]);
+
+/** Checker square, the transparency toggle. */
+export const Transparency = glyph([
+  "............",
+  ".XX..XX..XX.",
+  ".XX..XX..XX.",
+  "...XX..XX...",
+  "...XX..XX...",
+  ".XX..XX..XX.",
+  ".XX..XX..XX.",
+  "...XX..XX...",
+  "...XX..XX...",
+  ".XX..XX..XX.",
+  ".XX..XX..XX.",
+  "............",
+]);
