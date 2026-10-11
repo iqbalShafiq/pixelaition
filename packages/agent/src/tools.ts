@@ -284,6 +284,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         type: "setPalette",
         palette: input.palette,
       });
+      // read_project's legend must never disagree with the frame it describes.
+      run.palette = [...edited.buffer.palette];
       return { palette: edited.buffer.palette };
     },
   });

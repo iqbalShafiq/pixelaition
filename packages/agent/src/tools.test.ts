@@ -311,6 +311,31 @@ describe("drawing tools", () => {
     ).rejects.toThrow("Frame frame-9 is not part of this asset.");
     releaseRun("run-1");
   });
+
+  it("keeps the read_project palette legend in step with set_palette", async () => {
+    boundRun();
+    const next = ["#00000000", "#111111", "#222222", "#333333"];
+    await tool("set_palette").call({ palette: next }, { operationId: "run-1" });
+    const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
+      palette: Array<{ index: number; hex: string }>;
+    };
+    expect(project.palette).toEqual([
+      { index: 0, hex: "#00000000" },
+      { index: 1, hex: "#111111" },
+      { index: 2, hex: "#222222" },
+      { index: 3, hex: "#333333" },
+    ]);
+    // The frame reads legend from the same live palette.
+    const frame = await tool("read_frame").call({}, { operationId: "run-1" });
+    expect(frame).toMatchObject({
+      colors: [
+        { index: 1, hex: "#111111", count: 3 },
+        { index: 2, hex: "#222222", count: 3 },
+        { index: 3, hex: "#333333", count: 2 },
+      ],
+    });
+    releaseRun("run-1");
+  });
 });
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
