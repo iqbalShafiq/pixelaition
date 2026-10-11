@@ -37,6 +37,7 @@ import {
   generationRuns,
   generationThreads,
   models,
+  versions,
 } from "@pixelaition/db";
 import {
   bufferToFrame,
@@ -671,6 +672,34 @@ async function follow(
             answer: typeof outcome?.text === "string" ? outcome.text : null,
           })
           .where(eq(generationRuns.id, publicId));
+        // One snapshot per frame the run touched, written after the run is
+        // terminal. A failed insert must not disturb the terminal run state.
+        if (binding) {
+          try {
+            await db.insert(versions).values(
+              [...binding.frames].map(([frameId, frame]) => ({
+                id: randomUUID(),
+                assetId: binding.assetId,
+                frameId,
+                scope: "frame" as const,
+                kind: "run",
+                author: "agent" as const,
+                runId: publicId,
+                label: null,
+                snapshot: {
+                  layers: bufferToFrame(frame.buffer, {
+                    id: frameId,
+                    name: frame.name,
+                    index: frame.index,
+                  }).layers,
+                },
+                createdAt: new Date(),
+              })),
+            );
+          } catch (reason) {
+            console.error(`[follow] run version write failed: ${boundedReason(reason)}`);
+          }
+        }
         publish(publicId, "done", { status: snapshot.run.status, effort });
         finished = true;
         // Telemetry is optional and bounded (5s) so a broken Langfuse cannot

@@ -129,6 +129,70 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
   };
 }
 
+type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
+
+export type StoreFailure = { code: string; message: string };
+
+/** Frame-scoped snapshot shape: the layers a restore replays onto the frame. */
+function frameSnapshot(layers: Frame["layers"]) {
+  return { layers };
+}
+
+/** Asset-scoped snapshot shape: the metadata plus the frames that existed. */
+function assetSnapshot(asset: {
+  name: string;
+  width: number;
+  height: number;
+  palette: unknown;
+  frames: Array<{ id: string }>;
+}) {
+  return {
+    name: asset.name,
+    width: asset.width,
+    height: asset.height,
+    palette: asset.palette,
+    frameIds: asset.frames.map((frame) => frame.id),
+  };
+}
+
+async function recordFrameVersion(
+  db: Database,
+  assetId: string,
+  frameId: string,
+  kind: string,
+  layers: Frame["layers"],
+) {
+  await createVersion(db, {
+    assetId,
+    frameId,
+    scope: "frame",
+    kind,
+    author: "user",
+    snapshot: frameSnapshot(layers),
+  });
+}
+
+async function recordAssetVersion(
+  db: Database,
+  assetId: string,
+  kind: string,
+  asset: {
+    name: string;
+    width: number;
+    height: number;
+    palette: unknown;
+    frames: Array<{ id: string }>;
+  },
+) {
+  await createVersion(db, {
+    assetId,
+    scope: "asset",
+    kind,
+    author: "user",
+    snapshot: assetSnapshot(asset),
+  });
+}
+
 export async function saveFrame(
   db: Database,
   userId: string,
@@ -157,12 +221,9 @@ export async function saveFrame(
     .set({ layers, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, frameId, "edit", layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
-
-type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
-
-export type StoreFailure = { code: string; message: string };
 
 function asPixelAsset(record: AssetRecord): Asset {
   return {
@@ -230,6 +291,7 @@ export async function addFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -258,6 +320,7 @@ export async function duplicateFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -293,6 +356,7 @@ export async function moveFrameRecord(
     }
     await tx.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   });
+  await recordAssetVersion(db, assetId, "frame-move", next);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -306,12 +370,14 @@ export async function renameFrameRecord(
   const trimmed = name.trim();
   if (!trimmed) return undefined;
   const asset = await getAssetRecord(db, userId, assetId);
-  if (!asset?.frames.some((frame) => frame.id === frameId)) return undefined;
+  const frame = asset?.frames.find((item) => item.id === frameId);
+  if (!asset || !frame) return undefined;
   await db
     .update(frames)
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, frameId, "rename", frame.layers);
   return getAssetRecord(db, userId, assetId);
 }
 
@@ -345,10 +411,13 @@ export async function deleteFrameRecord(
     }
   }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  const after = await getAssetRecord(db, userId, assetId);
+  if (after) await recordAssetVersion(db, assetId, "frame-delete", after);
   return { ok: true };
 }
 
-export async function updateAssetRecord(
+/** Applies name, resize, and palette changes without recording a version. */
+async function applyAssetUpdate(
   db: Database,
   userId: string,
   assetId: string,
@@ -402,6 +471,205 @@ export async function updateAssetRecord(
     asset = writeFrame(asset, firstId, next);
   }
   return { asset: await persistAsset(db, userId, assetId, asset, before) };
+}
+
+export async function updateAssetRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  input: { name?: string; width?: number; height?: number; palette?: string[] },
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const result = await applyAssetUpdate(db, userId, assetId, input);
+  if (!result.asset) return result;
+  const kind =
+    input.width !== undefined || input.height !== undefined
+      ? "resize"
+      : input.palette !== undefined
+        ? "palette"
+        : input.name !== undefined
+          ? "rename"
+          : undefined;
+  if (kind) await recordAssetVersion(db, assetId, kind, result.asset);
+  return result;
+}
+
+/** The active-run guard shared by the store's restore and the API's routes. */
+export async function assetHasActiveRun(db: Database, assetId: string): Promise<boolean> {
+  const [run] = await db
+    .select({ id: generationRuns.id })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+    .where(
+      and(
+        eq(generationThreads.assetId, assetId),
+        inArray(generationRuns.status, ["queued", "running", "waiting"]),
+      ),
+    )
+    .limit(1);
+  return run !== undefined;
+}
+
+function frameLayersFromSnapshot(snapshot: unknown): Frame["layers"] | undefined {
+  if (typeof snapshot !== "object" || snapshot === null) return undefined;
+  const layers = (snapshot as { layers?: unknown }).layers;
+  if (!Array.isArray(layers) || layers.length === 0) return undefined;
+  for (const layer of layers) {
+    if (typeof layer !== "object" || layer === null) return undefined;
+    const item = layer as Record<string, unknown>;
+    if (
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.visible !== "boolean" ||
+      typeof item.pixels !== "string"
+    )
+      return undefined;
+  }
+  return layers as Frame["layers"];
+}
+
+function assetSnapshotFrom(
+  snapshot: unknown,
+): { name: string; width: number; height: number; palette: string[] } | undefined {
+  if (typeof snapshot !== "object" || snapshot === null) return undefined;
+  const item = snapshot as Record<string, unknown>;
+  if (typeof item.name !== "string" || item.name.trim() === "") return undefined;
+  if (typeof item.width !== "number" || typeof item.height !== "number") return undefined;
+  if (!Array.isArray(item.palette)) return undefined;
+  if (item.palette.some((color) => typeof color !== "string")) return undefined;
+  return {
+    name: item.name,
+    width: item.width,
+    height: item.height,
+    palette: item.palette as string[],
+  };
+}
+
+/**
+ * Replays a snapshot as the new current state and records the replay as a new
+ * `restore` version. Never destructive, and never while a run owns the asset.
+ */
+export async function restoreVersion(
+  db: Database,
+  userId: string,
+  assetId: string,
+  versionId: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  if (await assetHasActiveRun(db, assetId)) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "RUN_IN_PROGRESS",
+        message: "The agent is drawing on this asset right now.",
+      },
+    };
+  }
+  const [version] = await db
+    .select()
+    .from(versions)
+    .where(and(eq(versions.id, versionId), eq(versions.assetId, assetId)));
+  if (!version)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That version is not available." },
+    };
+
+  let restored: unknown;
+  if (version.scope === "frame") {
+    const frameId = version.frameId;
+    if (!frameId)
+      return {
+        asset: undefined,
+        failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
+      };
+    const frame = record.frames.find((item) => item.id === frameId);
+    if (!frame)
+      return {
+        asset: undefined,
+        failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
+      };
+    const layers = frameLayersFromSnapshot(version.snapshot);
+    if (!layers)
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's snapshot is malformed.",
+        },
+      };
+    try {
+      for (const layer of layers)
+        decodePixels(layer.pixels, record.width * record.height);
+    } catch {
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version does not fit this asset's canvas.",
+        },
+      };
+    }
+    await db
+      .update(frames)
+      .set({ layers, updatedAt: new Date() })
+      .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+    await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+    restored = frameSnapshot(layers);
+  } else {
+    const snapshot = assetSnapshotFrom(version.snapshot);
+    if (!snapshot)
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's snapshot is malformed.",
+        },
+      };
+    const applied = await applyAssetUpdate(db, userId, assetId, {
+      name: snapshot.name,
+      width: snapshot.width,
+      height: snapshot.height,
+      palette: snapshot.palette,
+    });
+    if (!applied.asset)
+      return {
+        asset: undefined,
+        failure: applied.failure ?? {
+          code: "NOT_FOUND",
+          message: "That asset is not available.",
+        },
+      };
+    restored = assetSnapshot(applied.asset);
+  }
+
+  await createVersion(db, {
+    assetId,
+    frameId: version.frameId,
+    scope: version.scope,
+    kind: "restore",
+    author: "user",
+    label: `Restore of ${version.author} ${version.kind} · ${version.id}`,
+    snapshot: restored,
+  });
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function updateVersionLabel(
+  db: Database,
+  userId: string,
+  assetId: string,
+  versionId: string,
+  label: string | null,
+) {
+  const asset = await getAssetRecord(db, userId, assetId);
+  if (!asset) return undefined;
+  const [updated] = await db
+    .update(versions)
+    .set({ label })
+    .where(and(eq(versions.id, versionId), eq(versions.assetId, assetId)))
+    .returning();
+  return updated;
 }
 
 /** A run id alone must never be enough to read or cancel somebody else's run. */

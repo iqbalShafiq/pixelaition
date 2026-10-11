@@ -13,7 +13,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { and, asc, desc, eq, inArray, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, notInArray } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
@@ -41,6 +41,7 @@ const telemetry =
     : undefined;
 import {
   addFrameRecord,
+  assetHasActiveRun,
   createApiKey,
   createAssetRecord,
   createProjectRecord,
@@ -52,16 +53,21 @@ import {
   getProjectRecord,
   insertRun,
   listProjects,
+  listVersions,
   moveFrameRecord,
   renameFrameRecord,
+  restoreVersion,
   revokeApiKey,
   runBelongsTo,
   saveFrame,
   savePreferences,
   updateAssetRecord,
+  updateVersionLabel,
   userIdForToken,
+  type VersionCursor,
 } from "./store.js";
-import { generationRuns, generationThreads, models } from "@pixelaition/db";
+import { RETENTION_LIMIT } from "./versions.js";
+import { generationRuns, models } from "@pixelaition/db";
 
 const scaleSchema = z.union([
   z.literal(1),
@@ -96,19 +102,20 @@ function fromNode(headers: Request["headers"]): Headers {
 // A run that is still live (queued, drawing, or paused for input) owns every
 // frame of its asset, so the mutation routes refuse to write under it.
 async function activeRunFor(assetId: string): Promise<boolean> {
-  const [run] = await db
-    .select({ id: generationRuns.id })
-    .from(generationRuns)
-    .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
-    .where(
-      and(
-        eq(generationThreads.assetId, assetId),
-        inArray(generationRuns.status, ["queued", "running", "waiting"]),
-      ),
-    )
-    .orderBy(desc(generationRuns.createdAt))
-    .limit(1);
-  return run !== undefined;
+  return assetHasActiveRun(db, assetId);
+}
+
+function encodeCursor(row: { createdAt: Date; id: string }): string {
+  return `${new Date(row.createdAt).toISOString()}|${row.id}`;
+}
+
+function decodeCursor(value: string): VersionCursor | undefined {
+  const separator = value.lastIndexOf("|");
+  if (separator === -1) return undefined;
+  const createdAt = new Date(value.slice(0, separator));
+  const id = value.slice(separator + 1);
+  if (Number.isNaN(createdAt.getTime()) || !id) return undefined;
+  return { createdAt, id };
 }
 
 // The worker never accepted this run, so the row must not stay queued: queued
@@ -417,6 +424,77 @@ export function createApp() {
         result.failure.message,
       );
     res.status(204).end();
+  });
+
+  app.get("/api/assets/:id/versions", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const scope =
+      req.query.scope === "frame" || req.query.scope === "asset"
+        ? req.query.scope
+        : undefined;
+    const frameId =
+      typeof req.query.frameId === "string" && req.query.frameId
+        ? req.query.frameId
+        : undefined;
+    const requested = typeof req.query.limit === "string" ? Number(req.query.limit) : NaN;
+    const limit = Number.isFinite(requested)
+      ? Math.min(Math.max(Math.trunc(requested), 1), RETENTION_LIMIT)
+      : undefined;
+    const cursor =
+      typeof req.query.cursor === "string" && req.query.cursor
+        ? decodeCursor(req.query.cursor)
+        : undefined;
+    const rows = await listVersions(db, asset.id, {
+      ...(scope ? { scope } : {}),
+      ...(frameId ? { frameId } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+      ...(cursor ? { cursor } : {}),
+    });
+    const last = rows.at(-1);
+    res.json({
+      versions: rows,
+      nextCursor:
+        last && limit !== undefined && rows.length === limit ? encodeCursor(last) : null,
+    });
+  });
+
+  app.patch("/api/assets/:id/versions/:versionId", async (req, res) => {
+    const body = z
+      .object({ label: z.string().trim().max(80).nullable() })
+      .parse(req.body);
+    const updated = await updateVersionLabel(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.versionId ?? "",
+      body.label || null,
+    );
+    if (!updated) return fail(res, 404, "NOT_FOUND", "That version is not available.");
+    res.json(updated);
+  });
+
+  app.post("/api/assets/:id/versions/:versionId/restore", async (req, res) => {
+    const result = await restoreVersion(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.versionId ?? "",
+    );
+    if (!result.asset) {
+      const code = result.failure?.code ?? "NOT_FOUND";
+      return fail(
+        res,
+        code === "RUN_IN_PROGRESS" ? 409 : code === "NOT_FOUND" ? 404 : 422,
+        code,
+        result.failure?.message ?? "That version is not available.",
+      );
+    }
+    res.json(result.asset);
   });
 
   app.post("/api/runs", async (req, res) => {
