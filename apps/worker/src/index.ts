@@ -32,12 +32,12 @@ import {
 } from "@pixelaition/agent";
 import {
   createDatabase,
+  createVersion,
   assets,
   frames,
   generationRuns,
   generationThreads,
   models,
-  versions,
 } from "@pixelaition/db";
 import {
   bufferToFrame,
@@ -672,30 +672,31 @@ async function follow(
             answer: typeof outcome?.text === "string" ? outcome.text : null,
           })
           .where(eq(generationRuns.id, publicId));
-        // One snapshot per frame the run touched, written after the run is
-        // terminal. A failed insert must not disturb the terminal run state.
+        // One snapshot per frame the run actually touched, written through the
+        // shared createVersion so coalescing and retention both run. A failed
+        // insert must not disturb the terminal run state.
         if (binding) {
           try {
-            await db.insert(versions).values(
-              [...binding.frames].map(([frameId, frame]) => ({
-                id: randomUUID(),
+            for (const frameId of binding.touchedFrames) {
+              const frame = binding.frames.get(frameId);
+              if (!frame) continue;
+              await createVersion(db, {
                 assetId: binding.assetId,
                 frameId,
-                scope: "frame" as const,
+                scope: "frame",
                 kind: "run",
-                author: "agent" as const,
+                author: "agent",
                 runId: publicId,
-                label: null,
                 snapshot: {
+                  name: frame.name,
                   layers: bufferToFrame(frame.buffer, {
                     id: frameId,
                     name: frame.name,
                     index: frame.index,
                   }).layers,
                 },
-                createdAt: new Date(),
-              })),
-            );
+              });
+            }
           } catch (reason) {
             console.error(`[follow] run version write failed: ${boundedReason(reason)}`);
           }
@@ -760,6 +761,17 @@ async function loadAsset(assetId: string) {
 
 type LoadedAsset = NonNullable<Awaited<ReturnType<typeof loadAsset>>>;
 
+/** Asset-scoped version snapshot: the metadata plus the frames that existed. */
+function assetVersionSnapshot(asset: LoadedAsset) {
+  return {
+    name: asset.name,
+    width: asset.width,
+    height: asset.height,
+    palette: asset.palette,
+    frameIds: asset.frames.map((frame) => frame.id),
+  };
+}
+
 /** A durable error message that fits one log line. */
 function boundedReason(reason: unknown): string {
   const text = reason instanceof Error ? reason.message : String(reason);
@@ -821,6 +833,7 @@ function bindAssetRun(options: {
     height: asset.height,
     style: asset.style,
     approvedScope: new Set([originFrameId]),
+    touchedFrames: new Set(),
     strokes: [],
     issues: [],
     onStroke: (_stroke, buffer, editedFrameId) => {
@@ -859,6 +872,18 @@ function bindAssetRun(options: {
       try {
         if (change.type === "add") {
           await insertFrameRow(change.frame);
+          await createVersion(db, {
+            assetId,
+            frameId: change.frame.id,
+            scope: "frame",
+            kind: "frame-add",
+            author: "agent",
+            runId: publicRunId,
+            snapshot: {
+              name: change.frame.name,
+              layers: bufferToFrame(change.frame.buffer, change.frame).layers,
+            },
+          });
         } else if (change.type === "delete") {
           await db
             .delete(frames)
@@ -867,13 +892,42 @@ function bindAssetRun(options: {
           // The tool replaced the last frame; the row must go before the
           // replacement takes the same (asset, index) slot.
           if (change.replacement) await insertFrameRow(change.replacement);
+          const after = await loadAsset(assetId);
+          if (!after)
+            throw new Error("The asset could not be read after the frame change.");
+          await createVersion(db, {
+            assetId,
+            scope: "asset",
+            kind: "frame-delete",
+            author: "agent",
+            runId: publicRunId,
+            snapshot: assetVersionSnapshot(after),
+          });
         } else if (change.type === "rename") {
+          const live = getRun(durableRunId)?.frames.get(change.frameId);
+          if (!live) throw new Error("The frame change could not be saved.");
           await db
             .update(frames)
             .set({ name: change.name, updatedAt: new Date() })
             .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
           const row = framesById.get(change.frameId);
           if (row) row.name = change.name;
+          await createVersion(db, {
+            assetId,
+            frameId: change.frameId,
+            scope: "frame",
+            kind: "rename",
+            author: "agent",
+            runId: publicRunId,
+            snapshot: {
+              name: change.name,
+              layers: bufferToFrame(live.buffer, {
+                id: change.frameId,
+                name: change.name,
+                index: live.index,
+              }).layers,
+            },
+          });
         } else {
           await db.transaction(async (tx) => {
             // A unique index guards (asset, index), so a direct renumber might
@@ -895,6 +949,17 @@ function bindAssetRun(options: {
             const row = framesById.get(item.id);
             if (row) row.index = item.index;
           }
+          const after = await loadAsset(assetId);
+          if (!after)
+            throw new Error("The asset could not be read after the frame change.");
+          await createVersion(db, {
+            assetId,
+            scope: "asset",
+            kind: "frame-move",
+            author: "agent",
+            runId: publicRunId,
+            snapshot: assetVersionSnapshot(after),
+          });
         }
         await db
           .update(assets)

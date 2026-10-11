@@ -2,12 +2,14 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   apiKeys,
   assets,
+  createVersion,
   frames,
   generationRuns,
   generationThreads,
   projects,
   userPreferences,
   versions,
+  RETENTION_LIMIT,
   type Database,
   type VersionScope,
 } from "@pixelaition/db";
@@ -26,13 +28,6 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
-import {
-  pruneOrder,
-  shouldCoalesce,
-  toVersionRow,
-  RETENTION_LIMIT,
-  type VersionInput,
-} from "./versions.js";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -133,9 +128,9 @@ type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
 
 export type StoreFailure = { code: string; message: string };
 
-/** Frame-scoped snapshot shape: the layers a restore replays onto the frame. */
-function frameSnapshot(layers: Frame["layers"]) {
-  return { layers };
+/** Frame-scoped snapshot shape: the name and layers a restore replays. */
+function frameSnapshot(name: string, layers: Frame["layers"]) {
+  return { name, layers };
 }
 
 /** Asset-scoped snapshot shape: the metadata plus the frames that existed. */
@@ -160,6 +155,7 @@ async function recordFrameVersion(
   assetId: string,
   frameId: string,
   kind: string,
+  name: string,
   layers: Frame["layers"],
 ) {
   await createVersion(db, {
@@ -168,7 +164,7 @@ async function recordFrameVersion(
     scope: "frame",
     kind,
     author: "user",
-    snapshot: frameSnapshot(layers),
+    snapshot: frameSnapshot(name, layers),
   });
 }
 
@@ -202,6 +198,12 @@ export async function saveFrame(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const asset = await getAssetRecord(db, userId, assetId);
   if (!asset) return { asset: undefined };
+  const frame = asset.frames.find((item) => item.id === frameId);
+  if (!frame)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
+    };
   // A buffer sized for another canvas would make every later read of this asset
   // throw, so it is refused here instead of stored.
   const expected = asset.width * asset.height;
@@ -221,7 +223,7 @@ export async function saveFrame(
     .set({ layers, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  await recordFrameVersion(db, assetId, frameId, "edit", layers);
+  await recordFrameVersion(db, assetId, frameId, "edit", frame.name, layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -291,7 +293,7 @@ export async function addFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  await recordFrameVersion(db, assetId, added.id, "frame-add", added.layers);
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -320,7 +322,7 @@ export async function duplicateFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  await recordFrameVersion(db, assetId, added.id, "frame-add", added.layers);
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -377,7 +379,7 @@ export async function renameFrameRecord(
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  await recordFrameVersion(db, assetId, frameId, "rename", frame.layers);
+  await recordFrameVersion(db, assetId, frameId, "rename", trimmed, frame.layers);
   return getAssetRecord(db, userId, assetId);
 }
 
@@ -509,39 +511,72 @@ export async function assetHasActiveRun(db: Database, assetId: string): Promise<
   return run !== undefined;
 }
 
-function frameLayersFromSnapshot(snapshot: unknown): Frame["layers"] | undefined {
+function frameSnapshotFrom(
+  snapshot: unknown,
+): { name: string; layers: Frame["layers"] } | undefined {
   if (typeof snapshot !== "object" || snapshot === null) return undefined;
-  const layers = (snapshot as { layers?: unknown }).layers;
+  const item = snapshot as { name?: unknown; layers?: unknown };
+  if (typeof item.name !== "string") return undefined;
+  const name = item.name.trim();
+  if (!name || name.length > 80) return undefined;
+  const layers = item.layers;
   if (!Array.isArray(layers) || layers.length === 0) return undefined;
   for (const layer of layers) {
     if (typeof layer !== "object" || layer === null) return undefined;
-    const item = layer as Record<string, unknown>;
+    const entry = layer as Record<string, unknown>;
     if (
-      typeof item.id !== "string" ||
-      typeof item.name !== "string" ||
-      typeof item.visible !== "boolean" ||
-      typeof item.pixels !== "string"
+      typeof entry.id !== "string" ||
+      typeof entry.name !== "string" ||
+      typeof entry.visible !== "boolean" ||
+      typeof entry.pixels !== "string"
     )
       return undefined;
   }
-  return layers as Frame["layers"];
+  return { name, layers: layers as Frame["layers"] };
 }
 
-function assetSnapshotFrom(
-  snapshot: unknown,
-): { name: string; width: number; height: number; palette: string[] } | undefined {
+function assetSnapshotFrom(snapshot: unknown):
+  | {
+      name: string;
+      width: number;
+      height: number;
+      palette: string[];
+      frameIds: string[];
+    }
+  | undefined {
   if (typeof snapshot !== "object" || snapshot === null) return undefined;
   const item = snapshot as Record<string, unknown>;
   if (typeof item.name !== "string" || item.name.trim() === "") return undefined;
   if (typeof item.width !== "number" || typeof item.height !== "number") return undefined;
   if (!Array.isArray(item.palette)) return undefined;
   if (item.palette.some((color) => typeof color !== "string")) return undefined;
+  if (!Array.isArray(item.frameIds)) return undefined;
+  if (item.frameIds.some((id) => typeof id !== "string")) return undefined;
   return {
     name: item.name,
     width: item.width,
     height: item.height,
     palette: item.palette as string[],
+    frameIds: item.frameIds as string[],
   };
+}
+
+/** Parks every frame above the range, then writes the dense 0..n-1 order. */
+async function reorderFrames(db: Database, assetId: string, frameIds: string[]) {
+  await db.transaction(async (tx) => {
+    // A unique index guards (asset, index), so a direct renumber might collide
+    // with a row that has not moved yet. Park first, then write the order.
+    await tx
+      .update(frames)
+      .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+      .where(eq(frames.assetId, assetId));
+    for (const [index, id] of frameIds.entries()) {
+      await tx
+        .update(frames)
+        .set({ index, updatedAt: new Date() })
+        .where(and(eq(frames.id, id), eq(frames.assetId, assetId)));
+    }
+  });
 }
 
 /**
@@ -589,8 +624,8 @@ export async function restoreVersion(
         asset: undefined,
         failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
       };
-    const layers = frameLayersFromSnapshot(version.snapshot);
-    if (!layers)
+    const snapshot = frameSnapshotFrom(version.snapshot);
+    if (!snapshot)
       return {
         asset: undefined,
         failure: {
@@ -599,7 +634,7 @@ export async function restoreVersion(
         },
       };
     try {
-      for (const layer of layers)
+      for (const layer of snapshot.layers)
         decodePixels(layer.pixels, record.width * record.height);
     } catch {
       return {
@@ -612,10 +647,10 @@ export async function restoreVersion(
     }
     await db
       .update(frames)
-      .set({ layers, updatedAt: new Date() })
+      .set({ name: snapshot.name, layers: snapshot.layers, updatedAt: new Date() })
       .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
     await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-    restored = frameSnapshot(layers);
+    restored = frameSnapshot(snapshot.name, snapshot.layers);
   } else {
     const snapshot = assetSnapshotFrom(version.snapshot);
     if (!snapshot)
@@ -624,6 +659,22 @@ export async function restoreVersion(
         failure: {
           code: "INVALID_VERSION",
           message: "That version's snapshot is malformed.",
+        },
+      };
+    // The recorded order only replays when it still names exactly this asset's
+    // frames: a version from another frame set cannot be replayed safely.
+    const currentIds = new Set(record.frames.map((item) => item.id));
+    const recordedIds = new Set(snapshot.frameIds);
+    if (
+      recordedIds.size !== snapshot.frameIds.length ||
+      recordedIds.size !== currentIds.size ||
+      snapshot.frameIds.some((id) => !currentIds.has(id))
+    )
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's frames do not match this asset.",
         },
       };
     const applied = await applyAssetUpdate(db, userId, assetId, {
@@ -640,8 +691,19 @@ export async function restoreVersion(
           message: "That asset is not available.",
         },
       };
+    const currentOrder = record.frames.map((item) => item.id).join("|");
+    if (currentOrder !== snapshot.frameIds.join("|"))
+      await reorderFrames(db, assetId, snapshot.frameIds);
     restored = assetSnapshot(applied.asset);
   }
+
+  const after = await getAssetRecord(db, userId, assetId);
+  if (!after)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  if (version.scope === "asset") restored = assetSnapshot(after);
 
   await createVersion(db, {
     assetId,
@@ -652,7 +714,7 @@ export async function restoreVersion(
     label: `Restore of ${version.author} ${version.kind} · ${version.id}`,
     snapshot: restored,
   });
-  return { asset: await getAssetRecord(db, userId, assetId) };
+  return { asset: after };
 }
 
 export async function updateVersionLabel(
@@ -774,61 +836,6 @@ export async function insertRun(
 }
 
 export type VersionCursor = { createdAt: Date; id: string };
-
-async function pruneVersions(db: Database, assetId: string) {
-  const rows = await db
-    .select({ id: versions.id, label: versions.label, createdAt: versions.createdAt })
-    .from(versions)
-    .where(eq(versions.assetId, assetId));
-  const stale = pruneOrder(rows);
-  if (stale.length > 0) await db.delete(versions).where(inArray(versions.id, stale));
-}
-
-/**
- * Records a snapshot for an asset. A recent unlabeled snapshot by the same
- * author on the same kind of work is replaced in place instead of piling up a
- * twin; every write then trims the asset back to its retention limit.
- */
-export async function createVersion(db: Database, input: VersionInput) {
-  const now = new Date();
-  const frameId = input.frameId ?? null;
-  const [existing] = await db
-    .select()
-    .from(versions)
-    .where(
-      and(
-        eq(versions.assetId, input.assetId),
-        eq(versions.scope, input.scope),
-        eq(versions.kind, input.kind),
-        eq(versions.author, input.author),
-        frameId === null ? isNull(versions.frameId) : eq(versions.frameId, frameId),
-      ),
-    )
-    .orderBy(desc(versions.createdAt), desc(versions.id))
-    .limit(1);
-
-  if (existing && shouldCoalesce(existing, input, now)) {
-    const [updated] = await db
-      .update(versions)
-      .set({
-        snapshot: input.snapshot,
-        runId: input.runId ?? existing.runId,
-        label: input.label ?? existing.label,
-        createdAt: now,
-      })
-      .where(eq(versions.id, existing.id))
-      .returning();
-    await pruneVersions(db, input.assetId);
-    return updated;
-  }
-
-  const [inserted] = await db
-    .insert(versions)
-    .values(toVersionRow({ ...input, id: randomUUID(), createdAt: now }))
-    .returning();
-  await pruneVersions(db, input.assetId);
-  return inserted;
-}
 
 /** Newest first, paged by `(createdAt, id)` so equal timestamps stay ordered. */
 export async function listVersions(

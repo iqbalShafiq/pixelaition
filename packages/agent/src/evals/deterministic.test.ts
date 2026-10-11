@@ -40,6 +40,7 @@ describe("generation decisions and tools", () => {
         notes: "",
       },
       approvedScope: new Set(["frame"]),
+      touchedFrames: new Set(),
       strokes: [],
       issues: [],
     });

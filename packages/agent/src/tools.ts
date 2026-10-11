@@ -80,6 +80,7 @@ function editFrame(
   const result = applyCommand(frame.buffer, command);
   if (!result.ok) throw new Error(result.message);
   replaceFrameBuffer(run, frame.id, result.buffer);
+  run.touchedFrames.add(frame.id);
   return { id: frame.id, buffer: result.buffer };
 }
 
@@ -510,6 +511,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       run.frames.set(added.id, frame);
       run.currentFrameId = added.id;
       run.approvedScope.add(added.id);
+      run.touchedFrames.add(added.id);
       return {
         frameId: added.id,
         name: frame.name,
@@ -534,6 +536,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       // Persist first: a refused save leaves the name exactly as it was.
       await run.onFrameChange?.({ type: "rename", frameId: frame.id, name });
       frame.frame.name = name;
+      run.touchedFrames.add(frame.id);
       return { frameId: frame.id, name };
     },
   });
@@ -565,6 +568,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         reordered.set(item.id, item.frame);
       }
       run.frames = reordered;
+      run.touchedFrames.add(id);
       return {
         frameId: id,
         index: candidates.find((item) => item.id === id)?.index ?? 0,

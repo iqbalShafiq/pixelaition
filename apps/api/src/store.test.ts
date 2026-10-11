@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   assets,
   createDatabase,
+  createVersion,
   frames,
   generationRuns,
   generationThreads,
@@ -13,7 +14,7 @@ import {
 import { createAsset, defaultStyle, encodePixels } from "@pixelaition/pixel";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createVersion, restoreVersion } from "./store.js";
+import { restoreVersion } from "./store.js";
 
 /**
  * restoreVersion needs a live database; when DATABASE_URL is absent or the
@@ -97,7 +98,7 @@ describe.skipIf(!db)("restoreVersion", () => {
       scope: "frame",
       kind: "edit",
       author: "user",
-      snapshot: { layers },
+      snapshot: { name: "restored-idle", layers },
     });
     if (!source) throw new Error("createVersion inserted nothing");
 
@@ -105,6 +106,7 @@ describe.skipIf(!db)("restoreVersion", () => {
     expect(result.failure).toBeUndefined();
     const restoredFrame = result.asset?.frames.find((item) => item.id === frame.id);
     expect(restoredFrame?.layers).toEqual(layers);
+    expect(restoredFrame?.name).toBe("restored-idle");
 
     const [restoreRow] = await live
       .select()
@@ -115,7 +117,7 @@ describe.skipIf(!db)("restoreVersion", () => {
     expect(restoreRow?.scope).toBe("frame");
     expect(restoreRow?.frameId).toBe(frame.id);
     expect(restoreRow?.author).toBe("user");
-    expect(restoreRow?.snapshot).toEqual({ layers });
+    expect(restoreRow?.snapshot).toEqual({ name: "restored-idle", layers });
   });
 
   it("restores asset metadata from an asset snapshot", async () => {
@@ -180,5 +182,59 @@ describe.skipIf(!db)("restoreVersion", () => {
 
     await live.delete(generationRuns).where(eq(generationRuns.id, runId));
     await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+  });
+
+  it("replays the recorded frame order", async () => {
+    const second = createAsset({ name: "second", width: 8, height: 8 }).frames[0];
+    if (!second) throw new Error("createAsset produced no frame");
+    await live.insert(frames).values({
+      id: second.id,
+      assetId: asset.id,
+      name: second.name,
+      index: 1,
+      layers: second.layers,
+    });
+    const source = await createVersion(live, {
+      assetId: asset.id,
+      scope: "asset",
+      kind: "frame-move",
+      author: "user",
+      snapshot: {
+        name: asset.name,
+        width: asset.width,
+        height: asset.height,
+        palette: asset.palette,
+        frameIds: [second.id, frame.id],
+      },
+    });
+    if (!source) throw new Error("createVersion inserted nothing");
+
+    const result = await restoreVersion(live, userId, asset.id, source.id);
+    expect(result.failure).toBeUndefined();
+    expect(result.asset?.frames.map((item) => item.id)).toEqual([second.id, frame.id]);
+  });
+
+  it("refuses an asset snapshot whose frames do not match", async () => {
+    const source = await createVersion(live, {
+      assetId: asset.id,
+      scope: "asset",
+      kind: "frame-move",
+      author: "user",
+      snapshot: {
+        name: asset.name,
+        width: asset.width,
+        height: asset.height,
+        palette: asset.palette,
+        frameIds: [frame.id],
+      },
+    });
+    if (!source) throw new Error("createVersion inserted nothing");
+
+    const result = await restoreVersion(live, userId, asset.id, source.id);
+    expect(result.asset).toBeUndefined();
+    expect(result.failure?.code).toBe("INVALID_VERSION");
+    expect(result.failure?.message).toBe(
+      "That version's frames do not match this asset.",
+    );
   });
 });

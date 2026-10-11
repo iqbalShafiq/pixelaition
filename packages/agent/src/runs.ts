@@ -73,6 +73,8 @@ export type RunBinding = {
   height: number;
   style: StyleGuide;
   approvedScope: Set<string>;
+  /** Frames this run edited or changed; the run terminal snapshots exactly these. */
+  touchedFrames: Set<string>;
   /** A user-edited plan staged for the next present_plan call; consumed once. */
   stagedOverride?: StagedPlanOverride;
   strokes: Stroke[];
@@ -95,6 +97,7 @@ export function bindRun(runId: string, binding: RunBinding): void {
     ),
     palette: [...binding.palette],
     approvedScope: new Set(binding.approvedScope),
+    touchedFrames: new Set(binding.touchedFrames),
     strokes: [...binding.strokes],
   });
 }
@@ -159,6 +162,7 @@ export function paintStroke(
   });
   if (!result.ok) throw new Error(result.message);
   replaceFrameBuffer(run, id, result.buffer);
+  run.touchedFrames.add(id);
   const stroke = { label, points };
   run.strokes.push(stroke);
   run.onStroke?.(stroke, result.buffer, id);

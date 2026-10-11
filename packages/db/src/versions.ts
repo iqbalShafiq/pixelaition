@@ -1,4 +1,7 @@
-import type { VersionAuthor, VersionScope } from "@pixelaition/db";
+import { randomUUID } from "node:crypto";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import type { Database } from "./client.js";
+import { versions, type VersionAuthor, type VersionScope } from "./schema.js";
 
 /** Snapshots from the same author and kind this close together replace each other. */
 export const COALESCE_WINDOW_MS = 120_000;
@@ -91,4 +94,60 @@ export function toVersionRow(
     snapshot: row.snapshot,
     createdAt: row.createdAt,
   };
+}
+
+async function pruneVersions(db: Database, assetId: string) {
+  const rows = await db
+    .select({ id: versions.id, label: versions.label, createdAt: versions.createdAt })
+    .from(versions)
+    .where(eq(versions.assetId, assetId));
+  const stale = pruneOrder(rows);
+  if (stale.length > 0) await db.delete(versions).where(inArray(versions.id, stale));
+}
+
+/**
+ * Records a snapshot for an asset. A recent unlabeled snapshot by the same
+ * author on the same kind of work is replaced in place instead of piling up a
+ * twin; every write then trims the asset back to its retention limit. Shared
+ * by the API's store hooks and the worker's run terminal.
+ */
+export async function createVersion(db: Database, input: VersionInput) {
+  const now = new Date();
+  const frameId = input.frameId ?? null;
+  const [existing] = await db
+    .select()
+    .from(versions)
+    .where(
+      and(
+        eq(versions.assetId, input.assetId),
+        eq(versions.scope, input.scope),
+        eq(versions.kind, input.kind),
+        eq(versions.author, input.author),
+        frameId === null ? isNull(versions.frameId) : eq(versions.frameId, frameId),
+      ),
+    )
+    .orderBy(desc(versions.createdAt), desc(versions.id))
+    .limit(1);
+
+  if (existing && shouldCoalesce(existing, input, now)) {
+    const [updated] = await db
+      .update(versions)
+      .set({
+        snapshot: input.snapshot,
+        runId: input.runId ?? existing.runId,
+        label: input.label ?? existing.label,
+        createdAt: now,
+      })
+      .where(eq(versions.id, existing.id))
+      .returning();
+    await pruneVersions(db, input.assetId);
+    return updated;
+  }
+
+  const [inserted] = await db
+    .insert(versions)
+    .values(toVersionRow({ ...input, id: randomUUID(), createdAt: now }))
+    .returning();
+  await pruneVersions(db, input.assetId);
+  return inserted;
 }

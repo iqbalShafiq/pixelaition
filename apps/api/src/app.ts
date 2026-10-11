@@ -66,8 +66,7 @@ import {
   userIdForToken,
   type VersionCursor,
 } from "./store.js";
-import { RETENTION_LIMIT } from "./versions.js";
-import { generationRuns, models } from "@pixelaition/db";
+import { generationRuns, models, RETENTION_LIMIT } from "@pixelaition/db";
 
 const scaleSchema = z.union([
   z.literal(1),
