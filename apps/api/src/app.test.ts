@@ -169,6 +169,145 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
+  it("surfaces a bound workspace run as the asset's active run with its card", async () => {
+    const projectId = randomUUID();
+    const asset = createAsset({ name: "bound-run", width: 8, height: 8 });
+    const frame = asset.frames[0];
+    if (!frame) throw new Error("createAsset produced no frame");
+    const threadId = randomUUID();
+    const runId = randomUUID();
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "bound",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    await live.insert(frames).values({
+      id: frame.id,
+      assetId: asset.id,
+      name: frame.name,
+      index: frame.index,
+      layers: frame.layers,
+    });
+    await live.insert(generationThreads).values({ id: threadId, projectId, userId });
+    await live.insert(generationRuns).values({
+      id: runId,
+      threadId,
+      requestId: randomUUID(),
+      status: "waiting",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      frameId: frame.id,
+      events: [
+        {
+          sequence: 1,
+          type: "interaction",
+          data: {
+            id: "i-bound",
+            type: "tool-approval",
+            toolName: "present_plan",
+            input: {},
+          },
+        },
+      ],
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/assets/${asset.id}/active-run`)
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.run).toMatchObject({
+        id: runId,
+        status: "waiting",
+        modelId: "test-model",
+      });
+      expect(res.body.interaction).toMatchObject({
+        id: "i-bound",
+        toolName: "present_plan",
+      });
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  it("refuses a stage override when the pending card is not a plan", async () => {
+    const projectId = randomUUID();
+    const threadId = randomUUID();
+    const runId = randomUUID();
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "gate",
+      style: defaultStyle,
+    });
+    await live.insert(generationThreads).values({ id: threadId, projectId, userId });
+    await live.insert(generationRuns).values({
+      id: runId,
+      threadId,
+      requestId: randomUUID(),
+      status: "waiting",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      events: [
+        {
+          sequence: 1,
+          type: "interaction",
+          data: {
+            id: "i-gate",
+            type: "tool-approval",
+            toolName: "paint_stroke",
+            input: {},
+          },
+        },
+      ],
+    });
+    try {
+      const body = {
+        interactionId: "i-gate",
+        frames: [{ name: "hop", description: "a hop" }],
+      };
+      const refused = await request(app)
+        .post(`/api/runs/${runId}/stage-override`)
+        .set("authorization", `Bearer ${token}`)
+        .send(body);
+      expect(refused.status).toBe(409);
+      expect(refused.body.code).toBe("NOT_A_PLAN");
+      // The same card as a plan proposal accepts the edit.
+      await live
+        .update(generationRuns)
+        .set({
+          events: [
+            {
+              sequence: 1,
+              type: "interaction",
+              data: {
+                id: "i-gate",
+                type: "tool-approval",
+                toolName: "present_plan",
+                input: {},
+              },
+            },
+          ],
+        })
+        .where(eq(generationRuns.id, runId));
+      const accepted = await request(app)
+        .post(`/api/runs/${runId}/stage-override`)
+        .set("authorization", `Bearer ${token}`)
+        .send(body);
+      expect(accepted.status).toBe(204);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
   it("requires a session for the recent runs", async () => {
     const res = await request(app).get("/api/runs/recent");
     expect(res.status).toBe(401);
@@ -279,6 +418,31 @@ describe.skipIf(!db)("API routes", () => {
         },
       ],
     });
+    // A waiting workspace run carries its pending card so the home can
+    // restore it without the retained stream.
+    const waitingRunId = randomUUID();
+    await live.insert(generationRuns).values({
+      id: waitingRunId,
+      threadId,
+      requestId: randomUUID(),
+      status: "waiting",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      prompt: "wait for the plan",
+      frameId: boundFrame.id,
+      events: [
+        {
+          sequence: 1,
+          type: "interaction",
+          data: {
+            id: "i-recent",
+            type: "tool-approval",
+            toolName: "present_plan",
+            input: {},
+          },
+        },
+      ],
+    });
     try {
       const res = await request(app)
         .get("/api/runs/recent")
@@ -294,8 +458,18 @@ describe.skipIf(!db)("API routes", () => {
         assetId,
         projectId: eventProjectId,
         assetName: "slime-biru",
+        scope: "workspace",
       });
       expect(typeof row?.createdAt).toBe("string");
+      const waitingRow = (res.body.runs as Array<Record<string, unknown>>).find(
+        (item) => item.id === waitingRunId,
+      );
+      expect(waitingRow).toMatchObject({
+        id: waitingRunId,
+        status: "waiting",
+        scope: "workspace",
+        interaction: { id: "i-recent", toolName: "present_plan" },
+      });
       const boundRow = (res.body.runs as Array<Record<string, unknown>>).find(
         (item) => item.id === boundRunId,
       );

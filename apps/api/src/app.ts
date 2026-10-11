@@ -930,11 +930,15 @@ export function createApp() {
       return fail(res, 409, "NOT_WAITING", "That run is not waiting for an answer.");
     }
     // The stored events carry the pending card; when it is derivable, the
-    // override must name exactly that interaction.
+    // override must name exactly that interaction, and that interaction must
+    // be a plan proposal — a scope edit against any other tool has no meaning.
     const events =
-      (row.events as Array<{ type?: string; data?: { id?: unknown } }> | null) ?? [];
-    const pendingId = events.filter((event) => event.type === "interaction").at(-1)
-      ?.data?.id;
+      (row.events as Array<{
+        type?: string;
+        data?: { id?: unknown; toolName?: unknown };
+      }> | null) ?? [];
+    const pending = events.filter((event) => event.type === "interaction").at(-1)?.data;
+    const pendingId = pending?.id;
     if (typeof pendingId === "string" && pendingId !== body.data.interactionId) {
       return fail(
         res,
@@ -942,6 +946,9 @@ export function createApp() {
         "STALE_INTERACTION",
         "That plan card is not the run's pending interaction.",
       );
+    }
+    if (typeof pending?.toolName === "string" && pending.toolName !== "present_plan") {
+      return fail(res, 409, "NOT_A_PLAN", "That interaction is not a plan proposal.");
     }
     await db
       .update(generationRuns)
