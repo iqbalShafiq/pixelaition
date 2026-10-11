@@ -35,33 +35,50 @@ const jevQuestions: Record<string, JevQuestion> = {
       "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists.",
     criteria: intentOptions,
   },
-  specific: {
+  // Two speculative specificity questions run in parallel; code picks the one
+  // that matters for the chosen intent (the docs' fan-out pattern). A drawing
+  // must describe itself; an edit or a variant must say what to change.
+  drawable: {
     type: "noul",
     instructions:
-      "Does the request name a concrete subject and enough detail to draw it? Answer no for a placeholder such as 'draw something'.",
+      "If the request asks for something new to be drawn, does it name a concrete subject? A subject with a size or a couple of qualities is enough detail; it does not need a full description. For a request that only changes or extends existing art, answer yes.",
     criteria: {
-      true: "The request names a concrete subject and enough detail to draw it.",
-      false: "It is a placeholder or too vague to draw from.",
+      true: "A new drawing names a concrete subject, optionally with a size or a few qualities.",
+      false:
+        "It asks for a new drawing but names no subject at all, or only a placeholder like 'something'.",
+    },
+  },
+  actionable: {
+    type: "noul",
+    instructions:
+      "If the request asks to change or extend existing art, does it say what to change? For a request that draws something new, answer yes.",
+    criteria: {
+      true: "An edit or variant says what to change, or the request does not edit existing art.",
+      false: "It asks to change existing art but does not say what to change.",
     },
   },
 };
 
 /**
  * Jev returns typed answers, never prose, so the clarifying question is ours.
- * A low `specific` probability routes to clarify regardless of intent.
+ * The chosen intent is only trusted when its own specificity question agrees:
+ * a drawing needs `drawable`, an edit or variant needs `actionable`.
  */
 export function toDecision(answers: {
   intent: JevAnswer;
-  specific: JevAnswer;
+  drawable: JevAnswer;
+  actionable: JevAnswer;
 }): DrawDecision {
   const chosen = answers.intent.choice;
   const intent =
     chosen === undefined || chosen === "clarify" || !(chosen in intentOptions)
       ? "clarify"
       : (chosen as DrawIntent);
-  const specific = answers.specific.noul ?? 0;
-  const confidence = Math.min(answers.intent.confidence ?? specific, specific);
-  if (intent === "clarify" || specific < 0.7) {
+  const drawable = answers.drawable.noul ?? 0;
+  const actionable = answers.actionable.noul ?? 0;
+  const support = intent === "draw" ? drawable : actionable;
+  const confidence = Math.min(answers.intent.confidence ?? support, support);
+  if (intent === "clarify" || support < 0.7) {
     return { intent: "clarify", confidence, question: clarifyQuestion, source: "jev" };
   }
   return { intent, confidence, source: "jev" };
@@ -71,6 +88,7 @@ export async function decidePrompt(prompt: string, env: JevEnv): Promise<DrawDec
   const { answers } = await askJev({ prompt }, jevQuestions, env);
   return toDecision({
     intent: answers.intent ?? {},
-    specific: answers.specific ?? {},
+    drawable: answers.drawable ?? {},
+    actionable: answers.actionable ?? {},
   });
 }

@@ -23,7 +23,8 @@
     "eval:judge": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:judge",
     "db:migrate": "dotenv -e .env -- pnpm --filter @pixelaition/db migrate",
     "docker:up": "docker compose up --build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev"
   },
   "lint-staged": {
     "*.{ts,tsx,js,css,md,json,yml}": "prettier --write"

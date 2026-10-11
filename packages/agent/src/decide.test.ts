@@ -25,14 +25,16 @@ describe("jev decisions", () => {
     expect(
       toDecision({
         intent: { choice: "variant", confidence: 0.82 },
-        specific: { noul: 0.95 },
+        drawable: { noul: 0.9 },
+        actionable: { noul: 0.95 },
       }),
     ).toEqual({ intent: "variant", confidence: 0.82, source: "jev" });
 
     expect(
       toDecision({
         intent: { choice: "draw", confidence: 0.9 },
-        specific: { noul: 0.4 },
+        drawable: { noul: 0.4 },
+        actionable: { noul: 0.9 },
       }),
     ).toEqual({
       intent: "clarify",
@@ -45,13 +47,36 @@ describe("jev decisions", () => {
     expect(
       toDecision({
         intent: { choice: "clarify", confidence: 0.88 },
-        specific: { noul: 0.9 },
+        drawable: { noul: 0.9 },
+        actionable: { noul: 0.9 },
       }),
     ).toMatchObject({ intent: "clarify", confidence: 0.88, source: "jev" });
 
+    // An edit is judged by whether it says what to change, not by drawability.
+    expect(
+      toDecision({
+        intent: { choice: "edit", confidence: 0.93 },
+        drawable: { noul: 0.42 },
+        actionable: { noul: 0.97 },
+      }),
+    ).toEqual({ intent: "edit", confidence: 0.93, source: "jev" });
+
+    // An edit that says nothing to change is still clarified.
+    expect(
+      toDecision({
+        intent: { choice: "edit", confidence: 0.8 },
+        drawable: { noul: 0.9 },
+        actionable: { noul: 0.3 },
+      }).intent,
+    ).toBe("clarify");
+
     // An answer outside the option set is not a decision to draw.
     expect(
-      toDecision({ intent: { choice: "paint" }, specific: { noul: 0.95 } }).intent,
+      toDecision({
+        intent: { choice: "paint" },
+        drawable: { noul: 0.95 },
+        actionable: { noul: 0.95 },
+      }).intent,
     ).toBe("clarify");
   });
 });
