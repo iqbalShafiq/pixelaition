@@ -1078,6 +1078,7 @@ function bindAssetRun(options: {
   });
   bindRun(durableRunId, {
     assetId,
+    assetName: asset.name,
     originFrameId,
     currentFrameId: originFrameId,
     frames: new Map(
