@@ -27,6 +27,7 @@ pnpm db:migrate
 - Canvas drawing lives in `apps/web/src/components/pixel-canvas.tsx`. The frame is drawn as a scaled bitmap; do not go back to one `fillRect` per cell. The transparency checker is baked into that bitmap in whole document pixels, never drawn in screen space.
 - While a run is active for an asset, the editor never writes the frame back; strokes come from the agent's tool calls as they happen. The canvas is a live feed, not a replay.
 - Interface colours come from Sweetie 16 through the tokens in `DESIGN.md`. Do not introduce a colour outside that table, and never use `faint` for copy.
+- Interface type comes from the pixel scale in `apps/web/src/styles.css` (`text-pixel-display/title/label/body/mono`, each face on its design grid); pixel craft comes from the utilities there (`pixel-corners`, `pixel-window`, `bevel`, `shadow-pixel-*`, `pixel-grid`, `dither-*`). Components use both instead of hand-rolling sizes, radii, or soft shadows.
 - Commit messages follow Conventional Commits.
 
 ## Packages

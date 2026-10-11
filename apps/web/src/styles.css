@@ -39,9 +39,6 @@
   --font-body: "Pixelify Sans", ui-sans-serif, sans-serif;
   --font-mono: "Departure Mono", ui-monospace, monospace;
   --font-display: "Silkscreen", "Pixelify Sans", ui-sans-serif, sans-serif;
-  --ease-pixel-2: steps(2, end);
-  --ease-pixel-3: steps(3, end);
-  --ease-pixel-4: steps(4, end);
 
   /* Sweetie 16 direct */
   --color-navy: #1a1c2c;
@@ -223,9 +220,14 @@
   background-size: 32px 32px;
 }
 
-/* Hard offset shadows: no blur, ever. */
+/* Hard offset shadows: no blur, ever. The navy bar is the default lift; on the
+   paper page it is invisible (shadow tone = page tone), so ghost buttons take
+   the steel bar instead — the same hard edge, but it reads on every surface. */
 @utility shadow-pixel-sm {
   box-shadow: 2px 2px 0 0 var(--color-navy);
+}
+@utility shadow-pixel-steel {
+  box-shadow: 2px 2px 0 0 var(--color-steel);
 }
 @utility shadow-pixel-md {
   box-shadow: 3px 3px 0 0 var(--color-navy);

@@ -59,14 +59,17 @@ The interface is built from the vocabulary of a limited-colour screen.
   differ in lightness; `line-strong` is for input edges that must read as a
   boundary.
 - **A pixel button is a flat block lifted by a solid bar**, not a soft shadow:
-  `shadow-[0_3px_0_0_<deeper tone>]`. Pressing it translates down 3px and removes
-  the bar. Nothing blurs.
+  `shadow-pixel-sm` (2px navy) on solid and danger, `shadow-pixel-steel` on
+  ghost so the bar also reads on the paper page, no bar on quiet. Pressing
+  translates the block 2px down and right and removes the bar. Nothing blurs.
 - **A pixel checkbox is an 18px square** that fills with the accent and takes a
   chunky check at `strokeWidth={4}` with square caps.
 - **A pixel field is an inset well**, darker than the surface it sits on, so it
   reads as somewhere you type rather than something you press.
-- **Icons come from `lucide-react`** at one stroke weight, so the tool set looks
-  drawn by one hand.
+- **Icons come from pixelarticons** through the `crisp` wrapper in
+  `pixel-icons.tsx`, and any missing glyph is drawn on the same 24 grid. Sizes
+  are **24 or 12, never 16 or 20** — the library is a 24 grid and 12 is its half
+  scale, so both sizes stay crisp at DPR 2.
 - **Textures are flat grids** (`pixel-grid`, `pixel-grid-lg`), never gradients or
   noise.
 
@@ -76,7 +79,26 @@ a control. Disabled controls show `not-allowed`.
 
 ## Type
 
-IBM Plex Sans for interface text. IBM Plex Mono for coordinates, labels, section headings, and status lines. Panel headings and field labels are mono, uppercase, and tracked out; body copy is sans and sentence case.
+Three pixel faces, each on its own design grid:
+
+| Face           | Grid                      | Use                                                           |
+| -------------- | ------------------------- | ------------------------------------------------------------- |
+| Silkscreen     | multiples of 8 (16/24/32) | wordmark, page titles, panel headers, dialog and sheet titles |
+| Pixelify Sans  | ≥12px, ≥16px for body     | body copy, labels, buttons, menus, tooltips, inputs           |
+| Departure Mono | multiples of 11 (11/22)   | numbers, hex, keyboard hints, run console, status lines       |
+
+The scale lives in `apps/web/src/styles.css` as `text-pixel-display`,
+`text-pixel-title`, `text-pixel-label`, `text-pixel-body`, and `text-pixel-mono`;
+components never hand-roll sizes. Pixel-font elements carry
+`-webkit-font-smoothing: none` and `text-rendering: geometricPrecision`, and a
+fractional size off the face's grid is a bug — it blurs.
+
+The micro-label decision (spec open question 6) went to **Silkscreen 16 for panel
+headers**: side by side with Pixelify 12 it reads as a section title that belongs
+to the same window language as the dialog and sheet titles, it fits the 280px
+rail (a "Style guide" header is about 110px), and its 24px line height costs
+nothing in a scrollable rail. Pixelify 12 stays the small-copy floor; Departure
+Mono stays numbers and logs only.
 
 ## Space
 
@@ -110,13 +132,23 @@ The wheel listener is attached with `{ passive: false }` on the canvas rather th
 
 ## Components
 
-Buttons, fields, cards, selects, menus, dialogs, sheets, tooltips, scroll areas, and toasts live in `apps/web/src/components/ui.tsx`. Screens use those pieces instead of one-off control styles. Scrollbars are thin and use the same ink family. Tool glyphs are inline SVG in `tool-icons.tsx`, so the toolbar needs no icon package.
+Buttons, fields, cards, selects, menus, dialogs, sheets, tooltips, scroll areas, and toasts live in `apps/web/src/components/ui.tsx`. Screens use those pieces instead of one-off control styles. Scrollbars are thin and use the same ink family. Every icon comes from `pixel-icons.tsx`, so the app needs no icon package.
+
+The pixel craft itself lives in `styles.css` utilities: `pixel-corners` (stepped
+corner), `pixel-window` (a 6px border-image 9-slice whose frame colour is baked
+into the data URI at `muted` 55% — the same tone as `line-strong`; changing it
+means editing the SVG), `bevel`/`bevel-in` (2px inset edges), the hard
+`shadow-pixel-*` bars, and the `pixel-grid`/`dither` textures. Menus, popovers,
+tooltips, dialogs, sheets, and the select popup all use `pixel-window`; only
+inline fields keep flat `border-2` edges. Overlays enter with `steps()` keyframes
+and the toast fades in two steps; the 140–200ms ease-out motion token covers
+everything else.
 
 `Field` associates its label with `htmlFor`, never by wrapping. A wrapped label also absorbs any button inside it, which is how a password field silently becomes "Password Show password" to a screen reader.
 
 ## Composer and run console
 
-The composer floats over the canvas column: max width 40rem, `field` surface, 2px `line-strong` border, pixel-corners, the standard solid lift bar, and 28 units of canvas padding underneath so the sprite keeps a resting area. Enter generates, Shift+Enter breaks the line, Escape blurs. When the key or the catalog is missing the composer says so in one mono line; the card that used to explain manual editing is gone.
+The composer floats over the canvas column: max width 40rem, `field` surface, 2px `line-strong` border, pixel-corners, the standard solid lift bar, and 28 units of canvas padding underneath so the sprite keeps a resting area. Enter generates, Shift+Enter breaks the line, Escape blurs. When the key or the catalog is missing the composer says so in one mono line; the card that used to explain manual editing is gone. Toasts sit above the composer band (`bottom-32`), so a toast never covers the Generate button.
 
 The run console sits above the composer in the same width and surface family. It shows the agent's real steps — thinking phases (reasoning text only when the provider sends it; encrypted reasoning stays a timed phase), tool rows with argument summaries and results, and the assistant message. It opens while a run is live, collapses to a summary bar when it ends, and never animates a step that did not happen.
 

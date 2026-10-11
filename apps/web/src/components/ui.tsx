@@ -19,10 +19,11 @@ const press = { whileTap: { scale: 0.98 }, transition: motionToken };
 type Tone = "solid" | "ghost" | "danger" | "quiet";
 
 const buttonTones: Record<Tone, string> = {
-  // A pixel button is a flat block; the hard shadow on the root lifts it.
-  solid: "bg-accent text-navy border-accent-deep",
-  ghost: "bg-panel text-ink border-line-strong hover:bg-raised",
-  danger: "bg-erase text-navy border-erase",
+  // A pixel button is a flat block; a hard bar lifts it. Navy reads on panel
+  // and raised surfaces; ghost takes the steel bar so it also reads on paper.
+  solid: "bg-accent text-navy border-accent-deep shadow-pixel-sm",
+  ghost: "bg-panel text-ink border-line-strong shadow-pixel-steel hover:bg-raised",
+  danger: "bg-erase text-navy border-erase shadow-pixel-sm",
   quiet: "bg-transparent text-muted border-transparent hover:text-ink",
 };
 
@@ -38,7 +39,7 @@ export function Button({
       {...press}
       type={type}
       {...props}
-      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
     >
       {children}
     </motion.button>
@@ -141,9 +142,14 @@ export function Field({
         {hint ? <span className="text-pixel-mono text-muted">{hint}</span> : null}
       </div>
       {children}
-      {/* Colour is never the only signal: the message carries the meaning. */}
+      {/* Colour is never the only signal: the message carries the meaning. The
+          field chip keeps coral at 6.85:1 even when the field sits on `raised`,
+          where coral directly on the surface would be 4.02:1. */}
       {error ? (
-        <span role="alert" className="text-[12px] text-erase">
+        <span
+          role="alert"
+          className="border-2 border-erase/60 bg-field px-2 py-1 text-[12px] text-erase"
+        >
           {error}
         </span>
       ) : null}
@@ -303,27 +309,14 @@ export function Toggle({
 /**
  * Progress and usage read as segmented cells, one cell per unit — never a
  * smooth bar. The row is capped at the 33-colour palette limit and can shrink
- * with its container so a big total cannot run off the rail; `label` names the
- * row when no text sits beside it.
+ * with its container so a big total cannot run off the rail; the surrounding
+ * text names the count, so the row itself stays out of the a11y tree.
  */
-export function ProgressCells({
-  value,
-  total,
-  label,
-}: {
-  value: number;
-  total: number;
-  label?: string;
-}) {
+export function ProgressCells({ value, total }: { value: number; total: number }) {
   const cells = Math.min(Math.max(total, 1), 33);
   const filled = Math.min(Math.max(value, 0), cells);
   return (
-    <span
-      role={label ? "img" : undefined}
-      aria-label={label}
-      aria-hidden={label ? undefined : true}
-      className="flex min-w-0 flex-1 items-center gap-px"
-    >
+    <span aria-hidden className="flex min-w-0 flex-1 items-center gap-px">
       {Array.from({ length: cells }, (_, index) => (
         <span
           key={index}
@@ -381,9 +374,9 @@ export function Panel({
   return (
     <section className={`flex min-h-0 min-w-0 flex-col gap-2 ${className}`}>
       <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
-        <h2 className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
-          {title}
-        </h2>
+        {/* Micro-label decision: panel headers are Silkscreen 16, the same
+            display face as dialog and sheet titles (see DESIGN.md). */}
+        <h2 className="text-pixel-title text-muted">{title}</h2>
         {action}
       </header>
       {children}
@@ -456,7 +449,7 @@ export function SelectControl({
       </Select.Trigger>
       <Select.Portal>
         <Select.Positioner sideOffset={4} className="z-40">
-          <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto border-2 border-line-strong bg-raised p-1 text-[13px]">
+          <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto bg-raised pixel-window p-1 text-[13px]">
             {options.map((option) => (
               <Select.Item
                 key={option}
@@ -714,7 +707,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <BaseToast.Provider>
       {children}
       <BaseToast.Portal>
-        <BaseToast.Viewport className="fixed right-4 bottom-4 z-50 flex w-[min(24rem,90vw)] flex-col gap-2">
+        {/* bottom-32 clears the composer band, whose Generate button the old
+            bottom-4 viewport covered while a toast was visible. */}
+        <BaseToast.Viewport className="fixed right-4 bottom-32 z-50 flex w-[min(24rem,90vw)] flex-col gap-2">
           <ToastList />
         </BaseToast.Viewport>
       </BaseToast.Portal>
