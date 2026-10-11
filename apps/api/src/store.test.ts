@@ -222,9 +222,18 @@ describe.skipIf(!db)("restoreVersion", () => {
     }
   });
 
-  it("does not lock an asset for a run whose frame_id belongs to no frame of it", async () => {
+  it("keeps the lock when a workspace run's pinned frame is deleted and the pin follows", async () => {
     const threadId = randomUUID();
     const runId = randomUUID();
+    const second = createAsset({ name: "second", width: 8, height: 8 }).frames[0];
+    if (!second) throw new Error("createAsset produced no frame");
+    await live.insert(frames).values({
+      id: second.id,
+      assetId: asset.id,
+      name: second.name,
+      index: 1,
+      layers: second.layers,
+    });
     await live.insert(generationThreads).values({
       id: threadId,
       projectId,
@@ -237,13 +246,23 @@ describe.skipIf(!db)("restoreVersion", () => {
       status: "running",
       modelId: "test-model",
       reasoningEffort: "low",
-      frameId: randomUUID(),
+      frameId: second.id,
     });
     try {
-      expect(await assetHasActiveRun(live, asset.id)).toBe(false);
+      expect(await assetHasActiveRun(live, asset.id)).toBe(true);
+      // The worker's delete branch removes the frame row and re-pins the run
+      // to a remaining frame; a live run must never silently unlock the asset
+      // by leaving frame_id pointing at the deleted frame.
+      await live.delete(frames).where(eq(frames.id, second.id));
+      await live
+        .update(generationRuns)
+        .set({ frameId: frame.id })
+        .where(eq(generationRuns.id, runId));
+      expect(await assetHasActiveRun(live, asset.id)).toBe(true);
     } finally {
       await live.delete(generationRuns).where(eq(generationRuns.id, runId));
       await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+      await live.delete(frames).where(eq(frames.id, second.id));
     }
   });
 

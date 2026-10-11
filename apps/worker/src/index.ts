@@ -1011,6 +1011,24 @@ function frameWrites(options: {
         // The tool replaced the last frame; the row must go before the
         // replacement takes the same (asset, index) slot.
         if (change.replacement) await insertFrameRow(change.replacement);
+        // The run row's frame_id pins the asset for the API's active-run
+        // guard. When the deleted frame was that pin, it must follow to a
+        // frame that still exists — the replacement under the last-frame
+        // rule, otherwise the first remaining frame — or the asset would
+        // silently unlock mid-run. A pin on another frame is left alone.
+        const remaining = [...framesById.values()].sort(
+          (left, right) => left.index - right.index,
+        );
+        const nextPin = change.replacement?.id ?? remaining[0]?.id ?? null;
+        await db
+          .update(generationRuns)
+          .set({ frameId: nextPin })
+          .where(
+            and(
+              eq(generationRuns.id, publicRunId),
+              eq(generationRuns.frameId, change.frameId),
+            ),
+          );
         const after = await loadAsset(assetId);
         if (!after)
           throw new Error("The asset could not be read after the frame change.");
