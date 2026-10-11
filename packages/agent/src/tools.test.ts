@@ -100,7 +100,7 @@ type Tool = {
 /** Run a tool's approval predicate against the live binding for `run-1`. */
 async function approval(
   name: string,
-  args: { frameId?: string },
+  args: Record<string, unknown>,
   runId = "run-1",
 ): Promise<boolean | { reason: string }> {
   const requirement = tool(name).requiresApproval;
@@ -1374,7 +1374,11 @@ describe("drawing approval", () => {
   it("pauses a call Jev cannot call clearly, with its verdict as the reason", async () => {
     boundRun();
     stubJev(0.6);
-    const verdict = await approval("replace_color", { frameId: "frame-1" });
+    const verdict = await approval("replace_color", {
+      frameId: "frame-1",
+      from: 1,
+      to: 0,
+    });
     expect(verdict).toMatchObject({
       reason: expect.stringContaining("Jev: the request check is not clear"),
     });

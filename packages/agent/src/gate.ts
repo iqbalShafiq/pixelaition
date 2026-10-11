@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { RunBinding } from "./runs.js";
 
 /**
- * The Jev request check for destructive tool calls. Jev answers two typed
+ * The Jev request check for destructive tool calls. Jev answers typed
  * questions about the call against the user's request; the code turns the
  * probabilities into one of three outcomes, the way OpenRouter's tool-gate
  * cookbook prescribes:
@@ -19,7 +19,7 @@ import type { RunBinding } from "./runs.js";
 export type ToolGateOutcome = {
   outcome: "approve" | "block" | "review";
   reason: string;
-  checks: { supported: number; proportionate: number };
+  checks: Record<string, number>;
 };
 
 const GATE_APPROVE_AT = 0.9;
@@ -28,48 +28,82 @@ const GATE_BLOCK_AT = 0.1;
 /** Jev lives on OpenRouter's Decisions API, not the chat endpoints. */
 const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 
-const gateAnswerSchema = z.object({
-  answers: z.object({
-    supported: z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
-    proportionate: z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
-  }),
+type NoulQuestion = {
+  type: "noul";
+  instructions: string;
+  criteria: { true: string; false: string };
+};
+
+const supportedQuestion: NoulQuestion = {
+  type: "noul",
+  instructions:
+    "The user's request in `request` asks for `call`, or `call` is a direct step of what they asked for. `call.description` says what the call does.",
+  criteria: {
+    true: "The request asks for this change, or the change is a direct step of what the request asks for.",
+    false:
+      "The request does not ask for this change, and the change is not a step of what the request asks for.",
+  },
+};
+
+const proportionateQuestion: NoulQuestion = {
+  type: "noul",
+  instructions:
+    "`call` stays within the scope of `request`: it does not clear, recolor, or replace a much larger part of the frame than the request describes. Compare `call.args` against `asset.width`, `asset.height`, and `request`.",
+  criteria: {
+    true: "The change touches only as much of the frame as the request describes.",
+    false:
+      "The change touches a much larger part of the frame than the request describes.",
+  },
+};
+
+/**
+ * What each destructive tool is judged on. The description is written for the
+ * check, not for the drawing model: it tells Jev what the call means and how
+ * it normally fits into drawing. A palette change or a layer removal is a
+ * single-question call; a region clear or a color swap also has a size that
+ * can outgrow the request.
+ */
+const TOOL_GATES: Record<
+  string,
+  { description: string; questions: Record<string, NoulQuestion> }
+> = {
+  clear_region: {
+    description:
+      "Clear a rectangle of a layer to transparency (erase pixels). Painting new artwork often begins by clearing the area the new artwork will occupy.",
+    questions: { supported: supportedQuestion, proportionate: proportionateQuestion },
+  },
+  replace_color: {
+    description:
+      "Replace every pixel of one palette color with another across the frame (or one layer).",
+    questions: { supported: supportedQuestion, proportionate: proportionateQuestion },
+  },
+  set_palette: {
+    description:
+      "Choose the colors the frame will paint with by replacing the frame's palette. Drawing a sprite in specific colors requires setting a palette; index 0 stays transparent.",
+    questions: { supported: supportedQuestion },
+  },
+  remove_layer: {
+    description: "Remove a layer and everything painted on it from the frame.",
+    questions: { supported: supportedQuestion },
+  },
+};
+
+const answerSchema = z.object({
+  answers: z.record(
+    z.string(),
+    z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
+  ),
   usage: z.object({ cost: z.number().optional() }).optional(),
 });
 
-const gateQuestions = {
-  supported: {
-    type: "noul",
-    instructions:
-      "The user's request in `request` asks for `call`, or `call` is a direct step of what they asked for. `call.description` says what the call does.",
-    criteria: {
-      true: "The request asks for this change, or the change is a direct step of what the request asks for.",
-      false:
-        "The request does not ask for this change, and the change is not a step of what the request asks for.",
-    },
-  },
-  proportionate: {
-    type: "noul",
-    instructions:
-      "`call` stays within the scope of `request`: it does not clear, recolor, or replace a much larger part of the frame than the request describes. Compare `call.args` against `asset.width`, `asset.height`, and `request`.",
-    criteria: {
-      true: "The change touches only as much of the frame as the request describes.",
-      false:
-        "The change touches a much larger part of the frame than the request describes.",
-    },
-  },
-} as const;
-
-/** The two probabilities select the outcome; formatting keeps reasons readable. */
-export function toGateOutcome(checks: {
-  supported: number;
-  proportionate: number;
-}): ToolGateOutcome {
-  const { supported, proportionate } = checks;
-  const pair = `supported=${supported.toFixed(2)}, proportionate=${proportionate.toFixed(2)}`;
-  if (supported >= GATE_APPROVE_AT && proportionate >= GATE_APPROVE_AT) {
+/** Every probability selects the outcome; formatting keeps reasons readable. */
+export function toGateOutcome(checks: Record<string, number>): ToolGateOutcome {
+  const pairs = Object.entries(checks);
+  const pair = pairs.map(([name, value]) => `${name}=${value.toFixed(2)}`).join(", ");
+  if (pairs.every(([, value]) => value >= GATE_APPROVE_AT)) {
     return { outcome: "approve", reason: pair, checks };
   }
-  if (supported <= GATE_BLOCK_AT || proportionate <= GATE_BLOCK_AT) {
+  if (pairs.some(([, value]) => value <= GATE_BLOCK_AT)) {
     return { outcome: "block", reason: `not supported by the request (${pair})`, checks };
   }
   return {
@@ -80,17 +114,75 @@ export function toGateOutcome(checks: {
 }
 
 /**
+ * A deterministic first check, the way the cookbook's arithmetic check runs
+ * before Jev: when the call provably cannot touch a painted pixel (an empty
+ * frame, an empty region, a color no pixel uses), there is nothing for Jev to
+ * judge and the call is safe to run.
+ */
+export function gateIsHarmless(
+  run: RunBinding,
+  toolName: string,
+  args: unknown,
+): boolean {
+  const frameId = (args as { frameId?: string }).frameId ?? run.currentFrameId;
+  const frame = frameId !== undefined ? run.frames.get(frameId) : undefined;
+  if (!frame) return false;
+  const { buffer } = frame;
+  const pixelsOf = (layerId: string) =>
+    buffer.layers.find((layer) => layer.id === layerId)?.pixels;
+  if (toolName === "clear_region") {
+    const { layerId, x, y, width, height } = args as {
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+    if (![x, y, width, height].every((value) => Number.isInteger(value))) return false;
+    const pixels = pixelsOf(layerId);
+    if (!pixels) return false;
+    const top = Math.max(0, y);
+    const bottom = Math.min(buffer.height, y + height);
+    const left = Math.max(0, x);
+    const right = Math.min(buffer.width, x + width);
+    for (let row = top; row < bottom; row++) {
+      for (let column = left; column < right; column++) {
+        if (pixels[row * buffer.width + column] !== 0) return false;
+      }
+    }
+    return true;
+  }
+  if (toolName === "replace_color") {
+    const { layerId, from } = args as { layerId?: string; from: number };
+    if (!Number.isInteger(from)) return false;
+    const layers =
+      layerId !== undefined
+        ? [pixelsOf(layerId)]
+        : buffer.layers.map((layer) => layer.pixels);
+    return !layers.some((pixels) => pixels?.includes(from));
+  }
+  if (toolName === "set_palette") {
+    // No painted pixel can lose its color when no pixel is painted.
+    return !buffer.layers.some((layer) => layer.pixels.some((value) => value !== 0));
+  }
+  return false;
+}
+
+/**
  * Ask Jev whether the call is supported by, and proportionate to, the user's
- * request. A missing key, an unreachable provider, or an answer shape this
- * client does not understand is an error naming the cause; it never becomes an
- * approval.
+ * request. A missing key, an unreachable provider, an unknown tool, or an
+ * answer shape this client does not understand is an error naming the cause;
+ * it never becomes an approval.
  */
 export async function gateToolCall(
   run: RunBinding,
   toolName: string,
-  description: string,
   args: unknown,
 ): Promise<ToolGateOutcome> {
+  const config = TOOL_GATES[toolName];
+  if (!config) {
+    throw new Error(`${toolName} does not pass the Jev request check.`);
+  }
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   const model = process.env.JEV_MODEL?.trim();
   if (!apiKey || !model) {
@@ -103,7 +195,7 @@ export async function gateToolCall(
     asset: { name: run.assetName, width: run.width, height: run.height },
     frame: { name: frame?.name },
     palette: run.palette,
-    call: { tool: toolName, description, args },
+    call: { tool: toolName, description: config.description, args },
   };
   const response = await fetch(JEV_DECISIONS_URL, {
     method: "POST",
@@ -111,20 +203,25 @@ export async function gateToolCall(
       authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model, state, questions: gateQuestions }),
+    body: JSON.stringify({ model, state, questions: config.questions }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
     throw new Error(`The Jev request check returned ${response.status}.`);
   }
-  const parsed = gateAnswerSchema.safeParse(await response.json());
+  const parsed = answerSchema.safeParse(await response.json());
   if (!parsed.success) {
     throw new Error("Jev returned an answer shape this client does not understand.");
   }
-  return toGateOutcome({
-    supported: parsed.data.answers.supported.noul,
-    proportionate: parsed.data.answers.proportionate.noul,
-  });
+  const checks: Record<string, number> = {};
+  for (const name of Object.keys(config.questions)) {
+    const answer = parsed.data.answers[name];
+    if (!answer) {
+      throw new Error(`Jev did not answer the ${name} check.`);
+    }
+    checks[name] = answer.noul;
+  }
+  return toGateOutcome(checks);
 }
 
 /**
