@@ -46,8 +46,8 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
           <span className="text-pixel-display text-accent">PIXELAITION</span>
         </header>
 
-        <section className="pixel-corners border-2 border-line bg-panel p-6">
-          <h1 className="text-[1.75rem] leading-tight font-medium tracking-[-0.01em] text-ink text-balance">
+        <section className="pixel-window bg-raised p-6">
+          <h1 className="text-pixel-title text-accent">
             {login ? "Sign in" : "Create your studio"}
           </h1>
           <p className="mt-1.5 text-[13px] text-muted">
@@ -104,7 +104,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             {error ? (
               <p
                 role="alert"
-                className="border-2 border-erase/60 bg-erase/10 px-3 py-2 text-[13px] text-erase"
+                className="border-2 border-erase bg-field px-3 py-2 text-[13px] text-erase"
               >
                 {error}
               </p>
