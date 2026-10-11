@@ -690,7 +690,7 @@ export function PalettePanel({
     <Panel
       title="Palette"
       action={
-        <span className="flex items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
           <ProgressCells value={usedColors} total={maxColors} />
           <span className={`text-pixel-mono ${over ? "text-erase" : "text-muted"}`}>
             {usedColors}/{maxColors}

@@ -302,8 +302,9 @@ export function Toggle({
 
 /**
  * Progress and usage read as segmented cells, one cell per unit — never a
- * smooth bar. The row is capped at the 33-colour palette limit so a big total
- * cannot run off the rail; `label` names the row when no text sits beside it.
+ * smooth bar. The row is capped at the 33-colour palette limit and can shrink
+ * with its container so a big total cannot run off the rail; `label` names the
+ * row when no text sits beside it.
  */
 export function ProgressCells({
   value,
@@ -321,12 +322,12 @@ export function ProgressCells({
       role={label ? "img" : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
-      className="flex items-center gap-px"
+      className="flex min-w-0 flex-1 items-center gap-px"
     >
       {Array.from({ length: cells }, (_, index) => (
         <span
           key={index}
-          className={`w-1.5 h-3 ${index < filled ? "bg-accent" : "bg-raised"}`}
+          className={`w-1 h-3 ${index < filled ? "bg-accent" : "bg-raised"}`}
         />
       ))}
     </span>
@@ -378,7 +379,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`flex min-h-0 flex-col gap-2 ${className}`}>
+    <section className={`flex min-h-0 min-w-0 flex-col gap-2 ${className}`}>
       <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
         <h2 className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
           {title}
@@ -448,7 +449,7 @@ export function SelectControl({
       <Select.Trigger
         id={id}
         aria-label={label}
-        className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink transition-colors duration-150 hover:border-line-strong focus:border-accent ${className}`}
+        className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink shadow-[inset_2px_2px_0_0_rgba(244,244,244,0.08),inset_-2px_-2px_0_0_rgba(26,28,44,0.45),2px_2px_0_0_var(--color-navy)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
       >
         <Select.Value placeholder={placeholder} />
         <ChevronDown size={14} strokeWidth={2.5} className="shrink-0 text-muted" />
