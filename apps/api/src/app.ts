@@ -13,7 +13,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { and, asc, desc, eq, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -747,13 +747,19 @@ export function createApp() {
       .limit(10);
     res.json({
       runs: rows.map((row) => {
-        const created = (
-          row.events as Array<{
+        const storedEvents =
+          (row.events as Array<{
             type?: string;
-            data?: { assetId?: unknown; projectId?: unknown; name?: unknown };
-          }> | null
-        )
-          ?.filter((event) => event.type === "asset-created")
+            data?: {
+              assetId?: unknown;
+              projectId?: unknown;
+              name?: unknown;
+              id?: unknown;
+              toolName?: unknown;
+            };
+          }> | null) ?? [];
+        const created = storedEvents
+          .filter((event) => event.type === "asset-created")
           .at(-1);
         const eventAssetId =
           typeof created?.data?.assetId === "string" ? created.data.assetId : undefined;
@@ -776,14 +782,25 @@ export function createApp() {
             ? row.assetProjectId
             : row.boundAssetProjectId;
         const assetName = fromEvent ? eventName : (row.assetName ?? row.boundAssetName);
+        // A waiting run's pending card travels with the row so the home can
+        // restore it without trusting the retained stream to still hold it.
+        const pending =
+          row.status === "waiting"
+            ? (storedEvents.filter((event) => event.type === "interaction").at(-1)
+                ?.data ?? undefined)
+            : undefined;
         return {
           id: row.id,
           status: row.status,
           prompt: row.prompt,
           createdAt: row.createdAt,
+          // A workspace thread keeps assetId NULL; its runs are the ones the
+          // home composer can rejoin, an editor run's home is the editor.
+          scope: row.threadAssetId === null ? "workspace" : "asset",
           ...(assetId ? { assetId } : {}),
           ...(projectId ? { projectId } : {}),
           ...(assetName ? { assetName } : {}),
+          ...(pending !== undefined ? { interaction: pending } : {}),
         };
       }),
     });
@@ -947,15 +964,26 @@ export function createApp() {
       typeof req.query.frameId === "string" && req.query.frameId
         ? req.query.frameId
         : undefined;
-    const [run] = await db
-      .select()
+    // A live run on this asset is either an editor run through its thread, or
+    // a workspace run that bound one of the asset's frames (the same join the
+    // mutation guard uses). Both must be surfaced so the editor locks and can
+    // rejoin; the thread join keeps the ownership check.
+    const [activeRow] = await db
+      .select({ run: generationRuns })
       .from(generationRuns)
-      .where(eq(generationRuns.threadId, thread.id))
+      .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+      .leftJoin(frames, eq(frames.id, generationRuns.frameId))
+      .where(
+        and(
+          eq(generationThreads.userId, res.locals.userId as string),
+          inArray(generationRuns.status, ["queued", "running", "waiting"]),
+          or(eq(generationRuns.threadId, thread.id), eq(frames.assetId, asset.id)),
+        ),
+      )
       .orderBy(desc(generationRuns.createdAt))
       .limit(1);
-    const active =
-      run &&
-      (run.status === "queued" || run.status === "running" || run.status === "waiting");
+    const run = activeRow?.run;
+    const active = run !== undefined;
     type StoredEvent = {
       sequence: number;
       type: string;

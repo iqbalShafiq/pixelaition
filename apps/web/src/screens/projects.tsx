@@ -38,6 +38,9 @@ type RecentRun = {
   projectId?: string;
   createdAt: string;
   assetName?: string;
+  scope?: "asset" | "workspace";
+  /** A waiting run's pending card, restored without the retained stream. */
+  interaction?: PendingInteraction;
 };
 
 export function ProjectsScreen() {
@@ -104,6 +107,9 @@ export function ProjectsScreen() {
   // The ids this session already answered, so a replayed interaction event
   // cannot bring an answered card back before its resolved marker arrives.
   const answeredIdsRef = useRef<Set<string>>(new Set());
+  // One rejoin attempt per mount: a refresh must not strand a workspace run
+  // that is still going or waiting for an answer.
+  const rejoinedRef = useRef(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const running = runId !== null;
@@ -208,6 +214,27 @@ export function ProjectsScreen() {
     },
     [closeStream, log, openStream, queryClient, sourceRef],
   );
+
+  // A home refresh must not strand a workspace run: on the first load of the
+  // run list, rejoin the newest non-terminal workspace run — reattach its
+  // stream and restore its pending card when it is waiting for an answer.
+  useEffect(() => {
+    if (rejoinedRef.current || !recent.data) return;
+    rejoinedRef.current = true;
+    if (runId !== null) return;
+    const candidate = recent.data.runs.find(
+      (item) =>
+        item.scope === "workspace" &&
+        ["queued", "running", "waiting"].includes(item.status),
+    );
+    if (!candidate) return;
+    setRunId(candidate.id);
+    setRunPrompt(candidate.prompt ?? "");
+    setConsoleOpen(true);
+    setPendingInteraction(candidate.interaction ?? null);
+    log(`Rejoined run ${candidate.id.slice(0, 8)}`);
+    listen(candidate.id);
+  }, [recent.data, runId, listen, log]);
 
   const list = projects.data?.projects ?? [];
   const projectId = list.some((project) => project.id === pickedProjectId)
@@ -517,9 +544,14 @@ export function ProjectsScreen() {
   );
 }
 
-/** A finished run reads in the accent, a dead one in the erase colour. */
+/**
+ * A finished run reads in the accent, a dead one in the erase colour, and a
+ * waiting one in the accent too — it needs the user's answer to go on.
+ */
 function runStatusTone(status: string): string {
-  if (status === "succeeded" || status === "completed") return "text-accent";
+  if (status === "succeeded" || status === "completed" || status === "waiting") {
+    return "text-accent";
+  }
   if (status === "failed" || status === "cancelled") return "text-erase";
   return "text-muted";
 }
