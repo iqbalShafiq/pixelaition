@@ -183,6 +183,11 @@ describe.skipIf(!db)("API routes", () => {
     const otherProjectId = randomUUID();
     const otherThreadId = randomUUID();
     const otherRunId = randomUUID();
+    // The event names the asset's own project, which is not the thread's home:
+    // the endpoint must pair the asset with the project it was created in.
+    const eventProjectId = randomUUID();
+    const unnamedAssetId = randomUUID();
+    const unnamedRunId = randomUUID();
     await live.insert(user).values({
       id: otherUserId,
       name: "Other User",
@@ -210,7 +215,7 @@ describe.skipIf(!db)("API routes", () => {
           {
             sequence: 2,
             type: "asset-created",
-            data: { assetId, projectId, name: "slime-biru" },
+            data: { assetId, projectId: eventProjectId, name: "slime-biru" },
           },
         ],
       },
@@ -255,6 +260,25 @@ describe.skipIf(!db)("API routes", () => {
       prompt: "use an existing asset",
       frameId: boundFrame.id,
     });
+    // An event that names its asset but not the asset's name: the id must not
+    // be paired with a name read from the database for another asset.
+    await live.insert(generationRuns).values({
+      id: unnamedRunId,
+      threadId,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      prompt: "create an unnamed asset",
+      frameId: boundFrame.id,
+      events: [
+        {
+          sequence: 1,
+          type: "asset-created",
+          data: { assetId: unnamedAssetId, projectId: eventProjectId },
+        },
+      ],
+    });
     try {
       const res = await request(app)
         .get("/api/runs/recent")
@@ -268,7 +292,7 @@ describe.skipIf(!db)("API routes", () => {
         status: "succeeded",
         prompt: "buat slime biru 32px",
         assetId,
-        projectId,
+        projectId: eventProjectId,
         assetName: "slime-biru",
       });
       expect(typeof row?.createdAt).toBe("string");
@@ -281,6 +305,15 @@ describe.skipIf(!db)("API routes", () => {
         projectId,
         assetName: "bound-slime",
       });
+      const unnamedRow = (res.body.runs as Array<Record<string, unknown>>).find(
+        (item) => item.id === unnamedRunId,
+      );
+      expect(unnamedRow).toMatchObject({
+        id: unnamedRunId,
+        assetId: unnamedAssetId,
+        projectId: eventProjectId,
+      });
+      expect(unnamedRow?.assetName).toBeUndefined();
       expect(
         (res.body.runs as Array<{ id: string }>).some((item) => item.id === otherRunId),
       ).toBe(false);

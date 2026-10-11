@@ -716,8 +716,10 @@ export function createApp() {
   // The home composer's run list. An editor run's asset hangs off its thread;
   // a workspace run's created asset exists only in its stored events, so the
   // event is the source of the link target and the asset name when present.
-  // The retained-event bound can evict an early `asset-created` on a long run,
-  // so the run's pinned frame (set when a workspace run binds an asset) is the
+  // An event's asset id is paired only with the event's own project id and
+  // name — never with a thread-derived project or another asset's name. The
+  // retained-event bound can evict an early `asset-created` on a long run, so
+  // the run's pinned frame (set when a workspace run binds an asset) is the
   // fallback: it names the asset the run actually touched.
   app.get("/api/runs/recent", async (_req, res) => {
     const bound = alias(assets, "bound_assets");
@@ -729,7 +731,6 @@ export function createApp() {
         createdAt: generationRuns.createdAt,
         events: generationRuns.events,
         threadAssetId: generationThreads.assetId,
-        threadProjectId: generationThreads.projectId,
         assetName: assets.name,
         assetProjectId: assets.projectId,
         boundAssetId: bound.id,
@@ -749,23 +750,32 @@ export function createApp() {
         const created = (
           row.events as Array<{
             type?: string;
-            data?: { assetId?: unknown; name?: unknown };
+            data?: { assetId?: unknown; projectId?: unknown; name?: unknown };
           }> | null
         )
           ?.filter((event) => event.type === "asset-created")
           .at(-1);
         const eventAssetId =
           typeof created?.data?.assetId === "string" ? created.data.assetId : undefined;
+        const eventProjectId =
+          typeof created?.data?.projectId === "string"
+            ? created.data.projectId
+            : undefined;
         const eventName =
           typeof created?.data?.name === "string" ? created.data.name : undefined;
-        const assetId =
-          eventAssetId ?? row.threadAssetId ?? row.boundAssetId ?? undefined;
-        const projectId = eventAssetId
-          ? row.threadProjectId
+        // The event is authoritative only when it names the asset's project
+        // too: an id from the event must never be paired with a thread-derived
+        // project or a database name that may belong to a different asset.
+        const fromEvent = eventAssetId !== undefined && eventProjectId !== undefined;
+        const assetId = fromEvent
+          ? eventAssetId
+          : (row.threadAssetId ?? row.boundAssetId ?? undefined);
+        const projectId = fromEvent
+          ? eventProjectId
           : row.threadAssetId
             ? row.assetProjectId
             : row.boundAssetProjectId;
-        const assetName = eventName ?? row.assetName ?? row.boundAssetName;
+        const assetName = fromEvent ? eventName : (row.assetName ?? row.boundAssetName);
         return {
           id: row.id,
           status: row.status,
