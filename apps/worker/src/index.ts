@@ -5,6 +5,7 @@ import { Agent } from "@anvia/core";
 import {
   parseAgentInteractionResponse,
   type AgentInteractionRequest,
+  type AgentInteractionResponse,
   type AgentQuestionPrompt,
 } from "@anvia/core/agent/interactions";
 import { DurableRuntime } from "@anvia/durable";
@@ -69,6 +70,9 @@ const listeners = new Map<string, Set<(event: PublicEvent) => void>>();
 // own map until the run is forgotten; the row's stored events carry them, so a
 // refresh or a worker restart can restore the card.
 const interactions = new Map<string, Map<string, StoredInteraction>>();
+// An answered run leaves "waiting" exactly once per suspension; cleared again
+// when the run suspends on a new interaction.
+const leftWaiting = new Set<string>();
 // Stroke events carry the whole frame base64-encoded, so an unbounded list would
 // hold megabytes per run for the life of the process.
 const MAX_RETAINED_EVENTS = 200;
@@ -89,6 +93,7 @@ function forgetRun(runId: string) {
   events.delete(runId);
   listeners.delete(runId);
   interactions.delete(runId);
+  leftWaiting.delete(runId);
 }
 
 const db = createDatabase();
@@ -494,7 +499,9 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
   if (!authorized(req)) return res.status(401).end();
   const body = z
     .object({ interactionId: z.string().min(1), response: z.unknown() })
-    .parse(req.body);
+    .safeParse(req.body);
+  if (!body.success)
+    return res.status(400).json({ message: "The request is missing a required field." });
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
   const [row] = await db
@@ -503,12 +510,14 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
     .where(eq(generationRuns.id, req.params.id ?? ""));
   if (!row?.durableRunId)
     return res.status(404).json({ message: "That run is not waiting." });
+  let response: AgentInteractionResponse;
   try {
-    runtime.respond(
-      row.durableRunId,
-      body.interactionId,
-      parseAgentInteractionResponse(body.response),
-    );
+    response = parseAgentInteractionResponse(body.data.response);
+  } catch {
+    return res.status(400).json({ message: "The response is malformed." });
+  }
+  try {
+    runtime.respond(row.durableRunId, body.data.interactionId, response);
   } catch (reason) {
     // The runtime refuses a response that does not match the pending
     // interaction: a stale card must re-read the run, never retry blindly.
@@ -642,7 +651,11 @@ async function follow(
       const batch = runtime.events(durableId, cursor);
       for (const event of batch) {
         cursor = event.sequence;
-        publish(publicId, event.type, event.data);
+        // Runtime events are raw: a suspension's status event carries the whole
+        // AgentInteractionRequest, call ids included. Sanitize before anything
+        // leaves the worker; the SSE path forwards the published payload
+        // byte-for-byte.
+        publish(publicId, event.type, sanitizeEvent(event.type, event.data));
       }
       const snapshot = runtime.snapshot(durableId);
       // A suspended run is still this run: publish the pending card once per
@@ -666,6 +679,7 @@ async function follow(
             sequence: published.sequence,
             data: published.data as SanitizedInteraction,
           });
+          leftWaiting.delete(publicId);
           await db
             .update(generationRuns)
             .set({
@@ -674,6 +688,21 @@ async function follow(
             })
             .where(eq(generationRuns.id, publicId));
         }
+      }
+      // An answered run must leave "waiting" or active-run would hand the
+      // console an answered card after a remount. The interaction stays in the
+      // persisted events; the pending derivation is status-gated. Written once
+      // per suspension.
+      if (
+        (snapshot.run.status === "running" || snapshot.run.status === "queued") &&
+        interactionsFor(publicId).length > 0 &&
+        !leftWaiting.has(publicId)
+      ) {
+        leftWaiting.add(publicId);
+        await db
+          .update(generationRuns)
+          .set({ status: "running" })
+          .where(eq(generationRuns.id, publicId));
       }
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
