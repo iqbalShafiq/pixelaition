@@ -7,11 +7,32 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
+import { z } from "zod";
 
 export type Stroke = {
   label: string;
   points: Array<{ x: number; y: number; color: number }>;
 };
+
+/** One frame the plan proposes; frameId names an existing frame, absent means add_frame will create it. */
+export const planFrameSchema = z.object({
+  frameId: z.string().min(1).optional(),
+  name: z.string().min(1).max(40),
+  description: z.string().min(1).max(200),
+});
+
+export type PlanFrame = z.infer<typeof planFrameSchema>;
+
+/**
+ * The editable slice of a plan the user may stage before answering the
+ * approval card. The stage endpoint validates it on write and present_plan
+ * validates it again on read, because jsonb carries no shape of its own.
+ */
+export const stagedOverrideSchema = z.object({
+  frames: z.array(planFrameSchema).min(1).max(24),
+});
+
+export type StagedPlanOverride = z.infer<typeof stagedOverrideSchema>;
 
 /** One frame of the asset, held in memory for the run's lifetime. */
 export type RunFrame = {
@@ -49,6 +70,8 @@ export type RunBinding = {
   height: number;
   style: StyleGuide;
   approvedScope: Set<string>;
+  /** A user-edited plan staged for the next present_plan call; consumed once. */
+  stagedOverride?: StagedPlanOverride;
   strokes: Stroke[];
   issues: CritiqueIssue[];
   plan?: string[];

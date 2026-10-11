@@ -81,7 +81,24 @@ function boundRun(
 
 type Tool = {
   call: (args: unknown, context: { operationId: string }) => Promise<unknown>;
+  requiresApproval?: unknown;
 };
+
+/** Run a tool's approval predicate against the live binding for `run-1`. */
+function approval(name: string, args: { frameId?: string }, runId = "run-1"): boolean {
+  const requirement = tool(name).requiresApproval;
+  if (typeof requirement !== "function") {
+    throw new Error(`${name} does not gate approval dynamically.`);
+  }
+  return (requirement as (args: unknown, context: unknown) => boolean)(args, {
+    toolName: name,
+    args,
+    rawArgs: JSON.stringify(args),
+    toolCallId: "tool-call-1",
+    internalCallId: "internal-call-1",
+    run: { agentId: "pixel-draw:test:low", runId },
+  });
+}
 
 /**
  * An 8×8 run for the frame tools. createBuffer refuses canvases under 8, so
@@ -660,6 +677,134 @@ describe("plan", () => {
     expect(result.steps).toEqual(steps);
     expect(getRun("run-1")?.plan).toEqual(steps);
     releaseRun("run-1");
+  });
+});
+
+describe("present_plan", () => {
+  const frames = [
+    { frameId: "frame-1", name: "idle", description: "rest pose" },
+    { frameId: "frame-2", name: "hop", description: "airborne" },
+    { name: "land", description: "touch down" },
+  ];
+
+  it("always asks for approval", () => {
+    expect(tool("present_plan").requiresApproval).toBe(true);
+  });
+
+  it("scopes the plan's existing frames plus the origin frame", async () => {
+    boundRun();
+    const result = (await tool("present_plan").call(
+      { summary: "hop cycle", frames },
+      { operationId: "run-1" },
+    )) as { approved: boolean; plan: unknown; scope: string[] };
+    expect(result.approved).toBe(true);
+    expect(result.plan).toEqual({ summary: "hop cycle", frames });
+    expect(result.scope).toEqual(["frame-1", "frame-2"]);
+    expect(getRun("run-1")?.approvedScope).toEqual(new Set(["frame-1", "frame-2"]));
+    releaseRun("run-1");
+  });
+
+  it("drops a planned frame id the asset does not have from the scope", async () => {
+    boundRun();
+    const result = (await tool("present_plan").call(
+      {
+        summary: "hop cycle",
+        frames: [
+          ...frames,
+          { frameId: "frame-9", name: "ghost", description: "not in the asset" },
+        ],
+      },
+      { operationId: "run-1" },
+    )) as { scope: string[] };
+    expect(result.scope).toEqual(["frame-1", "frame-2"]);
+    releaseRun("run-1");
+  });
+
+  it("consumes a staged override and scopes exactly its frames", async () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.stagedOverride = {
+      frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
+    };
+    const result = (await tool("present_plan").call(
+      { summary: "hop cycle", frames },
+      { operationId: "run-1" },
+    )) as { plan: { summary: string; frames: unknown[] }; scope: string[] };
+    expect(result.plan).toEqual({
+      summary: "hop cycle",
+      frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
+    });
+    expect(result.scope).toEqual(["frame-1", "frame-2"]);
+    expect(run.stagedOverride).toBeUndefined();
+    releaseRun("run-1");
+  });
+
+  it("refuses a malformed staged override instead of guessing", async () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.stagedOverride = { frames: [{ name: "", description: "" }] } as never;
+    await expect(
+      tool("present_plan").call(
+        { summary: "hop cycle", frames },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow(/override/i);
+    releaseRun("run-1");
+  });
+});
+
+describe("drawing approval", () => {
+  it("gates every pixel-mutating tool on the live approved scope", () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.approvedScope = new Set(["frame-2"]);
+    const stroke = {
+      frameId: "frame-2",
+      layerId: "layer-a",
+      label: "dot",
+      points: [{ x: 1, y: 1, color: 2 }],
+    };
+    expect(approval("paint_stroke", stroke)).toBe(false);
+    expect(approval("paint_stroke", { ...stroke, frameId: "frame-3" })).toBe(true);
+    expect(approval("fill_rect", { frameId: "frame-2" })).toBe(false);
+    expect(approval("fill_rect", { frameId: "frame-3" })).toBe(true);
+    expect(approval("set_palette", { frameId: "frame-2" })).toBe(false);
+    expect(approval("mirror_frame", { frameId: "frame-3" })).toBe(true);
+    releaseRun("run-1");
+  });
+
+  it("gates a call without a frame id on the current frame", () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.approvedScope = new Set(["frame-2"]);
+    expect(approval("paint_stroke", {})).toBe(true);
+    run.currentFrameId = "frame-2";
+    expect(approval("paint_stroke", {})).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("reads the binding live, so a frame approved later stops asking", () => {
+    boundRun();
+    const stroke = {
+      frameId: "frame-2",
+      layerId: "layer-a",
+      label: "dot",
+      points: [{ x: 1, y: 1, color: 2 }],
+    };
+    expect(approval("paint_stroke", stroke)).toBe(true);
+    getRun("run-1")!.approvedScope.add("frame-2");
+    expect(approval("paint_stroke", stroke)).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("asks for approval when no binding is live", () => {
+    boundRun();
+    expect(approval("paint_stroke", { frameId: "frame-1" }, "run-9")).toBe(true);
+    releaseRun("run-1");
+  });
+
+  it("always asks before deleting a frame", () => {
+    expect(tool("delete_frame").requiresApproval).toBe(true);
   });
 });
 

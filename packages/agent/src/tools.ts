@@ -1,4 +1,4 @@
-import { createTool } from "@anvia/core";
+import { createTool, type ToolApprovalContext } from "@anvia/core";
 import { ToolOutput } from "@anvia/core/tool";
 import { frameToPng, type ExportScale } from "@pixelaition/export";
 import {
@@ -20,10 +20,13 @@ import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
   frameBuffer,
+  getRun,
   paintStroke,
+  planFrameSchema,
   refreshCritique,
   replaceFrameBuffer,
   requireRun,
+  stagedOverrideSchema,
   type RunBinding,
   type RunFrame,
 } from "./runs.js";
@@ -184,6 +187,21 @@ function changeFrame(id: string, frame: RunFrame) {
   return { id, name: frame.name, index: frame.index, buffer: frame.buffer };
 }
 
+/**
+ * Approval is per frame: a drawing call on a frame inside the run's approved
+ * scope runs without a card, and every other frame asks first. The approval
+ * context names the durable run, which is the binding's key; without a live
+ * binding the answer fails closed, because an unknown scope must not write.
+ */
+function frameNeedsApproval(
+  args: { frameId?: string },
+  context: ToolApprovalContext<{ frameId?: string }>,
+): boolean {
+  const run = getRun(context.run.runId);
+  if (!run) return true;
+  return !run.approvedScope.has(args.frameId ?? run.currentFrameId);
+}
+
 export function createPixelTools(options: { vision?: boolean } = {}) {
   const readProject = createTool({
     name: "read_project",
@@ -291,6 +309,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       label: z.string().min(1).max(40),
       points: z.array(point).min(1).max(48),
     }),
+    requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       const stroke = paintStroke(
@@ -317,6 +336,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       height: z.number().int().positive(),
       color: z.number().int().nonnegative(),
     }),
+    requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       const { frameId, ...rect } = input;
@@ -333,6 +353,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       frameId: z.string().optional(),
       palette: z.array(z.string()).min(2).max(33),
     }),
+    requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       const edited = editFrame(run, input.frameId, {
@@ -356,6 +377,42 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const run = requireRun(context.operationId);
       run.plan = [...input.steps];
       return { steps: input.steps };
+    },
+  });
+
+  const presentPlan = createTool({
+    name: "present_plan",
+    description:
+      "Propose the frames for the job and wait for the user to approve or edit the list. The plan only runs once approved, and the approved frames become the run's editable scope; frames added later with add_frame join that scope. If the user edited the list, the executed plan reflects the edited version.",
+    inputSchema: z.object({
+      summary: z.string().min(1).max(300),
+      frames: z.array(planFrameSchema).min(1).max(24),
+    }),
+    requiresApproval: true,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      // Consume-once: a staged override is the user's edit of this proposal,
+      // never a standing policy for later calls.
+      const staged = run.stagedOverride;
+      run.stagedOverride = undefined;
+      let frames = input.frames;
+      if (staged !== undefined) {
+        const parsed = stagedOverrideSchema.safeParse(staged);
+        if (!parsed.success) throw new Error("The staged plan override is malformed.");
+        frames = parsed.data.frames;
+      }
+      const scope = new Set<string>([run.originFrameId]);
+      for (const frame of frames) {
+        if (frame.frameId !== undefined && run.frames.has(frame.frameId)) {
+          scope.add(frame.frameId);
+        }
+      }
+      run.approvedScope = scope;
+      return {
+        approved: true,
+        plan: { summary: input.summary, frames },
+        scope: [...scope],
+      };
     },
   });
 
@@ -404,6 +461,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     description:
       "Flip every layer of the current frame horizontally. Use this for a left/right variant before painting differences.",
     inputSchema: z.object({ frameId: z.string().optional() }),
+    requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       editFrame(run, input.frameId, { type: "mirror" });
@@ -519,6 +577,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     description:
       "Delete a frame. Deleting the last frame leaves a fresh blank frame named frame-1, so the asset always keeps one frame.",
     inputSchema: z.object({ frameId: z.string().optional() }),
+    requiresApproval: true,
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
       const { id } = resolveFrame(run, input.frameId);
@@ -610,6 +669,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     fillRect,
     setPalette,
     plan,
+    presentPlan,
     critique,
     checkAnimationTool,
     mirror,

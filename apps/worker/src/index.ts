@@ -25,6 +25,7 @@ import {
   pixelInstructions,
   releaseRun,
   selectRunTarget,
+  stagedOverrideSchema,
   type ModelSpec,
   type RunTarget,
 } from "@pixelaition/agent";
@@ -234,6 +235,7 @@ function toolRecovery(vision: boolean) {
     critique_frame: "safe" as const,
     check_animation: "safe" as const,
     plan: "safe" as const,
+    present_plan: "safe" as const,
     // Only vision agents register preview_frame, and the durable runtime
     // rejects a recovery entry for a tool the agent does not have.
     ...(vision ? { preview_frame: "safe" as const } : {}),
@@ -510,6 +512,15 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
     .where(eq(generationRuns.id, req.params.id ?? ""));
   if (!row?.durableRunId)
     return res.status(404).json({ message: "That run is not waiting." });
+  // The API stages a user-edited plan before it answers the card. Hydrate it
+  // into the live binding now; present_plan consumes it when it executes.
+  const binding = getRun(row.durableRunId);
+  if (binding && row.override !== null && row.override !== undefined) {
+    const parsed = stagedOverrideSchema.safeParse(row.override);
+    if (!parsed.success)
+      return res.status(422).json({ message: "The staged plan override is malformed." });
+    binding.stagedOverride = parsed.data;
+  }
   let response: AgentInteractionResponse;
   try {
     response = parseAgentInteractionResponse(body.data.response);
@@ -527,6 +538,14 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
           ? reason.message.slice(0, 200)
           : "That interaction is not pending.",
     });
+  }
+  // Consume-once from the row: a later card must never re-hydrate a plan the
+  // user already answered. The binding's copy lives until present_plan reads it.
+  if (row.override !== null && row.override !== undefined) {
+    await db
+      .update(generationRuns)
+      .set({ override: null })
+      .where(eq(generationRuns.id, row.id));
   }
   res.status(204).end();
 });

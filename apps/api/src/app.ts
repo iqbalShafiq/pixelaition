@@ -22,6 +22,7 @@ import {
   DecisionNotConfiguredError,
   LangfuseTelemetry,
   parseModelSpecRow,
+  stagedOverrideSchema,
   traceIdFor,
   type DrawDecision,
   type ModelSpec,
@@ -678,6 +679,36 @@ export function createApp() {
         detail?.message ?? "The drawing worker is not available.",
       );
     }
+    res.status(204).end();
+  });
+
+  app.post("/api/runs/:id/stage-override", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
+    // The user's edit of a pending plan; the worker hydrates it into the live
+    // binding when it answers the card, and present_plan consumes it there.
+    const body = stagedOverrideSchema.safeParse(req.body);
+    if (!body.success) {
+      return fail(
+        res,
+        422,
+        "INVALID_OVERRIDE",
+        "The plan override must list 1-24 frames with a name and a description.",
+      );
+    }
+    const [row] = await db
+      .select()
+      .from(generationRuns)
+      .where(eq(generationRuns.id, runId));
+    if (!row || row.status !== "waiting") {
+      return fail(res, 409, "NOT_WAITING", "That run is not waiting for an answer.");
+    }
+    await db
+      .update(generationRuns)
+      .set({ override: body.data })
+      .where(eq(generationRuns.id, runId));
     res.status(204).end();
   });
 

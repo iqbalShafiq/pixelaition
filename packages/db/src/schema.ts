@@ -159,6 +159,7 @@ export const generationRuns = pgTable("generation_runs", {
   answer: text("answer"),
   errorCode: text("error_code"),
   events: jsonb("events"),
+  override: jsonb("override"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
