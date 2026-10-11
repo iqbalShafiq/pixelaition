@@ -1,4 +1,6 @@
 import { createTool } from "@anvia/core";
+import { ToolOutput } from "@anvia/core/tool";
+import { frameToPng, type ExportScale } from "@pixelaition/export";
 import { applyCommand, composite, type FrameBuffer } from "@pixelaition/pixel";
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
@@ -70,7 +72,44 @@ function colorCounts(
     });
 }
 
-export function createPixelTools() {
+/** Image payloads over this size are refused rather than silently downscaled. */
+const MAX_PREVIEW_BYTES = 1024 * 1024;
+
+/** Contact sheet: every frame's composite, side by side, one synthetic buffer. */
+function composeStrip(buffers: FrameBuffer[]): FrameBuffer {
+  const [first, ...rest] = buffers;
+  if (!first) throw new Error("There are no frames to preview.");
+  for (const buffer of rest) {
+    if (
+      buffer.palette.length !== first.palette.length ||
+      buffer.palette.some((hex, index) => hex !== first.palette[index])
+    ) {
+      throw new Error("Frames with different palettes cannot share one preview strip.");
+    }
+  }
+  const width = buffers.reduce((sum, buffer) => sum + buffer.width, 0);
+  const height = Math.max(...buffers.map((buffer) => buffer.height));
+  const pixels = new Uint8Array(width * height);
+  let offsetX = 0;
+  for (const buffer of buffers) {
+    const composited = composite(buffer);
+    for (let y = 0; y < buffer.height; y += 1) {
+      pixels.set(
+        composited.subarray(y * buffer.width, (y + 1) * buffer.width),
+        y * width + offsetX,
+      );
+    }
+    offsetX += buffer.width;
+  }
+  return {
+    width,
+    height,
+    palette: [...first.palette],
+    layers: [{ id: "strip", name: "strip", visible: true, pixels }],
+  };
+}
+
+export function createPixelTools(options: { vision?: boolean } = {}) {
   const readProject = createTool({
     name: "read_project",
     description:
@@ -249,6 +288,43 @@ export function createPixelTools() {
     },
   });
 
+  // Only registered for models with verified image input; every other model
+  // must read the frame as RLE data instead of pretending to see it.
+  const preview = createTool({
+    name: "preview_frame",
+    description:
+      "Render the frame (or every frame as one strip) to a PNG you can see. Use it to verify your work before finishing.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      mode: z.enum(["frame", "strip"]).default("frame"),
+      scale: z.number().int().min(1).max(10).default(4),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const frame = resolveFrame(run, input.frameId);
+      const buffer = input.mode === "strip" ? composeStrip([run.buffer]) : run.buffer;
+      // rasterize accepts any positive integer scale; the schema bounds it to 1..10.
+      const png = frameToPng(buffer, input.scale as ExportScale);
+      if (png.length > MAX_PREVIEW_BYTES) {
+        throw new Error(
+          `The preview is ${png.length} bytes, over the ${MAX_PREVIEW_BYTES}-byte image limit. Lower the scale.`,
+        );
+      }
+      return ToolOutput.content([
+        {
+          type: "text",
+          text: `${frame.name} — ${buffer.width}×${buffer.height} pixels at ${input.scale}× (${png.length} bytes PNG).`,
+        },
+        {
+          type: "file",
+          data: { type: "data", data: Buffer.from(png).toString("base64") },
+          mediaType: "image/png",
+          filename: "preview.png",
+        },
+      ]);
+    },
+  });
+
   return [
     readProject,
     readFrame,
@@ -258,6 +334,7 @@ export function createPixelTools() {
     setPalette,
     critique,
     mirror,
+    ...(options.vision === true ? [preview] : []),
   ];
 }
 

@@ -1,3 +1,4 @@
+import { normalizeToolResultOutput } from "@anvia/core/tool";
 import type { FrameBuffer } from "@pixelaition/pixel";
 import { describe, expect, it } from "vitest";
 import { bindRun, releaseRun } from "./runs.js";
@@ -163,6 +164,68 @@ describe("read tools", () => {
         { operationId: "run-1" },
       ),
     ).rejects.toThrow(/outside/);
+    releaseRun("run-1");
+  });
+});
+
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+describe("preview_frame", () => {
+  it("is registered only for models with verified vision", () => {
+    const names = (tools: ReturnType<typeof createPixelTools>) =>
+      tools.map((tool) => tool.name);
+    expect(names(createPixelTools())).not.toContain("preview_frame");
+    expect(names(createPixelTools({ vision: false }))).not.toContain("preview_frame");
+    expect(names(createPixelTools({ vision: true }))).toContain("preview_frame");
+  });
+
+  it("returns a text part and a PNG image part", async () => {
+    boundRun();
+    const found = createPixelTools({ vision: true }).find(
+      (item) => item.name === "preview_frame",
+    );
+    if (!found) throw new Error("missing tool preview_frame");
+    const output = (await (
+      found as unknown as {
+        call: (args: unknown, context: { operationId: string }) => Promise<unknown>;
+      }
+    ).call({ scale: 2 }, { operationId: "run-1" })) as {
+      content: Array<{
+        type: string;
+        text?: string;
+        mediaType?: string;
+        data?: { type: string; data: string };
+      }>;
+    };
+    expect(output.content[0]?.type).toBe("text");
+    expect(output.content[0]?.text).toContain("4×4");
+    expect(output.content[0]?.text).toContain("at 2×");
+    const image = output.content[1];
+    expect(image?.type).toBe("file");
+    expect(image?.mediaType).toBe("image/png");
+    expect(image?.data?.type).toBe("data");
+    const bytes = Buffer.from(image?.data?.data ?? "", "base64");
+    expect(bytes.subarray(0, 8).equals(pngSignature)).toBe(true);
+    // The Anvia message schema must accept the rich output, or the run fails
+    // at tool-result serialization instead of the model seeing the image.
+    expect(normalizeToolResultOutput(output).type).toBe("content");
+    releaseRun("run-1");
+  });
+
+  it("renders the strip mode through the same PNG path", async () => {
+    boundRun();
+    const found = createPixelTools({ vision: true }).find(
+      (item) => item.name === "preview_frame",
+    );
+    if (!found) throw new Error("missing tool preview_frame");
+    const output = (await (
+      found as unknown as {
+        call: (args: unknown, context: { operationId: string }) => Promise<unknown>;
+      }
+    ).call({ mode: "strip", scale: 1 }, { operationId: "run-1" })) as {
+      content: Array<{ type: string; text?: string }>;
+    };
+    expect(output.content[0]?.text).toContain("4×4");
     releaseRun("run-1");
   });
 });

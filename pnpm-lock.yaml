@@ -270,6 +270,9 @@ importers:
       '@anvia/openai':
         specifier: ^1.3.0
         version: 1.3.0(@anvia/core@1.12.0(zod@4.6.5))(zod@4.6.5)
+      '@pixelaition/export':
+        specifier: workspace:*
+        version: link:../export
       '@pixelaition/pixel':
         specifier: workspace:*
         version: link:../pixel

@@ -132,7 +132,7 @@ const agents = completions.flatMap(({ spec, model }) =>
       id: `${agentPrefix}:${spec.id}:${effort}`,
       model,
       instructions: pixelInstructions,
-      tools: createPixelTools(),
+      tools: createPixelTools({ vision: spec.vision }),
       maxTurns: 24,
       controls: { reasoningEffort: effort },
       ...(observer
@@ -199,6 +199,7 @@ function toolRecovery() {
     read_frame: "safe" as const,
     read_region: "safe" as const,
     critique_frame: "safe" as const,
+    preview_frame: "safe" as const,
     paint_stroke: "idempotent" as const,
     fill_rect: "idempotent" as const,
     set_palette: "idempotent" as const,
@@ -225,7 +226,11 @@ app.get("/health", (_req, res) => {
 app.get("/internal/agents", (req, res) => {
   if (!authorized(req)) return res.status(401).end();
   res.json({
-    models: specs.map((spec) => ({ id: spec.id, efforts: spec.efforts })),
+    models: specs.map((spec) => ({
+      id: spec.id,
+      efforts: spec.efforts,
+      vision: spec.vision,
+    })),
     agents: agents.map((entry) => entry.id),
   });
 });

@@ -169,6 +169,7 @@ export const models = pgTable("models", {
   efforts: jsonb("efforts").notNull(),
   position: integer("position").notNull(),
   enabled: boolean("enabled").notNull().default(true),
+  vision: boolean("vision").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

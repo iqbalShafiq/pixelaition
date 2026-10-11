@@ -8,32 +8,50 @@ import {
 
 describe("model specs", () => {
   it("validates database rows instead of guessing", () => {
-    expect(parseModelSpecRow({ id: "m", api: "chat", efforts: ["low", "high"] })).toEqual(
-      {
+    expect(
+      parseModelSpecRow({
         id: "m",
         api: "chat",
         efforts: ["low", "high"],
-      },
-    );
-    expect(parseModelSpecRow({ id: "m", api: "responses", efforts: ["high"] }).api).toBe(
-      "responses",
-    );
+        vision: false,
+      }),
+    ).toEqual({
+      id: "m",
+      api: "chat",
+      efforts: ["low", "high"],
+      vision: false,
+    });
+    expect(
+      parseModelSpecRow({ id: "m", api: "responses", efforts: ["high"], vision: true })
+        .vision,
+    ).toBe(true);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "respones", efforts: ["low"] }),
+      parseModelSpecRow({ id: "bad", api: "respones", efforts: ["low"], vision: false }),
     ).toThrow(/bad/);
-    expect(() => parseModelSpecRow({ id: "bad", api: "", efforts: ["low"] })).toThrow(
-      /bad/,
-    );
-    expect(() => parseModelSpecRow({ id: "bad", api: "chat", efforts: [] })).toThrow(
-      /bad/,
-    );
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low", 7] }),
+      parseModelSpecRow({ id: "bad", api: "", efforts: ["low"], vision: false }),
     ).toThrow(/bad/);
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "chat", efforts: [], vision: false }),
+    ).toThrow(/bad/);
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low", 7], vision: false }),
+    ).toThrow(/bad/);
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low"], vision: "yes" }),
+    ).toThrow(/bad/);
+    expect(() =>
+      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low"], vision: true }),
+    ).toThrow(/vision/);
   });
   it("selects only exact model and effort pairs", () => {
     const specs: ModelSpec[] = [
-      { id: "deepseek-v4.1-flash", api: "chat", efforts: ["low", "high", "max"] },
+      {
+        id: "deepseek-v4.1-flash",
+        api: "chat",
+        efforts: ["low", "high", "max"],
+        vision: false,
+      },
     ];
     expect(selectRunTarget(specs, "deepseek-v4.1-flash", "max")).toEqual({
       modelId: "deepseek-v4.1-flash",

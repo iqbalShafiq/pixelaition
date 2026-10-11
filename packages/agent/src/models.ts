@@ -1,4 +1,9 @@
-export type ModelSpec = { id: string; api: "chat" | "responses"; efforts: string[] };
+export type ModelSpec = {
+  id: string;
+  api: "chat" | "responses";
+  efforts: string[];
+  vision: boolean;
+};
 export type RunTarget = { modelId: string; effort: string };
 
 /**
@@ -9,6 +14,7 @@ export function parseModelSpecRow(row: {
   id: string;
   api: unknown;
   efforts: unknown;
+  vision: unknown;
 }): ModelSpec {
   if (row.api !== "chat" && row.api !== "responses") {
     throw new Error(`Model ${row.id} declares an invalid api: ${String(row.api)}`);
@@ -22,7 +28,23 @@ export function parseModelSpecRow(row: {
       `Model ${row.id} declares invalid efforts: ${JSON.stringify(row.efforts)}`,
     );
   }
-  return { id: row.id, api: row.api, efforts: [...(row.efforts as string[])] };
+  if (typeof row.vision !== "boolean") {
+    throw new Error(`Model ${row.id} declares invalid vision: ${String(row.vision)}`);
+  }
+  // The pinned OpenAI chat adapter flattens tool-result file parts to
+  // `[file:image/png]` text, so a chat model cannot actually see a preview.
+  // Only the responses adapter maps them to provider image input.
+  if (row.vision === true && row.api !== "responses") {
+    throw new Error(
+      `Model ${row.id} declares vision with api ${row.api}, which cannot deliver tool-result images.`,
+    );
+  }
+  return {
+    id: row.id,
+    api: row.api,
+    efforts: [...(row.efforts as string[])],
+    vision: row.vision,
+  };
 }
 
 /** Exact match only: an unknown pair returns undefined and the caller fails loud. */
