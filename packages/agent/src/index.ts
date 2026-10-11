@@ -5,17 +5,24 @@ export { openCodeGoHeaders, parseModelSpecRow, selectRunTarget } from "./models.
 export type { ModelSpec, RunTarget } from "./models.js";
 export {
   bindRun,
+  bindRunAsset,
   frameBuffer,
   getRun,
   planFrameSchema,
   releaseRun,
+  requireAsset,
   requireRun,
   runIdFromOperation,
   stagedOverrideSchema,
 } from "./runs.js";
 export type {
+  AssetSummary,
+  BoundRunBinding,
+  CreateAssetInput,
   FrameChange,
   PlanFrame,
+  ProjectSummary,
+  RunAsset,
   RunBinding,
   RunFrame,
   StagedPlanOverride,

@@ -21,14 +21,18 @@ import {
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
+  bindRunAsset,
   frameBuffer,
   getRun,
   paintStroke,
   planFrameSchema,
   refreshCritique,
   replaceFrameBuffer,
+  requireAsset,
   requireRun,
   stagedOverrideSchema,
+  type BoundRunBinding,
+  type RunAsset,
   type RunBinding,
   type RunFrame,
   type Stroke,
@@ -49,7 +53,7 @@ const readView = z.enum(["composite", "layer"]);
 
 /** The frame named by the call, or the run's current frame. */
 function resolveFrame(
-  run: RunBinding,
+  run: BoundRunBinding,
   frameId?: string,
 ): { id: string; name: string; buffer: FrameBuffer; frame: RunFrame } {
   const buffer = frameBuffer(run, frameId);
@@ -80,7 +84,7 @@ function resolvePixels(
 
 /** Apply a command to one frame's buffer and write the result back to the run. */
 function editFrame(
-  run: RunBinding,
+  run: BoundRunBinding,
   frameId: string | undefined,
   command: Command,
 ): { id: string; buffer: FrameBuffer } {
@@ -168,7 +172,7 @@ function composeStrip(buffers: FrameBuffer[]): FrameBuffer {
  * `omit` builds the candidate view a delete would leave behind.
  */
 function assetView(
-  run: RunBinding,
+  run: BoundRunBinding,
   options: { withPixels?: string[]; omit?: string } = {},
 ): Asset {
   const encoded = new Set(options.withPixels ?? []);
@@ -193,7 +197,7 @@ function assetView(
 }
 
 /** Decode a frame the pixel package produced back into the run's shape. */
-function runFrameFrom(frame: Frame, run: RunBinding): RunFrame {
+function runFrameFrom(frame: Frame, run: BoundRunBinding): RunFrame {
   return {
     name: frame.name,
     index: frame.index,
@@ -218,7 +222,38 @@ function frameNeedsApproval(
 ): boolean {
   const run = getRun(context.run.runId);
   if (!run) return true;
-  return !run.approvedScope.has(args.frameId ?? run.currentFrameId);
+  // An unbound run has no current frame; an unknown frame always asks first.
+  const frameId = args.frameId ?? run.currentFrameId;
+  if (frameId === undefined) return true;
+  return !run.approvedScope.has(frameId);
+}
+
+/** Normalize a palette the way set_palette does, or fail with the same cause. */
+function normalizePalette(palette: string[]): string[] {
+  const normalized: string[] = [];
+  for (const color of palette) {
+    const hex = normalizeHex(color);
+    if (!hex) throw new Error("Index 0 must be #00000000 and every entry must be hex.");
+    normalized.push(hex);
+  }
+  if (normalized[0] !== "#00000000") {
+    throw new Error("Index 0 must be #00000000 and every entry must be hex.");
+  }
+  return normalized;
+}
+
+/** The model-facing shape of a just-bound asset: the ids it needs to paint. */
+function bindResult(asset: RunAsset, run: BoundRunBinding) {
+  return {
+    assetId: asset.id,
+    name: asset.name,
+    width: asset.width,
+    height: asset.height,
+    currentFrameId: run.currentFrameId,
+    frames: [...asset.frames]
+      .sort((left, right) => left.index - right.index)
+      .map((frame) => ({ id: frame.id, name: frame.name, index: frame.index })),
+  };
 }
 
 export function createPixelTools(options: { vision?: boolean } = {}) {
@@ -229,6 +264,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({}),
     execute: (_input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run);
       return {
         assetId: run.assetId,
@@ -258,6 +294,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
       const read = resolvePixels(frame.buffer, view, input.layerId);
@@ -288,6 +325,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       const buffer = frame.buffer;
       if (
@@ -333,6 +371,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const stroke = paintStroke(
         run,
         input.frameId,
@@ -360,6 +399,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...rect } = input;
       const edited = editFrame(run, frameId, { type: "rect", ...rect, filled: true });
       run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
@@ -380,6 +420,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, label, ...erase } = input;
       const edited = editFrame(run, frameId, { type: "erase", ...erase });
       recordStroke(
@@ -409,6 +450,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, from, to, label } = input;
       const edited = editFrame(run, frameId, {
         type: "line",
@@ -445,6 +487,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...fill } = input;
       const edited = editFrame(run, frameId, { type: "fill", ...fill });
       run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
@@ -468,6 +511,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...region } = input;
       const edited = editFrame(run, frameId, { type: "region", ...region, mode: "fill" });
       run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
@@ -490,6 +534,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...region } = input;
       const edited = editFrame(run, frameId, {
         type: "region",
@@ -515,6 +560,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...swap } = input;
       const edited = editFrame(run, frameId, { type: "replaceColor", ...swap });
       run.onStroke?.({ label: "replace", points: [] }, edited.buffer, edited.id);
@@ -534,6 +580,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const buffer = frameBuffer(run, input.frameId);
       const layerId = input.layerId ?? activeLayerId(buffer);
       if (!layerId) throw new Error("This frame has no layer to outline.");
@@ -569,6 +616,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { frameId, ...dither } = input;
       const edited = editFrame(run, frameId, { type: "dither", ...dither });
       run.onStroke?.({ label: "dither", points: [] }, edited.buffer, edited.id);
@@ -587,6 +635,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: true,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       // Resize every frame, the way the editor's asset resize does, so no frame
       // is left at a different size than the asset. Nothing is committed until
       // every frame has accepted the new size.
@@ -620,6 +669,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const edited = editFrame(run, input.frameId, {
         type: "setPalette",
         palette: input.palette,
@@ -639,6 +689,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const buffer = frameBuffer(run);
       const name = input.name ?? `layer-${buffer.layers.length + 1}`;
       const edited = editFrame(run, undefined, {
@@ -663,6 +714,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const edited = editFrame(run, undefined, {
         type: "renameLayer",
         layerId: input.layerId,
@@ -684,6 +736,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const edited = editFrame(run, undefined, {
         type: "setLayerVisible",
         layerId: input.layerId,
@@ -701,6 +754,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ layerId: z.string() }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const edited = editFrame(run, undefined, {
         type: "removeLayer",
         layerId: input.layerId,
@@ -746,7 +800,10 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         if (!parsed.success) throw new Error("The staged plan override is malformed.");
         frames = parsed.data.frames;
       }
-      const scope = new Set<string>([run.originFrameId]);
+      // An unbound workspace run may propose before it has an asset; its scope
+      // then only holds the frame ids of an asset the run already has.
+      const scope = new Set<string>();
+      if (run.originFrameId !== undefined) scope.add(run.originFrameId);
       for (const frame of frames) {
         if (frame.frameId !== undefined && run.frames.has(frame.frameId)) {
           scope.add(frame.frameId);
@@ -761,6 +818,81 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const listProjects = createTool({
+    name: "list_projects",
+    description:
+      "List your projects with their asset counts. Workspace runs call this before choosing or creating the asset to draw on.",
+    inputSchema: z.object({}),
+    execute: async (_input, context) => {
+      const run = requireRun(context.operationId);
+      if (!run.onListProjects || run.userId === undefined) {
+        throw new Error("This run cannot list projects.");
+      }
+      return run.onListProjects(run.userId);
+    },
+  });
+
+  const listAssets = createTool({
+    name: "list_assets",
+    description: "List the assets of one project with their sizes and frame counts.",
+    inputSchema: z.object({ projectId: z.string().min(1) }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      if (!run.onListAssets || run.userId === undefined) {
+        throw new Error("This run cannot list assets.");
+      }
+      return run.onListAssets(run.userId, input.projectId);
+    },
+  });
+
+  const createAssetTool = createTool({
+    name: "create_asset",
+    description:
+      "Create a new asset in a project and bind this run to it, so you can read and draw on it right away. The size is 8–128; the palette is optional and index 0 must stay #00000000.",
+    inputSchema: z.object({
+      projectId: z.string().min(1),
+      name: z.string().min(1).max(80),
+      width: z.number().int().min(8).max(128),
+      height: z.number().int().min(8).max(128),
+      palette: z.array(z.string()).min(2).max(33).optional(),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      if (!run.onCreateAsset || run.userId === undefined) {
+        throw new Error("This run cannot create an asset.");
+      }
+      const name = input.name.trim();
+      if (!name) throw new Error("An asset name cannot be blank.");
+      const palette =
+        input.palette === undefined ? undefined : normalizePalette(input.palette);
+      const asset = await run.onCreateAsset(run.userId, {
+        projectId: input.projectId,
+        name,
+        width: input.width,
+        height: input.height,
+        ...(palette === undefined ? {} : { palette }),
+      });
+      bindRunAsset(run, asset);
+      return bindResult(asset, run);
+    },
+  });
+
+  const useAsset = createTool({
+    name: "use_asset",
+    description:
+      "Bind this run to an existing asset so you can read and draw on it. Use list_assets first to find the asset id.",
+    inputSchema: z.object({ assetId: z.string().min(1) }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      if (!run.onLoadAsset || run.userId === undefined) {
+        throw new Error("This run cannot choose an asset.");
+      }
+      const asset = await run.onLoadAsset(run.userId, input.assetId);
+      bindRunAsset(run, asset);
+      return bindResult(asset, run);
+    },
+  });
+
   // Anvia's scratchpad: it records a thought and changes nothing else.
   const think = createThinkTool();
 
@@ -771,6 +903,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ frameId: z.string().optional() }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       return { issues: refreshCritique(run, input.frameId) };
     },
   });
@@ -782,6 +915,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ frameIds: z.array(z.string()).optional() }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const ids =
         input.frameIds ??
         [...run.frames]
@@ -812,6 +946,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: frameNeedsApproval,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       editFrame(run, input.frameId, { type: "mirror" });
       return { committed: true };
     },
@@ -823,6 +958,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ frameId: z.string() }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       run.currentFrameId = frame.id;
       return { currentFrameId: frame.id, name: frame.name };
@@ -839,6 +975,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const source =
         input.copyOf === undefined ? undefined : resolveFrame(run, input.copyOf);
       const next = source
@@ -876,6 +1013,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       const name = input.name.trim();
       if (!name) throw new Error("A frame name cannot be blank.");
@@ -897,6 +1035,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { id } = resolveFrame(run, input.frameId);
       const next = moveFrame(assetView(run), id, input.toIndex);
       if (!next) throw new Error(`Frame ${id} is not part of this asset.`);
@@ -931,6 +1070,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     requiresApproval: true,
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const { id } = resolveFrame(run, input.frameId);
       // The candidate state this delete would commit. The binding is only
       // touched once the worker confirms the change is saved.
@@ -984,6 +1124,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
+      requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       const buffer =
         input.mode === "strip"
@@ -1034,6 +1175,10 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     removeLayerTool,
     plan,
     presentPlan,
+    listProjects,
+    listAssets,
+    createAssetTool,
+    useAsset,
     think,
     critique,
     checkAnimationTool,

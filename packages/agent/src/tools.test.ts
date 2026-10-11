@@ -6,7 +6,11 @@ import {
   getRun,
   releaseRun,
   stagedOverrideSchema,
+  type AssetSummary,
+  type CreateAssetInput,
   type FrameChange,
+  type ProjectSummary,
+  type RunAsset,
   type Stroke,
 } from "./runs.js";
 import { createPixelTools } from "./tools.js";
@@ -144,6 +148,48 @@ function tool(name: string, options?: { vision?: boolean }): Tool {
   const found = createPixelTools(options).find((item) => item.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return found as unknown as Tool;
+}
+
+/** A workspace run before it has chosen or created an asset: no frames, no callbacks bound by default. */
+function unboundRun(
+  options: {
+    userId?: string;
+    onListProjects?: (userId: string) => Promise<ProjectSummary[]>;
+    onListAssets?: (userId: string, projectId: string) => Promise<AssetSummary[]>;
+    onCreateAsset?: (userId: string, input: CreateAssetInput) => Promise<RunAsset>;
+    onLoadAsset?: (userId: string, assetId: string) => Promise<RunAsset>;
+  } = {},
+): void {
+  bindRun("run-1", {
+    frames: new Map(),
+    palette: [],
+    style: { outline: "#f4f4f4", maxColors: 12 } as never,
+    approvedScope: new Set(),
+    touchedFrames: new Set(),
+    strokes: [],
+    issues: [],
+    ...(options.userId ? { userId: options.userId } : {}),
+    ...(options.onListProjects ? { onListProjects: options.onListProjects } : {}),
+    ...(options.onListAssets ? { onListAssets: options.onListAssets } : {}),
+    ...(options.onCreateAsset ? { onCreateAsset: options.onCreateAsset } : {}),
+    ...(options.onLoadAsset ? { onLoadAsset: options.onLoadAsset } : {}),
+  });
+}
+
+/** The asset a workspace callback returns: two 4×4 frames already decoded. */
+function loadedAsset(): RunAsset {
+  return {
+    id: "asset-2",
+    name: "slime",
+    width: 4,
+    height: 4,
+    palette: [...palette],
+    style: { outline: "#f4f4f4", maxColors: 12 } as never,
+    frames: [
+      { id: "frame-a", name: "idle", index: 0, buffer: idleBuffer() },
+      { id: "frame-b", name: "hop", index: 1, buffer: hopBuffer() },
+    ],
+  };
 }
 
 describe("read tools", () => {
@@ -930,6 +976,256 @@ describe("present_plan", () => {
         { operationId: "run-1" },
       ),
     ).rejects.toThrow(/override/i);
+    releaseRun("run-1");
+  });
+});
+
+describe("workspace tools", () => {
+  it("drawing and read tools fail with the bounded sentence before an asset is bound", async () => {
+    unboundRun();
+    await expect(
+      tool("paint_stroke").call(
+        { layerId: "layer-a", label: "dot", points: [{ x: 1, y: 1, color: 2 }] },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("Choose or create an asset first.");
+    await expect(tool("read_project").call({}, { operationId: "run-1" })).rejects.toThrow(
+      "Choose or create an asset first.",
+    );
+    await expect(tool("read_frame").call({}, { operationId: "run-1" })).rejects.toThrow(
+      "Choose or create an asset first.",
+    );
+    await expect(tool("add_frame").call({}, { operationId: "run-1" })).rejects.toThrow(
+      "Choose or create an asset first.",
+    );
+    await expect(
+      tool("critique_frame").call({}, { operationId: "run-1" }),
+    ).rejects.toThrow("Choose or create an asset first.");
+    releaseRun("run-1");
+  });
+
+  it("a genuinely lost run still fails as no longer active", async () => {
+    unboundRun();
+    releaseRun("run-1");
+    await expect(
+      tool("paint_stroke").call(
+        { layerId: "layer-a", label: "dot", points: [{ x: 1, y: 1, color: 2 }] },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("This drawing run is no longer active.");
+  });
+
+  it("plan tools work before an asset is bound", async () => {
+    unboundRun();
+    const steps = ["choose a project", "create the asset"];
+    expect(await tool("plan").call({ steps }, { operationId: "run-1" })).toEqual({
+      steps,
+    });
+    const proposed = (await tool("present_plan").call(
+      { summary: "slime", frames: [{ name: "idle", description: "rest pose" }] },
+      { operationId: "run-1" },
+    )) as { approved: boolean; scope: string[] };
+    expect(proposed.approved).toBe(true);
+    expect(proposed.scope).toEqual([]);
+    releaseRun("run-1");
+  });
+
+  it("use_asset loads the asset through the callback and binds its frames", async () => {
+    const calls: Array<{ userId: string; assetId: string }> = [];
+    unboundRun({
+      userId: "user-1",
+      onLoadAsset: async (userId, assetId) => {
+        calls.push({ userId, assetId });
+        return loadedAsset();
+      },
+    });
+    const result = (await tool("use_asset").call(
+      { assetId: "asset-2" },
+      { operationId: "run-1" },
+    )) as {
+      assetId: string;
+      name: string;
+      currentFrameId: string;
+      frames: Array<{ id: string }>;
+    };
+    expect(calls).toEqual([{ userId: "user-1", assetId: "asset-2" }]);
+    expect(result).toMatchObject({
+      assetId: "asset-2",
+      name: "slime",
+      width: 4,
+      height: 4,
+      currentFrameId: "frame-a",
+    });
+    expect(result.frames.map((frame) => frame.id)).toEqual(["frame-a", "frame-b"]);
+    const run = getRun("run-1")!;
+    expect(run.assetId).toBe("asset-2");
+    expect(run.originFrameId).toBe("frame-a");
+    expect(run.currentFrameId).toBe("frame-a");
+    expect([...run.frames.keys()]).toEqual(["frame-a", "frame-b"]);
+    expect(run.palette).toEqual(palette);
+    expect(run.width).toBe(4);
+    expect(run.height).toBe(4);
+    expect(run.approvedScope).toEqual(new Set(["frame-a"]));
+    // The run can draw right away, on the bound origin frame.
+    await tool("paint_stroke").call(
+      { layerId: "layer-base", label: "dot", points: [{ x: 2, y: 2, color: 5 }] },
+      { operationId: "run-1" },
+    );
+    expect(run.frames.get("frame-a")!.buffer.layers[0]!.pixels[2 * 4 + 2]).toBe(5);
+    releaseRun("run-1");
+  });
+
+  it("use_asset switches the binding and restarts the scope at the new origin", async () => {
+    unboundRun({
+      userId: "user-1",
+      onLoadAsset: async () => loadedAsset(),
+    });
+    await tool("use_asset").call({ assetId: "asset-2" }, { operationId: "run-1" });
+    const run = getRun("run-1")!;
+    run.approvedScope.add("frame-b");
+    run.touchedFrames.add("frame-a");
+    await tool("use_asset").call({ assetId: "asset-2" }, { operationId: "run-1" });
+    expect(run.approvedScope).toEqual(new Set(["frame-a"]));
+    expect(run.touchedFrames.size).toBe(0);
+    releaseRun("run-1");
+  });
+
+  it("create_asset hands the run's user id to the callback and binds the created asset", async () => {
+    const seen: Array<{ userId: string; input: CreateAssetInput }> = [];
+    unboundRun({
+      userId: "user-7",
+      onCreateAsset: async (userId, input) => {
+        seen.push({ userId, input });
+        return loadedAsset();
+      },
+    });
+    const result = (await tool("create_asset").call(
+      {
+        projectId: "project-1",
+        name: "  slime  ",
+        width: 8,
+        height: 8,
+        palette: ["#00000000", "#FFAA00"],
+      },
+      { operationId: "run-1" },
+    )) as { assetId: string; currentFrameId: string };
+    expect(seen).toEqual([
+      {
+        userId: "user-7",
+        input: {
+          projectId: "project-1",
+          name: "slime",
+          width: 8,
+          height: 8,
+          palette: ["#00000000", "#ffaa00"],
+        },
+      },
+    ]);
+    expect(result.assetId).toBe("asset-2");
+    expect(result.currentFrameId).toBe("frame-a");
+    expect(getRun("run-1")!.assetId).toBe("asset-2");
+    releaseRun("run-1");
+  });
+
+  it("create_asset refuses a palette that does not start transparent", async () => {
+    const seen: CreateAssetInput[] = [];
+    unboundRun({
+      userId: "user-7",
+      onCreateAsset: async (_userId, input) => {
+        seen.push(input);
+        return loadedAsset();
+      },
+    });
+    await expect(
+      tool("create_asset").call(
+        {
+          projectId: "project-1",
+          name: "slime",
+          width: 8,
+          height: 8,
+          palette: ["#ffaa00", "#00000000"],
+        },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("#00000000");
+    expect(seen).toEqual([]);
+    expect(getRun("run-1")!.assetId).toBeUndefined();
+    releaseRun("run-1");
+  });
+
+  it("list tools hand the run's user id to the callbacks and return their rows", async () => {
+    const seen: string[] = [];
+    unboundRun({
+      userId: "user-3",
+      onListProjects: async (userId) => {
+        seen.push(userId);
+        return [
+          {
+            id: "project-1",
+            name: "Pixelaition",
+            updatedAt: "2026-10-11T00:00:00.000Z",
+            assetCount: 2,
+          },
+        ];
+      },
+      onListAssets: async (userId, projectId) => {
+        seen.push(`${userId}:${projectId}`);
+        return [
+          {
+            id: "asset-2",
+            name: "slime",
+            width: 32,
+            height: 32,
+            frameCount: 4,
+            updatedAt: "2026-10-11T00:00:00.000Z",
+          },
+        ];
+      },
+    });
+    expect(await tool("list_projects").call({}, { operationId: "run-1" })).toEqual([
+      {
+        id: "project-1",
+        name: "Pixelaition",
+        updatedAt: "2026-10-11T00:00:00.000Z",
+        assetCount: 2,
+      },
+    ]);
+    expect(
+      await tool("list_assets").call(
+        { projectId: "project-1" },
+        { operationId: "run-1" },
+      ),
+    ).toEqual([
+      {
+        id: "asset-2",
+        name: "slime",
+        width: 32,
+        height: 32,
+        frameCount: 4,
+        updatedAt: "2026-10-11T00:00:00.000Z",
+      },
+    ]);
+    expect(seen).toEqual(["user-3", "user-3:project-1"]);
+    releaseRun("run-1");
+  });
+
+  it("workspace tools fail closed on a run without callbacks", async () => {
+    unboundRun();
+    await expect(
+      tool("list_projects").call({}, { operationId: "run-1" }),
+    ).rejects.toThrow("This run cannot list projects.");
+    await expect(
+      tool("list_assets").call({ projectId: "project-1" }, { operationId: "run-1" }),
+    ).rejects.toThrow("This run cannot list assets.");
+    await expect(
+      tool("create_asset").call(
+        { projectId: "project-1", name: "slime", width: 8, height: 8 },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("This run cannot create an asset.");
+    await expect(
+      tool("use_asset").call({ assetId: "asset-2" }, { operationId: "run-1" }),
+    ).rejects.toThrow("This run cannot choose an asset.");
     releaseRun("run-1");
   });
 });

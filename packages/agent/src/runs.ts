@@ -63,14 +63,56 @@ export type FrameChange =
       replacement?: { id: string; name: string; index: number; buffer: FrameBuffer };
     };
 
-export type RunBinding = {
-  assetId: string;
-  originFrameId: string;
-  currentFrameId: string;
-  frames: Map<string, RunFrame>;
-  palette: string[];
+/** One project the workspace tools list, with its asset count. */
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  assetCount: number;
+};
+
+/** One asset of a project, as the workspace tools list it. */
+export type AssetSummary = {
+  id: string;
+  name: string;
   width: number;
   height: number;
+  frameCount: number;
+  updatedAt: string;
+};
+
+export type CreateAssetInput = {
+  projectId: string;
+  name: string;
+  width: number;
+  height: number;
+  palette?: string[];
+};
+
+/**
+ * An asset a workspace run can bind: the frames already decoded into buffers,
+ * the palette, the canvas size, and the project's style guide. The worker loads
+ * it from the database after enforcing ownership.
+ */
+export type RunAsset = {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  palette: string[];
+  style: StyleGuide;
+  frames: Array<{ id: string; name: string; index: number; buffer: FrameBuffer }>;
+};
+
+export type RunBinding = {
+  /** The asset the run draws on; absent until a workspace run chooses or creates one. */
+  assetId?: string;
+  originFrameId?: string;
+  currentFrameId?: string;
+  frames: Map<string, RunFrame>;
+  palette: string[];
+  width?: number;
+  height?: number;
   style: StyleGuide;
   approvedScope: Set<string>;
   /** Frames this run edited or changed; the run terminal snapshots exactly these. */
@@ -80,8 +122,23 @@ export type RunBinding = {
   strokes: Stroke[];
   issues: CritiqueIssue[];
   plan?: string[];
+  /** The run owner; the workspace callbacks enforce ownership with this id. */
+  userId?: string;
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void;
   onFrameChange?: (change: FrameChange) => void | Promise<void>;
+  onListProjects?: (userId: string) => Promise<ProjectSummary[]>;
+  onListAssets?: (userId: string, projectId: string) => Promise<AssetSummary[]>;
+  onCreateAsset?: (userId: string, input: CreateAssetInput) => Promise<RunAsset>;
+  onLoadAsset?: (userId: string, assetId: string) => Promise<RunAsset>;
+};
+
+/** A run that has an asset: the fields every drawing tool reads are present. */
+export type BoundRunBinding = RunBinding & {
+  assetId: string;
+  originFrameId: string;
+  currentFrameId: string;
+  width: number;
+  height: number;
 };
 
 const runs = new Map<string, RunBinding>();
@@ -123,10 +180,57 @@ export function requireRun(operationId: string | undefined): RunBinding {
 }
 
 /**
+ * The asset guard for every tool that reads or writes pixels: a workspace run
+ * starts unbound, and until it chooses or creates an asset there is nothing to
+ * read or draw on.
+ */
+export function requireAsset(run: RunBinding): asserts run is BoundRunBinding {
+  if (
+    run.assetId === undefined ||
+    run.originFrameId === undefined ||
+    run.currentFrameId === undefined ||
+    run.width === undefined ||
+    run.height === undefined ||
+    run.frames.size === 0
+  ) {
+    throw new Error("Choose or create an asset first.");
+  }
+}
+
+/**
+ * Bind a loaded asset to a live run in place. The origin frame is the first
+ * frame by index; the approved scope restarts there, and touched frames are
+ * reset because the terminal snapshots describe the currently bound asset.
+ */
+export function bindRunAsset(
+  run: RunBinding,
+  asset: RunAsset,
+): asserts run is BoundRunBinding {
+  const frames = [...asset.frames].sort((left, right) => left.index - right.index);
+  const origin = frames[0];
+  if (!origin) throw new Error("That asset has no frames.");
+  run.assetId = asset.id;
+  run.originFrameId = origin.id;
+  run.currentFrameId = origin.id;
+  run.frames = new Map(
+    frames.map((frame) => [
+      frame.id,
+      { name: frame.name, index: frame.index, buffer: cloneBuffer(frame.buffer) },
+    ]),
+  );
+  run.palette = [...asset.palette];
+  run.width = asset.width;
+  run.height = asset.height;
+  run.style = asset.style;
+  run.approvedScope = new Set([origin.id]);
+  run.touchedFrames = new Set();
+}
+
+/**
  * The buffer of the frame named by the caller, or of the run's current frame.
  * An unknown frame id and a run without a current frame fail with named causes.
  */
-export function frameBuffer(run: RunBinding, frameId?: string): FrameBuffer {
+export function frameBuffer(run: BoundRunBinding, frameId?: string): FrameBuffer {
   if (frameId !== undefined) {
     const frame = run.frames.get(frameId);
     if (!frame) throw new Error(`Frame ${frameId} is not part of this asset.`);
@@ -148,7 +252,7 @@ export function replaceFrameBuffer(
 }
 
 export function paintStroke(
-  run: RunBinding,
+  run: BoundRunBinding,
   frameId: string | undefined,
   layerId: string,
   label: string,
@@ -169,7 +273,7 @@ export function paintStroke(
   return stroke;
 }
 
-export function refreshCritique(run: RunBinding, frameId?: string): CritiqueIssue[] {
+export function refreshCritique(run: BoundRunBinding, frameId?: string): CritiqueIssue[] {
   run.issues = critiqueFrame(frameBuffer(run, frameId), run.style ?? defaultStyle);
   return run.issues;
 }

@@ -8,6 +8,7 @@ Organize the current frame with add_layer, rename_layer, set_layer_visible, and 
 For a facing or action variant, add a copy with add_frame (copyOf) or mirror_frame first, then paint only the difference.
 For animation, create the frames with add_frame, name and order them with rename_frame and move_frame, and switch with use_frame before painting each pose.
 Write a plan for multi-step work before painting; for animation jobs propose frames in present_plan.
+In a workspace run, list projects and assets, then bind with use_asset or create_asset before drawing; until an asset is bound the drawing tools refuse.
 Call critique_frame before you finish; finish only when critique is empty. If it returns issues, fix them once and critique again.
 Before finishing animation work, call check_animation and fix flagged drift.
 The final message may mention only the size, frame name, and color count returned by tools.
