@@ -13,33 +13,42 @@ export type Stroke = {
   points: Array<{ x: number; y: number; color: number }>;
 };
 
+/** One frame of the asset, held in memory for the run's lifetime. */
 export type RunFrame = {
-  id: string;
   name: string;
-  index: number;
+  buffer: FrameBuffer;
 };
 
 export type RunBinding = {
   assetId: string;
-  frameId: string;
-  frames: RunFrame[];
+  originFrameId: string;
+  currentFrameId: string;
+  frames: Map<string, RunFrame>;
+  palette: string[];
+  width: number;
+  height: number;
   style: StyleGuide;
-  buffer: FrameBuffer;
+  approvedScope: Set<string>;
   strokes: Stroke[];
   issues: CritiqueIssue[];
-  onStroke?: (stroke: Stroke, buffer: FrameBuffer) => void;
+  plan?: string[];
+  onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void;
+  onFrameChange?: (change: unknown) => void | Promise<void>;
 };
 
 const runs = new Map<string, RunBinding>();
 
-export function bindRun(
-  runId: string,
-  binding: Omit<RunBinding, "frames"> & { frames?: RunFrame[] },
-): void {
+export function bindRun(runId: string, binding: RunBinding): void {
   runs.set(runId, {
     ...binding,
-    frames: binding.frames ?? [{ id: binding.frameId, name: "current", index: 0 }],
-    buffer: cloneBuffer(binding.buffer),
+    frames: new Map(
+      [...binding.frames].map(([id, frame]) => [
+        id,
+        { name: frame.name, buffer: cloneBuffer(frame.buffer) },
+      ]),
+    ),
+    palette: [...binding.palette],
+    approvedScope: new Set(binding.approvedScope),
     strokes: [...binding.strokes],
   });
 }
@@ -64,22 +73,53 @@ export function requireRun(operationId: string | undefined): RunBinding {
   return run;
 }
 
+/**
+ * The buffer of the frame named by the caller, or of the run's current frame.
+ * An unknown frame id and a run without a current frame fail with named causes.
+ */
+export function frameBuffer(run: RunBinding, frameId?: string): FrameBuffer {
+  if (frameId !== undefined) {
+    const frame = run.frames.get(frameId);
+    if (!frame) throw new Error(`Frame ${frameId} is not part of this asset.`);
+    return frame.buffer;
+  }
+  const frame = run.frames.get(run.currentFrameId);
+  if (!frame) throw new Error("Choose or create a frame first.");
+  return frame.buffer;
+}
+
+export function replaceFrameBuffer(
+  run: RunBinding,
+  frameId: string,
+  buffer: FrameBuffer,
+): void {
+  const frame = run.frames.get(frameId);
+  if (!frame) throw new Error(`Frame ${frameId} is not part of this asset.`);
+  frame.buffer = buffer;
+}
+
 export function paintStroke(
   run: RunBinding,
+  frameId: string | undefined,
   layerId: string,
   label: string,
   points: Stroke["points"],
 ): Stroke {
-  const result = applyCommand(run.buffer, { type: "paint", layerId, points });
+  const id = frameId ?? run.currentFrameId;
+  const result = applyCommand(frameBuffer(run, frameId), {
+    type: "paint",
+    layerId,
+    points,
+  });
   if (!result.ok) throw new Error(result.message);
-  run.buffer = result.buffer;
+  replaceFrameBuffer(run, id, result.buffer);
   const stroke = { label, points };
   run.strokes.push(stroke);
-  run.onStroke?.(stroke, run.buffer);
+  run.onStroke?.(stroke, result.buffer, id);
   return stroke;
 }
 
-export function refreshCritique(run: RunBinding): CritiqueIssue[] {
-  run.issues = critiqueFrame(run.buffer, run.style ?? defaultStyle);
+export function refreshCritique(run: RunBinding, frameId?: string): CritiqueIssue[] {
+  run.issues = critiqueFrame(frameBuffer(run, frameId), run.style ?? defaultStyle);
   return run.issues;
 }

@@ -25,7 +25,12 @@ describe("generation decisions and tools", () => {
     const buffer = createBuffer({ width: 8, height: 8 });
     bindRun("run-1", {
       assetId: "asset",
-      frameId: "frame",
+      originFrameId: "frame",
+      currentFrameId: "frame",
+      frames: new Map([["frame", { name: "frame", buffer }]]),
+      palette: [...buffer.palette],
+      width: 8,
+      height: 8,
       style: {
         defaultWidth: 8,
         defaultHeight: 8,
@@ -34,7 +39,7 @@ describe("generation decisions and tools", () => {
         shadowDirection: "down",
         notes: "",
       },
-      buffer,
+      approvedScope: new Set(["frame"]),
       strokes: [],
       issues: [],
     });

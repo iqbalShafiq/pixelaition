@@ -264,13 +264,14 @@ app.post("/internal/runs", async (req, res) => {
   if (!runtime) return;
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
-  const frame = asset.frames.find((item) => item.id === body.frameId) ?? asset.frames[0];
-  if (!frame) return res.status(404).json({ message: "Frame was not found." });
+  const framesById = new Map(asset.frames.map((item) => [item.id, item]));
+  const originFrame = framesById.get(body.frameId);
+  if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
   const run = await runtime.submit({
     agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
-    prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${frame.name}`,
+    prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${originFrame.name}`,
   });
   telemetry?.setTraceContext(run.id, {
     name: "draw-sprite",
@@ -279,34 +280,50 @@ app.post("/internal/runs", async (req, res) => {
     tags: ["pixelaition", "draw"],
     metadata: {
       assetId: body.assetId,
-      frameId: frame.id,
+      frameId: originFrame.id,
       modelId: target.modelId,
       reasoningEffort: target.effort,
     },
   });
   bindRun(run.id, {
     assetId: body.assetId,
-    frameId: frame.id,
+    originFrameId: originFrame.id,
+    currentFrameId: originFrame.id,
+    frames: new Map(
+      asset.frames.map((item) => [
+        item.id,
+        {
+          name: item.name,
+          buffer: frameToBuffer(item, asset.width, asset.height, asset.palette),
+        },
+      ]),
+    ),
+    palette: [...asset.palette],
+    width: asset.width,
+    height: asset.height,
     style: asset.style,
-    buffer: frameToBuffer(frame, asset.width, asset.height, asset.palette),
+    approvedScope: new Set([originFrame.id]),
     strokes: [],
     issues: [],
-    onStroke: (_stroke, buffer) => {
+    onStroke: (_stroke, buffer, editedFrameId) => {
       publish(body.runId, "canvas-stroke", {
-        frameId: frame.id,
+        frameId: editedFrameId,
         layers: buffer.layers.map((layer) => ({
           ...layer,
           pixels: encodePixels(layer.pixels),
         })),
       });
+      // The binding's frames were built from these rows, so the edited frame
+      // is always one of them.
+      const edited = framesById.get(editedFrameId)!;
       // Drizzle query promises are lazy: without awaiting or then-ing, the
       // update never executes. Persist explicitly and surface any failure.
       void (async () => {
         try {
           await db
             .update(frames)
-            .set({ layers: bufferToFrame(buffer, frame).layers, updatedAt: new Date() })
-            .where(eq(frames.id, frame.id));
+            .set({ layers: bufferToFrame(buffer, edited).layers, updatedAt: new Date() })
+            .where(eq(frames.id, editedFrameId));
         } catch (error) {
           console.error("[onStroke] frame persist failed", error);
         }
@@ -476,7 +493,11 @@ async function loadAsset(assetId: string) {
     .innerJoin(projects, eq(assets.projectId, projects.id))
     .where(eq(assets.id, assetId));
   if (!row) return undefined;
-  const frameRows = await db.select().from(frames).where(eq(frames.assetId, assetId));
+  const frameRows = await db
+    .select()
+    .from(frames)
+    .where(eq(frames.assetId, assetId))
+    .orderBy(asc(frames.index));
   return {
     ...row.asset,
     palette: row.asset.palette as string[],

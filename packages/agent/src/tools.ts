@@ -1,15 +1,21 @@
 import { createTool } from "@anvia/core";
 import { ToolOutput } from "@anvia/core/tool";
 import { frameToPng, type ExportScale } from "@pixelaition/export";
-import { applyCommand, composite, type FrameBuffer } from "@pixelaition/pixel";
+import {
+  applyCommand,
+  composite,
+  type Command,
+  type FrameBuffer,
+} from "@pixelaition/pixel";
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
+  frameBuffer,
   paintStroke,
   refreshCritique,
+  replaceFrameBuffer,
   requireRun,
   type RunBinding,
-  type RunFrame,
 } from "./runs.js";
 
 const point = z.object({
@@ -20,19 +26,20 @@ const point = z.object({
 
 const readView = z.enum(["composite", "layer"]);
 
-function resolveFrame(run: RunBinding, frameId?: string): RunFrame {
-  if (frameId !== undefined && frameId !== run.frameId) {
-    throw new Error(
-      `This run is drawing ${run.frameId}; ${frameId} is not the frame to read.`,
-    );
-  }
-  const frame = run.frames.find((item) => item.id === run.frameId);
-  if (!frame) throw new Error("The bound frame is missing from the run's frames.");
-  return frame;
+/** The frame named by the call, or the run's current frame. */
+function resolveFrame(
+  run: RunBinding,
+  frameId?: string,
+): { id: string; name: string; buffer: FrameBuffer } {
+  const buffer = frameBuffer(run, frameId);
+  const id = frameId ?? run.currentFrameId;
+  const frame = run.frames.get(id);
+  if (!frame) throw new Error("Choose or create a frame first.");
+  return { id, name: frame.name, buffer };
 }
 
 function resolvePixels(
-  run: RunBinding,
+  buffer: FrameBuffer,
   view: "composite" | "layer",
   layerId?: string,
 ): { pixels: Uint8Array; layerId?: string } {
@@ -40,14 +47,27 @@ function resolvePixels(
     if (layerId !== undefined) {
       throw new Error("A layer id cannot be combined with the composite view.");
     }
-    return { pixels: composite(run.buffer) };
+    return { pixels: composite(buffer) };
   }
   const layer =
     layerId === undefined
-      ? (run.buffer.layers.find((item) => item.visible) ?? run.buffer.layers[0])
-      : run.buffer.layers.find((item) => item.id === layerId);
+      ? (buffer.layers.find((item) => item.visible) ?? buffer.layers[0])
+      : buffer.layers.find((item) => item.id === layerId);
   if (!layer) throw new Error("That layer is not on this frame.");
   return { pixels: layer.pixels, layerId: layer.id };
+}
+
+/** Apply a command to one frame's buffer and write the result back to the run. */
+function editFrame(
+  run: RunBinding,
+  frameId: string | undefined,
+  command: Command,
+): { id: string; buffer: FrameBuffer } {
+  const frame = resolveFrame(run, frameId);
+  const result = applyCommand(frame.buffer, command);
+  if (!result.ok) throw new Error(result.message);
+  replaceFrameBuffer(run, frame.id, result.buffer);
+  return { id: frame.id, buffer: result.buffer };
 }
 
 function colorCounts(
@@ -117,14 +137,15 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({}),
     execute: (_input, context) => {
       const run = requireRun(context.operationId);
+      const frame = resolveFrame(run);
       return {
         assetId: run.assetId,
-        frames: run.frames,
-        currentFrame: resolveFrame(run),
-        width: run.buffer.width,
-        height: run.buffer.height,
-        palette: run.buffer.palette.map((hex, index) => ({ index, hex })),
-        layers: run.buffer.layers.map((layer) => ({
+        frames: [...run.frames].map(([id, item]) => ({ id, name: item.name })),
+        currentFrameId: run.currentFrameId,
+        width: run.width,
+        height: run.height,
+        palette: run.palette.map((hex, index) => ({ index, hex })),
+        layers: frame.buffer.layers.map((layer) => ({
           id: layer.id,
           name: layer.name,
           visible: layer.visible,
@@ -137,7 +158,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
   const readFrame = createTool({
     name: "read_frame",
     description:
-      "Read the frame as RLE rows (`colorxcount`). Defaults to the composite of visible layers; pass layerId to read one layer. Zero is transparent.",
+      "Read a frame as RLE rows (`colorxcount`). Defaults to the current frame and to the composite of visible layers; pass frameId or layerId to read another frame or one layer. Zero is transparent.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -147,15 +168,15 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const run = requireRun(context.operationId);
       const frame = resolveFrame(run, input.frameId);
       const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
-      const read = resolvePixels(run, view, input.layerId);
+      const read = resolvePixels(frame.buffer, view, input.layerId);
       return {
         frameId: frame.id,
         view,
         layerId: read.layerId,
-        width: run.buffer.width,
-        height: run.buffer.height,
-        rows: encodeRowsRle(read.pixels, run.buffer.width, run.buffer.height),
-        colors: colorCounts(read.pixels, run.buffer.palette),
+        width: frame.buffer.width,
+        height: frame.buffer.height,
+        rows: encodeRowsRle(read.pixels, frame.buffer.width, frame.buffer.height),
+        colors: colorCounts(read.pixels, frame.buffer.palette),
       };
     },
   });
@@ -163,7 +184,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
   const readRegion = createTool({
     name: "read_region",
     description:
-      "Read a rectangle of the frame as RLE rows (`colorxcount`) and color counts. Coordinates are frame pixels.",
+      "Read a rectangle of a frame as RLE rows (`colorxcount`) and color counts. Coordinates are frame pixels; defaults to the current frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       x: z.number().int(),
@@ -175,19 +196,20 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       const frame = resolveFrame(run, input.frameId);
+      const buffer = frame.buffer;
       if (
         input.x < 0 ||
         input.y < 0 ||
-        input.x + input.width > run.buffer.width ||
-        input.y + input.height > run.buffer.height
+        input.x + input.width > buffer.width ||
+        input.y + input.height > buffer.height
       ) {
         throw new Error("That region is outside the frame.");
       }
       const view = input.view ?? "composite";
-      const read = resolvePixels(run, view);
+      const read = resolvePixels(buffer, view);
       const pixels = new Uint8Array(input.width * input.height);
       for (let row = 0; row < input.height; row += 1) {
-        const start = (input.y + row) * run.buffer.width + input.x;
+        const start = (input.y + row) * buffer.width + input.x;
         pixels.set(read.pixels.subarray(start, start + input.width), row * input.width);
       }
       return {
@@ -199,7 +221,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         width: input.width,
         height: input.height,
         rows: encodeRowsRle(pixels, input.width, input.height),
-        colors: colorCounts(pixels, run.buffer.palette),
+        colors: colorCounts(pixels, buffer.palette),
       };
     },
   });
@@ -207,23 +229,32 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
   const paint = createTool({
     name: "paint_stroke",
     description:
-      "Paint up to 48 pixels on a layer. Colors are palette indexes. The server stores only the pixels it accepts.",
+      "Paint up to 48 pixels on a layer of the current frame. Colors are palette indexes. The server stores only the pixels it accepts.",
     inputSchema: z.object({
+      frameId: z.string().optional(),
       layerId: z.string(),
       label: z.string().min(1).max(40),
       points: z.array(point).min(1).max(48),
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
-      const stroke = paintStroke(run, input.layerId, input.label, input.points);
+      const stroke = paintStroke(
+        run,
+        input.frameId,
+        input.layerId,
+        input.label,
+        input.points,
+      );
       return { committed: stroke.points.length, label: stroke.label };
     },
   });
 
   const fillRect = createTool({
     name: "fill_rect",
-    description: "Fill a rectangle on a layer with one palette index.",
+    description:
+      "Fill a rectangle on a layer of the current frame. Pass frameId to fill another frame.",
     inputSchema: z.object({
+      frameId: z.string().optional(),
       layerId: z.string(),
       x: z.number().int(),
       y: z.number().int(),
@@ -233,57 +264,49 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
-      const result = applyCommand(run.buffer, { type: "rect", ...input, filled: true });
-      if (!result.ok) throw new Error(result.message);
-      run.buffer = result.buffer;
-      run.onStroke?.(
-        {
-          label: "fill",
-          points: [],
-        },
-        run.buffer,
-      );
+      const { frameId, ...rect } = input;
+      const edited = editFrame(run, frameId, { type: "rect", ...rect, filled: true });
+      run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
       return { committed: true };
     },
   });
 
   const setPalette = createTool({
     name: "set_palette",
-    description: "Replace the palette. Index 0 must stay #00000000.",
-    inputSchema: z.object({ palette: z.array(z.string()).min(2).max(33) }),
+    description: "Replace the palette of the current frame. Index 0 must stay #00000000.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      palette: z.array(z.string()).min(2).max(33),
+    }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
-      const result = applyCommand(run.buffer, {
+      const edited = editFrame(run, input.frameId, {
         type: "setPalette",
         palette: input.palette,
       });
-      if (!result.ok) throw new Error(result.message);
-      run.buffer = result.buffer;
-      return { palette: run.buffer.palette };
+      return { palette: edited.buffer.palette };
     },
   });
 
   const critique = createTool({
     name: "critique_frame",
     description:
-      "Run the deterministic pixel critique. Finish only when issues is empty.",
-    inputSchema: z.object({}),
-    execute: (_input, context) => {
+      "Run the deterministic pixel critique on the current frame. Finish only when issues is empty.",
+    inputSchema: z.object({ frameId: z.string().optional() }),
+    execute: (input, context) => {
       const run = requireRun(context.operationId);
-      return { issues: refreshCritique(run) };
+      return { issues: refreshCritique(run, input.frameId) };
     },
   });
 
   const mirror = createTool({
     name: "mirror_frame",
     description:
-      "Flip every layer horizontally. Use this for a left/right variant before painting differences.",
-    inputSchema: z.object({}),
-    execute: (_input, context) => {
+      "Flip every layer of the current frame horizontally. Use this for a left/right variant before painting differences.",
+    inputSchema: z.object({ frameId: z.string().optional() }),
+    execute: (input, context) => {
       const run = requireRun(context.operationId);
-      const result = applyCommand(run.buffer, { type: "mirror" });
-      if (!result.ok) throw new Error(result.message);
-      run.buffer = result.buffer;
+      editFrame(run, input.frameId, { type: "mirror" });
       return { committed: true };
     },
   });
@@ -293,7 +316,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
   const preview = createTool({
     name: "preview_frame",
     description:
-      "Render the frame (or every frame as one strip) to a PNG you can see. Use it to verify your work before finishing.",
+      "Render the current frame (or every frame as one strip) to a PNG you can see. Use it to verify your work before finishing.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       mode: z.enum(["frame", "strip"]).default("frame"),
@@ -302,7 +325,11 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       const frame = resolveFrame(run, input.frameId);
-      const buffer = input.mode === "strip" ? composeStrip([run.buffer]) : run.buffer;
+      const buffer =
+        input.mode === "strip"
+          ? composeStrip([...run.frames.values()].map((item) => item.buffer))
+          : frame.buffer;
+      const label = input.mode === "strip" ? `${run.frames.size} frames` : frame.name;
       // rasterize accepts any positive integer scale; the schema bounds it to 1..10.
       const png = frameToPng(buffer, input.scale as ExportScale);
       if (png.length > MAX_PREVIEW_BYTES) {
@@ -313,7 +340,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       return ToolOutput.content([
         {
           type: "text",
-          text: `${frame.name} — ${buffer.width}×${buffer.height} pixels at ${input.scale}× (${png.length} bytes PNG).`,
+          text: `${label} — ${buffer.width}×${buffer.height} pixels at ${input.scale}× (${png.length} bytes PNG).`,
         },
         {
           type: "file",
