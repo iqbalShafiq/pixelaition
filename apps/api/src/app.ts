@@ -110,6 +110,20 @@ async function activeRunFor(assetId: string): Promise<boolean> {
   return run !== undefined;
 }
 
+// The worker never accepted this run, so the row must not stay queued: queued
+// reads as active, and a stale active row would lock the asset forever.
+async function failUnacceptedRun(runId: string, workerMessage?: string | null) {
+  await db
+    .update(generationRuns)
+    .set({
+      status: "failed",
+      errorCode: "WORKER_UNAVAILABLE",
+      finishedAt: new Date(),
+      answer: workerMessage?.slice(0, 2000) ?? null,
+    })
+    .where(eq(generationRuns.id, runId));
+}
+
 export function createApp() {
   const app = express();
   app.use("/api/auth", toNodeHandler(auth));
@@ -516,27 +530,40 @@ export function createApp() {
       prompt: body.prompt,
       status: "queued",
     });
-    const worker = await fetch(
-      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+    let worker: Awaited<ReturnType<typeof fetch>>;
+    try {
+      worker = await fetch(
+        `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+          },
+          body: JSON.stringify({
+            ...body,
+            runId,
+            requestId,
+            userId: res.locals.userId,
+            threadId: thread.id,
+          }),
         },
-        body: JSON.stringify({
-          ...body,
-          runId,
-          requestId,
-          userId: res.locals.userId,
-          threadId: thread.id,
-        }),
-      },
-    );
+      );
+    } catch (reason) {
+      // No fallback: the worker never took the run, so it must not stay queued.
+      await failUnacceptedRun(runId);
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        reason instanceof Error ? reason.message : "The drawing worker is not available.",
+      );
+    }
     if (!worker.ok) {
       const detail = (await worker.json().catch(() => null)) as {
         message?: string;
       } | null;
+      await failUnacceptedRun(runId, detail?.message);
       return fail(
         res,
         502,
@@ -612,7 +639,9 @@ export function createApp() {
       .where(eq(generationRuns.threadId, thread.id))
       .orderBy(desc(generationRuns.createdAt))
       .limit(1);
-    const active = run && (run.status === "queued" || run.status === "running");
+    const active =
+      run &&
+      (run.status === "queued" || run.status === "running" || run.status === "waiting");
     type StoredEvent = {
       sequence: number;
       type: string;
@@ -622,7 +651,7 @@ export function createApp() {
     // without a frame it falls back to the whole asset.
     const finishedScope = and(
       eq(generationRuns.threadId, thread.id),
-      notInArray(generationRuns.status, ["queued", "running"]),
+      notInArray(generationRuns.status, ["queued", "running", "waiting"]),
       ...(frameId ? [eq(generationRuns.frameId, frameId)] : []),
     );
     let lastRow: typeof run;
