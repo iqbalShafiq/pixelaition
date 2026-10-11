@@ -1,4 +1,7 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
+import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import {
   Check,
   Copy,
@@ -6,12 +9,9 @@ import {
   Pencil,
   Play,
   Plus,
-  Square,
-  Trash2,
-} from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
-import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
+  Stop,
+  Trash,
+} from "./pixel-icons.js";
 import {
   Button,
   Checkbox,
@@ -196,7 +196,7 @@ function FrameRow({
                 onMouseDown={(event) => event.preventDefault()}
               >
                 <IconButton label={`Save ${frame.name}`} size="sm" onClick={onCommit}>
-                  <Check size={13} strokeWidth={2.5} />
+                  <Check />
                 </IconButton>
               </motion.span>
             ) : (
@@ -214,14 +214,14 @@ function FrameRow({
                   disabled={locked}
                   onClick={onStartEdit}
                 >
-                  <Pencil size={13} strokeWidth={2} />
+                  <Pencil />
                 </IconButton>
                 <Menu label={`Actions for ${frame.name}`}>
                   <MenuItem disabled={locked} onClick={onDuplicate}>
-                    <Copy size={13} strokeWidth={2} /> Duplicate
+                    <Copy /> Duplicate
                   </MenuItem>
                   <MenuItem disabled={locked} onClick={onDelete}>
-                    <Trash2 size={13} strokeWidth={2} /> Delete
+                    <Trash /> Delete
                   </MenuItem>
                 </Menu>
               </motion.span>
@@ -252,7 +252,7 @@ function FrameRow({
         }}
         className="grid h-6 w-5 shrink-0 cursor-grab place-items-center text-muted hover:text-ink disabled:cursor-default disabled:opacity-50"
       >
-        <MenuIcon size={14} strokeWidth={2} />
+        <MenuIcon width={12} height={12} />
       </button>
     </Reorder.Item>
   );
@@ -354,14 +354,10 @@ export function FramePanel({
             disabled={frames.length < 2}
             onClick={onTogglePlay}
           >
-            {playing ? (
-              <Square size={13} strokeWidth={2.5} />
-            ) : (
-              <Play size={13} strokeWidth={2.5} />
-            )}
+            {playing ? <Stop /> : <Play />}
           </IconButton>
           <IconButton label="Add frame" size="sm" disabled={locked} onClick={onAdd}>
-            <Plus size={14} strokeWidth={2.5} />
+            <Plus />
           </IconButton>
         </div>
       }
@@ -475,7 +471,7 @@ export function LayerPanel({
           disabled={locked || layers.length >= 4}
           onClick={onAdd}
         >
-          <Plus size={14} strokeWidth={2.5} />
+          <Plus />
         </IconButton>
       }
     >
@@ -567,7 +563,7 @@ export function LayerPanel({
                         size="sm"
                         onClick={commitEdit}
                       >
-                        <Check size={13} strokeWidth={2.5} />
+                        <Check />
                       </IconButton>
                     </motion.span>
                   ) : (
@@ -585,7 +581,7 @@ export function LayerPanel({
                         disabled={locked}
                         onClick={() => startEdit(layer.id, layer.name)}
                       >
-                        <Pencil size={13} strokeWidth={2} />
+                        <Pencil />
                       </IconButton>
                       <Menu label={`Actions for ${layer.name}`}>
                         <MenuItem
@@ -594,7 +590,7 @@ export function LayerPanel({
                             setPendingDelete({ id: layer.id, name: layer.name })
                           }
                         >
-                          <Trash2 size={13} strokeWidth={2} /> Delete
+                          <Trash /> Delete
                         </MenuItem>
                       </Menu>
                     </motion.span>

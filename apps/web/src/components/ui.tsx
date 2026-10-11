@@ -5,8 +5,8 @@ import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import { Select } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { ChevronDown, Eye, EyeOff, X } from "lucide-react";
 import { motion, type HTMLMotionProps } from "motion/react";
+import { ChevronDown, Close, Eye, EyeOff } from "./pixel-icons.js";
 import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
 
@@ -189,7 +189,7 @@ export function PasswordInput({
         onClick={() => setShown((value) => !value)}
         className="absolute inset-y-0 right-1.5 my-auto grid h-8 w-8 place-items-center border-2 border-transparent text-muted hover:border-line-strong hover:text-ink"
       >
-        {shown ? <EyeOff size={16} strokeWidth={2} /> : <Eye size={16} strokeWidth={2} />}
+        {shown ? <EyeOff /> : <Eye />}
       </button>
     </span>
   );
@@ -452,7 +452,7 @@ export function SelectControl({
         className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink shadow-[inset_2px_2px_0_0_rgba(244,244,244,0.08),inset_-2px_-2px_0_0_rgba(26,28,44,0.45),2px_2px_0_0_var(--color-navy)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
       >
         <Select.Value placeholder={placeholder} />
-        <ChevronDown size={14} strokeWidth={2.5} className="shrink-0 text-muted" />
+        <ChevronDown className="shrink-0 text-muted" />
       </Select.Trigger>
       <Select.Portal>
         <Select.Positioner sideOffset={4} className="z-40">
@@ -594,7 +594,7 @@ export function Dialog({
               ) : null}
             </div>
             <DialogClose>
-              <X size={16} strokeWidth={2.5} />
+              <Close />
               <span className="sr-only">Close</span>
             </DialogClose>
           </header>
@@ -637,7 +637,7 @@ export function ConfirmDialog({
           </BaseDialog.Description>
           <div className="mt-4 flex justify-end gap-2">
             <DialogClose>
-              <X size={16} strokeWidth={2.5} />
+              <Close />
               <span className="sr-only">Cancel</span>
             </DialogClose>
             <Button
@@ -696,7 +696,7 @@ export function Sheet({
               {title}
             </BaseDialog.Title>
             <DialogClose>
-              <X size={16} strokeWidth={2.5} />
+              <Close />
               <span className="sr-only">Close {title}</span>
             </DialogClose>
           </header>
@@ -736,7 +736,7 @@ function ToastList() {
         aria-label="Dismiss"
         className="absolute top-2 right-2 grid h-6 w-6 place-items-center border-2 border-line text-muted hover:border-line-strong hover:text-ink"
       >
-        <X size={13} strokeWidth={2.5} />
+        <Close width={12} height={12} />
       </BaseToast.Close>
     </BaseToast.Root>
   ));

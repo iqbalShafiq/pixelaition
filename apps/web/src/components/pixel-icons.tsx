@@ -38,7 +38,7 @@ import type { ComponentType, SVGProps } from "react";
  *   node --input-type=module -e "import('pixelarticons/react').then(m =>
  *     console.log(Object.keys(m).sort().join('\n')))"
  *
- * Export            Replaces (lucide)   pixelarticons export   Note
+ * Export            Replaces (old set)  pixelarticons export   Note
  * ---------------   -----------------   --------------------   --------------------------------
  * Pencil            Pencil              Pencil
  * Eraser            Eraser              Eraser

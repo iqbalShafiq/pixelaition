@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, FolderOpen, Plus } from "lucide-react";
+import { ArrowRight, Folder, Plus } from "../components/pixel-icons.js";
 import { useState } from "react";
 import { SpriteThumb } from "../components/sprite-thumb.js";
 import {
@@ -102,7 +102,7 @@ export function ProjectsScreen() {
                 className="w-full"
               >
                 {create.isPending ? "Creating" : "Create project"}
-                <ArrowRight size={15} strokeWidth={2.5} />
+                <ArrowRight />
               </Button>
             </form>
           </Card>
@@ -195,7 +195,7 @@ function ProjectCard({ project }: { project: Project }) {
           <SpriteThumb assetId={newest.id} />
         ) : (
           <span className="grid h-12 w-12 shrink-0 place-items-center border-2 border-dashed border-line text-muted">
-            <FolderOpen size={16} strokeWidth={2} />
+            <Folder />
           </span>
         )}
         <div className="min-w-0 flex-1">
@@ -249,7 +249,7 @@ function ProjectCard({ project }: { project: Project }) {
           disabled={createAsset.isPending}
           onClick={() => createAsset.mutate()}
         >
-          <Plus size={14} strokeWidth={3} />
+          <Plus />
           New asset
         </Button>
         <Button

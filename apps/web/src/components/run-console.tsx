@@ -1,32 +1,30 @@
 import { StreamMarkdown } from "@anvia/react-ui/stream";
+import type { ComponentType } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Brain,
   Check,
-  ClipboardCheck,
+  Clipboard,
+  Close,
   Eye,
-  FlipHorizontal,
-  FolderOpen,
+  Flip,
+  Folder,
   Palette,
   Pencil,
   Square,
   Wrench,
-  X,
-} from "lucide-react";
-import type { ComponentType } from "react";
-import { useEffect, useRef, useState } from "react";
+  type IconProps,
+} from "./pixel-icons.js";
 import { formatDuration, type RunRow } from "../lib/run-activity.js";
 
-const toolIcons: Record<
-  string,
-  ComponentType<{ size?: number; strokeWidth?: number }>
-> = {
+const toolIcons: Record<string, ComponentType<IconProps>> = {
   paint_stroke: Pencil,
   fill_rect: Square,
   set_palette: Palette,
   read_frame: Eye,
-  read_project: FolderOpen,
-  critique_frame: ClipboardCheck,
-  mirror_frame: FlipHorizontal,
+  read_project: Folder,
+  critique_frame: Clipboard,
+  mirror_frame: Flip,
 };
 
 /** One earlier run, kept small: what was asked and what came back. */
@@ -104,22 +102,22 @@ export function RunConsole({
 
   const rowIcon = (row: RunRow) => {
     if (row.kind === "phase") {
-      return <Brain size={12} strokeWidth={2} className="text-muted" />;
+      return <Brain width={12} height={12} className="text-muted" />;
     }
     if (row.kind === "tool") {
       const Icon = toolIcons[row.name] ?? Wrench;
       return (
         <Icon
-          size={12}
-          strokeWidth={2}
+          width={12}
+          height={12}
           className={row.state === "error" ? "text-erase" : "text-muted"}
         />
       );
     }
     if (row.state === "completed")
-      return <Check size={12} strokeWidth={2.5} className="text-accent" />;
+      return <Check width={12} height={12} className="text-accent" />;
     if (row.state === "failed" || row.state === "cancelled") {
-      return <X size={12} strokeWidth={2.5} className="text-erase" />;
+      return <Close width={12} height={12} className="text-erase" />;
     }
     return <span className="mt-[3px] inline-block h-1.5 w-1.5 animate-pulse bg-accent" />;
   };

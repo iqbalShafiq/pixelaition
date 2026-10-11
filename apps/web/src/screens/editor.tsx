@@ -31,7 +31,7 @@ import {
   StylePanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import { Minus, Plus } from "lucide-react";
+import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -1105,7 +1105,7 @@ export function EditorScreen() {
                     }));
                   }}
                 >
-                  <Minus size={14} strokeWidth={2} />
+                  <Minus />
                 </IconButton>
                 <IconButton
                   label="Zoom in"
@@ -1118,7 +1118,7 @@ export function EditorScreen() {
                     }));
                   }}
                 >
-                  <Plus size={14} strokeWidth={2} />
+                  <Plus />
                 </IconButton>
                 <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
                 <button

@@ -1,34 +1,33 @@
-import {
-  Eraser,
-  Grid3X3,
-  Hand,
-  Layers,
-  PaintBucket,
-  Pencil,
-  Pipette,
-  Slash,
-  Square,
-  SquareDashed,
-} from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
+import {
+  Eraser,
+  Fill,
+  Grid,
+  Hand,
+  Layers,
+  Line,
+  Pencil,
+  Picker,
+  Select,
+  Square,
+  Transparency,
+  type IconProps,
+} from "./pixel-icons.js";
 import { Button, IconButton, Panel, Separator } from "./ui.js";
-
-const stroke = 2;
-const size = 16;
 
 const tools: Array<{
   id: Tool;
   label: string;
   key: string;
-  icon: ComponentType<{ size?: number; strokeWidth?: number }>;
+  icon: ComponentType<IconProps>;
 }> = [
-  { id: "select", label: "Select", key: "V", icon: SquareDashed },
+  { id: "select", label: "Select", key: "V", icon: Select },
   { id: "pencil", label: "Pencil", key: "B", icon: Pencil },
   { id: "eraser", label: "Eraser", key: "E", icon: Eraser },
-  { id: "fill", label: "Fill", key: "G", icon: PaintBucket },
-  { id: "picker", label: "Eyedropper", key: "I", icon: Pipette },
-  { id: "line", label: "Line", key: "L", icon: Slash },
+  { id: "fill", label: "Fill", key: "G", icon: Fill },
+  { id: "picker", label: "Eyedropper", key: "I", icon: Picker },
+  { id: "line", label: "Line", key: "L", icon: Line },
   { id: "rect", label: "Rectangle", key: "R", icon: Square },
   { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
@@ -112,7 +111,7 @@ export function Toolbar({
             active={tool === entry.id}
             onClick={() => onTool(entry.id)}
           >
-            <Icon size={size} strokeWidth={stroke} />
+            <Icon />
           </IconButton>
         );
       })}
@@ -177,17 +176,17 @@ export function ViewPanel({
     <Panel title="View">
       <div className="flex items-center gap-1">
         <IconButton label="Grid" active={grid} onClick={() => onGrid(!grid)}>
-          <Grid3X3 size={15} strokeWidth={2} />
+          <Grid />
         </IconButton>
         <IconButton
           label="Transparency"
           active={checker}
           onClick={() => onChecker(!checker)}
         >
-          <SquareDashed size={15} strokeWidth={2} />
+          <Transparency />
         </IconButton>
         <IconButton label="Onion skin" active={onion} onClick={() => onOnion(!onion)}>
-          <Layers size={15} strokeWidth={2} />
+          <Layers />
         </IconButton>
       </div>
     </Panel>
