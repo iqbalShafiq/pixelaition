@@ -685,13 +685,15 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
   const resizeCanvas = createTool({
     name: "resize_canvas",
     description:
-      "Resize the whole canvas (8–128). Every frame keeps the pixels that fit and drops the rest. This is destructive and always asks for approval.",
+      "Resize the whole canvas (8–128). Every frame keeps the pixels that fit and drops the rest.",
     inputSchema: z.object({
       width: z.number().int(),
       height: z.number().int(),
     }),
-    requiresApproval: true,
+    requiresApproval: gatedApproval("resize_canvas", frameNeedsApproval),
     execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "resize_canvas");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       // Resize every frame, the way the editor's asset resize does, so no frame
@@ -1131,8 +1133,10 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     description:
       "Delete a frame. Deleting the last frame leaves a fresh blank frame named frame-1, so the asset always keeps one frame.",
     inputSchema: z.object({ frameId: z.string().optional() }),
-    requiresApproval: true,
+    requiresApproval: gatedApproval("delete_frame", frameNeedsApproval),
     execute: async (input, context) => {
+      const refused = gateRefusal(context.operationId, "delete_frame");
+      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const { id } = resolveFrame(run, input.frameId);

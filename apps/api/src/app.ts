@@ -21,11 +21,14 @@ import { auth, db } from "./auth.js";
 import {
   decidePrompt,
   DecisionNotConfiguredError,
+  JevNotConfiguredError,
   LangfuseTelemetry,
   parseModelSpecRow,
+  screenInput,
   stagedOverrideSchema,
   traceIdFor,
   type DrawDecision,
+  type GuardrailReport,
   type ModelSpec,
 } from "@pixelaition/agent";
 
@@ -594,12 +597,82 @@ export function createApp() {
         : { projectId: target.projectId },
     );
     const requestId = crypto.randomUUID();
+    // The guardrail screens the user's message before any run exists, the
+    // input side of the cookbook's pass/review/block policy.
+    const guardrailStarted = Date.now();
+    let guardrail: GuardrailReport;
+    try {
+      guardrail = await screenInput(body.prompt, {
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: jevModel,
+      });
+    } catch (reason) {
+      if (reason instanceof JevNotConfiguredError) {
+        return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+      }
+      return fail(
+        res,
+        502,
+        "GUARDRAIL_FAILED",
+        reason instanceof Error ? reason.message : "The content guardrail failed.",
+      );
+    }
+    void telemetry?.recordSpan(
+      {
+        traceId: traceIdFor(requestId),
+        kind: "generation",
+        name: "guardrail-input",
+        startMs: guardrailStarted,
+        endMs: Date.now(),
+        input: body.prompt,
+        output: JSON.stringify({
+          action: guardrail.action,
+          hazards: guardrail.hazards,
+          severity: guardrail.severity,
+        }),
+        model: jevModel,
+        ...(guardrail.cost !== undefined ? { usage: { cost: guardrail.cost } } : {}),
+        ...(guardrail.action !== "pass"
+          ? { level: "WARNING" as const, statusMessage: guardrail.reason }
+          : {}),
+      },
+      {
+        name: "decide",
+        userId: res.locals.userId as string,
+        sessionId: thread.id,
+        tags: ["pixelaition", "decide", "guardrail"],
+        metadata:
+          target.scope === "asset"
+            ? { assetId: target.assetId }
+            : { projectId: target.projectId },
+      },
+    );
+    if (guardrail.action === "block") {
+      return fail(
+        res,
+        422,
+        "POLICY_BLOCKED",
+        `This request breaks the content policy (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}, severity=${guardrail.severity.toFixed(2)}).`,
+      );
+    }
+    if (guardrail.action === "review") {
+      return fail(
+        res,
+        422,
+        "POLICY_REVIEW",
+        `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
+      );
+    }
     const decisionStarted = Date.now();
     let decided: DrawDecision;
+    let decisionCost: number | undefined;
     try {
       decided = await decidePrompt(body.prompt, {
         apiKey: process.env.OPENROUTER_API_KEY,
         model: jevModel,
+        onCall: (call) => {
+          decisionCost = call.cost;
+        },
       });
     } catch (reason) {
       if (reason instanceof DecisionNotConfiguredError) {
@@ -622,6 +695,7 @@ export function createApp() {
         input: body.prompt,
         output: JSON.stringify(decided),
         model: jevModel,
+        ...(decisionCost !== undefined ? { usage: { cost: decisionCost } } : {}),
       },
       {
         name: "decide",

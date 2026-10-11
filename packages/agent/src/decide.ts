@@ -1,4 +1,10 @@
-import { z } from "zod";
+import {
+  askJev,
+  JevNotConfiguredError,
+  type JevAnswer,
+  type JevEnv,
+  type JevQuestion,
+} from "./jev.js";
 
 export type DrawIntent = "draw" | "edit" | "variant" | "clarify";
 export type DrawDecision = {
@@ -8,20 +14,8 @@ export type DrawDecision = {
   source: "jev";
 };
 
-/** Generation refuses to start until Jev is configured. */
-export class DecisionNotConfiguredError extends Error {
-  constructor() {
-    super("Set JEV_MODEL and OPENROUTER_API_KEY before generating.");
-    this.name = "DecisionNotConfiguredError";
-  }
-}
-
-/**
- * Jev is a System One decision model served by OpenRouter's Decisions API,
- * not the OpenAI-compatible chat endpoints. One OpenRouter key authenticates
- * it; there is no separate TypeSafe account or key.
- */
-export const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
+/** The decision path keeps its own name for the shared configuration error. */
+export { JevNotConfiguredError as DecisionNotConfiguredError };
 
 const intentOptions = {
   draw: "Draw a new sprite, item, or tile from scratch.",
@@ -34,7 +28,7 @@ const clarifyQuestion =
   "What should the pixel asset show, and about how many pixels wide should it be?";
 
 /** The typed questions Jev answers in one parallel request. */
-const jevQuestions = {
+const jevQuestions: Record<string, JevQuestion> = {
   intent: {
     type: "choice",
     instructions:
@@ -50,68 +44,33 @@ const jevQuestions = {
       false: "It is a placeholder or too vague to draw from.",
     },
   },
-} as const;
-
-const jevAnswerSchema = z.object({
-  answers: z.object({
-    intent: z.object({
-      type: z.literal("choice"),
-      choice: z.string(),
-      confidence: z.number().min(0).max(1),
-    }),
-    specific: z.object({
-      type: z.literal("noul"),
-      noul: z.number().min(0).max(1),
-    }),
-  }),
-  usage: z.object({ cost: z.number().optional() }).optional(),
-});
-export type JevAnswers = z.infer<typeof jevAnswerSchema>["answers"];
+};
 
 /**
  * Jev returns typed answers, never prose, so the clarifying question is ours.
  * A low `specific` probability routes to clarify regardless of intent.
  */
-export function toDecision(answers: JevAnswers): DrawDecision {
+export function toDecision(answers: {
+  intent: JevAnswer;
+  specific: JevAnswer;
+}): DrawDecision {
   const chosen = answers.intent.choice;
   const intent =
-    chosen === "clarify" || !(chosen in intentOptions)
+    chosen === undefined || chosen === "clarify" || !(chosen in intentOptions)
       ? "clarify"
       : (chosen as DrawIntent);
-  const specific = answers.specific.noul;
-  const confidence = Math.min(answers.intent.confidence, specific);
+  const specific = answers.specific.noul ?? 0;
+  const confidence = Math.min(answers.intent.confidence ?? specific, specific);
   if (intent === "clarify" || specific < 0.7) {
     return { intent: "clarify", confidence, question: clarifyQuestion, source: "jev" };
   }
   return { intent, confidence, source: "jev" };
 }
 
-export async function decidePrompt(
-  prompt: string,
-  env: {
-    apiKey?: string | undefined;
-    model?: string | undefined;
-    /** Test seam; production always uses the OpenRouter Decisions endpoint. */
-    decisionsUrl?: string | undefined;
-  },
-): Promise<DrawDecision> {
-  const apiKey = env.apiKey?.trim();
-  const model = env.model?.trim();
-  if (!apiKey || !model) throw new DecisionNotConfiguredError();
-  const response = await fetch(env.decisionsUrl ?? JEV_DECISIONS_URL, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ model, state: { prompt }, questions: jevQuestions }),
+export async function decidePrompt(prompt: string, env: JevEnv): Promise<DrawDecision> {
+  const { answers } = await askJev({ prompt }, jevQuestions, env);
+  return toDecision({
+    intent: answers.intent ?? {},
+    specific: answers.specific ?? {},
   });
-  if (!response.ok) {
-    throw new Error(`The Jev decision provider returned ${response.status}.`);
-  }
-  const parsed = jevAnswerSchema.safeParse(await response.json());
-  if (!parsed.success) {
-    throw new Error("Jev returned an answer shape this client does not understand.");
-  }
-  return toDecision(parsed.data.answers);
 }

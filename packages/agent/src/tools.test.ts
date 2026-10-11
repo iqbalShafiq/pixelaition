@@ -1385,12 +1385,28 @@ describe("drawing approval", () => {
     releaseRun("run-1");
   });
 
-  it("always asks before deleting a frame", () => {
-    expect(tool("delete_frame").requiresApproval).toBe(true);
+  it("gates a frame delete on the request check", async () => {
+    boundRun();
+    stubJev(0.02);
+    expect(await approval("delete_frame", { frameId: "frame-1" })).toBe(false);
+    const refused = await tool("delete_frame").call(
+      { frameId: "frame-1" },
+      { operationId: "run-1" },
+    );
+    expect(refused).toMatchObject({
+      refused: expect.stringContaining("not supported"),
+    });
+    expect(getRun("run-1")!.frames.size).toBe(2);
+    releaseRun("run-1");
   });
 
-  it("always asks before resizing the canvas", () => {
-    expect(tool("resize_canvas").requiresApproval).toBe(true);
+  it("runs a resize without asking when the size cannot drop a pixel or the request check approves", async () => {
+    boundRun();
+    // The same size is harmless: no Jev call, no approval.
+    expect(await approval("resize_canvas", { width: 4, height: 4 })).toBe(false);
+    stubJev(0.97);
+    expect(await approval("resize_canvas", { width: 8, height: 8 })).toBe(false);
+    releaseRun("run-1");
   });
 });
 

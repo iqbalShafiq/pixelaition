@@ -7,6 +7,16 @@ export {
   toGateOutcome,
 } from "./gate.js";
 export type { ToolGateOutcome } from "./gate.js";
+export {
+  inputBattery,
+  outputBattery,
+  routeGuardrail,
+  screenInput,
+  screenOutput,
+} from "./guardrails.js";
+export type { GuardrailAction, GuardrailReport } from "./guardrails.js";
+export { askJev, JevNotConfiguredError } from "./jev.js";
+export type { JevAnswer, JevEnv, JevQuestion } from "./jev.js";
 export { pixelInstructions } from "./instructions.js";
 export { parseModelSpecRow, selectRunTarget } from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";
@@ -27,6 +37,7 @@ export type {
   BoundRunBinding,
   CreateAssetInput,
   FrameChange,
+  JevGateCheck,
   PlanFrame,
   ProjectSummary,
   RunAsset,

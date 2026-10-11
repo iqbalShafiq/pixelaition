@@ -104,6 +104,17 @@ export type RunAsset = {
   frames: Array<{ id: string; name: string; index: number; buffer: FrameBuffer }>;
 };
 
+/** One Jev gate call, for the run's trace. */
+export type JevGateCheck = {
+  toolName: string;
+  outcome: "approve" | "block" | "review";
+  reason: string;
+  checks: Record<string, number>;
+  durationMs: number;
+  model: string;
+  cost?: number;
+};
+
 export type RunBinding = {
   /** The asset the run draws on; absent until a workspace run chooses or creates one. */
   assetId?: string;
@@ -128,6 +139,8 @@ export type RunBinding = {
   /** The run owner; the workspace callbacks enforce ownership with this id. */
   userId?: string;
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void;
+  /** Records one Jev request check on the run's trace. */
+  onJevCheck?: (check: JevGateCheck) => void;
   onFrameChange?: (change: FrameChange) => void | Promise<void>;
   onListProjects?: (userId: string) => Promise<ProjectSummary[]>;
   onListAssets?: (userId: string, projectId: string) => Promise<AssetSummary[]>;

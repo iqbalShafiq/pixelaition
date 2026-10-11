@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { askJev, type JevQuestion } from "./jev.js";
 import type { RunBinding } from "./runs.js";
 
 /**
@@ -25,14 +25,7 @@ export type ToolGateOutcome = {
 const GATE_APPROVE_AT = 0.9;
 const GATE_BLOCK_AT = 0.1;
 
-/** Jev lives on OpenRouter's Decisions API, not the chat endpoints. */
-const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
-
-type NoulQuestion = {
-  type: "noul";
-  instructions: string;
-  criteria: { true: string; false: string };
-};
+type NoulQuestion = JevQuestion & { type: "noul" };
 
 const supportedQuestion: NoulQuestion = {
   type: "noul",
@@ -59,9 +52,9 @@ const proportionateQuestion: NoulQuestion = {
 /**
  * What each destructive tool is judged on. The description is written for the
  * check, not for the drawing model: it tells Jev what the call means and how
- * it normally fits into drawing. A palette change or a layer removal is a
- * single-question call; a region clear or a color swap also has a size that
- * can outgrow the request.
+ * it normally fits into drawing. A palette change, a layer removal, a frame
+ * delete, or a canvas resize is a single-question call; a region clear or a
+ * color swap also has a size that can outgrow the request.
  */
 const TOOL_GATES: Record<
   string,
@@ -86,15 +79,17 @@ const TOOL_GATES: Record<
     description: "Remove a layer and everything painted on it from the frame.",
     questions: { supported: supportedQuestion },
   },
+  delete_frame: {
+    description:
+      "Delete a whole frame of the animation and everything painted on it. Drawing a new animation often starts by clearing away an old frame the user no longer wants.",
+    questions: { supported: supportedQuestion },
+  },
+  resize_canvas: {
+    description:
+      "Resize the whole canvas, which every frame adopts; pixels outside the new size are dropped. Users often ask for a specific canvas size in the same sentence as what to draw.",
+    questions: { supported: supportedQuestion },
+  },
 };
-
-const answerSchema = z.object({
-  answers: z.record(
-    z.string(),
-    z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
-  ),
-  usage: z.object({ cost: z.number().optional() }).optional(),
-});
 
 /** Every probability selects the outcome; formatting keeps reasons readable. */
 export function toGateOutcome(checks: Record<string, number>): ToolGateOutcome {
@@ -165,6 +160,10 @@ export function gateIsHarmless(
     // No painted pixel can lose its color when no pixel is painted.
     return !buffer.layers.some((layer) => layer.pixels.some((value) => value !== 0));
   }
+  if (toolName === "resize_canvas") {
+    const { width, height } = args as { width: number; height: number };
+    return width === run.width && height === run.height;
+  }
   return false;
 }
 
@@ -183,11 +182,6 @@ export async function gateToolCall(
   if (!config) {
     throw new Error(`${toolName} does not pass the Jev request check.`);
   }
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  const model = process.env.JEV_MODEL?.trim();
-  if (!apiKey || !model) {
-    throw new Error("Set OPENROUTER_API_KEY and JEV_MODEL for the Jev request check.");
-  }
   const frame =
     run.currentFrameId !== undefined ? run.frames.get(run.currentFrameId) : undefined;
   const state = {
@@ -197,31 +191,30 @@ export async function gateToolCall(
     palette: run.palette,
     call: { tool: toolName, description: config.description, args },
   };
-  const response = await fetch(JEV_DECISIONS_URL, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ model, state, questions: config.questions }),
-    signal: AbortSignal.timeout(15_000),
+  const started = Date.now();
+  const { answers, cost, model } = await askJev(state, config.questions, {
+    apiKey: process.env.OPENROUTER_API_KEY,
+    model: process.env.JEV_MODEL,
   });
-  if (!response.ok) {
-    throw new Error(`The Jev request check returned ${response.status}.`);
-  }
-  const parsed = answerSchema.safeParse(await response.json());
-  if (!parsed.success) {
-    throw new Error("Jev returned an answer shape this client does not understand.");
-  }
   const checks: Record<string, number> = {};
   for (const name of Object.keys(config.questions)) {
-    const answer = parsed.data.answers[name];
-    if (!answer) {
+    const probability = answers[name]?.noul;
+    if (probability === undefined) {
       throw new Error(`Jev did not answer the ${name} check.`);
     }
-    checks[name] = answer.noul;
+    checks[name] = probability;
   }
-  return toGateOutcome(checks);
+  const outcome = toGateOutcome(checks);
+  run.onJevCheck?.({
+    toolName,
+    outcome: outcome.outcome,
+    reason: outcome.reason,
+    checks,
+    durationMs: Date.now() - started,
+    model,
+    ...(cost !== undefined ? { cost } : {}),
+  });
+  return outcome;
 }
 
 /**

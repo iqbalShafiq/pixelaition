@@ -24,11 +24,14 @@ import {
   parseModelSpecRow,
   pixelInstructions,
   releaseRun,
+  screenOutput,
   selectRunTarget,
   stagedOverrideSchema,
+  traceIdFor,
   type AssetSummary,
   type CreateAssetInput,
   type FrameChange,
+  type JevGateCheck,
   type ModelSpec,
   type ProjectSummary,
   type RunAsset,
@@ -148,6 +151,92 @@ const telemetry =
         serviceName: "pixelaition-worker",
       })
     : undefined;
+
+/**
+ * One Jev request check lands on the run's own trace with its verdict and
+ * cost. Telemetry is optional and must never disturb the run.
+ */
+function recordGateCheck(durableRunId: string, check: JevGateCheck): void {
+  void telemetry?.recordRunSpan({
+    traceId: traceIdFor(durableRunId),
+    kind: "generation",
+    name: "jev-gate",
+    startMs: Date.now() - check.durationMs,
+    endMs: Date.now(),
+    input: check.toolName,
+    output: JSON.stringify({ outcome: check.outcome, checks: check.checks }),
+    model: check.model,
+    ...(check.cost !== undefined ? { usage: { cost: check.cost } } : {}),
+    ...(check.outcome === "block"
+      ? { level: "WARNING" as const, statusMessage: check.reason }
+      : {}),
+  });
+}
+
+/**
+ * Screen a run's closing message before it is stored — the output side of the
+ * guardrail. A blocked message is withheld, and a message the check could not
+ * screen is withheld too with the cause named: an unscreened reply is never
+ * stored. The verdict lands on the run's trace as a span and a score.
+ */
+async function screenAnswer(durableRunId: string, text: unknown): Promise<string | null> {
+  if (typeof text !== "string" || text.trim().length === 0) return null;
+  const started = Date.now();
+  try {
+    const report = await screenOutput(text, {
+      apiKey: process.env.OPENROUTER_API_KEY,
+      model: process.env.JEV_MODEL,
+    });
+    void telemetry?.recordRunSpan({
+      traceId: traceIdFor(durableRunId),
+      kind: "generation",
+      name: "guardrail-output",
+      startMs: started,
+      endMs: Date.now(),
+      input: text.slice(0, 1000),
+      output: JSON.stringify({
+        action: report.action,
+        hazards: report.hazards,
+        severity: report.severity,
+      }),
+      model: process.env.JEV_MODEL,
+      ...(report.cost !== undefined ? { usage: { cost: report.cost } } : {}),
+      ...(report.action !== "pass"
+        ? { level: "WARNING" as const, statusMessage: report.reason }
+        : {}),
+    });
+    await telemetry?.recordScore({
+      runId: durableRunId,
+      name: "guardrail-output",
+      value: report.action === "block" ? 0 : report.action === "review" ? 0.5 : 1,
+      ...(report.action !== "pass" ? { comment: report.reason } : {}),
+    });
+    if (report.action === "block") {
+      return "This reply was withheld by the content policy.";
+    }
+    return text;
+  } catch (reason) {
+    void telemetry?.recordRunSpan({
+      traceId: traceIdFor(durableRunId),
+      kind: "generation",
+      name: "guardrail-output",
+      startMs: started,
+      endMs: Date.now(),
+      input: text.slice(0, 1000),
+      output: JSON.stringify({ action: "unscreened" }),
+      model: process.env.JEV_MODEL,
+      level: "ERROR",
+      statusMessage: boundedReason(reason),
+    });
+    await telemetry?.recordScore({
+      runId: durableRunId,
+      name: "guardrail-output",
+      value: 0,
+      comment: `unscreened: ${boundedReason(reason)}`,
+    });
+    return `The reply could not be screened (${boundedReason(reason)}), so it was withheld.`;
+  }
+}
 
 const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
 const baseUrl = process.env.OPENROUTER_BASE_URL?.trim();
@@ -717,6 +806,7 @@ async function follow(
           stored.find((event) => event.type === "status")?.data as
             { outcome?: { text?: string } } | undefined
         )?.outcome;
+        const answer = await screenAnswer(durableId, outcome?.text);
         await db
           .update(generationRuns)
           .set({
@@ -724,7 +814,7 @@ async function follow(
               snapshot.run.status === "completed" ? "succeeded" : snapshot.run.status,
             finishedAt: new Date(),
             events: stored,
-            answer: typeof outcome?.text === "string" ? outcome.text : null,
+            answer,
           })
           .where(eq(generationRuns.id, publicId));
         // One snapshot per frame the run actually touched, written through the
@@ -1116,6 +1206,7 @@ function bindAssetRun(options: {
     issues: [],
     onStroke: writes.onStroke,
     onFrameChange: writes.onFrameChange,
+    onJevCheck: (check) => recordGateCheck(durableRunId, check),
   });
 }
 
@@ -1307,6 +1398,7 @@ function bindWorkspaceRun(options: {
       if (!writes) throw new Error("The run is not bound to an asset.");
       await writes.onFrameChange(change);
     },
+    onJevCheck: (check) => recordGateCheck(durableRunId, check),
   });
 }
 
@@ -1350,6 +1442,21 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
     // Idempotent: a run this process already follows is left alone.
     if (getRun(durableRunId)) continue;
     try {
+      // The submission path set this context; recovery must rebuild it too so
+      // gate and guardrail spans land on the same trace with user and session.
+      telemetry?.setTraceContext(durableRunId, {
+        name: "draw-sprite",
+        userId,
+        sessionId: run.threadId,
+        tags: ["pixelaition", "draw"],
+        metadata: {
+          ...(assetId ? { assetId } : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(run.frameId ? { frameId: run.frameId } : {}),
+          modelId: run.modelId,
+          reasoningEffort: run.reasoningEffort,
+        },
+      });
       // A workspace run has no asset to bind until its tools pick one, so its
       // binding starts unbound and its follow loop is rebuilt; its events and
       // terminal state still land.

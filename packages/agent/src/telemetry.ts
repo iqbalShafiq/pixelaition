@@ -412,6 +412,32 @@ export class LangfuseTelemetry {
     await this.flush();
   }
 
+  /**
+   * Records a span on a trace this process already started. The context was
+   * set when the run was bound; a span without one is a programming error and
+   * is dropped with a log instead of inventing context.
+   */
+  async recordRunSpan(input: {
+    traceId: string;
+    kind: TelemetrySpanKind;
+    name: string;
+    startMs: number;
+    endMs: number;
+    input?: string;
+    output?: string;
+    model?: string;
+    usage?: Record<string, unknown>;
+    level?: "DEFAULT" | "WARNING" | "ERROR";
+    statusMessage?: string;
+  }): Promise<void> {
+    const context = this.contexts.get(input.traceId);
+    if (!context) {
+      console.error(`[telemetry] no trace context for ${input.traceId}; span dropped.`);
+      return;
+    }
+    await this.recordSpan(input, context);
+  }
+
   async flush(): Promise<void> {
     if (this.pending.length === 0) return;
     const spans = this.pending.splice(0, this.pending.length);

@@ -24,15 +24,15 @@ describe("jev decisions", () => {
   it("maps Jev answers onto the draw intent", () => {
     expect(
       toDecision({
-        intent: { type: "choice", choice: "variant", confidence: 0.82 },
-        specific: { type: "noul", noul: 0.95 },
+        intent: { choice: "variant", confidence: 0.82 },
+        specific: { noul: 0.95 },
       }),
     ).toEqual({ intent: "variant", confidence: 0.82, source: "jev" });
 
     expect(
       toDecision({
-        intent: { type: "choice", choice: "draw", confidence: 0.9 },
-        specific: { type: "noul", noul: 0.4 },
+        intent: { choice: "draw", confidence: 0.9 },
+        specific: { noul: 0.4 },
       }),
     ).toEqual({
       intent: "clarify",
@@ -44,9 +44,14 @@ describe("jev decisions", () => {
 
     expect(
       toDecision({
-        intent: { type: "choice", choice: "clarify", confidence: 0.88 },
-        specific: { type: "noul", noul: 0.9 },
+        intent: { choice: "clarify", confidence: 0.88 },
+        specific: { noul: 0.9 },
       }),
     ).toMatchObject({ intent: "clarify", confidence: 0.88, source: "jev" });
+
+    // An answer outside the option set is not a decision to draw.
+    expect(
+      toDecision({ intent: { choice: "paint" }, specific: { noul: 0.95 } }).intent,
+    ).toBe("clarify");
   });
 });
