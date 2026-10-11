@@ -111,6 +111,34 @@ describe("checkAnimation", () => {
     expect(report.pairs[0]).toMatchObject({ centroidShift: 0, silhouetteDrift: 0 });
   });
 
+  it("flags a pair whose second frame has no opaque pixels", () => {
+    const report = checkAnimation([
+      { id: "a", buffer: painted([{ x: 2, y: 2 }]) },
+      { id: "b", buffer: createBuffer({ width: 8, height: 8 }) },
+    ]);
+    expect(report.flags).toContain("Frame b has no opaque pixels.");
+    // The metrics stay what they were: no invented centroid, no invented shift.
+    expect(report.pairs[0]).toMatchObject({ centroidShift: 0, silhouetteDrift: 0 });
+  });
+
+  it("flags a single empty frame", () => {
+    const report = checkAnimation([
+      { id: "a", buffer: createBuffer({ width: 8, height: 8 }) },
+    ]);
+    expect(report.flags).toEqual(["Frame a has no opaque pixels."]);
+  });
+
+  it("flags an empty frame once even when it pairs twice", () => {
+    const report = checkAnimation([
+      { id: "a", buffer: painted([{ x: 2, y: 2 }]) },
+      { id: "b", buffer: createBuffer({ width: 8, height: 8 }) },
+      { id: "c", buffer: painted([{ x: 2, y: 3 }]) },
+    ]);
+    expect(report.flags.filter((flag) => flag.includes("no opaque pixels"))).toHaveLength(
+      1,
+    );
+  });
+
   it("reports a single frame as a self-pairing loop with no flags", () => {
     const report = checkAnimation([{ id: "a", buffer: painted([{ x: 2, y: 2 }]) }]);
     expect(report.pairs).toEqual([]);

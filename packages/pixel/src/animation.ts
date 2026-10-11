@@ -80,8 +80,8 @@ export function frameStats(buffer: FrameBuffer): FrameStats {
 
 /**
  * One ordered pair of frames. A frame with no opaque pixels has no centroid
- * or silhouette, so a pair that involves one reports zero shift and lets the
- * per-frame stats and critique_frame's EMPTY issue carry that fact.
+ * or silhouette, so a pair that involves one reports zero shift; the empty
+ * frame itself is flagged by checkAnimation, and its stats carry the fact.
  */
 function compareFrames(
   from: { id: string; buffer: FrameBuffer },
@@ -144,9 +144,9 @@ function compareFrames(
 
 /**
  * Deterministic continuity metrics for an animation: every consecutive pair
- * plus the loop from the last frame back to the first. Flags name identical
- * distinct frames, centroid moves over two pixels, and a loop that jumps
- * further than every internal pair.
+ * plus the loop from the last frame back to the first. Flags name empty
+ * frames, identical distinct frames, centroid moves over two pixels, and a
+ * loop that jumps further than every internal pair.
  */
 export function checkAnimation(
   frames: Array<{ id: string; buffer: FrameBuffer }>,
@@ -159,6 +159,14 @@ export function checkAnimation(
   const last = frames[frames.length - 1]!;
   const loop = compareFrames(last, first);
   const flags: string[] = [];
+  for (const frame of frames) {
+    const opaque = opaqueOf(
+      composite(frame.buffer),
+      frame.buffer.width,
+      frame.buffer.height,
+    );
+    if (!opaque) flags.push(`Frame ${frame.id} has no opaque pixels.`);
+  }
   for (const pair of [...pairs, loop]) {
     if (pair.from !== pair.to && pair.changedPixels === 0) {
       flags.push(`${pair.from} → ${pair.to}: identical frames`);
