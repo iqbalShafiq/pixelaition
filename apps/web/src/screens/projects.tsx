@@ -73,7 +73,7 @@ export function ProjectsScreen() {
             <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
               Workspace
             </p>
-            <h1 className="mt-3 text-[2.5rem] leading-[1.05] font-medium tracking-[-0.02em] text-ink text-balance">
+            <h1 className="mt-3 text-pixel-hero text-ink text-balance">
               Your sprite families
             </h1>
             <p className="mt-3 max-w-[46ch] text-[14px] leading-relaxed text-muted">
@@ -113,9 +113,7 @@ export function ProjectsScreen() {
 
         <section className="grid gap-4">
           <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
-            <h2 className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
-              Projects
-            </h2>
+            <h2 className="text-pixel-title text-muted">Projects</h2>
             <span className="text-pixel-mono text-muted">
               {list.length.toString().padStart(2, "0")}
             </span>

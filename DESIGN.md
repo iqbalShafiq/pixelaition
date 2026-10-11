@@ -81,24 +81,26 @@ a control. Disabled controls show `not-allowed`.
 
 Three pixel faces, each on its own design grid:
 
-| Face           | Grid                      | Use                                                           |
-| -------------- | ------------------------- | ------------------------------------------------------------- |
-| Silkscreen     | multiples of 8 (16/24/32) | wordmark, page titles, panel headers, dialog and sheet titles |
-| Pixelify Sans  | ≥12px, ≥16px for body     | body copy, labels, buttons, menus, tooltips, inputs           |
-| Departure Mono | multiples of 11 (11/22)   | numbers, hex, keyboard hints, run console, status lines       |
+| Face           | Grid                                             | Use                                                                               |
+| -------------- | ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Silkscreen     | multiples of 8 (16/24/32)                        | display: wordmark, page titles and heroes, panel headers, dialog and sheet titles |
+| Pixelify Sans  | 12px floor for short strings, 16px for body copy | body copy, labels, buttons, menus, tooltips, inputs                               |
+| Departure Mono | multiples of 11 (11/22)                          | numbers, hex, keyboard hints, run console and logs, micro-labels and kickers      |
 
-The scale lives in `apps/web/src/styles.css` as `text-pixel-display`,
-`text-pixel-title`, `text-pixel-label`, `text-pixel-body`, and `text-pixel-mono`;
-components never hand-roll sizes. Pixel-font elements carry
-`-webkit-font-smoothing: none` and `text-rendering: geometricPrecision`, and a
-fractional size off the face's grid is a bug — it blurs.
+The scale lives in `apps/web/src/styles.css` as `text-pixel-hero`,
+`text-pixel-display`, `text-pixel-title`, `text-pixel-label`, `text-pixel-body`,
+and `text-pixel-mono`; components never hand-roll sizes. Pixel-font elements
+carry `-webkit-font-smoothing: none` and `text-rendering: geometricPrecision`,
+and a fractional size off the face's grid is a bug — it blurs.
 
 The micro-label decision (spec open question 6) went to **Silkscreen 16 for panel
 headers**: side by side with Pixelify 12 it reads as a section title that belongs
 to the same window language as the dialog and sheet titles, it fits the 280px
-rail (a "Style guide" header is about 110px), and its 24px line height costs
-nothing in a scrollable rail. Pixelify 12 stays the small-copy floor; Departure
-Mono stays numbers and logs only.
+rail (a "Frames" header measures 95px of text), and its 24px line height costs
+nothing in a scrollable rail. Pixelify 12 stays the small-copy floor. Departure
+Mono covers numbers and logs plus the uppercase micro-labels and kickers
+(field labels, toast titles, empty-state titles, page eyebrows), which stay
+mono by design.
 
 ## Space
 
