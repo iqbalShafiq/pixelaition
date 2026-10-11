@@ -20,6 +20,7 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { Composer } from "../components/composer.js";
+import { PixelLoader } from "../components/pixel-loader.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { ExportDialog } from "../components/export-dialog.js";
@@ -975,7 +976,7 @@ export function EditorScreen() {
         <span className="ml-auto flex items-center gap-1.5">
           {running ? (
             <span className="hidden items-center gap-1.5 text-pixel-mono text-accent sm:flex">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              <PixelLoader size={12} />
               drawing
             </span>
           ) : null}
