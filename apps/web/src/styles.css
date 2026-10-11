@@ -423,7 +423,8 @@
     background-position-y: 0;
   }
   to {
-    background-position-y: -36px;
+    /* The sheet is three squares tall; the element sets its own size. */
+    background-position-y: calc(var(--pixel-loader-size, 12px) * -3);
   }
 }
 

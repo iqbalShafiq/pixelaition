@@ -32,6 +32,7 @@ import {
   type PendingInteraction,
   type StagedPlanFrame,
 } from "./interaction-card.js";
+import { PixelLoader } from "./pixel-loader.js";
 import type { FrameDto } from "../lib/types.js";
 
 const toolIcons: Record<string, ComponentType<IconProps>> = {
@@ -172,7 +173,7 @@ export function RunConsole({
     if (row.state === "failed" || row.state === "cancelled") {
       return <Close width={12} height={12} className="text-erase" />;
     }
-    return <span className="mt-[3px] inline-block h-1.5 w-1.5 animate-pulse bg-accent" />;
+    return <PixelLoader size={12} />;
   };
 
   return (
