@@ -34,10 +34,27 @@ function toolPayload(body: Record<string, unknown> | undefined): {
   return { name, input: inner.toolCall?.input };
 }
 
+/** `4×2` when both sides are numbers, otherwise nothing. */
+function sizeText(value: Record<string, unknown>): string | undefined {
+  return typeof value.width === "number" && typeof value.height === "number"
+    ? `${value.width}×${value.height}`
+    : undefined;
+}
+
+/** `3,5` from an object with numeric x and y, otherwise nothing. */
+function pointText(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { x, y } = value as Record<string, unknown>;
+  return typeof x === "number" && typeof y === "number" ? `${x},${y}` : undefined;
+}
+
 function toolSummary(name: string, input: unknown): string | undefined {
   if (!input || typeof input !== "object") return undefined;
   const value = input as Record<string, unknown>;
-  if (name === "paint_stroke" && Array.isArray(value.points)) {
+  if (
+    (name === "paint_stroke" || name === "erase_stroke") &&
+    Array.isArray(value.points)
+  ) {
     return `${value.points.length} px`;
   }
   if (name === "set_palette" && Array.isArray(value.palette)) {
@@ -46,11 +63,36 @@ function toolSummary(name: string, input: unknown): string | undefined {
   if (name === "plan" && Array.isArray(value.steps)) {
     return `${value.steps.length} steps`;
   }
-  if (name === "fill_rect") {
-    return `${value.width}×${value.height}`;
+  if (
+    name === "fill_rect" ||
+    name === "fill_region" ||
+    name === "clear_region" ||
+    name === "resize_canvas" ||
+    name === "read_region"
+  ) {
+    return sizeText(value);
   }
-  if (name === "read_region") {
-    return `${value.width}×${value.height}`;
+  if (name === "dither_rect") {
+    const size = sizeText(value);
+    return size && typeof value.pattern === "string" ? `${size} ${value.pattern}` : size;
+  }
+  if (name === "draw_line") {
+    const from = pointText(value.from);
+    const to = pointText(value.to);
+    return from && to ? `${from} → ${to}` : undefined;
+  }
+  if (name === "flood_fill") {
+    return pointText(value);
+  }
+  if (
+    name === "replace_color" &&
+    typeof value.from === "number" &&
+    typeof value.to === "number"
+  ) {
+    return `${value.from} → ${value.to}`;
+  }
+  if (name === "apply_outline" && typeof value.color === "number") {
+    return `color ${value.color}`;
   }
   if (name === "preview_frame" && typeof value.mode === "string") {
     return value.mode;

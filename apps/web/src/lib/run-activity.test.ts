@@ -136,6 +136,39 @@ describe("run activity rows", () => {
     expect(rows[0]).toMatchObject({ summary: "2 flags" });
   });
 
+  it("summarizes the drawing primitives", () => {
+    const row = (toolName: string, input: unknown) =>
+      applyRunEvent([], 1, "tool_started", toolStarted("0:tool:1", toolName, input))[0];
+    expect(
+      row("erase_stroke", {
+        points: [
+          { x: 1, y: 1 },
+          { x: 2, y: 1 },
+        ],
+      }),
+    ).toMatchObject({ kind: "tool", name: "erase_stroke", summary: "2 px" });
+    expect(row("draw_line", { from: { x: 0, y: 0 }, to: { x: 3, y: 1 } })).toMatchObject({
+      summary: "0,0 → 3,1",
+    });
+    expect(row("flood_fill", { x: 2, y: 5 })).toMatchObject({ summary: "2,5" });
+    expect(row("fill_region", { width: 3, height: 4 })).toMatchObject({
+      summary: "3×4",
+    });
+    expect(row("clear_region", { width: 3, height: 4 })).toMatchObject({
+      summary: "3×4",
+    });
+    expect(row("replace_color", { from: 1, to: 4 })).toMatchObject({
+      summary: "1 → 4",
+    });
+    expect(row("resize_canvas", { width: 16, height: 24 })).toMatchObject({
+      summary: "16×24",
+    });
+    expect(row("dither_rect", { width: 4, height: 2, pattern: "checker" })).toMatchObject(
+      { summary: "4×2 checker" },
+    );
+    expect(row("apply_outline", { color: 1 })).toMatchObject({ summary: "color 1" });
+  });
+
   it("marks a reasoning phase without inventing text", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(rows, 9, "model_started", { operationId: "0:model:1" });

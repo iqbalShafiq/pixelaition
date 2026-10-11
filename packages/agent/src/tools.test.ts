@@ -813,6 +813,22 @@ describe("drawing approval", () => {
     expect(approval("paint_stroke", { ...stroke, frameId: "frame-3" })).toBe(true);
     expect(approval("fill_rect", { frameId: "frame-2" })).toBe(false);
     expect(approval("fill_rect", { frameId: "frame-3" })).toBe(true);
+    expect(approval("erase_stroke", { frameId: "frame-2" })).toBe(false);
+    expect(approval("erase_stroke", { frameId: "frame-3" })).toBe(true);
+    expect(approval("draw_line", { frameId: "frame-2" })).toBe(false);
+    expect(approval("draw_line", { frameId: "frame-3" })).toBe(true);
+    expect(approval("flood_fill", { frameId: "frame-2" })).toBe(false);
+    expect(approval("flood_fill", { frameId: "frame-3" })).toBe(true);
+    expect(approval("fill_region", { frameId: "frame-2" })).toBe(false);
+    expect(approval("fill_region", { frameId: "frame-3" })).toBe(true);
+    expect(approval("clear_region", { frameId: "frame-2" })).toBe(false);
+    expect(approval("clear_region", { frameId: "frame-3" })).toBe(true);
+    expect(approval("replace_color", { frameId: "frame-2" })).toBe(false);
+    expect(approval("replace_color", { frameId: "frame-3" })).toBe(true);
+    expect(approval("apply_outline", { frameId: "frame-2" })).toBe(false);
+    expect(approval("apply_outline", { frameId: "frame-3" })).toBe(true);
+    expect(approval("dither_rect", { frameId: "frame-2" })).toBe(false);
+    expect(approval("dither_rect", { frameId: "frame-3" })).toBe(true);
     expect(approval("set_palette", { frameId: "frame-2" })).toBe(false);
     expect(approval("mirror_frame", { frameId: "frame-3" })).toBe(true);
     releaseRun("run-1");
@@ -850,6 +866,10 @@ describe("drawing approval", () => {
 
   it("always asks before deleting a frame", () => {
     expect(tool("delete_frame").requiresApproval).toBe(true);
+  });
+
+  it("always asks before resizing the canvas", () => {
+    expect(tool("resize_canvas").requiresApproval).toBe(true);
   });
 });
 
@@ -901,6 +921,45 @@ describe("check_animation", () => {
     await expect(
       tool("check_animation").call({ frameIds: ["frame-9"] }, { operationId: "run-1" }),
     ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    releaseRun("run-1");
+  });
+});
+
+describe("3-shade rock", () => {
+  it("draws a rock with outline and dither that critiques clean", async () => {
+    boundFrameRun();
+    const layerId = getRun("run-1")!.frames.get("frame-1")!.buffer.layers[0]!.id;
+    // A 4×4 body at (2,2)–(5,5): one base shade, the lower half dithered, and
+    // the style outline ringed around it. One empty border pixel all round.
+    const body: Array<{ x: number; y: number; color: number }> = [];
+    for (let y = 2; y <= 5; y += 1) {
+      for (let x = 2; x <= 5; x += 1) body.push({ x, y, color: 2 });
+    }
+    await tool("paint_stroke").call(
+      { layerId, label: "rock base", points: body },
+      { operationId: "run-1" },
+    );
+    await tool("dither_rect").call(
+      {
+        layerId,
+        x: 2,
+        y: 4,
+        width: 4,
+        height: 2,
+        colorA: 2,
+        colorB: 3,
+        pattern: "checker",
+      },
+      { operationId: "run-1" },
+    );
+    expect(await tool("apply_outline").call({}, { operationId: "run-1" })).toMatchObject({
+      committed: true,
+      color: 1,
+    });
+    const result = (await tool("critique_frame").call({}, { operationId: "run-1" })) as {
+      issues: Array<{ code: string }>;
+    };
+    expect(result.issues).toEqual([]);
     releaseRun("run-1");
   });
 });

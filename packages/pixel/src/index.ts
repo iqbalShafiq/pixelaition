@@ -24,7 +24,7 @@ export {
   layerById,
   usedColorCount,
 } from "./buffer.js";
-export { decodePixels, encodePixels } from "./pixels.js";
+export { decodePixels, encodePixels, normalizeHex } from "./pixels.js";
 export { assetSchema, pixelProjectSchema, styleGuideSchema } from "./schema.js";
 export {
   MAX_COLORS,

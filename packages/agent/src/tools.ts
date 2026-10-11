@@ -10,7 +10,9 @@ import {
   duplicateFrame,
   frameStats,
   frameToBuffer,
+  linePoints,
   moveFrame,
+  normalizeHex,
   type Asset,
   type Command,
   type Frame,
@@ -29,12 +31,18 @@ import {
   stagedOverrideSchema,
   type RunBinding,
   type RunFrame,
+  type Stroke,
 } from "./runs.js";
 
 const point = z.object({
   x: z.number().int(),
   y: z.number().int(),
   color: z.number().int().nonnegative(),
+});
+
+const strokePoint = z.object({
+  x: z.number().int(),
+  y: z.number().int(),
 });
 
 const readView = z.enum(["composite", "layer"]);
@@ -82,6 +90,16 @@ function editFrame(
   replaceFrameBuffer(run, frame.id, result.buffer);
   run.touchedFrames.add(frame.id);
   return { id: frame.id, buffer: result.buffer };
+}
+
+/** Record a labeled stroke and hand the edited frame to the run's live feed. */
+function recordStroke(
+  run: RunBinding,
+  stroke: Stroke,
+  edited: { id: string; buffer: FrameBuffer },
+): void {
+  run.strokes.push(stroke);
+  run.onStroke?.(stroke, edited.buffer, edited.id);
 }
 
 function colorCounts(
@@ -344,6 +362,249 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const edited = editFrame(run, frameId, { type: "rect", ...rect, filled: true });
       run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
       return { committed: true };
+    },
+  });
+
+  const eraseStroke = createTool({
+    name: "erase_stroke",
+    description:
+      "Erase up to 48 pixels on a layer of the current frame, clearing them to transparency. Pass frameId to erase another frame.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      label: z.string().min(1).max(40),
+      points: z.array(strokePoint).min(1).max(48),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, label, ...erase } = input;
+      const edited = editFrame(run, frameId, { type: "erase", ...erase });
+      recordStroke(
+        run,
+        {
+          label,
+          points: input.points.map((pixel) => ({ ...pixel, color: 0 })),
+        },
+        edited,
+      );
+      return { committed: input.points.length, label };
+    },
+  });
+
+  const drawLine = createTool({
+    name: "draw_line",
+    description:
+      "Draw a straight line between two pixels on a layer of the current frame. Pass frameId to draw on another frame.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      label: z.string().min(1).max(40),
+      from: strokePoint,
+      to: strokePoint,
+      color: z.number().int().nonnegative(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, from, to, label } = input;
+      const edited = editFrame(run, frameId, {
+        type: "line",
+        layerId: input.layerId,
+        x0: from.x,
+        y0: from.y,
+        x1: to.x,
+        y1: to.y,
+        color: input.color,
+      });
+      const stroke = {
+        label,
+        points: linePoints(from.x, from.y, to.x, to.y).map((pixel) => ({
+          ...pixel,
+          color: input.color,
+        })),
+      };
+      recordStroke(run, stroke, edited);
+      return { committed: stroke.points.length, label };
+    },
+  });
+
+  const floodFill = createTool({
+    name: "flood_fill",
+    description:
+      "Flood-fill the connected run of one color around (x, y) on a layer of the current frame. Pass frameId to fill another frame.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      color: z.number().int().nonnegative(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, ...fill } = input;
+      const edited = editFrame(run, frameId, { type: "fill", ...fill });
+      run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const fillRegion = createTool({
+    name: "fill_region",
+    description:
+      "Fill a rectangle on a layer of the current frame. Pass frameId to fill another frame.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      color: z.number().int().nonnegative(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, ...region } = input;
+      const edited = editFrame(run, frameId, { type: "region", ...region, mode: "fill" });
+      run.onStroke?.({ label: "fill", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const clearRegion = createTool({
+    name: "clear_region",
+    description:
+      "Clear a rectangle on a layer of the current frame to transparency. Pass frameId to clear another frame.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, ...region } = input;
+      const edited = editFrame(run, frameId, {
+        type: "region",
+        ...region,
+        color: 0,
+        mode: "clear",
+      });
+      run.onStroke?.({ label: "clear", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const replaceColorTool = createTool({
+    name: "replace_color",
+    description:
+      "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given, every layer otherwise.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string().optional(),
+      from: z.number().int().nonnegative(),
+      to: z.number().int().nonnegative(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, ...swap } = input;
+      const edited = editFrame(run, frameId, { type: "replaceColor", ...swap });
+      run.onStroke?.({ label: "replace", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const applyOutline = createTool({
+    name: "apply_outline",
+    description:
+      "Ring the silhouette of the current frame with the style guide's outline color, or the palette color you pass. Paints on the active layer unless layerId names one.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string().optional(),
+      color: z.number().int().nonnegative().optional(),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const buffer = frameBuffer(run, input.frameId);
+      const layerId = input.layerId ?? activeLayerId(buffer);
+      if (!layerId) throw new Error("This frame has no layer to outline.");
+      let color = input.color;
+      if (color === undefined) {
+        const outline = normalizeHex(run.style.outline);
+        color = outline ? buffer.palette.indexOf(outline) : -1;
+        if (color <= 0) {
+          throw new Error("The style guide outline color is not in the palette.");
+        }
+      }
+      const edited = editFrame(run, input.frameId, { type: "outline", layerId, color });
+      run.onStroke?.({ label: "outline", points: [] }, edited.buffer, edited.id);
+      return { committed: true, layerId, color };
+    },
+  });
+
+  const ditherRect = createTool({
+    name: "dither_rect",
+    description:
+      "Dither a rectangle on a layer of the current frame with two palette colors: `checker` alternates both axes, `50` alternates columns. Use it for texture and shading.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      colorA: z.number().int().nonnegative(),
+      colorB: z.number().int().nonnegative(),
+      pattern: z.enum(["checker", "50"]),
+    }),
+    requiresApproval: frameNeedsApproval,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const { frameId, ...dither } = input;
+      const edited = editFrame(run, frameId, { type: "dither", ...dither });
+      run.onStroke?.({ label: "dither", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const resizeCanvas = createTool({
+    name: "resize_canvas",
+    description:
+      "Resize the whole canvas (8–128). Every frame keeps the pixels that fit and drops the rest. This is destructive and always asks for approval.",
+    inputSchema: z.object({
+      width: z.number().int(),
+      height: z.number().int(),
+    }),
+    requiresApproval: true,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      // Resize every frame, the way the editor's asset resize does, so no frame
+      // is left at a different size than the asset. Nothing is committed until
+      // every frame has accepted the new size.
+      const resized = [...run.frames].map(([id, frame]) => {
+        const result = applyCommand(frame.buffer, {
+          type: "resize",
+          width: input.width,
+          height: input.height,
+        });
+        if (!result.ok) throw new Error(result.message);
+        return { id, buffer: result.buffer };
+      });
+      run.width = input.width;
+      run.height = input.height;
+      for (const frame of resized) {
+        replaceFrameBuffer(run, frame.id, frame.buffer);
+        run.touchedFrames.add(frame.id);
+        run.onStroke?.({ label: "resize", points: [] }, frame.buffer, frame.id);
+      }
+      return { width: input.width, height: input.height, frames: resized.length };
     },
   });
 
@@ -672,6 +933,15 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     readRegion,
     paint,
     fillRect,
+    eraseStroke,
+    drawLine,
+    floodFill,
+    fillRegion,
+    clearRegion,
+    replaceColorTool,
+    applyOutline,
+    ditherRect,
+    resizeCanvas,
     setPalette,
     plan,
     presentPlan,

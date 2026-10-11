@@ -78,6 +78,8 @@ import type { ComponentType, SVGProps } from "react";
  *   Select        replaces SquareDashed  dashed square
  *   Layers        replaces Layers        onion skin: stacked sheets
  *   Transparency  replaces SquareDashed  checker square
+ *   Outline       (tool row)             hollow ring
+ *   Dither        (tool row)             checkerboard
  *
  * Every pixelarticons component draws on 24x24 with fill="currentColor"
  * already; `crisp` fixes the render size and puts every edge on the grid.
@@ -236,5 +238,37 @@ export const Transparency = glyph([
   "...XX..XX...",
   ".XX..XX..XX.",
   ".XX..XX..XX.",
+  "............",
+]);
+
+/** Hollow ring, the outline tool. */
+export const Outline = glyph([
+  "............",
+  "..XXXXXXXX..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..X......X..",
+  "..XXXXXXXX..",
+  "............",
+]);
+
+/** Checkerboard, the dither tool. */
+export const Dither = glyph([
+  "............",
+  ".XX..XX..XX.",
+  "XX..XX..XX..",
+  ".XX..XX..XX.",
+  "XX..XX..XX..",
+  ".XX..XX..XX.",
+  "XX..XX..XX..",
+  ".XX..XX..XX.",
+  "XX..XX..XX..",
+  ".XX..XX..XX.",
+  "XX..XX..XX..",
   "............",
 ]);

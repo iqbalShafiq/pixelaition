@@ -13,7 +13,7 @@ import {
   writeFrame,
 } from "./document.js";
 import { indexOf } from "./pixels.js";
-import type { Asset } from "./types.js";
+import type { Asset, FrameBuffer } from "./types.js";
 
 function paint(buffer = createBuffer({ width: 8, height: 8 })) {
   const layerId = buffer.layers[0]?.id ?? "";
@@ -527,5 +527,76 @@ describe("pixel commands", () => {
         pattern: "checker",
       }),
     ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
+  });
+});
+
+describe("pixel critique", () => {
+  const style = { maxColors: 8, outline: "#1a1c2c" };
+
+  function critiqueBuffer(): FrameBuffer {
+    return createBuffer({
+      width: 8,
+      height: 8,
+      palette: ["#00000000", "#1a1c2c", "#f4efe4"],
+    });
+  }
+
+  function paintPoints(
+    buffer: FrameBuffer,
+    points: Array<{ x: number; y: number; color: number }>,
+  ): FrameBuffer {
+    const result = applyCommand(buffer, {
+      type: "paint",
+      layerId: buffer.layers[0]?.id ?? "",
+      points,
+    });
+    if (!result.ok) throw new Error(result.message);
+    return result.buffer;
+  }
+
+  const codes = (buffer: FrameBuffer): string[] =>
+    critiqueFrame(buffer, style).map((issue) => issue.code);
+
+  /** A 3×3 body at (3,3)–(5,5), the shape the ring and interior cases build on. */
+  function blockPoints(): Array<{ x: number; y: number; color: number }> {
+    const points: Array<{ x: number; y: number; color: number }> = [];
+    for (let y = 3; y <= 5; y += 1) {
+      for (let x = 3; x <= 5; x += 1) points.push({ x, y, color: 2 });
+    }
+    return points;
+  }
+
+  it("flags an isolated opaque pixel as stray until a neighbor appears", () => {
+    const dot = paintPoints(critiqueBuffer(), [{ x: 3, y: 3, color: 2 }]);
+    expect(codes(dot)).toContain("STRAY_PIXEL");
+    const pair = paintPoints(dot, [{ x: 4, y: 3, color: 2 }]);
+    expect(codes(pair)).not.toContain("STRAY_PIXEL");
+  });
+
+  it("flags outline-colored pixels that are not beside transparency", () => {
+    const block = paintPoints(critiqueBuffer(), blockPoints());
+    const interior = paintPoints(block, [{ x: 4, y: 4, color: 1 }]);
+    expect(codes(interior)).toContain("OUTLINE_INTERIOR");
+    expect(codes(interior)).not.toContain("STRAY_PIXEL");
+  });
+
+  it("accepts a silhouette ring and leaves the frame critique clean", () => {
+    const block = paintPoints(critiqueBuffer(), blockPoints());
+    const ringed = applyCommand(block, {
+      type: "outline",
+      layerId: block.layers[0]?.id ?? "",
+      color: 1,
+    });
+    expect(ringed.ok).toBe(true);
+    if (!ringed.ok) return;
+    expect(critiqueFrame(ringed.buffer, style)).toEqual([]);
+  });
+
+  it("flags artwork that touches the canvas edge", () => {
+    const edge = paintPoints(critiqueBuffer(), [
+      { x: 0, y: 3, color: 1 },
+      { x: 0, y: 4, color: 1 },
+    ]);
+    expect(codes(edge)).toEqual(["TOUCHES_EDGE"]);
   });
 });
