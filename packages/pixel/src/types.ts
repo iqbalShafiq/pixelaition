@@ -62,6 +62,8 @@ export type Point = { x: number; y: number };
 
 export type PaintPoint = Point & { color: number };
 
+export type DitherPattern = "checker" | "50";
+
 export type Command =
   | { type: "paint"; layerId: string; points: PaintPoint[] }
   | { type: "erase"; layerId: string; points: Point[] }
@@ -94,6 +96,19 @@ export type Command =
       height: number;
       color: number;
       mode: "fill" | "clear" | "flood";
+    }
+  | { type: "replaceColor"; layerId?: string; from: number; to: number }
+  | { type: "outline"; layerId: string; color: number }
+  | {
+      type: "dither";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      colorA: number;
+      colorB: number;
+      pattern: DitherPattern;
     }
   | { type: "setPalette"; palette: string[] }
   | { type: "resize"; width: number; height: number }

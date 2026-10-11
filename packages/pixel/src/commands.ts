@@ -1,4 +1,4 @@
-import { cloneBuffer, layerById, replaceLayer } from "./buffer.js";
+import { cloneBuffer, composite, layerById, replaceLayer } from "./buffer.js";
 import {
   clonePixels,
   inBounds,
@@ -12,6 +12,7 @@ import {
   MAX_LAYERS,
   type Command,
   type CommandResult,
+  type DitherPattern,
   type FrameBuffer,
   type Point,
 } from "./types.js";
@@ -134,6 +135,104 @@ function flood(
       { x: point.x, y: point.y + 1 },
       { x: point.x, y: point.y - 1 },
     );
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
+function paletteIndexOk(buffer: FrameBuffer, color: number): boolean {
+  return Number.isInteger(color) && color >= 0 && color < buffer.palette.length;
+}
+
+function replaceColor(
+  buffer: FrameBuffer,
+  layerId: string | undefined,
+  from: number,
+  to: number,
+): CommandResult {
+  if (!paletteIndexOk(buffer, from) || !paletteIndexOk(buffer, to)) {
+    return fail("PALETTE_INDEX", "The swap uses a color that is not in the palette.");
+  }
+  if (layerId !== undefined) {
+    const gate = requireLayer(buffer, layerId);
+    if ("ok" in gate) return gate;
+  }
+  const swap = (pixels: Uint8Array): Uint8Array => {
+    const next = clonePixels(pixels);
+    for (let index = 0; index < next.length; index += 1) {
+      if (next[index] === from) next[index] = to;
+    }
+    return next;
+  };
+  return {
+    ok: true,
+    buffer: {
+      ...buffer,
+      layers: buffer.layers.map((layer) =>
+        layerId === undefined || layer.id === layerId
+          ? { ...layer, pixels: swap(layer.pixels) }
+          : layer,
+      ),
+    },
+  };
+}
+
+function outline(buffer: FrameBuffer, layerId: string, color: number): CommandResult {
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  if (!paletteIndexOk(buffer, color)) {
+    return fail("PALETTE_INDEX", "The outline color is not in the palette.");
+  }
+  const view = composite(buffer);
+  const next = clonePixels(layer.pixels);
+  for (let y = 0; y < buffer.height; y += 1) {
+    for (let x = 0; x < buffer.width; x += 1) {
+      if (readCell(view, indexOf(buffer.width, x, y)) !== 0) continue;
+      const touchesOpaque = [
+        { x: x + 1, y },
+        { x: x - 1, y },
+        { x, y: y + 1 },
+        { x, y: y - 1 },
+      ].some(
+        (point) =>
+          inBounds(buffer.width, buffer.height, point.x, point.y) &&
+          readCell(view, indexOf(buffer.width, point.x, point.y)) !== 0,
+      );
+      if (touchesOpaque) next[indexOf(buffer.width, x, y)] = color;
+    }
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
+function dither(
+  buffer: FrameBuffer,
+  layerId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  colorA: number,
+  colorB: number,
+  pattern: DitherPattern,
+): CommandResult {
+  const gate = requireLayer(buffer, layerId);
+  if ("ok" in gate) return gate;
+  if (width < 1 || height < 1) {
+    return fail("SIZE", "A dither region needs a positive width and height.");
+  }
+  if (!withinRegion(buffer, x, y, width, height)) {
+    return fail("OUT_OF_BOUNDS", "The dither region reaches outside the canvas.");
+  }
+  if (!paletteIndexOk(buffer, colorA) || !paletteIndexOk(buffer, colorB)) {
+    return fail("PALETTE_INDEX", "A dither color is not in the palette.");
+  }
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const next = clonePixels(layer.pixels);
+  for (let cellY = y; cellY < y + height; cellY += 1) {
+    for (let cellX = x; cellX < x + width; cellX += 1) {
+      const useA = pattern === "checker" ? (cellX + cellY) % 2 === 0 : cellX % 2 === 0;
+      next[indexOf(buffer.width, cellX, cellY)] = useA ? colorA : colorB;
+    }
   }
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
@@ -330,6 +429,22 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         },
       };
     }
+    case "replaceColor":
+      return replaceColor(buffer, command.layerId, command.from, command.to);
+    case "outline":
+      return outline(buffer, command.layerId, command.color);
+    case "dither":
+      return dither(
+        buffer,
+        command.layerId,
+        command.x,
+        command.y,
+        command.width,
+        command.height,
+        command.colorA,
+        command.colorB,
+        command.pattern,
+      );
     default: {
       const unexpected: never = command;
       return fail("UNKNOWN_COMMAND", `Unsupported edit: ${JSON.stringify(unexpected)}`);

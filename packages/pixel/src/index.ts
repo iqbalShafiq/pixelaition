@@ -43,6 +43,7 @@ export type {
   Command,
   CommandResult,
   CritiqueIssue,
+  DitherPattern,
   Frame,
   FrameBuffer,
   Layer,
