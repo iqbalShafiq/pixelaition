@@ -2,9 +2,16 @@ import { createTool } from "@anvia/core";
 import { ToolOutput } from "@anvia/core/tool";
 import { frameToPng, type ExportScale } from "@pixelaition/export";
 import {
+  addFrame,
   applyCommand,
+  bufferToFrame,
   composite,
+  duplicateFrame,
+  frameToBuffer,
+  moveFrame,
+  type Asset,
   type Command,
+  type Frame,
   type FrameBuffer,
 } from "@pixelaition/pixel";
 import { z } from "zod";
@@ -16,6 +23,7 @@ import {
   replaceFrameBuffer,
   requireRun,
   type RunBinding,
+  type RunFrame,
 } from "./runs.js";
 
 const point = z.object({
@@ -30,12 +38,12 @@ const readView = z.enum(["composite", "layer"]);
 function resolveFrame(
   run: RunBinding,
   frameId?: string,
-): { id: string; name: string; buffer: FrameBuffer } {
+): { id: string; name: string; buffer: FrameBuffer; frame: RunFrame } {
   const buffer = frameBuffer(run, frameId);
   const id = frameId ?? run.currentFrameId;
   const frame = run.frames.get(id);
   if (!frame) throw new Error("Choose or create a frame first.");
-  return { id, name: frame.name, buffer };
+  return { id, name: frame.name, buffer, frame };
 }
 
 function resolvePixels(
@@ -127,6 +135,44 @@ function composeStrip(buffers: FrameBuffer[]): FrameBuffer {
     palette: [...first.palette],
     layers: [{ id: "strip", name: "strip", visible: true, pixels }],
   };
+}
+
+/**
+ * The run's frames as a pixel-package Asset. Pixels are encoded only for the
+ * frames a pixel function reads them from: addFrame and moveFrame read only
+ * ids, names, and indexes, so their other frames carry empty layer lists.
+ */
+function assetView(run: RunBinding, withPixels: string[] = []): Asset {
+  const encoded = new Set(withPixels);
+  return {
+    id: run.assetId,
+    name: "",
+    width: run.width,
+    height: run.height,
+    palette: [...run.palette],
+    frames: [...run.frames].map(([id, frame]) => ({
+      id,
+      name: frame.name,
+      index: frame.index,
+      layers: encoded.has(id)
+        ? bufferToFrame(frame.buffer, { id, name: frame.name, index: frame.index }).layers
+        : [],
+    })),
+  };
+}
+
+/** Decode a frame the pixel package produced back into the run's shape. */
+function runFrameFrom(frame: Frame, run: RunBinding): RunFrame {
+  return {
+    name: frame.name,
+    index: frame.index,
+    buffer: frameToBuffer(frame, run.width, run.height, run.palette),
+  };
+}
+
+/** A run frame as the persistence change union describes it. */
+function changeFrame(id: string, frame: RunFrame) {
+  return { id, name: frame.name, index: frame.index, buffer: frame.buffer };
 }
 
 export function createPixelTools(options: { vision?: boolean } = {}) {
@@ -313,6 +359,137 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const useFrame = createTool({
+    name: "use_frame",
+    description: "Switch the current frame. Later tools without a frameId act on it.",
+    inputSchema: z.object({ frameId: z.string() }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const frame = resolveFrame(run, input.frameId);
+      run.currentFrameId = frame.id;
+      return { currentFrameId: frame.id, name: frame.name };
+    },
+  });
+
+  const addFrameTool = createTool({
+    name: "add_frame",
+    description:
+      "Add a frame after the last one and make it current. Blank by default; pass copyOf to copy a frame's pixels. Use it to build animation frames.",
+    inputSchema: z.object({
+      name: z.string().max(40).optional(),
+      copyOf: z.string().optional(),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const source =
+        input.copyOf === undefined ? undefined : resolveFrame(run, input.copyOf);
+      const next = source
+        ? duplicateFrame(assetView(run, [source.id]), source.id, input.name ?? "")
+        : addFrame(assetView(run), input.name ?? "");
+      if (!next) throw new Error(`Frame ${input.copyOf} is not part of this asset.`);
+      const added = next.frames.at(-1);
+      if (!added) throw new Error("The frame could not be added.");
+      const frame = runFrameFrom(added, run);
+      run.frames.set(added.id, frame);
+      run.currentFrameId = added.id;
+      run.approvedScope.add(added.id);
+      await run.onFrameChange?.({ type: "add", frame: changeFrame(added.id, frame) });
+      return {
+        frameId: added.id,
+        name: frame.name,
+        index: frame.index,
+        currentFrameId: added.id,
+      };
+    },
+  });
+
+  const renameFrameTool = createTool({
+    name: "rename_frame",
+    description: "Rename a frame. The name is trimmed and must not be blank.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      name: z.string().min(1).max(40),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const frame = resolveFrame(run, input.frameId);
+      const name = input.name.trim();
+      if (!name) throw new Error("A frame name cannot be blank.");
+      frame.frame.name = name;
+      await run.onFrameChange?.({ type: "rename", frameId: frame.id, name });
+      return { frameId: frame.id, name };
+    },
+  });
+
+  const moveFrameTool = createTool({
+    name: "move_frame",
+    description:
+      "Move a frame to a 0-based position. The list is renumbered densely from 0.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      toIndex: z.number().int().nonnegative(),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const { id } = resolveFrame(run, input.frameId);
+      const next = moveFrame(assetView(run), id, input.toIndex);
+      if (!next) throw new Error(`Frame ${id} is not part of this asset.`);
+      const reordered = new Map<string, RunFrame>();
+      for (const item of next.frames) {
+        const frame = run.frames.get(item.id);
+        if (!frame) throw new Error(`Frame ${item.id} is not part of this asset.`);
+        frame.index = item.index;
+        reordered.set(item.id, frame);
+      }
+      run.frames = reordered;
+      const order = next.frames.map((item) => ({ id: item.id, index: item.index }));
+      await run.onFrameChange?.({ type: "move", order });
+      return {
+        frameId: id,
+        index: order.find((item) => item.id === id)?.index ?? 0,
+        order: order.map((item) => item.id),
+      };
+    },
+  });
+
+  const deleteFrameTool = createTool({
+    name: "delete_frame",
+    description:
+      "Delete a frame. Deleting the last frame leaves a fresh blank frame named frame-1, so the asset always keeps one frame.",
+    inputSchema: z.object({ frameId: z.string().optional() }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const { id } = resolveFrame(run, input.frameId);
+      run.frames.delete(id);
+      run.approvedScope.delete(id);
+      let replacement: ReturnType<typeof changeFrame> | undefined;
+      if (run.frames.size === 0) {
+        // The app's rule: an asset keeps at least one frame, so the last
+        // delete replaces it with a fresh blank frame instead of refusing.
+        const next = addFrame(assetView(run), "");
+        const added = next.frames.at(-1);
+        if (!added) throw new Error("The replacement frame could not be created.");
+        const frame = runFrameFrom(added, run);
+        run.frames.set(added.id, frame);
+        run.approvedScope.add(added.id);
+        replacement = changeFrame(added.id, frame);
+      }
+      if (run.currentFrameId === id) {
+        run.currentFrameId = replacement?.id ?? [...run.frames.keys()][0] ?? "";
+      }
+      await run.onFrameChange?.({
+        type: "delete",
+        frameId: id,
+        ...(replacement ? { replacement } : {}),
+      });
+      return {
+        deleted: id,
+        currentFrameId: run.currentFrameId,
+        replacementFrameId: replacement?.id,
+      };
+    },
+  });
+
   // Only registered for models with verified image input; every other model
   // must read the frame as RLE data instead of pretending to see it.
   const preview = createTool({
@@ -363,6 +540,11 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     setPalette,
     critique,
     mirror,
+    useFrame,
+    addFrameTool,
+    renameFrameTool,
+    moveFrameTool,
+    deleteFrameTool,
     ...(options.vision === true ? [preview] : []),
   ];
 }

@@ -27,7 +27,7 @@ describe("generation decisions and tools", () => {
       assetId: "asset",
       originFrameId: "frame",
       currentFrameId: "frame",
-      frames: new Map([["frame", { name: "frame", buffer }]]),
+      frames: new Map([["frame", { name: "frame", index: 0, buffer }]]),
       palette: [...buffer.palette],
       width: 8,
       height: 8,

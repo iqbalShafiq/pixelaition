@@ -11,7 +11,7 @@ export {
   requireRun,
   runIdFromOperation,
 } from "./runs.js";
-export type { RunBinding, RunFrame, Stroke } from "./runs.js";
+export type { FrameChange, RunBinding, RunFrame, Stroke } from "./runs.js";
 export { buildOtlpPayload, LangfuseTelemetry, traceIdFor } from "./telemetry.js";
 export type {
   LangfuseTelemetryOptions,

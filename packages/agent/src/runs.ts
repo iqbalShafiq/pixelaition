@@ -16,8 +16,28 @@ export type Stroke = {
 /** One frame of the asset, held in memory for the run's lifetime. */
 export type RunFrame = {
   name: string;
+  index: number;
   buffer: FrameBuffer;
 };
+
+/**
+ * A frame-level change the tools made. The worker persists it exactly like the
+ * editor's routes do: `add` inserts a row, `rename` updates one, `move` writes
+ * the dense renumbering, and `delete` removes a row (inserting `replacement`
+ * when the last frame had to be replaced).
+ */
+export type FrameChange =
+  | {
+      type: "add";
+      frame: { id: string; name: string; index: number; buffer: FrameBuffer };
+    }
+  | { type: "rename"; frameId: string; name: string }
+  | { type: "move"; order: Array<{ id: string; index: number }> }
+  | {
+      type: "delete";
+      frameId: string;
+      replacement?: { id: string; name: string; index: number; buffer: FrameBuffer };
+    };
 
 export type RunBinding = {
   assetId: string;
@@ -33,7 +53,7 @@ export type RunBinding = {
   issues: CritiqueIssue[];
   plan?: string[];
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void;
-  onFrameChange?: (change: unknown) => void | Promise<void>;
+  onFrameChange?: (change: FrameChange) => void | Promise<void>;
 };
 
 const runs = new Map<string, RunBinding>();
@@ -44,7 +64,7 @@ export function bindRun(runId: string, binding: RunBinding): void {
     frames: new Map(
       [...binding.frames].map(([id, frame]) => [
         id,
-        { name: frame.name, buffer: cloneBuffer(frame.buffer) },
+        { name: frame.name, index: frame.index, buffer: cloneBuffer(frame.buffer) },
       ]),
     ),
     palette: [...binding.palette],

@@ -1,7 +1,7 @@
 import { normalizeToolResultOutput } from "@anvia/core/tool";
-import type { FrameBuffer } from "@pixelaition/pixel";
+import { createBuffer, type FrameBuffer } from "@pixelaition/pixel";
 import { describe, expect, it } from "vitest";
-import { bindRun, getRun, releaseRun, type Stroke } from "./runs.js";
+import { bindRun, getRun, releaseRun, type FrameChange, type Stroke } from "./runs.js";
 import { createPixelTools } from "./tools.js";
 
 const palette = [
@@ -57,14 +57,15 @@ function hopBuffer(): FrameBuffer {
 
 function boundRun(
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void,
+  onFrameChange?: (change: FrameChange) => void | Promise<void>,
 ): void {
   bindRun("run-1", {
     assetId: "asset-1",
     originFrameId: "frame-1",
     currentFrameId: "frame-1",
     frames: new Map([
-      ["frame-1", { name: "idle", buffer: idleBuffer() }],
-      ["frame-2", { name: "hop", buffer: hopBuffer() }],
+      ["frame-1", { name: "idle", index: 0, buffer: idleBuffer() }],
+      ["frame-2", { name: "hop", index: 1, buffer: hopBuffer() }],
     ]),
     palette: [...palette],
     width: 4,
@@ -74,12 +75,44 @@ function boundRun(
     strokes: [],
     issues: [],
     ...(onStroke ? { onStroke } : {}),
+    ...(onFrameChange ? { onFrameChange } : {}),
   });
 }
 
 type Tool = {
   call: (args: unknown, context: { operationId: string }) => Promise<unknown>;
 };
+
+/**
+ * An 8×8 run for the frame tools. createBuffer refuses canvases under 8, so
+ * the frame CRUD suite cannot reuse the 4×4 read/draw fixture.
+ */
+function boundFrameRun(
+  onFrameChange?: (change: FrameChange) => void | Promise<void>,
+): void {
+  const blank = (color: number): FrameBuffer => {
+    const buffer = createBuffer({ width: 8, height: 8, palette, layerName: "pixels" });
+    if (color !== 0) buffer.layers[0]!.pixels[0] = color;
+    return buffer;
+  };
+  bindRun("run-1", {
+    assetId: "asset-1",
+    originFrameId: "frame-1",
+    currentFrameId: "frame-1",
+    frames: new Map([
+      ["frame-1", { name: "idle", index: 0, buffer: blank(0) }],
+      ["frame-2", { name: "hop", index: 1, buffer: blank(4) }],
+    ]),
+    palette: [...palette],
+    width: 8,
+    height: 8,
+    style: { outline: "#f4f4f4", maxColors: 12 } as never,
+    approvedScope: new Set(["frame-1"]),
+    strokes: [],
+    issues: [],
+    ...(onFrameChange ? { onFrameChange } : {}),
+  });
+}
 
 function tool(name: string, options?: { vision?: boolean }): Tool {
   const found = createPixelTools(options).find((item) => item.name === name);
@@ -334,6 +367,204 @@ describe("drawing tools", () => {
         { index: 3, hex: "#333333", count: 2 },
       ],
     });
+    releaseRun("run-1");
+  });
+});
+
+describe("frame tools", () => {
+  it("use_frame switches the frame that later tools default to", async () => {
+    boundFrameRun();
+    await tool("use_frame").call({ frameId: "frame-2" }, { operationId: "run-1" });
+    expect(getRun("run-1")?.currentFrameId).toBe("frame-2");
+    const layerId = getRun("run-1")?.frames.get("frame-2")?.buffer.layers[0]?.id ?? "";
+    await tool("paint_stroke").call(
+      { layerId, label: "dot", points: [{ x: 2, y: 2, color: 2 }] },
+      { operationId: "run-1" },
+    );
+    const run = getRun("run-1");
+    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[2 * 8 + 2]).toBe(2);
+    expect(run?.frames.get("frame-1")?.buffer.layers[0]?.pixels[2 * 8 + 2]).toBe(0);
+    releaseRun("run-1");
+  });
+
+  it("use_frame refuses a frame that is not part of the asset", async () => {
+    boundFrameRun();
+    await expect(
+      tool("use_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
+    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    releaseRun("run-1");
+  });
+
+  it("add_frame appends a blank frame, makes it current, and joins the approved scope", async () => {
+    const changes: FrameChange[] = [];
+    boundFrameRun((change) => {
+      changes.push(change);
+    });
+    const result = (await tool("add_frame").call(
+      { name: "jump" },
+      { operationId: "run-1" },
+    )) as { frameId: string; name: string; index: number };
+    const run = getRun("run-1");
+    expect([...run!.frames].map(([, frame]) => frame.name)).toEqual([
+      "idle",
+      "hop",
+      "jump",
+    ]);
+    expect(result).toMatchObject({ name: "jump", index: 2 });
+    expect(run!.currentFrameId).toBe(result.frameId);
+    expect(run!.approvedScope.has(result.frameId)).toBe(true);
+    const added = run!.frames.get(result.frameId);
+    expect(added?.index).toBe(2);
+    expect(added?.buffer.width).toBe(8);
+    expect([...added!.buffer.layers[0]!.pixels]).toEqual(new Array(64).fill(0));
+    expect(changes).toEqual([
+      {
+        type: "add",
+        frame: {
+          id: result.frameId,
+          name: "jump",
+          index: 2,
+          buffer: added!.buffer,
+        },
+      },
+    ]);
+    releaseRun("run-1");
+  });
+
+  it("add_frame names an unnamed frame frame-3 after two frames", async () => {
+    boundFrameRun();
+    const result = (await tool("add_frame").call({}, { operationId: "run-1" })) as {
+      name: string;
+    };
+    expect(result.name).toBe("frame-3");
+    releaseRun("run-1");
+  });
+
+  it("add_frame with copyOf copies the frame with fresh layer ids", async () => {
+    boundFrameRun();
+    const result = (await tool("add_frame").call(
+      { copyOf: "frame-2" },
+      { operationId: "run-1" },
+    )) as { frameId: string; name: string };
+    const run = getRun("run-1");
+    const source = run!.frames.get("frame-2");
+    const added = run!.frames.get(result.frameId);
+    expect(added?.name).toBe("hop copy");
+    expect(added?.buffer.layers[0]?.pixels).toEqual(source?.buffer.layers[0]?.pixels);
+    expect(added?.buffer.layers[0]?.pixels[0]).toBe(4);
+    expect(added?.buffer.layers[0]?.id).not.toBe(source?.buffer.layers[0]?.id);
+    releaseRun("run-1");
+  });
+
+  it("add_frame waits for an async frame change before it returns", async () => {
+    const order: string[] = [];
+    boundFrameRun(async () => {
+      await Promise.resolve();
+      order.push("persisted");
+    });
+    await tool("add_frame").call({ name: "jump" }, { operationId: "run-1" });
+    order.push("returned");
+    expect(order).toEqual(["persisted", "returned"]);
+    releaseRun("run-1");
+  });
+
+  it("rename_frame trims the name and reports the change", async () => {
+    const changes: FrameChange[] = [];
+    boundFrameRun((change) => {
+      changes.push(change);
+    });
+    const result = await tool("rename_frame").call(
+      { frameId: "frame-2", name: "  hop-2  " },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ frameId: "frame-2", name: "hop-2" });
+    expect(getRun("run-1")?.frames.get("frame-2")?.name).toBe("hop-2");
+    expect(changes).toEqual([{ type: "rename", frameId: "frame-2", name: "hop-2" }]);
+    releaseRun("run-1");
+  });
+
+  it("rename_frame refuses a blank name", async () => {
+    boundFrameRun();
+    await expect(
+      tool("rename_frame").call({ name: "   " }, { operationId: "run-1" }),
+    ).rejects.toThrow(/name/i);
+    releaseRun("run-1");
+  });
+
+  it("move_frame reorders the map and renumbers densely", async () => {
+    const changes: FrameChange[] = [];
+    boundFrameRun((change) => {
+      changes.push(change);
+    });
+    const result = (await tool("move_frame").call(
+      { frameId: "frame-1", toIndex: 1 },
+      { operationId: "run-1" },
+    )) as { frameId: string; index: number; order: string[] };
+    const run = getRun("run-1");
+    expect([...run!.frames.keys()]).toEqual(["frame-2", "frame-1"]);
+    expect([...run!.frames.values()].map((frame) => frame.index)).toEqual([0, 1]);
+    expect(result).toMatchObject({ frameId: "frame-1", index: 1 });
+    expect(result.order).toEqual(["frame-2", "frame-1"]);
+    expect(changes).toEqual([
+      {
+        type: "move",
+        order: [
+          { id: "frame-2", index: 0 },
+          { id: "frame-1", index: 1 },
+        ],
+      },
+    ]);
+    releaseRun("run-1");
+  });
+
+  it("delete_frame removes a frame and keeps the others", async () => {
+    const changes: FrameChange[] = [];
+    boundFrameRun((change) => {
+      changes.push(change);
+    });
+    await tool("delete_frame").call({ frameId: "frame-2" }, { operationId: "run-1" });
+    const run = getRun("run-1");
+    expect([...run!.frames.keys()]).toEqual(["frame-1"]);
+    expect(changes).toEqual([{ type: "delete", frameId: "frame-2" }]);
+    releaseRun("run-1");
+  });
+
+  it("delete_frame on the last frame replaces it with a fresh frame-1", async () => {
+    const changes: FrameChange[] = [];
+    boundFrameRun((change) => {
+      changes.push(change);
+    });
+    await tool("delete_frame").call({ frameId: "frame-1" }, { operationId: "run-1" });
+    await tool("delete_frame").call({ frameId: "frame-2" }, { operationId: "run-1" });
+    const run = getRun("run-1");
+    expect(run!.frames.size).toBe(1);
+    const [replacementId, replacement] = [...run!.frames][0]!;
+    expect(replacement.name).toBe("frame-1");
+    expect(replacement.index).toBe(0);
+    expect(run!.currentFrameId).toBe(replacementId);
+    expect(run!.approvedScope.has(replacementId)).toBe(true);
+    expect(replacement.buffer.layers[0]?.pixels.every((value) => value === 0)).toBe(true);
+    expect(changes).toEqual([
+      { type: "delete", frameId: "frame-1" },
+      {
+        type: "delete",
+        frameId: "frame-2",
+        replacement: {
+          id: replacementId,
+          name: "frame-1",
+          index: 0,
+          buffer: replacement.buffer,
+        },
+      },
+    ]);
+    releaseRun("run-1");
+  });
+
+  it("delete_frame refuses a frame that is not part of the asset", async () => {
+    boundFrameRun();
+    await expect(
+      tool("delete_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
+    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
     releaseRun("run-1");
   });
 });

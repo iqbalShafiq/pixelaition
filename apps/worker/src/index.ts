@@ -22,15 +22,16 @@ import {
   type ModelSpec,
   type RunTarget,
 } from "@pixelaition/agent";
-import { createDatabase, frames, generationRuns, models } from "@pixelaition/db";
+import { createDatabase, assets, frames, generationRuns, models } from "@pixelaition/db";
 import {
   bufferToFrame,
   defaultStyle,
   encodePixels,
   frameToBuffer,
+  type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { asc, eq } from "drizzle-orm";
+import { asc, and, eq, sql } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
 
@@ -200,10 +201,18 @@ function toolRecovery() {
     read_region: "safe" as const,
     critique_frame: "safe" as const,
     preview_frame: "safe" as const,
+    use_frame: "safe" as const,
     paint_stroke: "idempotent" as const,
     fill_rect: "idempotent" as const,
     set_palette: "idempotent" as const,
     mirror_frame: "idempotent" as const,
+    rename_frame: "idempotent" as const,
+    move_frame: "idempotent" as const,
+    // Adding and deleting frames are not idempotent: a replay would add a
+    // second frame or delete a frame that is already gone, so an interruption
+    // after the intent is committed needs reconciliation, not a retry.
+    add_frame: "manual" as const,
+    delete_frame: "manual" as const,
   };
 }
 
@@ -264,9 +273,32 @@ app.post("/internal/runs", async (req, res) => {
   if (!runtime) return;
   const asset = await loadAsset(body.assetId);
   if (!asset) return res.status(404).json({ message: "Asset was not found." });
-  const framesById = new Map(asset.frames.map((item) => [item.id, item]));
+  const framesById = new Map(
+    asset.frames.map((item) => [
+      item.id,
+      { id: item.id, name: item.name, index: item.index },
+    ]),
+  );
   const originFrame = framesById.get(body.frameId);
   if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
+
+  /** Insert one frames row, exactly like store.ts's addFrameRecord does. */
+  const insertFrameRow = async (frame: {
+    id: string;
+    name: string;
+    index: number;
+    buffer: FrameBuffer;
+  }) => {
+    await db.insert(frames).values({
+      id: frame.id,
+      assetId: body.assetId,
+      name: frame.name,
+      index: frame.index,
+      layers: bufferToFrame(frame.buffer, frame).layers,
+    });
+    framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
+  };
+
   const run = await runtime.submit({
     agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
@@ -294,6 +326,7 @@ app.post("/internal/runs", async (req, res) => {
         item.id,
         {
           name: item.name,
+          index: item.index,
           buffer: frameToBuffer(item, asset.width, asset.height, asset.palette),
         },
       ]),
@@ -313,9 +346,13 @@ app.post("/internal/runs", async (req, res) => {
           pixels: encodePixels(layer.pixels),
         })),
       });
-      // The binding's frames were built from these rows, so the edited frame
-      // is always one of them.
-      const edited = framesById.get(editedFrameId)!;
+      // A stroke always targets a frame the binding knows: the origin frame
+      // from loadAsset, or one a frame tool inserted and registered below.
+      const edited = framesById.get(editedFrameId);
+      if (!edited) {
+        console.error(`[onStroke] no frame row for ${editedFrameId}`);
+        return;
+      }
       // Drizzle query promises are lazy: without awaiting or then-ing, the
       // update never executes. Persist explicitly and surface any failure.
       void (async () => {
@@ -328,6 +365,58 @@ app.post("/internal/runs", async (req, res) => {
           console.error("[onStroke] frame persist failed", error);
         }
       })();
+    },
+    // Frame CRUD tools await this before returning, so a row exists before any
+    // later stroke targets it. Failures are logged, like onStroke: the run's
+    // in-memory frames stay the source of truth for the rest of the run.
+    onFrameChange: async (change) => {
+      try {
+        if (change.type === "add") {
+          await insertFrameRow(change.frame);
+        } else if (change.type === "delete") {
+          await db
+            .delete(frames)
+            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, body.assetId)));
+          framesById.delete(change.frameId);
+          // The tool replaced the last frame; the row must go before the
+          // replacement takes the same (asset, index) slot.
+          if (change.replacement) await insertFrameRow(change.replacement);
+        } else if (change.type === "rename") {
+          await db
+            .update(frames)
+            .set({ name: change.name, updatedAt: new Date() })
+            .where(and(eq(frames.id, change.frameId), eq(frames.assetId, body.assetId)));
+          const row = framesById.get(change.frameId);
+          if (row) row.name = change.name;
+        } else {
+          await db.transaction(async (tx) => {
+            // A unique index guards (asset, index), so a direct renumber might
+            // collide with a row that has not moved yet. Park every frame far
+            // above the final range first, then write the dense order — the
+            // same rule store.ts uses for the editor's reorder.
+            await tx
+              .update(frames)
+              .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+              .where(eq(frames.assetId, body.assetId));
+            for (const item of change.order) {
+              await tx
+                .update(frames)
+                .set({ index: item.index, updatedAt: new Date() })
+                .where(and(eq(frames.id, item.id), eq(frames.assetId, body.assetId)));
+            }
+          });
+          for (const item of change.order) {
+            const row = framesById.get(item.id);
+            if (row) row.index = item.index;
+          }
+        }
+        await db
+          .update(assets)
+          .set({ updatedAt: new Date() })
+          .where(eq(assets.id, body.assetId));
+      } catch (error) {
+        console.error("[onFrameChange] frame persist failed", error);
+      }
     },
   });
   void follow(runtime, run.id, body.runId, target.effort);
