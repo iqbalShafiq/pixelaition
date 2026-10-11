@@ -252,6 +252,7 @@ function toolRecovery(vision: boolean) {
     // rejects a recovery entry for a tool the agent does not have.
     ...(vision ? { preview_frame: "safe" as const } : {}),
     use_frame: "safe" as const,
+    think: "safe" as const,
     paint_stroke: "idempotent" as const,
     fill_rect: "idempotent" as const,
     erase_stroke: "idempotent" as const,
@@ -264,6 +265,10 @@ function toolRecovery(vision: boolean) {
     dither_rect: "idempotent" as const,
     resize_canvas: "idempotent" as const,
     set_palette: "idempotent" as const,
+    add_layer: "idempotent" as const,
+    rename_layer: "idempotent" as const,
+    set_layer_visible: "idempotent" as const,
+    remove_layer: "idempotent" as const,
     mirror_frame: "idempotent" as const,
     rename_frame: "idempotent" as const,
     move_frame: "idempotent" as const,

@@ -53,6 +53,7 @@ const toolIcons: Record<string, ComponentType<IconProps>> = {
   critique_frame: Clipboard,
   check_animation: Play,
   plan: Checklist,
+  think: Brain,
   mirror_frame: Flip,
 };
 

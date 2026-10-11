@@ -63,6 +63,9 @@ function toolSummary(name: string, input: unknown): string | undefined {
   if (name === "plan" && Array.isArray(value.steps)) {
     return `${value.steps.length} steps`;
   }
+  if (name === "think") {
+    return "thinking";
+  }
   if (
     name === "fill_rect" ||
     name === "fill_region" ||

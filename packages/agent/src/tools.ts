@@ -1,4 +1,4 @@
-import { createTool, type ToolApprovalContext } from "@anvia/core";
+import { createThinkTool, createTool, type ToolApprovalContext } from "@anvia/core";
 import { ToolOutput } from "@anvia/core/tool";
 import { frameToPng, type ExportScale } from "@pixelaition/export";
 import {
@@ -264,7 +264,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       return {
         frameId: frame.id,
         view,
-        layerId: read.layerId,
+        // Composite reads have no layer; an undefined key is not strict JSON.
+        ...(read.layerId === undefined ? {} : { layerId: read.layerId }),
         width: frame.buffer.width,
         height: frame.buffer.height,
         rows: encodeRowsRle(read.pixels, frame.buffer.width, frame.buffer.height),
@@ -307,7 +308,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       return {
         frameId: frame.id,
         view,
-        layerId: read.layerId,
+        // Composite reads have no layer; an undefined key is not strict JSON.
+        ...(read.layerId === undefined ? {} : { layerId: read.layerId }),
         x: input.x,
         y: input.y,
         width: input.width,
@@ -628,6 +630,86 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const addLayerTool = createTool({
+    name: "add_layer",
+    description:
+      "Add a layer to the current frame (a frame holds at most four). It starts blank and visible; paint on it by its layerId.",
+    inputSchema: z.object({
+      name: z.string().min(1).max(40).optional(),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const buffer = frameBuffer(run);
+      const name = input.name ?? `layer-${buffer.layers.length + 1}`;
+      const edited = editFrame(run, undefined, {
+        type: "addLayer",
+        id: crypto.randomUUID(),
+        name,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      const added = edited.buffer.layers.at(-1);
+      if (!added) throw new Error("The layer could not be added.");
+      return { layerId: added.id, name: added.name, layers: edited.buffer.layers.length };
+    },
+  });
+
+  const renameLayerTool = createTool({
+    name: "rename_layer",
+    description:
+      "Rename a layer on the current frame. The name is trimmed and must not be blank.",
+    inputSchema: z.object({
+      layerId: z.string(),
+      name: z.string().min(1).max(40),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const edited = editFrame(run, undefined, {
+        type: "renameLayer",
+        layerId: input.layerId,
+        name: input.name,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      const layer = edited.buffer.layers.find((item) => item.id === input.layerId);
+      return { layerId: input.layerId, name: layer?.name ?? input.name.trim() };
+    },
+  });
+
+  const setLayerVisibleTool = createTool({
+    name: "set_layer_visible",
+    description:
+      "Show or hide a layer on the current frame. A hidden layer stays in the frame but leaves the composite.",
+    inputSchema: z.object({
+      layerId: z.string(),
+      visible: z.boolean(),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerVisible",
+        layerId: input.layerId,
+        visible: input.visible,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { layerId: input.layerId, visible: input.visible };
+    },
+  });
+
+  const removeLayerTool = createTool({
+    name: "remove_layer",
+    description:
+      "Remove a layer from the current frame. A frame keeps at least one layer, so the last layer cannot be removed.",
+    inputSchema: z.object({ layerId: z.string() }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const edited = editFrame(run, undefined, {
+        type: "removeLayer",
+        layerId: input.layerId,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { removed: input.layerId, layers: edited.buffer.layers.length };
+    },
+  });
+
   const plan = createTool({
     name: "plan",
     description:
@@ -678,6 +760,9 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       };
     },
   });
+
+  // Anvia's scratchpad: it records a thought and changes nothing else.
+  const think = createThinkTool();
 
   const critique = createTool({
     name: "critique_frame",
@@ -943,8 +1028,13 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     ditherRect,
     resizeCanvas,
     setPalette,
+    addLayerTool,
+    renameLayerTool,
+    setLayerVisibleTool,
+    removeLayerTool,
     plan,
     presentPlan,
+    think,
     critique,
     checkAnimationTool,
     mirror,

@@ -82,6 +82,20 @@ describe("run activity rows", () => {
     });
   });
 
+  it("renders the think scratchpad as a thinking row", () => {
+    const rows = applyRunEvent(
+      [],
+      1,
+      "tool_started",
+      toolStarted("0:tool:1", "think", { thought: "Try a two-layer build." }),
+    );
+    expect(rows[0]).toMatchObject({
+      kind: "tool",
+      name: "think",
+      summary: "thinking",
+    });
+  });
+
   it("keeps the provider error on a failed tool", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(

@@ -278,6 +278,18 @@ describe("read tools", () => {
     ).rejects.toThrow(/outside/);
     releaseRun("run-1");
   });
+
+  it("composite reads serialize as strict tool output", async () => {
+    boundRun();
+    const frame = await tool("read_frame").call({}, { operationId: "run-1" });
+    expect(normalizeToolResultOutput(frame).type).toBe("json");
+    const region = await tool("read_region").call(
+      { x: 0, y: 0, width: 2, height: 2 },
+      { operationId: "run-1" },
+    );
+    expect(normalizeToolResultOutput(region).type).toBe("json");
+    releaseRun("run-1");
+  });
 });
 
 describe("drawing tools", () => {
@@ -672,6 +684,130 @@ describe("frame tools", () => {
     await tool("delete_frame").call({ frameId: "frame-2" }, { operationId: "run-1" });
     expect(sizes).toEqual([2]);
     expect(getRun("run-1")?.frames.size).toBe(1);
+    releaseRun("run-1");
+  });
+});
+
+describe("layer tools", () => {
+  it("add_layer appends a named layer to the current frame and feeds it live", async () => {
+    const seen: Array<{ frameId: string; layers: number }> = [];
+    boundRun((_stroke, buffer, frameId) => {
+      seen.push({ frameId, layers: buffer.layers.length });
+    });
+    const result = (await tool("add_layer").call(
+      { name: "shade" },
+      { operationId: "run-1" },
+    )) as { layerId: string; name: string; layers: number };
+    const run = getRun("run-1");
+    const layers = run!.frames.get("frame-1")!.buffer.layers;
+    expect(layers).toHaveLength(3);
+    expect(layers.at(-1)).toMatchObject({
+      id: result.layerId,
+      name: "shade",
+      visible: true,
+    });
+    expect(layers.at(-1)!.pixels.every((value) => value === 0)).toBe(true);
+    expect(result).toMatchObject({ name: "shade", layers: 3 });
+    expect(seen).toEqual([{ frameId: "frame-1", layers: 3 }]);
+    releaseRun("run-1");
+  });
+
+  it("add_layer names the layer layer-3 by default", async () => {
+    boundRun();
+    const result = (await tool("add_layer").call({}, { operationId: "run-1" })) as {
+      name: string;
+    };
+    expect(result.name).toBe("layer-3");
+    releaseRun("run-1");
+  });
+
+  it("add_layer refuses a fifth layer", async () => {
+    boundRun();
+    await tool("add_layer").call({}, { operationId: "run-1" });
+    await tool("add_layer").call({}, { operationId: "run-1" });
+    await expect(tool("add_layer").call({}, { operationId: "run-1" })).rejects.toThrow(
+      "A frame can hold four layers.",
+    );
+    expect(getRun("run-1")!.frames.get("frame-1")!.buffer.layers).toHaveLength(4);
+    releaseRun("run-1");
+  });
+
+  it("rename_layer trims the name and reports it", async () => {
+    boundRun();
+    const result = await tool("rename_layer").call(
+      { layerId: "layer-detail", name: "  highlights  " },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ layerId: "layer-detail", name: "highlights" });
+    expect(getRun("run-1")!.frames.get("frame-1")!.buffer.layers[1]!.name).toBe(
+      "highlights",
+    );
+    releaseRun("run-1");
+  });
+
+  it("rename_layer refuses a blank name", async () => {
+    boundRun();
+    await expect(
+      tool("rename_layer").call(
+        { layerId: "layer-detail", name: "   " },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow(/name/i);
+    releaseRun("run-1");
+  });
+
+  it("set_layer_visible hides and shows a layer", async () => {
+    boundRun();
+    const hidden = await tool("set_layer_visible").call(
+      { layerId: "layer-detail", visible: false },
+      { operationId: "run-1" },
+    );
+    expect(hidden).toMatchObject({ layerId: "layer-detail", visible: false });
+    expect(getRun("run-1")!.frames.get("frame-1")!.buffer.layers[1]!.visible).toBe(false);
+    const shown = await tool("set_layer_visible").call(
+      { layerId: "layer-detail", visible: true },
+      { operationId: "run-1" },
+    );
+    expect(shown).toMatchObject({ layerId: "layer-detail", visible: true });
+    releaseRun("run-1");
+  });
+
+  it("remove_layer drops a layer from the current frame", async () => {
+    boundRun();
+    const result = await tool("remove_layer").call(
+      { layerId: "layer-detail" },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ removed: "layer-detail", layers: 1 });
+    expect(
+      getRun("run-1")!
+        .frames.get("frame-1")!
+        .buffer.layers.map((layer) => layer.id),
+    ).toEqual(["layer-base"]);
+    releaseRun("run-1");
+  });
+
+  it("remove_layer refuses to remove the last layer", async () => {
+    boundRun();
+    await tool("remove_layer").call(
+      { layerId: "layer-detail" },
+      { operationId: "run-1" },
+    );
+    await expect(
+      tool("remove_layer").call({ layerId: "layer-base" }, { operationId: "run-1" }),
+    ).rejects.toThrow("A frame keeps at least one layer.");
+    releaseRun("run-1");
+  });
+});
+
+describe("think", () => {
+  it("registers the Anvia scratchpad and returns the thought", async () => {
+    boundRun();
+    const result = await tool("think").call(
+      { thought: "Two layers: base silhouette, then shading." },
+      { operationId: "run-1" },
+    );
+    expect(result).toBe("Two layers: base silhouette, then shading.");
     releaseRun("run-1");
   });
 });
