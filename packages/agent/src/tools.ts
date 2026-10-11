@@ -141,23 +141,30 @@ function composeStrip(buffers: FrameBuffer[]): FrameBuffer {
  * The run's frames as a pixel-package Asset. Pixels are encoded only for the
  * frames a pixel function reads them from: addFrame and moveFrame read only
  * ids, names, and indexes, so their other frames carry empty layer lists.
+ * `omit` builds the candidate view a delete would leave behind.
  */
-function assetView(run: RunBinding, withPixels: string[] = []): Asset {
-  const encoded = new Set(withPixels);
+function assetView(
+  run: RunBinding,
+  options: { withPixels?: string[]; omit?: string } = {},
+): Asset {
+  const encoded = new Set(options.withPixels ?? []);
   return {
     id: run.assetId,
     name: "",
     width: run.width,
     height: run.height,
     palette: [...run.palette],
-    frames: [...run.frames].map(([id, frame]) => ({
-      id,
-      name: frame.name,
-      index: frame.index,
-      layers: encoded.has(id)
-        ? bufferToFrame(frame.buffer, { id, name: frame.name, index: frame.index }).layers
-        : [],
-    })),
+    frames: [...run.frames]
+      .filter(([id]) => id !== options.omit)
+      .map(([id, frame]) => ({
+        id,
+        name: frame.name,
+        index: frame.index,
+        layers: encoded.has(id)
+          ? bufferToFrame(frame.buffer, { id, name: frame.name, index: frame.index })
+              .layers
+          : [],
+      })),
   };
 }
 
@@ -384,16 +391,21 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const source =
         input.copyOf === undefined ? undefined : resolveFrame(run, input.copyOf);
       const next = source
-        ? duplicateFrame(assetView(run, [source.id]), source.id, input.name ?? "")
+        ? duplicateFrame(
+            assetView(run, { withPixels: [source.id] }),
+            source.id,
+            input.name ?? "",
+          )
         : addFrame(assetView(run), input.name ?? "");
       if (!next) throw new Error(`Frame ${input.copyOf} is not part of this asset.`);
       const added = next.frames.at(-1);
       if (!added) throw new Error("The frame could not be added.");
       const frame = runFrameFrom(added, run);
+      // Persist first: a refused save leaves the binding exactly as it was.
+      await run.onFrameChange?.({ type: "add", frame: changeFrame(added.id, frame) });
       run.frames.set(added.id, frame);
       run.currentFrameId = added.id;
       run.approvedScope.add(added.id);
-      await run.onFrameChange?.({ type: "add", frame: changeFrame(added.id, frame) });
       return {
         frameId: added.id,
         name: frame.name,
@@ -415,8 +427,9 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const frame = resolveFrame(run, input.frameId);
       const name = input.name.trim();
       if (!name) throw new Error("A frame name cannot be blank.");
-      frame.frame.name = name;
+      // Persist first: a refused save leaves the name exactly as it was.
       await run.onFrameChange?.({ type: "rename", frameId: frame.id, name });
+      frame.frame.name = name;
       return { frameId: frame.id, name };
     },
   });
@@ -434,20 +447,24 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const { id } = resolveFrame(run, input.frameId);
       const next = moveFrame(assetView(run), id, input.toIndex);
       if (!next) throw new Error(`Frame ${id} is not part of this asset.`);
-      const reordered = new Map<string, RunFrame>();
-      for (const item of next.frames) {
+      const candidates = next.frames.map((item) => {
         const frame = run.frames.get(item.id);
         if (!frame) throw new Error(`Frame ${item.id} is not part of this asset.`);
-        frame.index = item.index;
-        reordered.set(item.id, frame);
+        return { id: item.id, index: item.index, frame };
+      });
+      const order = candidates.map((item) => ({ id: item.id, index: item.index }));
+      // Persist first: a refused save leaves the order exactly as it was.
+      await run.onFrameChange?.({ type: "move", order });
+      const reordered = new Map<string, RunFrame>();
+      for (const item of candidates) {
+        item.frame.index = item.index;
+        reordered.set(item.id, item.frame);
       }
       run.frames = reordered;
-      const order = next.frames.map((item) => ({ id: item.id, index: item.index }));
-      await run.onFrameChange?.({ type: "move", order });
       return {
         frameId: id,
-        index: order.find((item) => item.id === id)?.index ?? 0,
-        order: order.map((item) => item.id),
+        index: candidates.find((item) => item.id === id)?.index ?? 0,
+        order: candidates.map((item) => item.id),
       };
     },
   });
@@ -460,28 +477,37 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
       const { id } = resolveFrame(run, input.frameId);
-      run.frames.delete(id);
-      run.approvedScope.delete(id);
-      let replacement: ReturnType<typeof changeFrame> | undefined;
-      if (run.frames.size === 0) {
+      // The candidate state this delete would commit. The binding is only
+      // touched once the worker confirms the change is saved.
+      let replacement: { id: string; frame: RunFrame } | undefined;
+      if (run.frames.size === 1) {
         // The app's rule: an asset keeps at least one frame, so the last
         // delete replaces it with a fresh blank frame instead of refusing.
-        const next = addFrame(assetView(run), "");
+        const next = addFrame(assetView(run, { omit: id }), "");
         const added = next.frames.at(-1);
         if (!added) throw new Error("The replacement frame could not be created.");
-        const frame = runFrameFrom(added, run);
-        run.frames.set(added.id, frame);
-        run.approvedScope.add(added.id);
-        replacement = changeFrame(added.id, frame);
+        replacement = { id: added.id, frame: runFrameFrom(added, run) };
       }
-      if (run.currentFrameId === id) {
-        run.currentFrameId = replacement?.id ?? [...run.frames.keys()][0] ?? "";
-      }
+      const remaining = [...run.frames.keys()].filter((frameId) => frameId !== id);
+      const nextCurrent =
+        run.currentFrameId === id
+          ? (replacement?.id ?? remaining[0] ?? "")
+          : run.currentFrameId;
       await run.onFrameChange?.({
         type: "delete",
         frameId: id,
-        ...(replacement ? { replacement } : {}),
+        ...(replacement
+          ? { replacement: changeFrame(replacement.id, replacement.frame) }
+          : {}),
       });
+      // Persisted; now commit the same state to the binding.
+      run.frames.delete(id);
+      run.approvedScope.delete(id);
+      if (replacement) {
+        run.frames.set(replacement.id, replacement.frame);
+        run.approvedScope.add(replacement.id);
+      }
+      run.currentFrameId = nextCurrent;
       return {
         deleted: id,
         currentFrameId: run.currentFrameId,

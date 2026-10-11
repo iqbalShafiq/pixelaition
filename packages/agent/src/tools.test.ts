@@ -567,6 +567,87 @@ describe("frame tools", () => {
     ).rejects.toThrow("Frame frame-9 is not part of this asset.");
     releaseRun("run-1");
   });
+
+  it("add_frame leaves the binding untouched when the frame change is refused", async () => {
+    boundFrameRun(() => {
+      throw new Error("The frame change could not be saved.");
+    });
+    await expect(
+      tool("add_frame").call({ name: "jump" }, { operationId: "run-1" }),
+    ).rejects.toThrow("The frame change could not be saved.");
+    const run = getRun("run-1");
+    expect(run?.frames.size).toBe(2);
+    expect([...run!.frames.keys()]).toEqual(["frame-1", "frame-2"]);
+    expect(run?.currentFrameId).toBe("frame-1");
+    expect(run?.approvedScope).toEqual(new Set(["frame-1"]));
+    releaseRun("run-1");
+  });
+
+  it("delete_frame leaves the binding untouched when the frame change is refused", async () => {
+    boundFrameRun(() => {
+      throw new Error("The frame change could not be saved.");
+    });
+    await expect(
+      tool("delete_frame").call({ frameId: "frame-2" }, { operationId: "run-1" }),
+    ).rejects.toThrow("The frame change could not be saved.");
+    const run = getRun("run-1");
+    expect([...run!.frames.keys()]).toEqual(["frame-1", "frame-2"]);
+    expect(run?.currentFrameId).toBe("frame-1");
+    expect(run?.approvedScope).toEqual(new Set(["frame-1"]));
+    releaseRun("run-1");
+  });
+
+  it("rename_frame leaves the name untouched when the frame change is refused", async () => {
+    boundFrameRun(() => {
+      throw new Error("The frame change could not be saved.");
+    });
+    await expect(
+      tool("rename_frame").call(
+        { frameId: "frame-2", name: "hop-2" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("The frame change could not be saved.");
+    expect(getRun("run-1")?.frames.get("frame-2")?.name).toBe("hop");
+    releaseRun("run-1");
+  });
+
+  it("move_frame leaves the order untouched when the frame change is refused", async () => {
+    boundFrameRun(() => {
+      throw new Error("The frame change could not be saved.");
+    });
+    await expect(
+      tool("move_frame").call(
+        { frameId: "frame-1", toIndex: 1 },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("The frame change could not be saved.");
+    const run = getRun("run-1");
+    expect([...run!.frames.keys()]).toEqual(["frame-1", "frame-2"]);
+    expect([...run!.frames.values()].map((frame) => frame.index)).toEqual([0, 1]);
+    releaseRun("run-1");
+  });
+
+  it("add_frame persists the candidate frame before the binding changes", async () => {
+    const sizes: number[] = [];
+    boundFrameRun(async () => {
+      sizes.push(getRun("run-1")?.frames.size ?? -1);
+    });
+    await tool("add_frame").call({ name: "jump" }, { operationId: "run-1" });
+    expect(sizes).toEqual([2]);
+    expect(getRun("run-1")?.frames.size).toBe(3);
+    releaseRun("run-1");
+  });
+
+  it("delete_frame persists before the binding drops the frame", async () => {
+    const sizes: number[] = [];
+    boundFrameRun(async () => {
+      sizes.push(getRun("run-1")?.frames.size ?? -1);
+    });
+    await tool("delete_frame").call({ frameId: "frame-2" }, { operationId: "run-1" });
+    expect(sizes).toEqual([2]);
+    expect(getRun("run-1")?.frames.size).toBe(1);
+    releaseRun("run-1");
+  });
 });
 
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

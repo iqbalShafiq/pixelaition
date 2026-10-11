@@ -366,9 +366,10 @@ app.post("/internal/runs", async (req, res) => {
         }
       })();
     },
-    // Frame CRUD tools await this before returning, so a row exists before any
-    // later stroke targets it. Failures are logged, like onStroke: the run's
-    // in-memory frames stay the source of truth for the rest of the run.
+    // Frame CRUD tools await this before committing their in-memory change, so
+    // a row exists before any later stroke targets it. A failed save is logged
+    // and rethrown as a bounded cause: the tool call fails and the binding
+    // stays put instead of diverging from the database.
     onFrameChange: async (change) => {
       try {
         if (change.type === "add") {
@@ -416,6 +417,7 @@ app.post("/internal/runs", async (req, res) => {
           .where(eq(assets.id, body.assetId));
       } catch (error) {
         console.error("[onFrameChange] frame persist failed", error);
+        throw new Error("The frame change could not be saved.");
       }
     },
   });
