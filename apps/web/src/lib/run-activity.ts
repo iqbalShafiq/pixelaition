@@ -14,6 +14,14 @@ export type RunRow =
       label: string;
       state: "running" | "completed" | "failed" | "cancelled";
       detail?: string;
+    }
+  | {
+      /** A workspace run's created asset: the console's link target. */
+      id: string;
+      kind: "asset";
+      assetId: string;
+      projectId: string;
+      name: string;
     };
 
 const TERMINAL: Record<string, "completed" | "failed" | "cancelled"> = {
@@ -192,6 +200,19 @@ export function applyRunEvent(
           }
         : row,
     );
+  }
+  if (type === "asset-created") {
+    // The event is the only source of the link target; a payload missing the
+    // id, project, or name is ignored rather than guessed.
+    const assetId = typeof body?.assetId === "string" ? body.assetId : undefined;
+    const projectId = typeof body?.projectId === "string" ? body.projectId : undefined;
+    const name = typeof body?.name === "string" ? body.name : undefined;
+    if (!assetId || !projectId || !name) return rows;
+    // A rejoin replays the stream from 0; the same asset must not stack rows.
+    return [
+      ...rows.filter((row) => !(row.kind === "asset" && row.assetId === assetId)),
+      { id: `asset-${sequence}`, kind: "asset", assetId, projectId, name },
+    ];
   }
   if (type === "status") {
     const status = typeof body?.status === "string" ? body.status : "running";

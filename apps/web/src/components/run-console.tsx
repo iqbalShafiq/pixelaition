@@ -1,4 +1,5 @@
 import { StreamMarkdown } from "@anvia/react-ui/stream";
+import { Link } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -133,6 +134,10 @@ export function RunConsole({
   const stateLabel = lastStatus?.kind === "status" ? lastStatus.label : "finished";
   const durationMs = running ? elapsed : (lastRunMs ?? restoredMs);
   const empty = !running && rows.length === 0 && !message && history.length === 0;
+  // The asset a workspace run created; its row carries the editor link. The
+  // action appears once the run is terminal — mid-run the editor could not
+  // write to the asset and would not rejoin a workspace run's stream.
+  const asset = [...rows].reverse().find((row) => row.kind === "asset");
   const summary = interaction
     ? "waiting for your answer"
     : running
@@ -148,6 +153,9 @@ export function RunConsole({
   const rowIcon = (row: RunRow) => {
     if (row.kind === "phase") {
       return <Brain width={12} height={12} className="text-muted" />;
+    }
+    if (row.kind === "asset") {
+      return <Folder width={12} height={12} className="text-muted" />;
     }
     if (row.kind === "tool") {
       const Icon = toolIcons[row.name] ?? Wrench;
@@ -219,6 +227,8 @@ export function RunConsole({
                     {row.label}
                     {row.state === "running" ? "…" : ""}
                   </span>
+                ) : row.kind === "asset" ? (
+                  <span className="text-ink">asset · {row.name}</span>
                 ) : row.kind === "tool" ? (
                   <span className={row.state === "error" ? "text-erase" : "text-ink"}>
                     {row.name}
@@ -234,6 +244,17 @@ export function RunConsole({
               </li>
             ))}
           </ul>
+          {asset && !running ? (
+            <div className="mt-2 border-t-2 border-line pt-2">
+              <Link
+                to="/projects/$projectId/assets/$assetId"
+                params={{ projectId: asset.projectId, assetId: asset.assetId }}
+                className="inline-flex min-h-9 items-center border-2 border-accent bg-field px-3 py-1.5 text-pixel-body text-ink shadow-pixel-sm transition-transform duration-150 hover:-translate-x-[1px] hover:-translate-y-[1px] hover:shadow-pixel-md"
+              >
+                Open {asset.name}
+              </Link>
+            </div>
+          ) : null}
           {message ? (
             <div className="mt-2 border-t-2 border-line pt-2 text-pixel-body text-ink">
               <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">

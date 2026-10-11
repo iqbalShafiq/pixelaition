@@ -168,4 +168,127 @@ describe.skipIf(!db)("API routes", () => {
       await live.delete(projects).where(eq(projects.id, projectId));
     }
   });
+
+  it("requires a session for the recent runs", async () => {
+    const res = await request(app).get("/api/runs/recent");
+    expect(res.status).toBe(401);
+  });
+
+  it("lists the caller's recent runs with the asset link target", async () => {
+    const projectId = randomUUID();
+    const threadId = randomUUID();
+    const runId = randomUUID();
+    const assetId = randomUUID();
+    const otherUserId = randomUUID();
+    const otherProjectId = randomUUID();
+    const otherThreadId = randomUUID();
+    const otherRunId = randomUUID();
+    await live.insert(user).values({
+      id: otherUserId,
+      name: "Other User",
+      email: `other-${otherUserId}@test.local`,
+    });
+    await live.insert(projects).values([
+      { id: projectId, userId, name: "recent", style: defaultStyle },
+      { id: otherProjectId, userId: otherUserId, name: "theirs", style: defaultStyle },
+    ]);
+    await live.insert(generationThreads).values([
+      { id: threadId, projectId, userId },
+      { id: otherThreadId, projectId: otherProjectId, userId: otherUserId },
+    ]);
+    await live.insert(generationRuns).values([
+      {
+        id: runId,
+        threadId,
+        requestId: randomUUID(),
+        status: "succeeded",
+        modelId: "test-model",
+        reasoningEffort: "low",
+        prompt: "buat slime biru 32px",
+        events: [
+          { sequence: 1, type: "status", data: { status: "completed" } },
+          {
+            sequence: 2,
+            type: "asset-created",
+            data: { assetId, projectId, name: "slime-biru" },
+          },
+        ],
+      },
+      {
+        id: otherRunId,
+        threadId: otherThreadId,
+        requestId: randomUUID(),
+        status: "succeeded",
+        modelId: "test-model",
+        reasoningEffort: "low",
+        prompt: "not mine",
+      },
+    ]);
+    // A long run can evict its early `asset-created` from the retained events;
+    // the run's pinned frame still names the asset it touched.
+    const boundAsset = createAsset({ name: "bound-slime", width: 8, height: 8 });
+    const boundFrame = boundAsset.frames[0];
+    if (!boundFrame) throw new Error("createAsset produced no frame");
+    const boundRunId = randomUUID();
+    await live.insert(assets).values({
+      id: boundAsset.id,
+      projectId,
+      name: boundAsset.name,
+      width: boundAsset.width,
+      height: boundAsset.height,
+      palette: boundAsset.palette,
+    });
+    await live.insert(frames).values({
+      id: boundFrame.id,
+      assetId: boundAsset.id,
+      name: boundFrame.name,
+      index: boundFrame.index,
+      layers: boundFrame.layers,
+    });
+    await live.insert(generationRuns).values({
+      id: boundRunId,
+      threadId,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      prompt: "use an existing asset",
+      frameId: boundFrame.id,
+    });
+    try {
+      const res = await request(app)
+        .get("/api/runs/recent")
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      const row = (res.body.runs as Array<Record<string, unknown>>).find(
+        (item) => item.id === runId,
+      );
+      expect(row).toMatchObject({
+        id: runId,
+        status: "succeeded",
+        prompt: "buat slime biru 32px",
+        assetId,
+        projectId,
+        assetName: "slime-biru",
+      });
+      expect(typeof row?.createdAt).toBe("string");
+      const boundRow = (res.body.runs as Array<Record<string, unknown>>).find(
+        (item) => item.id === boundRunId,
+      );
+      expect(boundRow).toMatchObject({
+        id: boundRunId,
+        assetId: boundAsset.id,
+        projectId,
+        assetName: "bound-slime",
+      });
+      expect(
+        (res.body.runs as Array<{ id: string }>).some((item) => item.id === otherRunId),
+      ).toBe(false);
+      expect(res.body.runs.length).toBeLessThanOrEqual(10);
+    } finally {
+      // Deleting the second user cascades their project, thread, and run.
+      await live.delete(user).where(eq(user.id, otherUserId));
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
 });

@@ -28,6 +28,7 @@ import {
   type StagedPlanFrame,
 } from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
+import { useRunStream } from "../lib/run-stream.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import {
@@ -185,7 +186,7 @@ export function EditorScreen() {
   }, [wide]);
   const viewRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
-  const sourceRef = useRef<EventSource | null>(null);
+  const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const fitted = useRef<string | null>(null);
 
   const frames = asset.data?.frames ?? [];
@@ -461,136 +462,130 @@ export function EditorScreen() {
 
   const listen = useCallback(
     (id: string, fallbackFrameId: string, after = 0) => {
-      sourceRef.current?.close();
-      const source = new EventSource(`/api/runs/${id}/stream?after=${after}`);
-      sourceRef.current = source;
-      source.onmessage = (event) => {
-        const body = JSON.parse(event.data) as {
-          type: string;
-          data: unknown;
-          sequence: number;
-        };
-        setRows((current) => applyRunEvent(current, body.sequence, body.type, body.data));
-        if (body.type === "canvas-stroke") {
-          const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
-          const target = data.frameId ?? fallbackFrameId;
-          if (data.layers && target) {
-            setRunFrameId(target);
-            const layers = data.layers.map((layer) => ({
-              ...layer,
-              pixels: base64ToBytes(layer.pixels),
-            }));
-            setDrafts((current) => {
-              const entry = current[target];
-              if (!entry) return current;
-              return {
-                ...current,
-                [target]: { ...entry, present: { ...entry.present, layers } },
-              };
-            });
-          }
-          return;
-        }
-        if (body.type === "status") {
-          const data = body.data as { status?: string; outcome?: { text?: string } };
-          if (data.status === "completed" && typeof data.outcome?.text === "string") {
-            setMessage(data.outcome.text);
-          }
-          return;
-        }
-        if (body.type === "interaction") {
-          // The card is the run's next move, not a step row; open the console
-          // so it is visible even if the user had collapsed it. A replayed
-          // interaction the run already answered must not resurrect.
-          const data = body.data as PendingInteraction;
-          if (!answeredIdsRef.current.has(data.id)) {
-            setPendingInteraction(data);
-            setConsoleOpen(true);
-          }
-          return;
-        }
-        if (body.type === "interaction-resolved") {
-          // The worker retires an answered card by id; a replay from 0 ends
-          // with the card cleared instead of re-showing it.
-          const data = body.data as { id?: string };
-          if (typeof data.id === "string") {
-            answeredIdsRef.current.add(data.id);
-            setPendingInteraction((current) =>
-              current?.id === data.id ? null : current,
-            );
-          }
-          return;
-        }
-        if (body.type === "done") {
-          const data = body.data as { status?: string; error?: string };
-          setMessage(
-            data.status === "completed"
-              ? ""
-              : (data.error ?? `The run ${data.status ?? "finished"}.`),
+      openStream(id, {
+        after,
+        onMessage: (body) => {
+          setRows((current) =>
+            applyRunEvent(current, body.sequence, body.type, body.data),
           );
-          setPendingInteraction(null);
-          source.close();
-          sourceRef.current = null;
-          setRunId(null);
-          setRunFrameId(null);
-          // Drop the local draft for the drawn frame so the reloaded pixels
-          // from the server become the truth.
-          const target = runFrameIdRef.current;
-          if (target) {
-            pending.current.delete(target);
-            setDrafts((current) => {
-              if (!current[target]) return current;
-              const next = { ...current };
-              delete next[target];
-              return next;
-            });
-          }
-          void client.invalidateQueries({ queryKey: ["asset", assetId] });
-          void client.invalidateQueries({ queryKey: ["versions", assetId] });
-          // The finished run is on screen already; only the earlier list needs
-          // a refresh, and it is scoped to the frame the agent painted.
-          const shown = runFrameIdRef.current;
-          if (shown) {
-            void api<ActiveRunResponse>(
-              `/api/assets/${assetId}/active-run?frameId=${encodeURIComponent(shown)}`,
-            )
-              .catch(() => null)
-              .then((result) => {
-                if (!result || sourceRef.current) return;
-                setRunHistory(
-                  result.history.filter((item) => item.id !== result.lastRun?.id),
-                );
+          if (body.type === "canvas-stroke") {
+            const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
+            const target = data.frameId ?? fallbackFrameId;
+            if (data.layers && target) {
+              setRunFrameId(target);
+              const layers = data.layers.map((layer) => ({
+                ...layer,
+                pixels: base64ToBytes(layer.pixels),
+              }));
+              setDrafts((current) => {
+                const entry = current[target];
+                if (!entry) return current;
+                return {
+                  ...current,
+                  [target]: { ...entry, present: { ...entry.present, layers } },
+                };
               });
-          }
-          return;
-        }
-        // Other events are already reflected in the row list above.
-      };
-      source.onerror = () => {
-        source.close();
-        sourceRef.current = null;
-        // A dropped stream does not mean the run stopped: ask the server. The
-        // answer carries the pending card too, so a waiting run restores it
-        // even when the replayed stream no longer retains the interaction.
-        void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
-          .catch(() => ({ run: null, interaction: null }))
-          .then((result) => {
-            if (result.run) {
-              setRunId(result.run.id);
-              rememberRunModel(result.run.id, result.run.modelId);
-              setPendingInteraction(result.interaction);
-              log("The stream dropped; rejoining the running agent");
-              listen(result.run.id, "", 0);
-              return;
             }
+            return;
+          }
+          if (body.type === "status") {
+            const data = body.data as { status?: string; outcome?: { text?: string } };
+            if (data.status === "completed" && typeof data.outcome?.text === "string") {
+              setMessage(data.outcome.text);
+            }
+            return;
+          }
+          if (body.type === "interaction") {
+            // The card is the run's next move, not a step row; open the console
+            // so it is visible even if the user had collapsed it. A replayed
+            // interaction the run already answered must not resurrect.
+            const data = body.data as PendingInteraction;
+            if (!answeredIdsRef.current.has(data.id)) {
+              setPendingInteraction(data);
+              setConsoleOpen(true);
+            }
+            return;
+          }
+          if (body.type === "interaction-resolved") {
+            // The worker retires an answered card by id; a replay from 0 ends
+            // with the card cleared instead of re-showing it.
+            const data = body.data as { id?: string };
+            if (typeof data.id === "string") {
+              answeredIdsRef.current.add(data.id);
+              setPendingInteraction((current) =>
+                current?.id === data.id ? null : current,
+              );
+            }
+            return;
+          }
+          if (body.type === "done") {
+            const data = body.data as { status?: string; error?: string };
+            setMessage(
+              data.status === "completed"
+                ? ""
+                : (data.error ?? `The run ${data.status ?? "finished"}.`),
+            );
+            setPendingInteraction(null);
+            closeStream();
             setRunId(null);
             setRunFrameId(null);
-            setPendingInteraction(null);
-            log("The activity stream closed");
-          });
-      };
+            // Drop the local draft for the drawn frame so the reloaded pixels
+            // from the server become the truth.
+            const target = runFrameIdRef.current;
+            if (target) {
+              pending.current.delete(target);
+              setDrafts((current) => {
+                if (!current[target]) return current;
+                const next = { ...current };
+                delete next[target];
+                return next;
+              });
+            }
+            void client.invalidateQueries({ queryKey: ["asset", assetId] });
+            void client.invalidateQueries({ queryKey: ["versions", assetId] });
+            // The finished run is on screen already; only the earlier list needs
+            // a refresh, and it is scoped to the frame the agent painted.
+            const shown = runFrameIdRef.current;
+            if (shown) {
+              void api<ActiveRunResponse>(
+                `/api/assets/${assetId}/active-run?frameId=${encodeURIComponent(shown)}`,
+              )
+                .catch(() => null)
+                .then((result) => {
+                  if (!result || sourceRef.current) return;
+                  setRunHistory(
+                    result.history.filter((item) => item.id !== result.lastRun?.id),
+                  );
+                });
+            }
+            return;
+          }
+          // Other events are already reflected in the row list above.
+        },
+        onDrop: () => {
+          // A dropped stream does not mean the run stopped: ask the server. The
+          // answer carries the pending card too, so a waiting run restores it
+          // even when the replayed stream no longer retains the interaction.
+          void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
+            .catch(() => ({ run: null, interaction: null }))
+            .then((result) => {
+              if (result.run) {
+                setRunId(result.run.id);
+                rememberRunModel(result.run.id, result.run.modelId);
+                setPendingInteraction(result.interaction);
+                log("The stream dropped; rejoining the running agent");
+                listen(result.run.id, "", 0);
+                return;
+              }
+              setRunId(null);
+              setRunFrameId(null);
+              setPendingInteraction(null);
+              log("The activity stream closed");
+            });
+        },
+      });
     },
-    [assetId, client, log, rememberRunModel],
+    [assetId, client, closeStream, log, openStream, rememberRunModel, sourceRef],
   );
 
   useEffect(() => {
@@ -648,8 +643,6 @@ export function EditorScreen() {
       cancelled = true;
     };
   }, [frameId, assetId]);
-
-  useEffect(() => () => sourceRef.current?.close(), []);
 
   function onAction(action: CanvasAction) {
     if (!frameId) return;

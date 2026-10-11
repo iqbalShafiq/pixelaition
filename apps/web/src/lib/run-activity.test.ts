@@ -209,6 +209,43 @@ describe("run activity rows", () => {
     });
   });
 
+  it("maps a created asset to a row carrying the editor link target", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(
+      rows,
+      5,
+      "tool_started",
+      toolStarted("0:tool:5", "create_asset", {
+        projectId: "p1",
+        name: "slime-biru",
+        width: 32,
+        height: 32,
+      }),
+    );
+    rows = applyRunEvent(rows, 6, "asset-created", {
+      assetId: "a1",
+      projectId: "p1",
+      name: "slime-biru",
+      width: 32,
+      height: 32,
+      frameCount: 4,
+    });
+    expect(rows.at(-1)).toEqual({
+      id: "asset-6",
+      kind: "asset",
+      assetId: "a1",
+      projectId: "p1",
+      name: "slime-biru",
+    });
+  });
+
+  it("ignores an asset-created event that does not name its target", () => {
+    expect(applyRunEvent([], 1, "asset-created", { name: "slime" })).toEqual([]);
+    expect(
+      applyRunEvent([], 2, "asset-created", { assetId: "a1", projectId: "p1" }),
+    ).toEqual([]);
+  });
+
   it("ignores unknown events", () => {
     expect(applyRunEvent([], 1, "heartbeat", {})).toEqual([]);
     expect(

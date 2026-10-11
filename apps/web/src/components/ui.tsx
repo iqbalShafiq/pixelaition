@@ -431,12 +431,16 @@ export function SelectControl({
 }: {
   id?: string;
   value: string;
-  options: string[];
+  /** Plain strings use the value as the label; objects keep the two apart. */
+  options: Array<string | { value: string; label: string }>;
   onChange: (value: string) => void;
   label: string;
   placeholder?: string;
   className?: string;
 }) {
+  const items = options.map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
   return (
     <Select.Root value={value} onValueChange={(next) => onChange(next ?? value)}>
       <Select.Trigger
@@ -444,19 +448,23 @@ export function SelectControl({
         aria-label={label}
         className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink shadow-[inset_2px_2px_0_0_rgba(244,244,244,0.08),inset_-2px_-2px_0_0_rgba(26,28,44,0.45),2px_2px_0_0_var(--color-navy)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
       >
-        <Select.Value placeholder={placeholder} />
+        <Select.Value placeholder={placeholder}>
+          {(selected: string | null) =>
+            items.find((item) => item.value === selected)?.label ?? placeholder
+          }
+        </Select.Value>
         <ChevronDown className="shrink-0 text-muted" />
       </Select.Trigger>
       <Select.Portal>
         <Select.Positioner sideOffset={4} className="z-40">
           <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto bg-raised pixel-window p-1 text-[13px]">
-            {options.map((option) => (
+            {items.map((item) => (
               <Select.Item
-                key={option}
-                value={option}
+                key={item.value}
+                value={item.value}
                 className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-navy"
               >
-                <Select.ItemText>{option}</Select.ItemText>
+                <Select.ItemText>{item.label}</Select.ItemText>
               </Select.Item>
             ))}
           </Select.Popup>

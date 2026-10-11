@@ -1,9 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Folder, Plus } from "../components/pixel-icons.js";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { SpriteThumb } from "../components/sprite-thumb.js";
+import { Composer } from "../components/composer.js";
+import { RunConsole } from "../components/run-console.js";
+import {
+  type InteractionResponse,
+  type PendingInteraction,
+  type StagedPlanFrame,
+} from "../components/interaction-card.js";
 import {
   Button,
   Callout,
@@ -11,15 +18,27 @@ import {
   EmptyState,
   Field,
   PixelMark,
+  SelectControl,
   TextInput,
   motionToken,
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
+import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
+import { useRunStream } from "../lib/run-stream.js";
 
 type Project = { id: string; name: string; description: string };
 type Asset = { id: string; name: string; width: number; height: number };
+type RecentRun = {
+  id: string;
+  status: string;
+  prompt: string | null;
+  assetId?: string;
+  projectId?: string;
+  createdAt: string;
+  assetName?: string;
+};
 
 export function ProjectsScreen() {
   const queryClient = useQueryClient();
@@ -47,7 +66,252 @@ export function ProjectsScreen() {
       }),
   });
 
+  // The home composer runs against the same catalog and preferences the editor
+  // uses, so the model and effort a run was given are never invented here.
+  const catalog = useQuery({
+    queryKey: ["models"],
+    queryFn: () =>
+      api<{
+        models: Array<{ id: string; efforts: string[] }>;
+        modelReady: boolean;
+      }>("/api/models"),
+  });
+  const preferences = useQuery({
+    queryKey: ["preferences"],
+    queryFn: () =>
+      api<{ lastModelId: string | null; lastReasoningEffort: string | null }>(
+        "/api/preferences",
+      ),
+  });
+  const recent = useQuery({
+    queryKey: ["recent-runs"],
+    queryFn: () => api<{ runs: RecentRun[] }>("/api/runs/recent"),
+  });
+
+  const [prompt, setPrompt] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [effort, setEffort] = useState("medium");
+  const [pickedProjectId, setPickedProjectId] = useState("");
+  const [rows, setRows] = useState<RunRow[]>([]);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [runPrompt, setRunPrompt] = useState("");
+  const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
+    null,
+  );
+  // The ids this session already answered, so a replayed interaction event
+  // cannot bring an answered card back before its resolved marker arrives.
+  const answeredIdsRef = useRef<Set<string>>(new Set());
+  const composerRef = useRef<HTMLDivElement>(null);
+  const { sourceRef, open: openStream, close: closeStream } = useRunStream();
+  const running = runId !== null;
+
+  useEffect(() => {
+    if (preferences.data?.lastModelId) setModelId(preferences.data.lastModelId);
+    if (preferences.data?.lastReasoningEffort) {
+      setEffort(preferences.data.lastReasoningEffort);
+    }
+  }, [preferences.data]);
+
+  // A stored preference can name a model or effort that is no longer offered;
+  // the composer must always show a selectable pair.
+  useEffect(() => {
+    const options = catalog.data?.models ?? [];
+    if (options.length === 0) return;
+    if (!options.some((item) => item.id === modelId)) setModelId(options[0]?.id ?? "");
+  }, [catalog.data, modelId]);
+
+  useEffect(() => {
+    const options =
+      catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+    if (options.length > 0 && !options.includes(effort)) setEffort(options[0] ?? "");
+  }, [catalog.data, modelId, effort]);
+
+  const log = useCallback((text: string) => {
+    setRows((current) => [
+      ...current.slice(-120),
+      { id: crypto.randomUUID(), kind: "status", label: text, state: "running" },
+    ]);
+  }, []);
+
+  const listen = useCallback(
+    (id: string) => {
+      openStream(id, {
+        onMessage: (body) => {
+          setRows((current) =>
+            applyRunEvent(current, body.sequence, body.type, body.data),
+          );
+          if (body.type === "status") {
+            const data = body.data as { status?: string; outcome?: { text?: string } };
+            if (data.status === "completed" && typeof data.outcome?.text === "string") {
+              setMessage(data.outcome.text);
+            }
+            return;
+          }
+          if (body.type === "interaction") {
+            // The card is the run's next move, not a step row; open the console
+            // so it is visible even if the user had collapsed it.
+            const data = body.data as PendingInteraction;
+            if (!answeredIdsRef.current.has(data.id)) {
+              setPendingInteraction(data);
+              setConsoleOpen(true);
+            }
+            return;
+          }
+          if (body.type === "interaction-resolved") {
+            const data = body.data as { id?: string };
+            if (typeof data.id === "string") {
+              answeredIdsRef.current.add(data.id);
+              setPendingInteraction((current) =>
+                current?.id === data.id ? null : current,
+              );
+            }
+            return;
+          }
+          if (body.type === "done") {
+            const data = body.data as { status?: string; error?: string };
+            setMessage(
+              data.status === "completed"
+                ? ""
+                : (data.error ?? `The run ${data.status ?? "finished"}.`),
+            );
+            setPendingInteraction(null);
+            closeStream();
+            setRunId(null);
+            void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+            void queryClient.invalidateQueries({ queryKey: ["projects"] });
+            return;
+          }
+        },
+        onDrop: () => {
+          // A dropped stream does not mean the run stopped: ask the run list.
+          // A still-active run rejoins from the top; a finished one closes.
+          void api<{ runs: RecentRun[] }>("/api/runs/recent")
+            .catch(() => null)
+            .then((result) => {
+              if (sourceRef.current) return;
+              const row = result?.runs.find((item) => item.id === id);
+              if (row && ["queued", "running", "waiting"].includes(row.status)) {
+                log("The stream dropped; rejoining the running agent");
+                listen(id);
+                return;
+              }
+              setRunId(null);
+              setPendingInteraction(null);
+              log("The activity stream closed");
+              void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+            });
+        },
+      });
+    },
+    [closeStream, log, openStream, queryClient, sourceRef],
+  );
+
   const list = projects.data?.projects ?? [];
+  const projectId = list.some((project) => project.id === pickedProjectId)
+    ? pickedProjectId
+    : (list[0]?.id ?? "");
+  const models = catalog.data?.models.map((item) => item.id) ?? [];
+  const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+  // A workspace run belongs to one project; without one the composer names the
+  // cause instead of starting a run against a guessed home.
+  const blockedReason = projects.isPending
+    ? "your projects are still loading"
+    : projects.isError
+      ? "your projects could not be loaded"
+      : list.length === 0
+        ? "a workspace run needs a project — create one first"
+        : undefined;
+
+  async function generate() {
+    if (running || !projectId) return;
+    setError(null);
+    setMessage("");
+    setRows([]);
+    setConsoleOpen(true);
+    setRunPrompt(prompt);
+    try {
+      await api("/api/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
+      });
+      const started = await api<{ runId: string }>("/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          scope: "workspace",
+          projectId,
+          prompt,
+          modelId,
+          reasoningEffort: effort,
+        }),
+      });
+      setRunId(started.runId);
+      log(`Run ${started.runId.slice(0, 8)} started`);
+      listen(started.runId);
+    } catch (reason) {
+      const text = reason instanceof Error ? reason.message : "Generation failed.";
+      setError(text);
+      notify({ title: "Could not start the run", description: text });
+    }
+  }
+
+  async function stop() {
+    if (!runId) return;
+    try {
+      await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+      log("Stopped; waiting for the agent to acknowledge");
+      // The stream stays open: the worker's cancelled status and done event
+      // clear the run state.
+    } catch (reason) {
+      notify({
+        title: "Could not stop the run",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
+  /**
+   * Answers the pending card. A plan-scope edit is staged against the very
+   * interaction it answers before the response travels, in that order; a
+   * failed call leaves the card up and names the cause in a toast.
+   */
+  async function respondToInteraction(
+    response: InteractionResponse,
+    stagedFrames?: StagedPlanFrame[],
+  ) {
+    if (!runId || !pendingInteraction) return;
+    try {
+      if (stagedFrames) {
+        await api(`/api/runs/${runId}/stage-override`, {
+          method: "POST",
+          body: JSON.stringify({
+            interactionId: pendingInteraction.id,
+            frames: stagedFrames,
+          }),
+        });
+      }
+      await api(`/api/runs/${runId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
+      });
+      answeredIdsRef.current.add(pendingInteraction.id);
+      setPendingInteraction(null);
+      setConsoleOpen(true);
+    } catch (reason) {
+      notify({
+        title: "The answer did not reach the agent",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+      // The card owns its busy state; a rejection re-arms its buttons.
+      throw reason;
+    }
+  }
+
+  function focusComposer() {
+    composerRef.current?.querySelector("textarea")?.focus();
+  }
 
   return (
     <main id="content" className="pixel-grid-lg min-h-dvh bg-paper">
@@ -68,18 +332,65 @@ export function ProjectsScreen() {
           </Button>
         </header>
 
-        <section className="grid gap-8 lg:grid-cols-[1fr_24rem] lg:items-end">
-          <div>
-            <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
-              Workspace
-            </p>
-            <h1 className="mt-3 text-pixel-hero text-ink text-balance">
-              Your sprite families
-            </h1>
-            <p className="mt-3 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-              One project keeps one palette and one style guide, so every asset you draw
-              inside it stays recognisably related.
-            </p>
+        <section className="grid gap-8 lg:grid-cols-[1fr_24rem] lg:items-start">
+          <div className="grid gap-5">
+            <div>
+              <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
+                Workspace
+              </p>
+              <h1 className="mt-3 text-pixel-hero text-ink text-balance">
+                Your sprite families
+              </h1>
+              <p className="mt-3 max-w-[46ch] text-[14px] leading-relaxed text-muted">
+                Describe a sprite and the agent finds it a home, or draw one by hand from
+                a project below. One project keeps one palette and one style guide, so
+                every asset inside it stays recognisably related.
+              </p>
+            </div>
+
+            <div ref={composerRef} className="grid gap-2">
+              <Composer
+                prompt={prompt}
+                onPrompt={setPrompt}
+                modelId={modelId}
+                models={models}
+                onModel={setModelId}
+                effort={effort}
+                efforts={efforts}
+                onEffort={setEffort}
+                running={running}
+                modelReady={catalog.data?.modelReady ?? false}
+                onGenerate={() => void generate()}
+                onStop={() => void stop()}
+                scope={
+                  <SelectControl
+                    label="Project"
+                    value={projectId}
+                    options={list.map((project) => ({
+                      value: project.id,
+                      label: project.name,
+                    }))}
+                    onChange={setPickedProjectId}
+                    placeholder="no projects"
+                    className="max-w-[12rem]"
+                  />
+                }
+                blockedReason={blockedReason}
+              />
+              <RunConsole
+                rows={rows}
+                running={running}
+                open={consoleOpen}
+                onOpen={setConsoleOpen}
+                message={message || (error ?? "")}
+                prompt={runPrompt}
+                interaction={pendingInteraction}
+                frames={[]}
+                palette={[]}
+                onRespond={respondToInteraction}
+                onEscape={focusComposer}
+              />
+            </div>
           </div>
 
           <Card className="grid gap-3">
@@ -109,6 +420,63 @@ export function ProjectsScreen() {
               </Button>
             </form>
           </Card>
+        </section>
+
+        <section className="grid gap-4">
+          <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
+            <h2 className="text-pixel-title text-muted">Recent runs</h2>
+            <span className="text-pixel-mono text-muted">
+              {(recent.data?.runs.length ?? 0).toString().padStart(2, "0")}
+            </span>
+          </div>
+
+          {recent.isPending ? (
+            <p className="text-pixel-mono text-muted">
+              Reading your recent runs from the server…
+            </p>
+          ) : recent.isError ? (
+            <Callout tone="danger">
+              {recent.error instanceof Error
+                ? recent.error.message
+                : "The recent runs could not be loaded."}
+            </Callout>
+          ) : (recent.data?.runs.length ?? 0) === 0 ? (
+            <EmptyState
+              title="No runs yet"
+              body="Describe a sprite above and the agent's work will show up here."
+            />
+          ) : (
+            <ul className="grid gap-2">
+              {recent.data?.runs.map((run) => (
+                <li
+                  key={run.id}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 border-2 border-line bg-raised px-3 py-2"
+                >
+                  <span
+                    className="min-w-0 flex-1 truncate text-[13px] text-ink"
+                    title={run.prompt ?? ""}
+                  >
+                    {run.prompt ?? "—"}
+                  </span>
+                  <span className={`text-pixel-mono ${runStatusTone(run.status)}`}>
+                    {run.status}
+                  </span>
+                  <span className="text-pixel-mono text-muted">
+                    {new Date(run.createdAt).toLocaleString()}
+                  </span>
+                  {run.assetId && run.projectId ? (
+                    <Link
+                      to="/projects/$projectId/assets/$assetId"
+                      params={{ projectId: run.projectId, assetId: run.assetId }}
+                      className="text-pixel-mono text-accent underline decoration-dotted underline-offset-2 hover:text-ink"
+                    >
+                      Open {run.assetName ?? "asset"}
+                    </Link>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="grid gap-4">
@@ -147,6 +515,13 @@ export function ProjectsScreen() {
       </div>
     </main>
   );
+}
+
+/** A finished run reads in the accent, a dead one in the erase colour. */
+function runStatusTone(status: string): string {
+  if (status === "succeeded" || status === "completed") return "text-accent";
+  if (status === "failed" || status === "cancelled") return "text-erase";
+  return "text-muted";
 }
 
 function ProjectCard({ project }: { project: Project }) {

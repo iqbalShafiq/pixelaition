@@ -14,6 +14,7 @@ import {
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
 import { and, asc, desc, eq, notInArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
@@ -66,7 +67,14 @@ import {
   userIdForToken,
   type VersionCursor,
 } from "./store.js";
-import { generationRuns, models, RETENTION_LIMIT } from "@pixelaition/db";
+import {
+  assets,
+  frames,
+  generationRuns,
+  generationThreads,
+  models,
+  RETENTION_LIMIT,
+} from "@pixelaition/db";
 
 const scaleSchema = z.union([
   z.literal(1),
@@ -703,6 +711,72 @@ export function createApp() {
         .where(eq(generationRuns.id, runId));
     }
     res.status(202).json({ runId, streamId: runId });
+  });
+
+  // The home composer's run list. An editor run's asset hangs off its thread;
+  // a workspace run's created asset exists only in its stored events, so the
+  // event is the source of the link target and the asset name when present.
+  // The retained-event bound can evict an early `asset-created` on a long run,
+  // so the run's pinned frame (set when a workspace run binds an asset) is the
+  // fallback: it names the asset the run actually touched.
+  app.get("/api/runs/recent", async (_req, res) => {
+    const bound = alias(assets, "bound_assets");
+    const rows = await db
+      .select({
+        id: generationRuns.id,
+        status: generationRuns.status,
+        prompt: generationRuns.prompt,
+        createdAt: generationRuns.createdAt,
+        events: generationRuns.events,
+        threadAssetId: generationThreads.assetId,
+        threadProjectId: generationThreads.projectId,
+        assetName: assets.name,
+        assetProjectId: assets.projectId,
+        boundAssetId: bound.id,
+        boundAssetName: bound.name,
+        boundAssetProjectId: bound.projectId,
+      })
+      .from(generationRuns)
+      .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+      .leftJoin(assets, eq(generationThreads.assetId, assets.id))
+      .leftJoin(frames, eq(generationRuns.frameId, frames.id))
+      .leftJoin(bound, eq(frames.assetId, bound.id))
+      .where(eq(generationThreads.userId, res.locals.userId as string))
+      .orderBy(desc(generationRuns.createdAt))
+      .limit(10);
+    res.json({
+      runs: rows.map((row) => {
+        const created = (
+          row.events as Array<{
+            type?: string;
+            data?: { assetId?: unknown; name?: unknown };
+          }> | null
+        )
+          ?.filter((event) => event.type === "asset-created")
+          .at(-1);
+        const eventAssetId =
+          typeof created?.data?.assetId === "string" ? created.data.assetId : undefined;
+        const eventName =
+          typeof created?.data?.name === "string" ? created.data.name : undefined;
+        const assetId =
+          eventAssetId ?? row.threadAssetId ?? row.boundAssetId ?? undefined;
+        const projectId = eventAssetId
+          ? row.threadProjectId
+          : row.threadAssetId
+            ? row.assetProjectId
+            : row.boundAssetProjectId;
+        const assetName = eventName ?? row.assetName ?? row.boundAssetName;
+        return {
+          id: row.id,
+          status: row.status,
+          prompt: row.prompt,
+          createdAt: row.createdAt,
+          ...(assetId ? { assetId } : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(assetName ? { assetName } : {}),
+        };
+      }),
+    });
   });
 
   app.get("/api/runs/:id/stream", async (req, res) => {

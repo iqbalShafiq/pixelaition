@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button, SelectControl, Textarea } from "./ui.js";
 
 /**
@@ -19,6 +19,8 @@ export function Composer({
   modelReady,
   onGenerate,
   onStop,
+  scope,
+  blockedReason,
 }: {
   prompt: string;
   onPrompt: (value: string) => void;
@@ -32,6 +34,10 @@ export function Composer({
   modelReady: boolean;
   onGenerate: () => void;
   onStop: () => void;
+  /** An extra bar control before the model select (the home scope picker). */
+  scope?: ReactNode;
+  /** A named cause that keeps the run from starting; shown in the bar. */
+  blockedReason?: string;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -41,6 +47,7 @@ export function Composer({
     area.style.height = `${Math.min(area.scrollHeight, 144)}px`;
   }, [prompt]);
 
+  const blocked = Boolean(blockedReason);
   const noCatalog = models.length === 0 || efforts.length === 0;
   const modelOptions = models.length > 0 ? models : ["no models"];
 
@@ -60,13 +67,16 @@ export function Composer({
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            if (!running && prompt.trim() && modelReady && !noCatalog) onGenerate();
+            if (!running && prompt.trim() && modelReady && !noCatalog && !blocked) {
+              onGenerate();
+            }
           }
           if (event.key === "Escape") event.currentTarget.blur();
         }}
         onChange={(event) => onPrompt(event.target.value)}
       />
       <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
+        {scope}
         <SelectControl
           label="Model"
           value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}
@@ -80,7 +90,9 @@ export function Composer({
           options={efforts.length > 0 ? efforts : ["none"]}
           onChange={onEffort}
         />
-        {!modelReady ? (
+        {blocked ? (
+          <span className="text-pixel-mono text-muted">{blockedReason}</span>
+        ) : !modelReady ? (
           <span className="text-pixel-mono text-muted">
             OPENAI_API_KEY is missing on the server
           </span>
@@ -95,7 +107,7 @@ export function Composer({
           ) : (
             <Button
               onClick={onGenerate}
-              disabled={!prompt.trim() || !modelReady || noCatalog || !modelId}
+              disabled={!prompt.trim() || !modelReady || noCatalog || !modelId || blocked}
             >
               Generate
             </Button>
