@@ -47,9 +47,10 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { asc, and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { asc, and, desc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
+import { buildRunPrompt } from "./prompt.js";
 
 type PublicEvent = {
   sequence: number;
@@ -178,7 +179,7 @@ const agents = completions.flatMap(({ spec, model }) =>
       model,
       instructions: pixelInstructions,
       tools: createPixelTools({ vision: spec.vision }),
-      maxTurns: 24,
+      maxTurns: 40,
       controls: { reasoningEffort: effort },
       ...(observer
         ? {
@@ -341,11 +342,32 @@ app.post("/internal/runs", async (req, res) => {
   const originFrame = asset.frames.find((frame) => frame.id === body.frameId);
   if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
 
+  // A follow-up should build on what already happened, so the prompt carries
+  // the last finished runs on this asset. A run still queued, running, or
+  // waiting has no answer to show; only finished rows count.
+  const recent = await db
+    .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationThreads.id, generationRuns.threadId))
+    .where(
+      and(
+        eq(generationThreads.assetId, body.assetId),
+        notInArray(generationRuns.status, ["queued", "running", "waiting"]),
+      ),
+    )
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(3);
+
   const run = await runtime.submit({
     agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
-    prompt: `${body.prompt}\nStyle: ${JSON.stringify(asset.style)}\nFrame: ${originFrame.name}`,
+    prompt: buildRunPrompt({
+      prompt: body.prompt,
+      style: asset.style,
+      frameName: originFrame.name,
+      recent,
+    }),
   });
   telemetry?.setTraceContext(run.id, {
     name: "draw-sprite",
