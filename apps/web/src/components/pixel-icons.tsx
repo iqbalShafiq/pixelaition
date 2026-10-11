@@ -1,0 +1,120 @@
+import {
+  ArrowRight as RawArrowRight,
+  Check as RawCheck,
+  ChevronDown as RawChevronDown,
+  Clipboard as RawClipboard,
+  Close as RawClose,
+  ColorsSwatch as RawColorsSwatch,
+  Copy as RawCopy,
+  Download as RawDownload,
+  Eraser as RawEraser,
+  Eye as RawEye,
+  EyeOff as RawEyeOff,
+  FlipHorizontal2 as RawFlipHorizontal2,
+  Folder as RawFolder,
+  Grid3x3 as RawGrid3x3,
+  Hand as RawHand,
+  Layout as RawLayout,
+  Menu as RawMenu,
+  Minus as RawMinus,
+  Pencil as RawPencil,
+  Pipette as RawPipette,
+  Play as RawPlay,
+  Plus as RawPlus,
+  Robot as RawRobot,
+  Send as RawSend,
+  Square as RawSquare,
+  Stop as RawStop,
+  Tools as RawTools,
+  Trash as RawTrash,
+} from "pixelarticons/react";
+import type { ComponentType, SVGProps } from "react";
+
+/**
+ * The app's icon set: pixelarticons on the 24x24 grid, wrapped by `crisp`.
+ *
+ * Audit, run from apps/web against pixelarticons 2.4.2:
+ *
+ *   node --input-type=module -e "import('pixelarticons/react').then(m =>
+ *     console.log(Object.keys(m).sort().join('\n')))"
+ *
+ * Export            Replaces (lucide)   pixelarticons export   Note
+ * ---------------   -----------------   --------------------   --------------------------------
+ * Pencil            Pencil              Pencil
+ * Eraser            Eraser              Eraser
+ * Picker            Pipette             Pipette
+ * Square            Square              Square
+ * Hand              Hand                Hand
+ * Plus              Plus                Plus
+ * Trash             Trash2              Trash
+ * Copy              Copy                Copy
+ * Play              Play                Play
+ * Stop              (Square, playback)  Stop
+ * Eye               Eye                 Eye
+ * EyeOff            EyeOff              EyeOff
+ * Folder            FolderOpen          Folder                 substitution: no FolderOpen
+ * Clipboard         ClipboardCheck      Clipboard              substitution: no ClipboardCheck
+ * Flip              FlipHorizontal      FlipHorizontal2        exact export is FlipHorizontal2
+ * Wrench            Wrench              Tools                  substitution: no wrench glyph
+ * Brain             Brain               Robot                  substitution: no brain glyph
+ * Check             Check               Check
+ * Close             X                   Close
+ * Grid              Grid3X3             Grid3x3                exact export is Grid3x3 (lower x)
+ * Export            (button label)      Download               substitution: no Export glyph
+ * Menu              Menu                Menu
+ * PanelLeft         (mobile rail)       Layout                 substitution: left-rail layout glyph
+ * Send              (composer)          Send
+ * Palette           Palette             ColorsSwatch           substitution: no Palette
+ * ArrowRight        ArrowRight          ArrowRight
+ * ChevronDown       ChevronDown         ChevronDown
+ * Minus             Minus               Minus
+ *
+ * custom (the free set has no equivalent; Task 10 adds the SVGs to this
+ * module, no substitution is allowed here):
+ *   Fill          replaces PaintBucket
+ *   Line          replaces Slash
+ *   Select        replaces SquareDashed (also the Transparency toggle)
+ *   Layers        replaces Layers (onion skin)
+ *   Transparency  replaces SquareDashed
+ *
+ * Every pixelarticons component draws on 24x24 with fill="currentColor"
+ * already; `crisp` fixes the render size and puts every edge on the grid.
+ */
+
+type IconProps = SVGProps<SVGSVGElement>;
+
+/** Pixelarticons are 24x24; crispEdges keeps every edge on the grid. */
+function crisp(Component: ComponentType<IconProps>) {
+  return function CrispIcon(props: IconProps) {
+    return <Component width={24} height={24} shapeRendering="crispEdges" {...props} />;
+  };
+}
+
+export const Pencil = crisp(RawPencil);
+export const Eraser = crisp(RawEraser);
+export const Picker = crisp(RawPipette);
+export const Square = crisp(RawSquare);
+export const Hand = crisp(RawHand);
+export const Plus = crisp(RawPlus);
+export const Trash = crisp(RawTrash);
+export const Copy = crisp(RawCopy);
+export const Play = crisp(RawPlay);
+export const Stop = crisp(RawStop);
+export const Eye = crisp(RawEye);
+export const EyeOff = crisp(RawEyeOff);
+export const Folder = crisp(RawFolder);
+export const Clipboard = crisp(RawClipboard);
+export const Flip = crisp(RawFlipHorizontal2);
+export const Wrench = crisp(RawTools);
+export const Brain = crisp(RawRobot);
+export const Check = crisp(RawCheck);
+export const Close = crisp(RawClose);
+export const Grid = crisp(RawGrid3x3);
+export const Export = crisp(RawDownload);
+export const Menu = crisp(RawMenu);
+export const PanelLeft = crisp(RawLayout);
+export const Send = crisp(RawSend);
+export const Palette = crisp(RawColorsSwatch);
+export const ArrowRight = crisp(RawArrowRight);
+export const ChevronDown = crisp(RawChevronDown);
+export const Minus = crisp(RawMinus);
