@@ -192,7 +192,7 @@ export async function gateToolCall(
     call: { tool: toolName, description: config.description, args },
   };
   const started = Date.now();
-  const { answers, cost, model } = await askJev(state, config.questions, {
+  const { answers, usage, model } = await askJev(state, config.questions, {
     apiKey: process.env.OPENROUTER_API_KEY,
     model: process.env.JEV_MODEL,
   });
@@ -212,7 +212,7 @@ export async function gateToolCall(
     checks,
     durationMs: Date.now() - started,
     model,
-    ...(cost !== undefined ? { cost } : {}),
+    usage,
   });
   return outcome;
 }

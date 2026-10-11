@@ -1,4 +1,4 @@
-import { askJev, type JevEnv, type JevQuestion } from "./jev.js";
+import { askJev, type JevEnv, type JevQuestion, type JevUsage } from "./jev.js";
 
 /**
  * The guardrail from TypeSafe's LLM-guardrails cookbook: one request screens a
@@ -16,8 +16,8 @@ export type GuardrailReport = {
   /** The hazard with the highest probability, for the reason line. */
   top: { hazard: string; probability: number };
   reason: string;
-  /** What the Decisions request cost, for telemetry. */
-  cost?: number;
+  /** What the Decisions request used, for telemetry. */
+  usage?: JevUsage;
 };
 
 /** The cookbook's strict policy, kept as named numbers a product can edit. */
@@ -186,17 +186,11 @@ function toReport(
 }
 
 export async function screenInput(text: string, env: JevEnv): Promise<GuardrailReport> {
-  const { answers, cost } = await askJev({ text }, inputBattery, env);
-  return {
-    ...toReport("input", answers),
-    ...(cost !== undefined ? { cost } : {}),
-  };
+  const { answers, usage } = await askJev({ text }, inputBattery, env);
+  return { ...toReport("input", answers), usage };
 }
 
 export async function screenOutput(text: string, env: JevEnv): Promise<GuardrailReport> {
-  const { answers, cost } = await askJev({ text }, outputBattery, env);
-  return {
-    ...toReport("output", answers),
-    ...(cost !== undefined ? { cost } : {}),
-  };
+  const { answers, usage } = await askJev({ text }, outputBattery, env);
+  return { ...toReport("output", answers), usage };
 }

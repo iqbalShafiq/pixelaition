@@ -117,9 +117,12 @@ export function buildOtlpPayload(
               }
               if (span.model) push("langfuse.observation.model.name", span.model);
               if (span.usage) {
-                push("langfuse.observation.usage_details", JSON.stringify(span.usage));
-                // Langfuse reads USD cost from cost_details, not usage_details.
-                const cost = (span.usage as { cost?: unknown }).cost;
+                // Langfuse reads tokens from usage_details and USD cost from
+                // cost_details; the cost key must not leak into the tokens.
+                const { cost, ...tokens } = span.usage as { cost?: unknown };
+                if (Object.keys(tokens).length > 0) {
+                  push("langfuse.observation.usage_details", JSON.stringify(tokens));
+                }
                 if (typeof cost === "number") {
                   push(
                     "langfuse.observation.cost_details",

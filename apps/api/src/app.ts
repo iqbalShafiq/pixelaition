@@ -631,7 +631,7 @@ export function createApp() {
           severity: guardrail.severity,
         }),
         model: jevModel,
-        ...(guardrail.cost !== undefined ? { usage: { cost: guardrail.cost } } : {}),
+        ...(guardrail.usage !== undefined ? { usage: { ...guardrail.usage } } : {}),
         ...(guardrail.action !== "pass"
           ? { level: "WARNING" as const, statusMessage: guardrail.reason }
           : {}),
@@ -665,13 +665,14 @@ export function createApp() {
     }
     const decisionStarted = Date.now();
     let decided: DrawDecision;
-    let decisionCost: number | undefined;
+    let decisionUsage: Record<string, number> | undefined;
     try {
       decided = await decidePrompt(body.prompt, {
         apiKey: process.env.OPENROUTER_API_KEY,
         model: jevModel,
         onCall: (call) => {
-          decisionCost = call.cost;
+          const { model: _model, latencyMs: _latencyMs, ...usage } = call;
+          decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
         },
       });
     } catch (reason) {
@@ -695,7 +696,7 @@ export function createApp() {
         input: body.prompt,
         output: JSON.stringify(decided),
         model: jevModel,
-        ...(decisionCost !== undefined ? { usage: { cost: decisionCost } } : {}),
+        ...(decisionUsage !== undefined ? { usage: decisionUsage } : {}),
       },
       {
         name: "decide",

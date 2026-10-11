@@ -41,7 +41,7 @@ describe("jev guardrails", () => {
               jailbreak: { type: "noul", noul: 0.03 },
               severity: { type: "score", score: 2.3, confidence: 0.9, probabilities: {} },
             },
-            usage: { cost: 0.00002 },
+            usage: { input_tokens: 465, output_tokens: 63, cost: 0.00002 },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -52,7 +52,8 @@ describe("jev guardrails", () => {
     });
     expect(report.action).toBe("block");
     expect(report.top).toEqual({ hazard: "sexual_content", probability: 0.96 });
-    expect(report.cost).toBe(0.00002);
+    expect(report.usage?.cost).toBe(0.00002);
+    expect(report.usage?.input).toBe(465);
   });
 
   it("refuses to screen without a configured key", async () => {

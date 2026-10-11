@@ -273,7 +273,7 @@ const gateSuite: Suite = {
     const item = gateCases.find((candidate) => candidate.label === sample.input)!;
     const run = fixture(item.request);
     run.onJevCheck = (check) => {
-      observedCost = check.cost ?? 0;
+      observedCost = check.usage?.cost ?? 0;
     };
     return (await gateToolCall(run, item.tool, item.args)).outcome;
   },

@@ -166,7 +166,7 @@ function recordGateCheck(durableRunId: string, check: JevGateCheck): void {
     input: check.toolName,
     output: JSON.stringify({ outcome: check.outcome, checks: check.checks }),
     model: check.model,
-    ...(check.cost !== undefined ? { usage: { cost: check.cost } } : {}),
+    ...(check.usage !== undefined ? { usage: { ...check.usage } } : {}),
     ...(check.outcome === "block"
       ? { level: "WARNING" as const, statusMessage: check.reason }
       : {}),
@@ -200,7 +200,7 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
         severity: report.severity,
       }),
       model: process.env.JEV_MODEL,
-      ...(report.cost !== undefined ? { usage: { cost: report.cost } } : {}),
+      ...(report.usage !== undefined ? { usage: { ...report.usage } } : {}),
       ...(report.action !== "pass"
         ? { level: "WARNING" as const, statusMessage: report.reason }
         : {}),

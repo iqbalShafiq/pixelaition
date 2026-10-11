@@ -8,6 +8,7 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { z } from "zod";
+import type { JevUsage } from "./jev.js";
 
 export type Stroke = {
   label: string;
@@ -112,7 +113,7 @@ export type JevGateCheck = {
   checks: Record<string, number>;
   durationMs: number;
   model: string;
-  cost?: number;
+  usage?: JevUsage;
 };
 
 export type RunBinding = {

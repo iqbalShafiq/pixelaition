@@ -22,8 +22,15 @@ export type JevEnv = {
   /** Test seam; production always uses the OpenRouter Decisions endpoint. */
   decisionsUrl?: string | undefined;
   /** Called once per successful request with its usage, for telemetry. */
-  onCall?:
-    ((call: { model: string; cost?: number; latencyMs: number }) => void) | undefined;
+  onCall?: ((call: { model: string; latencyMs: number } & JevUsage) => void) | undefined;
+};
+
+/** Token counts and cost as Jev reports them, in Langfuse's usage keys. */
+export type JevUsage = {
+  input?: number;
+  output?: number;
+  total?: number;
+  cost?: number;
 };
 
 export type JevQuestion = {
@@ -50,7 +57,13 @@ const answerSchema = z.object({
       score: z.number().optional(),
     }),
   ),
-  usage: z.object({ cost: z.number().optional() }).optional(),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+      cost: z.number().optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -62,7 +75,7 @@ export async function askJev(
   state: unknown,
   questions: Record<string, JevQuestion>,
   env: JevEnv,
-): Promise<{ answers: Record<string, JevAnswer>; cost?: number; model: string }> {
+): Promise<{ answers: Record<string, JevAnswer>; usage: JevUsage; model: string }> {
   const apiKey = env.apiKey?.trim();
   const model = env.model?.trim();
   if (!apiKey || !model) throw new JevNotConfiguredError();
@@ -105,11 +118,15 @@ export async function askJev(
       ...(answer.score !== undefined ? { score: answer.score } : {}),
     };
   }
-  const cost = parsed.data.usage?.cost;
-  env.onCall?.({
-    model,
-    ...(cost !== undefined ? { cost } : {}),
-    latencyMs: Date.now() - started,
-  });
-  return { answers, ...(cost !== undefined ? { cost } : {}), model };
+  const reported = parsed.data.usage;
+  const usage: JevUsage = {
+    ...(reported?.input_tokens !== undefined ? { input: reported.input_tokens } : {}),
+    ...(reported?.output_tokens !== undefined ? { output: reported.output_tokens } : {}),
+    ...(reported?.input_tokens !== undefined && reported?.output_tokens !== undefined
+      ? { total: reported.input_tokens + reported.output_tokens }
+      : {}),
+    ...(reported?.cost !== undefined ? { cost: reported.cost } : {}),
+  };
+  env.onCall?.({ model, ...usage, latencyMs: Date.now() - started });
+  return { answers, usage, model };
 }
