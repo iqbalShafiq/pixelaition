@@ -135,15 +135,15 @@ function ApprovalBody({
   const plan = planInput(interaction.input);
   const planFrames = plan?.frames ?? [];
   const frameById = new Map(frames.map((frame) => [frame.id, frame]));
-  // Frames are included unless the user explicitly unchecks them, so a plan
-  // that arrives before the asset query settles still reads correctly.
-  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  // Frames are included unless the user explicitly unchecks them, keyed by the
+  // plan's own position: a proposed frame has no frameId yet, so only the
+  // index lets it be pruned like any other. The plan that arrives before the
+  // asset query settles still reads correctly.
+  const [removed, setRemoved] = useState<Set<number>>(() => new Set());
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const staged = planFrames.filter(
-    (frame) => frame.frameId === undefined || !removed.has(frame.frameId),
-  );
+  const staged = planFrames.filter((_, index) => !removed.has(index));
   const edited = removed.size > 0;
   const empty = planFrames.length > 0 && staged.length === 0;
 
@@ -223,22 +223,20 @@ function ApprovalBody({
                     {frame.description}
                   </span>
                 </span>
-                {assetFrame ? (
-                  <Checkbox
-                    hideLabel
-                    label={`Include ${frame.name}`}
-                    checked={!removed.has(assetFrame.id)}
-                    disabled={busy}
-                    onChange={(next) =>
-                      setRemoved((current) => {
-                        const ids = new Set(current);
-                        if (next) ids.delete(assetFrame.id);
-                        else ids.add(assetFrame.id);
-                        return ids;
-                      })
-                    }
-                  />
-                ) : null}
+                <Checkbox
+                  hideLabel
+                  label={`Include ${frame.name}`}
+                  checked={!removed.has(index)}
+                  disabled={busy}
+                  onChange={(next) =>
+                    setRemoved((current) => {
+                      const indexes = new Set(current);
+                      if (next) indexes.delete(index);
+                      else indexes.add(index);
+                      return indexes;
+                    })
+                  }
+                />
               </li>
             );
           })}
