@@ -947,7 +947,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
-      editFrame(run, input.frameId, { type: "mirror" });
+      const edited = editFrame(run, input.frameId, { type: "mirror" });
+      run.onStroke?.({ label: "mirror", points: [] }, edited.buffer, edited.id);
       return { committed: true };
     },
   });

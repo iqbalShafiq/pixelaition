@@ -390,6 +390,24 @@ describe("drawing tools", () => {
     releaseRun("run-1");
   });
 
+  it("hands the mirrored frame to onStroke so the worker persists it", async () => {
+    const seen: Array<{ frameId: string; row0: number[] }> = [];
+    boundRun((_stroke, buffer, frameId) => {
+      seen.push({
+        frameId,
+        row0: [...(buffer.layers[0]?.pixels.slice(0, 4) ?? [])],
+      });
+    });
+    await tool("mirror_frame").call({ frameId: "frame-1" }, { operationId: "run-1" });
+    // frame-1's base row [1,1,0,0] flips to [0,0,1,1].
+    expect(seen).toEqual([{ frameId: "frame-1", row0: [0, 0, 1, 1] }]);
+    expect([
+      ...(getRun("run-1")?.frames.get("frame-1")?.buffer.layers[0]?.pixels.slice(0, 4) ??
+        []),
+    ]).toEqual([0, 0, 1, 1]);
+    releaseRun("run-1");
+  });
+
   it("fills a rectangle on the frame named by the tool call", async () => {
     const seen: string[] = [];
     boundRun((_stroke, _buffer, frameId) => seen.push(frameId));
