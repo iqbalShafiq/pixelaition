@@ -28,6 +28,7 @@ import {
   stagedOverrideSchema,
   type ModelSpec,
   type RunTarget,
+  type StagedPlanOverride,
 } from "@pixelaition/agent";
 import { createDatabase, assets, frames, generationRuns, models } from "@pixelaition/db";
 import {
@@ -512,21 +513,32 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
     .where(eq(generationRuns.id, req.params.id ?? ""));
   if (!row?.durableRunId)
     return res.status(404).json({ message: "That run is not waiting." });
-  // The API stages a user-edited plan before it answers the card. Hydrate it
-  // into the live binding now; present_plan consumes it when it executes.
-  const binding = getRun(row.durableRunId);
-  if (binding && row.override !== null && row.override !== undefined) {
-    const parsed = stagedOverrideSchema.safeParse(row.override);
-    if (!parsed.success)
-      return res.status(422).json({ message: "The staged plan override is malformed." });
-    binding.stagedOverride = parsed.data;
-  }
   let response: AgentInteractionResponse;
   try {
     response = parseAgentInteractionResponse(body.data.response);
   } catch {
     return res.status(400).json({ message: "The response is malformed." });
   }
+  // The API stages a user-edited plan against the interaction it answers.
+  // Hydrate it into the live binding only for that interaction; present_plan
+  // consumes it when it executes. A mismatched or malformed row never seeds a
+  // plan.
+  const binding = getRun(row.durableRunId);
+  let staged: StagedPlanOverride | undefined;
+  let malformedOverride = false;
+  if (row.override !== null && row.override !== undefined) {
+    const parsed = stagedOverrideSchema.safeParse(row.override);
+    if (parsed.success) staged = parsed.data;
+    else malformedOverride = true;
+  }
+  const denied = response.type === "tool-approval" && !response.approved;
+  // A malformed row cannot seed a plan; a denial clears it below, anything
+  // else must fail with the cause named.
+  if (malformedOverride && !denied)
+    return res.status(422).json({ message: "The staged plan override is malformed." });
+  const stagedForResponse =
+    staged !== undefined && staged.interactionId === body.data.interactionId;
+  if (binding && stagedForResponse) binding.stagedOverride = staged;
   try {
     runtime.respond(row.durableRunId, body.data.interactionId, response);
   } catch (reason) {
@@ -539,9 +551,15 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
           : "That interaction is not pending.",
     });
   }
-  // Consume-once from the row: a later card must never re-hydrate a plan the
-  // user already answered. The binding's copy lives until present_plan reads it.
-  if (row.override !== null && row.override !== undefined) {
+  // A rejected proposal must never seed a later plan: drop the edit outright.
+  // An approved one is consumed once present_plan executes, so only the row
+  // copy is cleared here — consume-once from the row.
+  if (denied && binding) binding.stagedOverride = undefined;
+  if (
+    (denied || stagedForResponse) &&
+    row.override !== null &&
+    row.override !== undefined
+  ) {
     await db
       .update(generationRuns)
       .set({ override: null })

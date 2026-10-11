@@ -25,10 +25,13 @@ export type PlanFrame = z.infer<typeof planFrameSchema>;
 
 /**
  * The editable slice of a plan the user may stage before answering the
- * approval card. The stage endpoint validates it on write and present_plan
- * validates it again on read, because jsonb carries no shape of its own.
+ * approval card, keyed to the interaction it answers. The stage endpoint
+ * validates it on write and the worker hydrates it only for that interaction;
+ * present_plan validates it again on read, because jsonb carries no shape of
+ * its own.
  */
 export const stagedOverrideSchema = z.object({
+  interactionId: z.string().min(1),
   frames: z.array(planFrameSchema).min(1).max(24),
 });
 

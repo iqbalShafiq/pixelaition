@@ -1,7 +1,14 @@
 import { normalizeToolResultOutput } from "@anvia/core/tool";
 import { createBuffer, type FrameBuffer } from "@pixelaition/pixel";
 import { describe, expect, it } from "vitest";
-import { bindRun, getRun, releaseRun, type FrameChange, type Stroke } from "./runs.js";
+import {
+  bindRun,
+  getRun,
+  releaseRun,
+  stagedOverrideSchema,
+  type FrameChange,
+  type Stroke,
+} from "./runs.js";
 import { createPixelTools } from "./tools.js";
 
 const palette = [
@@ -724,6 +731,7 @@ describe("present_plan", () => {
     boundRun();
     const run = getRun("run-1")!;
     run.stagedOverride = {
+      interactionId: "interaction-1",
       frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
     };
     const result = (await tool("present_plan").call(
@@ -739,10 +747,45 @@ describe("present_plan", () => {
     releaseRun("run-1");
   });
 
+  it("keys a staged override to the interaction it answers", () => {
+    const edited = [{ frameId: "frame-2", name: "hop", description: "airborne only" }];
+    expect(stagedOverrideSchema.safeParse({ frames: edited }).success).toBe(false);
+    expect(
+      stagedOverrideSchema.safeParse({ interactionId: "", frames: edited }).success,
+    ).toBe(false);
+    expect(
+      stagedOverrideSchema.safeParse({ interactionId: "interaction-1", frames: edited })
+        .success,
+    ).toBe(true);
+  });
+
+  it("does not reuse a consumed override for a later proposal", async () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.stagedOverride = {
+      interactionId: "interaction-1",
+      frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
+    };
+    await tool("present_plan").call(
+      { summary: "first proposal", frames },
+      { operationId: "run-1" },
+    );
+    const second = (await tool("present_plan").call(
+      { summary: "second proposal", frames },
+      { operationId: "run-1" },
+    )) as { plan: { summary: string; frames: unknown[] }; scope: string[] };
+    expect(second.plan).toEqual({ summary: "second proposal", frames });
+    expect(second.scope).toEqual(["frame-1", "frame-2"]);
+    releaseRun("run-1");
+  });
+
   it("refuses a malformed staged override instead of guessing", async () => {
     boundRun();
     const run = getRun("run-1")!;
-    run.stagedOverride = { frames: [{ name: "", description: "" }] } as never;
+    run.stagedOverride = {
+      interactionId: "interaction-1",
+      frames: [{ name: "", description: "" }],
+    } as never;
     await expect(
       tool("present_plan").call(
         { summary: "hop cycle", frames },

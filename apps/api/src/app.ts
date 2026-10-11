@@ -687,15 +687,15 @@ export function createApp() {
     if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
       return fail(res, 404, "NOT_FOUND", "That run is not available.");
     }
-    // The user's edit of a pending plan; the worker hydrates it into the live
-    // binding when it answers the card, and present_plan consumes it there.
+    // The user's edit of a pending plan, keyed to the card it answers; the
+    // worker hydrates it only for that interaction and present_plan consumes it.
     const body = stagedOverrideSchema.safeParse(req.body);
     if (!body.success) {
       return fail(
         res,
         422,
         "INVALID_OVERRIDE",
-        "The plan override must list 1-24 frames with a name and a description.",
+        "The plan override must name the pending interaction and list 1-24 frames with a name and a description.",
       );
     }
     const [row] = await db
@@ -704,6 +704,20 @@ export function createApp() {
       .where(eq(generationRuns.id, runId));
     if (!row || row.status !== "waiting") {
       return fail(res, 409, "NOT_WAITING", "That run is not waiting for an answer.");
+    }
+    // The stored events carry the pending card; when it is derivable, the
+    // override must name exactly that interaction.
+    const events =
+      (row.events as Array<{ type?: string; data?: { id?: unknown } }> | null) ?? [];
+    const pendingId = events.filter((event) => event.type === "interaction").at(-1)
+      ?.data?.id;
+    if (typeof pendingId === "string" && pendingId !== body.data.interactionId) {
+      return fail(
+        res,
+        409,
+        "STALE_INTERACTION",
+        "That plan card is not the run's pending interaction.",
+      );
     }
     await db
       .update(generationRuns)

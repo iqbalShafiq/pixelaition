@@ -392,7 +392,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       // Consume-once: a staged override is the user's edit of this proposal,
-      // never a standing policy for later calls.
+      // never a standing policy for later calls. The worker hydrates it only
+      // for the interaction it was staged for; a denied card clears it.
       const staged = run.stagedOverride;
       run.stagedOverride = undefined;
       let frames = input.frames;
