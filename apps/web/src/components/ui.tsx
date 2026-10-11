@@ -5,7 +5,7 @@ import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import { Select } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, X } from "lucide-react";
 import { motion, type HTMLMotionProps } from "motion/react";
 import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
@@ -152,7 +152,7 @@ export function Field({
 }
 
 const well =
-  "w-full border-2 bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none placeholder:text-muted disabled:opacity-50";
+  "w-full border-2 bevel-in bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none placeholder:text-muted disabled:opacity-50";
 
 export function TextInput({
   className = "",
@@ -253,10 +253,25 @@ export function Checkbox({
         className={`grid h-[18px] w-[18px] shrink-0 place-items-center border-2 transition-colors duration-150 ${
           checked
             ? "border-accent bg-accent text-navy"
-            : "border-line-strong bg-field text-transparent group-hover:border-muted"
+            : "border-line-strong bevel-in bg-field text-transparent group-hover:border-muted"
         }`}
       >
-        <Check size={13} strokeWidth={4} strokeLinecap="square" />
+        {/* 13px layout box keeps the pre-change baseline (the svg bottom edge is
+            the label baseline inside the layers panel's clipped 18px wrapper);
+            preserveAspectRatio still draws the 12px glyph. */}
+        <svg
+          viewBox="0 0 8 8"
+          width={12}
+          height={13}
+          preserveAspectRatio="xMidYMid meet"
+          shapeRendering="crispEdges"
+          aria-hidden
+        >
+          <path
+            d="M1 4h1v1h1v1h1V5h1V4h1V3h1V2H6v1H5v1H4V3H3v1H2v1H1z"
+            fill="currentColor"
+          />
+        </svg>
       </span>
       {hideLabel ? (
         <span className="sr-only">{label}</span>
@@ -280,6 +295,41 @@ export function Toggle({
 }) {
   return (
     <Checkbox label={label} checked={checked} disabled={disabled} onChange={onChange} />
+  );
+}
+
+/* ---------------------------------------------------------------- progress */
+
+/**
+ * Progress and usage read as segmented cells, one cell per unit — never a
+ * smooth bar. The row is capped at the 33-colour palette limit so a big total
+ * cannot run off the rail; `label` names the row when no text sits beside it.
+ */
+export function ProgressCells({
+  value,
+  total,
+  label,
+}: {
+  value: number;
+  total: number;
+  label?: string;
+}) {
+  const cells = Math.min(Math.max(total, 1), 33);
+  const filled = Math.min(Math.max(value, 0), cells);
+  return (
+    <span
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      className="flex items-center gap-px"
+    >
+      {Array.from({ length: cells }, (_, index) => (
+        <span
+          key={index}
+          className={`w-1.5 h-3 ${index < filled ? "bg-accent" : "bg-raised"}`}
+        />
+      ))}
+    </span>
   );
 }
 

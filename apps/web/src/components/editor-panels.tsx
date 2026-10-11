@@ -23,6 +23,7 @@ import {
   MenuItem,
   Panel,
   Popover,
+  ProgressCells,
   TextInput,
 } from "./ui.js";
 import { hexToRgba } from "../lib/color.js";
@@ -689,8 +690,11 @@ export function PalettePanel({
     <Panel
       title="Palette"
       action={
-        <span className={`text-pixel-mono ${over ? "text-erase" : "text-muted"}`}>
-          {usedColors}/{maxColors}
+        <span className="flex items-center gap-2">
+          <ProgressCells value={usedColors} total={maxColors} />
+          <span className={`text-pixel-mono ${over ? "text-erase" : "text-muted"}`}>
+            {usedColors}/{maxColors}
+          </span>
         </span>
       }
     >

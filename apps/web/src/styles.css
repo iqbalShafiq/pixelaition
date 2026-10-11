@@ -408,5 +408,16 @@
     height: 14px;
     background: var(--color-ink);
     border: 2px solid var(--color-paper);
+    box-shadow: 2px 2px 0 0 var(--color-navy);
+  }
+
+  /* Firefox draws its own pseudo-element; same square knob, no radius. */
+  .hue-strip::-moz-range-thumb {
+    width: 10px;
+    height: 14px;
+    background: var(--color-ink);
+    border: 2px solid var(--color-paper);
+    box-shadow: 2px 2px 0 0 var(--color-navy);
+    border-radius: 0;
   }
 }
