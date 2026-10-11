@@ -41,6 +41,33 @@ describe("run activity rows", () => {
     expect(rows[0]).toMatchObject({ kind: "tool", state: "ok" });
   });
 
+  it("summarizes the observation tools", () => {
+    const rows = applyRunEvent([], 1, "tool_started", {
+      input: {
+        toolCall: {
+          toolName: "read_region",
+          input: { x: 0, y: 0, width: 8, height: 8 },
+        },
+      },
+    });
+    expect(rows[0]).toMatchObject({
+      kind: "tool",
+      name: "read_region",
+      summary: "8×8",
+    });
+
+    const preview = applyRunEvent([], 2, "tool_started", {
+      input: {
+        toolCall: { toolName: "preview_frame", input: { mode: "strip" } },
+      },
+    });
+    expect(preview[0]).toMatchObject({
+      kind: "tool",
+      name: "preview_frame",
+      summary: "strip",
+    });
+  });
+
   it("keeps the provider error on a failed tool", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(

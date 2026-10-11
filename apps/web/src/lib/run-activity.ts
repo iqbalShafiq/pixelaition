@@ -46,6 +46,12 @@ function toolSummary(name: string, input: unknown): string | undefined {
   if (name === "fill_rect") {
     return `${value.width}×${value.height}`;
   }
+  if (name === "read_region") {
+    return `${value.width}×${value.height}`;
+  }
+  if (name === "preview_frame" && typeof value.mode === "string") {
+    return value.mode;
+  }
   return undefined;
 }
 
