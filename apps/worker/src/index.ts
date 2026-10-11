@@ -2,6 +2,11 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
+import {
+  parseAgentInteractionResponse,
+  type AgentInteractionRequest,
+  type AgentQuestionPrompt,
+} from "@anvia/core/agent/interactions";
 import { DurableRuntime } from "@anvia/durable";
 import { SqliteDurableStore } from "@anvia/durable/sqlite";
 import { OpenAIClient } from "@anvia/openai";
@@ -41,16 +46,35 @@ type PublicEvent = {
   data: unknown;
 };
 
+/** What the console needs to answer: no toolCallId, internalCallId, or reason. */
+type SanitizedInteraction = {
+  id: string;
+  type: "tool-approval" | "tool-question";
+  toolName: string;
+  questions?: readonly AgentQuestionPrompt[];
+  input?: unknown;
+};
+
+type StoredInteraction = {
+  sequence: number;
+  data: SanitizedInteraction;
+};
+
 const agentPrefix = "pixel-draw";
 
 const events = new Map<string, PublicEvent[]>();
 const listeners = new Map<string, Set<(event: PublicEvent) => void>>();
+// A suspended run can publish hundreds of events after its interaction, so the
+// retained-event bound would evict the pending card. Interactions live in their
+// own map until the run is forgotten; the row's stored events carry them, so a
+// refresh or a worker restart can restore the card.
+const interactions = new Map<string, Map<string, StoredInteraction>>();
 // Stroke events carry the whole frame base64-encoded, so an unbounded list would
 // hold megabytes per run for the life of the process.
 const MAX_RETAINED_EVENTS = 200;
 let sequence = 0;
 
-function publish(runId: string, type: string, data: unknown) {
+function publish(runId: string, type: string, data: unknown): PublicEvent {
   const event = { sequence: ++sequence, type, data };
   const list = events.get(runId) ?? [];
   list.push(event);
@@ -58,11 +82,13 @@ function publish(runId: string, type: string, data: unknown) {
     list.splice(0, list.length - MAX_RETAINED_EVENTS);
   events.set(runId, list);
   for (const listener of listeners.get(runId) ?? []) listener(event);
+  return event;
 }
 
 function forgetRun(runId: string) {
   events.delete(runId);
   listeners.delete(runId);
+  interactions.delete(runId);
 }
 
 const db = createDatabase();
@@ -464,8 +490,40 @@ app.post("/internal/runs/:id/cancel", async (req, res) => {
   res.status(204).end();
 });
 
+app.post("/internal/runs/:id/respond", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const body = z
+    .object({ interactionId: z.string().min(1), response: z.unknown() })
+    .parse(req.body);
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  const [row] = await db
+    .select()
+    .from(generationRuns)
+    .where(eq(generationRuns.id, req.params.id ?? ""));
+  if (!row?.durableRunId)
+    return res.status(404).json({ message: "That run is not waiting." });
+  try {
+    runtime.respond(
+      row.durableRunId,
+      body.interactionId,
+      parseAgentInteractionResponse(body.response),
+    );
+  } catch (reason) {
+    // The runtime refuses a response that does not match the pending
+    // interaction: a stale card must re-read the run, never retry blindly.
+    return res.status(409).json({
+      message:
+        reason instanceof Error
+          ? reason.message.slice(0, 200)
+          : "That interaction is not pending.",
+    });
+  }
+  res.status(204).end();
+});
+
 /** Only the events the run console needs, and only the fields it reads. */
-function consoleEvents(runId: string) {
+function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
   const kept = [
     "model_started",
     "model_completed",
@@ -473,8 +531,9 @@ function consoleEvents(runId: string) {
     "tool_completed",
     "status",
     "done",
+    "interaction",
   ];
-  return (events.get(runId) ?? [])
+  const stored = (events.get(runId) ?? [])
     .filter((event) => kept.includes(event.type))
     .slice(-160)
     .map((event) => ({
@@ -482,9 +541,51 @@ function consoleEvents(runId: string) {
       type: event.type,
       data: sanitizeEvent(event.type, event.data),
     }));
+  // Interactions that the retained-event bound already evicted are still part
+  // of the run's story; merge them back in sequence order.
+  const seen = new Set(stored.map((event) => event.sequence));
+  for (const entry of extra) {
+    if (seen.has(entry.sequence)) continue;
+    stored.push({ sequence: entry.sequence, type: "interaction", data: entry.data });
+  }
+  return stored.sort((a, b) => a.sequence - b.sequence);
+}
+
+function interactionsFor(runId: string): StoredInteraction[] {
+  return [...(interactions.get(runId)?.values() ?? [])];
+}
+
+function rememberInteraction(runId: string, interaction: StoredInteraction) {
+  const list = interactions.get(runId) ?? new Map<string, StoredInteraction>();
+  list.set(interaction.data.id, interaction);
+  interactions.set(runId, list);
+}
+
+/**
+ * The durable request carries call ids the console never needs. Approval keeps
+ * the tool arguments; a question keeps its prompts.
+ */
+function sanitizeInteraction(request: AgentInteractionRequest): SanitizedInteraction {
+  if (request.type === "tool-approval") {
+    return {
+      id: request.id,
+      type: request.type,
+      toolName: request.toolName,
+      input: request.input,
+    };
+  }
+  return {
+    id: request.id,
+    type: request.type,
+    toolName: request.toolName,
+    questions: request.questions,
+  };
 }
 
 function sanitizeEvent(type: string, raw: unknown): unknown {
+  // An interaction payload was already reduced to the console's fields when it
+  // was published; nothing here to strip.
+  if (type === "interaction") return raw;
   const data = raw as Record<string, unknown> | undefined;
   const operationId =
     typeof data?.operationId === "string" ? data.operationId : undefined;
@@ -544,9 +645,39 @@ async function follow(
         publish(publicId, event.type, event.data);
       }
       const snapshot = runtime.snapshot(durableId);
+      // A suspended run is still this run: publish the pending card once per
+      // interaction id and persist it, so a refresh or a worker restart can
+      // restore it from the row's stored events.
+      const outcome = snapshot.run.outcome as
+        { type?: string; interaction?: AgentInteractionRequest } | undefined;
+      if (
+        snapshot.run.status === "waiting" &&
+        outcome?.type === "interaction" &&
+        outcome.interaction
+      ) {
+        const interaction = outcome.interaction;
+        if (!interactions.get(publicId)?.has(interaction.id)) {
+          const published = publish(
+            publicId,
+            "interaction",
+            sanitizeInteraction(interaction),
+          );
+          rememberInteraction(publicId, {
+            sequence: published.sequence,
+            data: published.data as SanitizedInteraction,
+          });
+          await db
+            .update(generationRuns)
+            .set({
+              status: "waiting",
+              events: consoleEvents(publicId, interactionsFor(publicId)),
+            })
+            .where(eq(generationRuns.id, publicId));
+        }
+      }
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
-        const stored = consoleEvents(publicId);
+        const stored = consoleEvents(publicId, interactionsFor(publicId));
         const outcome = (
           stored.find((event) => event.type === "status")?.data as
             { outcome?: { text?: string } } | undefined

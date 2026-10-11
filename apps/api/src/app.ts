@@ -621,6 +621,66 @@ export function createApp() {
     res.status(204).end();
   });
 
+  app.post("/api/runs/:id/respond", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
+    const body = z
+      .object({ interactionId: z.string().min(1), response: z.unknown() })
+      .parse(req.body);
+    const [row] = await db
+      .select()
+      .from(generationRuns)
+      .where(eq(generationRuns.id, runId));
+    if (!row || row.status !== "waiting") {
+      return fail(res, 409, "NOT_WAITING", "That run is not waiting for an answer.");
+    }
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      upstream = await fetch(
+        `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/respond`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+    } catch (reason) {
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        reason instanceof Error ? reason.message : "The drawing worker is not available.",
+      );
+    }
+    if (!upstream.ok) {
+      const detail = (await upstream.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      // The worker refuses a response the durable runtime no longer matches;
+      // pass that conflict through instead of inventing a retry.
+      if (upstream.status === 409) {
+        return fail(
+          res,
+          409,
+          "NOT_WAITING",
+          detail?.message ?? "That run is not waiting for an answer.",
+        );
+      }
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        detail?.message ?? "The drawing worker is not available.",
+      );
+    }
+    res.status(204).end();
+  });
+
   app.get("/api/assets/:id/active-run", async (req, res) => {
     const asset = await getAssetRecord(
       db,
@@ -645,7 +705,14 @@ export function createApp() {
     type StoredEvent = {
       sequence: number;
       type: string;
-      data?: { outcome?: { text?: string } };
+      data?: {
+        outcome?: { text?: string };
+        id?: string;
+        type?: string;
+        toolName?: string;
+        questions?: unknown;
+        input?: unknown;
+      };
     };
     // The console's history is scoped to one frame when the editor asks for it;
     // without a frame it falls back to the whole asset.
@@ -690,8 +757,17 @@ export function createApp() {
       events.find((event) => event.type === "status" && event.data?.outcome?.text)?.data
         ?.outcome?.text ??
       "";
+    // A waiting run's newest interaction event is the card the console shows;
+    // older ones were already answered.
+    const interaction =
+      run?.status === "waiting"
+        ? (((run.events as StoredEvent[] | null) ?? [])
+            .filter((event) => event.type === "interaction")
+            .at(-1)?.data ?? null)
+        : null;
     res.json({
       run: active ? run : null,
+      interaction,
       lastRun: lastRow
         ? {
             id: lastRow.id,
