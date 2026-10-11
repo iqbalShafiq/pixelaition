@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   abstention,
   answerRelevancy,
@@ -8,11 +7,10 @@ import {
   runEvalSuite,
 } from "@anvia/core/evals";
 import { OpenAIClient } from "@anvia/openai";
-import { openCodeGoHeaders } from "../models.js";
 
-const key = process.env.OPENAI_API_KEY?.trim();
+const key = process.env.OPENROUTER_API_KEY?.trim();
 if (!key) {
-  console.error("OPENAI_API_KEY is required for judge evaluations.");
+  console.error("OPENROUTER_API_KEY is required for judge evaluations.");
   process.exit(1);
 }
 
@@ -24,12 +22,10 @@ if (!evalModelId) {
   process.exit(1);
 }
 
-const evalBaseUrl = process.env.OPENAI_BASE_URL?.trim();
-const evalHeaders = openCodeGoHeaders(evalBaseUrl, randomUUID());
+const evalBaseUrl = process.env.OPENROUTER_BASE_URL?.trim();
 const model = new OpenAIClient({
   apiKey: key,
   ...(evalBaseUrl ? { baseUrl: evalBaseUrl } : {}),
-  ...(evalHeaders ? { headers: evalHeaders } : {}),
 }).completionModel({
   modelId: evalModelId,
   api: "chat",

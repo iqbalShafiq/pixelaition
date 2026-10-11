@@ -176,7 +176,7 @@ export function createApp() {
     try {
       res.json({
         models: await listModels(),
-        modelReady: Boolean(process.env.OPENAI_API_KEY?.trim()),
+        modelReady: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
       });
     } catch (reason) {
       return fail(
@@ -549,12 +549,12 @@ export function createApp() {
       if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
       target = { scope: "asset", assetId: asset.id, frameId };
     }
-    if (!process.env.OPENAI_API_KEY?.trim()) {
+    if (!process.env.OPENROUTER_API_KEY?.trim()) {
       return fail(
         res,
         503,
         "MODEL_UNCONFIGURED",
-        "Add OPENAI_API_KEY on the server to generate.",
+        "Add OPENROUTER_API_KEY on the server to generate.",
       );
     }
     let catalog: ModelSpec[];
@@ -577,15 +577,13 @@ export function createApp() {
         "Pick a model and effort from the catalog.",
       );
     }
-    const decisionModel = process.env.DECISION_MODEL?.trim();
-    const decisionApi = catalog.find((model) => model.id === decisionModel)?.api;
-    const hasJev = Boolean(process.env.TYPESAFE_API_KEY?.trim());
-    if (!hasJev && (!decisionModel || !decisionApi)) {
+    const jevModel = process.env.JEV_MODEL?.trim();
+    if (!jevModel) {
       return fail(
         res,
         503,
         "DECISION_UNCONFIGURED",
-        "Set DECISION_MODEL to a model from the catalog before generating.",
+        "Set JEV_MODEL to the Jev model id before generating.",
       );
     }
     const thread = await ensureThread(
@@ -600,11 +598,8 @@ export function createApp() {
     let decided: DrawDecision;
     try {
       decided = await decidePrompt(body.prompt, {
-        typesafeApiKey: process.env.TYPESAFE_API_KEY,
-        openaiApiKey: process.env.OPENAI_API_KEY,
-        openaiBaseUrl: process.env.OPENAI_BASE_URL,
-        decisionModel,
-        decisionApi: decisionApi as "chat" | "responses" | undefined,
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: jevModel,
       });
     } catch (reason) {
       if (reason instanceof DecisionNotConfiguredError) {
@@ -626,7 +621,7 @@ export function createApp() {
         endMs: Date.now(),
         input: body.prompt,
         output: JSON.stringify(decided),
-        model: decisionModel ?? "jev",
+        model: jevModel,
       },
       {
         name: "decide",

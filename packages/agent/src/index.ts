@@ -1,7 +1,7 @@
 export { DecisionNotConfiguredError, decidePrompt, toDecision } from "./decide.js";
 export type { DrawDecision, DrawIntent } from "./decide.js";
 export { pixelInstructions } from "./instructions.js";
-export { openCodeGoHeaders, parseModelSpecRow, selectRunTarget } from "./models.js";
+export { parseModelSpecRow, selectRunTarget } from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";
 export {
   bindRun,

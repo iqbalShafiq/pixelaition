@@ -94,7 +94,7 @@ export function Composer({
           <span className="text-pixel-mono text-muted">{blockedReason}</span>
         ) : !modelReady ? (
           <span className="text-pixel-mono text-muted">
-            OPENAI_API_KEY is missing on the server
+            OPENROUTER_API_KEY is missing on the server
           </span>
         ) : noCatalog ? (
           <span className="text-pixel-mono text-muted">the model catalog is empty</span>

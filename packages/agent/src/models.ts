@@ -57,16 +57,3 @@ export function selectRunTarget(
   if (!model || !model.efforts.includes(effort)) return undefined;
   return { modelId: model.id, effort };
 }
-
-/**
- * The OpenCode Go endpoint rejects requests that carry no stable session id
- * and asks its clients to identify themselves instead of looking like a
- * plain SDK. Only requests to that endpoint get these headers.
- */
-export function openCodeGoHeaders(
-  baseUrl: string | undefined,
-  sessionId: string,
-): Record<string, string> | undefined {
-  if (!baseUrl?.includes("opencode.ai")) return undefined;
-  return { "x-opencode-session": sessionId, "user-agent": "pixelaition/0.1" };
-}

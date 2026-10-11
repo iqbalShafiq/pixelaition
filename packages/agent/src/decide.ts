@@ -1,27 +1,27 @@
-import { randomUUID } from "node:crypto";
-import { generateCompletion } from "@anvia/core/completion";
-import { choice, check, decide } from "@anvia/core/decision";
-import type { DecisionModel } from "@anvia/core/decision";
-import { JEV_LATEST, JevClient } from "@anvia/jev";
-import { OpenAIClient } from "@anvia/openai";
 import { z } from "zod";
-import { openCodeGoHeaders } from "./models.js";
 
 export type DrawIntent = "draw" | "edit" | "variant" | "clarify";
 export type DrawDecision = {
   intent: DrawIntent;
   confidence: number;
   question?: string;
-  source: "jev" | "model";
+  source: "jev";
 };
 
-/** Generation refuses to start until a real decision model is configured. */
+/** Generation refuses to start until Jev is configured. */
 export class DecisionNotConfiguredError extends Error {
   constructor() {
-    super("Set DECISION_MODEL (or TYPESAFE_API_KEY) before generating.");
+    super("Set JEV_MODEL and OPENROUTER_API_KEY before generating.");
     this.name = "DecisionNotConfiguredError";
   }
 }
+
+/**
+ * Jev is a System One decision model served by OpenRouter's Decisions API,
+ * not the OpenAI-compatible chat endpoints. One OpenRouter key authenticates
+ * it; there is no separate TypeSafe account or key.
+ */
+export const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 
 const intentOptions = {
   draw: "Draw a new sprite, item, or tile from scratch.",
@@ -30,106 +30,88 @@ const intentOptions = {
   clarify: "The request is too vague, so ask one question instead of drawing.",
 } as const;
 
-const intentQuestion = choice({
-  instructions:
-    "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists.",
-  options: intentOptions,
+const clarifyQuestion =
+  "What should the pixel asset show, and about how many pixels wide should it be?";
+
+/** The typed questions Jev answers in one parallel request. */
+const jevQuestions = {
+  intent: {
+    type: "choice",
+    instructions:
+      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists.",
+    criteria: intentOptions,
+  },
+  specific: {
+    type: "noul",
+    instructions:
+      "Does the request name a concrete subject and enough detail to draw it? Answer no for a placeholder such as 'draw something'.",
+    criteria: {
+      true: "The request names a concrete subject and enough detail to draw it.",
+      false: "It is a placeholder or too vague to draw from.",
+    },
+  },
+} as const;
+
+const jevAnswerSchema = z.object({
+  answers: z.object({
+    intent: z.object({
+      type: z.literal("choice"),
+      choice: z.string(),
+      confidence: z.number().min(0).max(1),
+    }),
+    specific: z.object({
+      type: z.literal("noul"),
+      noul: z.number().min(0).max(1),
+    }),
+  }),
+  usage: z.object({ cost: z.number().optional() }).optional(),
 });
+export type JevAnswers = z.infer<typeof jevAnswerSchema>["answers"];
 
-const specificQuestion = check({
-  instructions:
-    "Answer yes when the request names a concrete subject and enough detail to draw it. Answer no when it is a placeholder such as 'draw something'.",
-});
-
-const decisionOutput = z.object({
-  intent: z.enum(["draw", "edit", "variant", "clarify"]),
-  confidence: z.number().min(0).max(1),
-  // Strict structured outputs require every property in `required`, so the
-  // optional question is expressed as nullable instead of omitted.
-  question: z.string().min(1).max(300).nullable(),
-});
-type DecisionOutput = z.infer<typeof decisionOutput>;
-
-const decisionInstructions = [
-  "Decide how to handle one pixel-art request.",
-  "Answer draw, edit, or variant when the request is concrete.",
-  "Answer clarify when it is too vague to draw from, and then ask exactly one short question.",
-].join(" ");
-
-export function toDecision(
-  raw: DecisionOutput,
-  source: DrawDecision["source"],
-): DrawDecision {
-  return {
-    intent: raw.intent,
-    confidence: raw.confidence,
-    ...(raw.intent === "clarify" && raw.question ? { question: raw.question } : {}),
-    source,
-  };
-}
-
-function jevModel(apiKey: string): DecisionModel<unknown> {
-  return new JevClient({ apiKey }).decisionModel({
-    modelId: JEV_LATEST,
-  }) as DecisionModel<unknown>;
-}
-
-async function askJev(
-  model: DecisionModel<unknown>,
-  prompt: string,
-): Promise<DrawDecision> {
-  const result = await decide({
-    model,
-    state: { prompt },
-    questions: { intent: intentQuestion, specific: specificQuestion },
-  });
-  const { intent, specific } = result.answers;
-  const chosen = intent.choice;
-  if (chosen === "clarify" || specific.probability < 0.7) {
-    return {
-      intent: "clarify",
-      confidence: Math.min(intent.confidence ?? 1, specific.probability),
-      question:
-        "What should the pixel asset show, and about how many pixels wide should it be?",
-      source: "jev",
-    };
+/**
+ * Jev returns typed answers, never prose, so the clarifying question is ours.
+ * A low `specific` probability routes to clarify regardless of intent.
+ */
+export function toDecision(answers: JevAnswers): DrawDecision {
+  const chosen = answers.intent.choice;
+  const intent =
+    chosen === "clarify" || !(chosen in intentOptions)
+      ? "clarify"
+      : (chosen as DrawIntent);
+  const specific = answers.specific.noul;
+  const confidence = Math.min(answers.intent.confidence, specific);
+  if (intent === "clarify" || specific < 0.7) {
+    return { intent: "clarify", confidence, question: clarifyQuestion, source: "jev" };
   }
-  return {
-    intent: chosen in intentOptions ? chosen : "draw",
-    confidence: intent.confidence ?? specific.probability,
-    source: "jev",
-  };
+  return { intent, confidence, source: "jev" };
 }
 
 export async function decidePrompt(
   prompt: string,
   env: {
-    typesafeApiKey?: string | undefined;
-    openaiApiKey?: string | undefined;
-    openaiBaseUrl?: string | undefined;
-    decisionModel?: string | undefined;
-    decisionApi?: "chat" | "responses" | undefined;
+    apiKey?: string | undefined;
+    model?: string | undefined;
+    /** Test seam; production always uses the OpenRouter Decisions endpoint. */
+    decisionsUrl?: string | undefined;
   },
 ): Promise<DrawDecision> {
-  if (env.typesafeApiKey?.trim()) {
-    return askJev(jevModel(env.typesafeApiKey.trim()), prompt);
+  const apiKey = env.apiKey?.trim();
+  const model = env.model?.trim();
+  if (!apiKey || !model) throw new DecisionNotConfiguredError();
+  const response = await fetch(env.decisionsUrl ?? JEV_DECISIONS_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model, state: { prompt }, questions: jevQuestions }),
+  });
+  if (!response.ok) {
+    throw new Error(`The Jev decision provider returned ${response.status}.`);
   }
-  const apiKey = env.openaiApiKey?.trim();
-  const modelId = env.decisionModel?.trim();
-  if (!apiKey || !modelId || !env.decisionApi) throw new DecisionNotConfiguredError();
-  const baseUrl = env.openaiBaseUrl?.trim();
-  const headers = openCodeGoHeaders(baseUrl, randomUUID());
-  const client = new OpenAIClient({
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-    ...(headers ? { headers } : {}),
-  });
-  const model = client.completionModel({ modelId, api: env.decisionApi });
-  const result = await generateCompletion({
-    model,
-    prompt,
-    instructions: decisionInstructions,
-    outputSchema: decisionOutput,
-  });
-  return toDecision(result.output, "model");
+  const parsed = jevAnswerSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("Jev returned an answer shape this client does not understand.");
+  }
+  return toDecision(parsed.data.answers);
 }

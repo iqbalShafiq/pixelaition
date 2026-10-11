@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
 import {
@@ -20,7 +19,6 @@ import {
   createPixelTools,
   getRun,
   LangfuseTelemetry,
-  openCodeGoHeaders,
   parseModelSpecRow,
   pixelInstructions,
   releaseRun,
@@ -144,15 +142,12 @@ const telemetry =
       })
     : undefined;
 
-const apiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
-const baseUrl = process.env.OPENAI_BASE_URL?.trim();
-// OpenCode Go requires a stable session header on every request.
-const headers = openCodeGoHeaders(baseUrl, randomUUID());
+const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
+const baseUrl = process.env.OPENROUTER_BASE_URL?.trim();
 const openai = apiKey
   ? new OpenAIClient({
       apiKey,
       ...(baseUrl ? { baseUrl } : {}),
-      ...(headers ? { headers } : {}),
     })
   : undefined;
 
@@ -362,7 +357,7 @@ app.post("/internal/runs", async (req, res) => {
   }
   const chosen = agentForTarget(target);
   if (!chosen || !openai)
-    return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
+    return res.status(503).json({ message: "Add OPENROUTER_API_KEY to generate." });
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
 
