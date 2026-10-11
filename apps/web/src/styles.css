@@ -362,11 +362,11 @@
 }
 
 .dialog-popup {
-  animation: overlay-enter 160ms ease-out;
+  animation: overlay-enter 160ms steps(3, end);
 }
 
 .sheet-popup {
-  animation: var(--sheet-enter) 180ms ease-out;
+  animation: var(--sheet-enter) 200ms steps(4, end);
 }
 
 .sheet-popup[data-side="left"] {
@@ -378,8 +378,8 @@
 }
 
 .toast-popup {
-  animation: sheet-enter-right 180ms ease-out;
-  transition: opacity 180ms ease-out;
+  animation: sheet-enter-right 200ms steps(4, end);
+  transition: opacity 160ms steps(2, end);
 }
 
 .toast-popup[data-ending-style] {

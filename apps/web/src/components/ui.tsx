@@ -99,8 +99,8 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
     <BaseTooltip.Root>
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner sideOffset={8}>
-          <BaseTooltip.Popup className="z-40 border-2 border-line-strong bg-raised px-2 py-1 text-pixel-mono text-ink">
+        <BaseTooltip.Positioner sideOffset={8} className="z-40">
+          <BaseTooltip.Popup className="bg-raised pixel-window px-2 py-1 text-pixel-mono text-ink">
             {label}
           </BaseTooltip.Popup>
         </BaseTooltip.Positioner>
@@ -494,7 +494,7 @@ export function Menu({
       </BaseMenu.Trigger>
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={6} align={align} className="z-40">
-          <BaseMenu.Popup className="min-w-[10rem] border-2 border-line-strong bg-raised p-1 text-[13px]">
+          <BaseMenu.Popup className="min-w-[10rem] bg-raised pixel-window p-1 text-[13px]">
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -548,7 +548,7 @@ export function Popover({
       </BasePopover.Trigger>
       <BasePopover.Portal>
         <BasePopover.Positioner sideOffset={6} align={align} className="z-40">
-          <BasePopover.Popup className="w-64 border-2 border-line-strong bg-raised p-2 text-[13px]">
+          <BasePopover.Popup className="w-64 bg-raised pixel-window p-2 text-[13px]">
             {children}
           </BasePopover.Popup>
         </BasePopover.Positioner>
@@ -580,7 +580,7 @@ export function Dialog({
         <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/85" />
         <BaseDialog.Popup
           style={{ width: `min(${width}, 94vw)` }}
-          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4"
+          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4"
         >
           <header className="flex items-start justify-between gap-3 border-b-2 border-line pb-2">
             <div>
@@ -628,7 +628,7 @@ export function ConfirmDialog({
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
         <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-navy/85" />
-        <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4">
+        <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4">
           <BaseDialog.Title className="text-pixel-title text-accent">
             {title}
           </BaseDialog.Title>
