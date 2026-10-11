@@ -168,6 +168,31 @@ describe("run activity rows", () => {
       applyRunEvent([], 2, "model_delta", { operationId: "0:model:1", event: {} }),
     ).toEqual([]);
   });
+
+  it("leaves the rows unchanged for an interaction: the card is not a step row", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(
+      rows,
+      1,
+      "tool_started",
+      toolStarted("0:tool:1", "present_plan", {
+        summary: "a three-frame slime jump",
+        frames: [
+          { name: "idle", description: "slime resting" },
+          { name: "crouch", description: "slime squashed" },
+        ],
+      }),
+    );
+    const before = [...rows];
+    const after = applyRunEvent(rows, 2, "interaction", {
+      id: "int-1",
+      type: "tool-approval",
+      toolName: "present_plan",
+      input: { summary: "a three-frame slime jump", frames: [] },
+    });
+    expect(after).toEqual(before);
+    expect(after.some((row) => JSON.stringify(row).includes("interaction"))).toBe(false);
+  });
 });
 
 describe("formatting", () => {

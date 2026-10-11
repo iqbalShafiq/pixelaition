@@ -19,6 +19,13 @@ import {
   type IconProps,
 } from "./pixel-icons.js";
 import { formatDuration, type RunRow } from "../lib/run-activity.js";
+import {
+  InteractionCard,
+  type InteractionResponse,
+  type PendingInteraction,
+  type StagedPlanFrame,
+} from "./interaction-card.js";
+import type { FrameDto } from "../lib/types.js";
 
 const toolIcons: Record<string, ComponentType<IconProps>> = {
   paint_stroke: Pencil,
@@ -56,6 +63,11 @@ export function RunConsole({
   prompt = "",
   history = [],
   restoredMs = null,
+  interaction,
+  frames,
+  palette,
+  onRespond,
+  onEscape,
 }: {
   rows: RunRow[];
   running: boolean;
@@ -65,6 +77,14 @@ export function RunConsole({
   prompt?: string;
   history?: HistoryRun[];
   restoredMs?: number | null;
+  interaction: PendingInteraction | null;
+  frames: FrameDto[];
+  palette: string[];
+  onRespond: (
+    response: InteractionResponse,
+    stagedFrames?: StagedPlanFrame[],
+  ) => Promise<void>;
+  onEscape: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
@@ -97,15 +117,17 @@ export function RunConsole({
   const stateLabel = lastStatus?.kind === "status" ? lastStatus.label : "finished";
   const durationMs = running ? elapsed : (lastRunMs ?? restoredMs);
   const empty = !running && rows.length === 0 && !message && history.length === 0;
-  const summary = running
-    ? `working · ${formatDuration(elapsed)}`
-    : empty
-      ? "no activity yet"
-      : steps === 0
-        ? `${history.length} earlier run${history.length === 1 ? "" : "s"}`
-        : `${steps} step${steps === 1 ? "" : "s"} · ${stateLabel}${
-            durationMs !== null ? ` in ${formatDuration(durationMs)}` : ""
-          }`;
+  const summary = interaction
+    ? "waiting for your answer"
+    : running
+      ? `working · ${formatDuration(elapsed)}`
+      : empty
+        ? "no activity yet"
+        : steps === 0
+          ? `${history.length} earlier run${history.length === 1 ? "" : "s"}`
+          : `${steps} step${steps === 1 ? "" : "s"} · ${stateLabel}${
+              durationMs !== null ? ` in ${formatDuration(durationMs)}` : ""
+            }`;
 
   const rowIcon = (row: RunRow) => {
     if (row.kind === "phase") {
@@ -226,6 +248,18 @@ export function RunConsole({
               </ul>
             </div>
           ) : null}
+        </div>
+      ) : null}
+      {interaction ? (
+        <div className="border-t-2 border-line p-2">
+          <InteractionCard
+            key={interaction.id}
+            interaction={interaction}
+            frames={frames}
+            palette={palette}
+            onRespond={onRespond}
+            onEscape={onEscape}
+          />
         </div>
       ) : null}
     </section>

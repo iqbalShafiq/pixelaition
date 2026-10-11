@@ -1,0 +1,413 @@
+import { motion } from "motion/react";
+import { useState } from "react";
+import { FrameThumb } from "./editor-panels.js";
+import { Button, Checkbox, Textarea } from "./ui.js";
+import type { FrameDto } from "../lib/types.js";
+
+/** One prompt from a `tool-question` interaction (the Anvia question shape). */
+export type InteractionQuestion = {
+  id: string;
+  text: string;
+  choices?: Array<{ label: string; value: string }>;
+  allowCustom?: boolean;
+};
+
+/**
+ * The pending card as the worker publishes it: no call ids, no model reason.
+ * An approval carries the tool arguments as `input`; a question carries its
+ * prompts. The card is the only place either type is answered.
+ */
+export type PendingInteraction = {
+  id: string;
+  type: "tool-approval" | "tool-question";
+  toolName: string;
+  questions?: InteractionQuestion[];
+  input?: unknown;
+};
+
+/** The canonical Anvia response bodies the worker parses. */
+export type InteractionResponse =
+  | { type: "tool-approval"; approved: boolean; reason?: string }
+  | { type: "tool-question"; answers: Array<{ questionId: string; value: string }> };
+
+/** One frame of a staged plan edit, shaped exactly like the stage-override schema. */
+export type StagedPlanFrame = { frameId?: string; name: string; description: string };
+
+/** steps(4, end): the card lands on whole pixels, never a smooth glide. */
+const steppedEase = (t: number) => Math.min(1, Math.floor(t * 4) / 4);
+
+/**
+ * `present_plan`'s arguments, read defensively because the stream carries them
+ * as unknown. A frame without a name or description is not a plan frame.
+ */
+function planInput(
+  input: unknown,
+): { summary: string; frames: StagedPlanFrame[] } | null {
+  if (!input || typeof input !== "object") return null;
+  const value = input as Record<string, unknown>;
+  if (!Array.isArray(value.frames)) return null;
+  const frames: StagedPlanFrame[] = [];
+  for (const item of value.frames) {
+    if (!item || typeof item !== "object") continue;
+    const frame = item as Record<string, unknown>;
+    if (typeof frame.name !== "string" || typeof frame.description !== "string") continue;
+    frames.push({
+      ...(typeof frame.frameId === "string" ? { frameId: frame.frameId } : {}),
+      name: frame.name,
+      description: frame.description,
+    });
+  }
+  return { summary: typeof value.summary === "string" ? value.summary : "", frames };
+}
+
+/**
+ * The interaction card: the plan to confirm or the questions to answer. It
+ * renders in the run console above the composer; answering it is the run's
+ * only way forward, so nothing here is invented — the frames, choices, and
+ * summary are the agent's own payload.
+ */
+export function InteractionCard({
+  interaction,
+  frames,
+  palette,
+  onRespond,
+  onEscape,
+}: {
+  interaction: PendingInteraction;
+  frames: FrameDto[];
+  palette: string[];
+  /** Stages a scope edit (when one exists) before responding. Rejects on failure. */
+  onRespond: (
+    response: InteractionResponse,
+    stagedFrames?: StagedPlanFrame[],
+  ) => Promise<void>;
+  /** Escape hands the keyboard back to the prompt composer. */
+  onEscape: () => void;
+}) {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: steppedEase }}
+      aria-label={
+        interaction.type === "tool-approval"
+          ? "Approve the agent's request"
+          : "Answer the agent"
+      }
+      className="pointer-events-auto pixel-window w-full bg-panel"
+      style={{ maxWidth: "40rem" }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onEscape();
+      }}
+    >
+      <div className="p-3">
+        {interaction.type === "tool-approval" ? (
+          <ApprovalBody
+            interaction={interaction}
+            frames={frames}
+            palette={palette}
+            onRespond={onRespond}
+          />
+        ) : (
+          <QuestionBody interaction={interaction} onRespond={onRespond} />
+        )}
+      </div>
+    </motion.section>
+  );
+}
+
+/* ----------------------------------------------------------------- approval */
+
+function ApprovalBody({
+  interaction,
+  frames,
+  palette,
+  onRespond,
+}: {
+  interaction: PendingInteraction;
+  frames: FrameDto[];
+  palette: string[];
+  onRespond: (
+    response: InteractionResponse,
+    stagedFrames?: StagedPlanFrame[],
+  ) => Promise<void>;
+}) {
+  const plan = planInput(interaction.input);
+  const planFrames = plan?.frames ?? [];
+  const frameById = new Map(frames.map((frame) => [frame.id, frame]));
+  // Frames are included unless the user explicitly unchecks them, so a plan
+  // that arrives before the asset query settles still reads correctly.
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set());
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const staged = planFrames.filter(
+    (frame) => frame.frameId === undefined || !removed.has(frame.frameId),
+  );
+  const edited = removed.size > 0;
+  const empty = planFrames.length > 0 && staged.length === 0;
+
+  async function submit(approved: boolean) {
+    if (busy || (approved && empty)) return;
+    setBusy(true);
+    try {
+      const reason = note.trim();
+      await onRespond(
+        { type: "tool-approval", approved, ...(reason ? { reason } : {}) },
+        // A denial clears any staged edit on the worker; only an approval
+        // carries the user's scope back.
+        approved && edited ? staged : undefined,
+      );
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  const inputLines = plan
+    ? []
+    : Object.entries(
+        interaction.input &&
+          typeof interaction.input === "object" &&
+          !Array.isArray(interaction.input)
+          ? (interaction.input as Record<string, unknown>)
+          : {},
+      ).map(([key, value]) => ({
+        key,
+        value: typeof value === "string" ? value : (JSON.stringify(value) ?? "null"),
+      }));
+
+  return (
+    <>
+      <h3 className="text-pixel-title text-accent">
+        {plan ? "Confirm the plan" : `Confirm ${interaction.toolName}`}
+      </h3>
+      {plan?.summary ? (
+        <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
+      ) : null}
+      {inputLines.length > 0 ? (
+        <ul className="mt-2 grid gap-0.5">
+          {inputLines.map((line) => (
+            <li key={line.key} className="text-pixel-mono text-ink">
+              <span className="text-muted">{line.key}:</span> {line.value}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {planFrames.length > 0 ? (
+        <ul className="mt-2 grid gap-1.5">
+          {planFrames.map((frame, index) => {
+            const assetFrame = frame.frameId ? frameById.get(frame.frameId) : undefined;
+            return (
+              <li
+                key={frame.frameId ?? `new-${index}`}
+                className="flex items-center gap-2 border-2 border-line bg-field px-2 py-1.5"
+              >
+                {assetFrame ? (
+                  <FrameThumb frame={assetFrame} palette={palette} />
+                ) : (
+                  <span
+                    aria-hidden
+                    className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line bg-screen text-pixel-mono text-muted"
+                  >
+                    new
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-ink">
+                    {frame.name}
+                  </span>
+                  <span
+                    className="block truncate text-pixel-mono text-muted"
+                    title={frame.description}
+                  >
+                    {frame.description}
+                  </span>
+                </span>
+                {assetFrame ? (
+                  <Checkbox
+                    hideLabel
+                    label={`Include ${frame.name}`}
+                    checked={!removed.has(assetFrame.id)}
+                    disabled={busy}
+                    onChange={(next) =>
+                      setRemoved((current) => {
+                        const ids = new Set(current);
+                        if (next) ids.delete(assetFrame.id);
+                        else ids.add(assetFrame.id);
+                        return ids;
+                      })
+                    }
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      <Textarea
+        value={note}
+        aria-label="Note to the agent"
+        placeholder="Add a note…"
+        rows={2}
+        className="mt-3 min-h-[2.5rem]"
+        onChange={(event) => setNote(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            void submit(true);
+          }
+        }}
+      />
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button disabled={busy || empty} onClick={() => void submit(true)}>
+          Continue
+        </Button>
+        <Button tone="danger" disabled={busy} onClick={() => void submit(false)}>
+          Cancel run
+        </Button>
+        {empty ? (
+          <span className="text-pixel-mono text-erase">keep at least one frame</span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/* ----------------------------------------------------------------- questions */
+
+type AnswerState = { choice?: string; multi?: string[]; text: string };
+
+/**
+ * One string per question: typed text wins, otherwise the chosen value, with
+ * `_multi` ids serialized as a JSON array string — the shape the worker parses.
+ */
+function answerValue(
+  question: InteractionQuestion,
+  state: AnswerState | undefined,
+): string {
+  const text = state?.text.trim() ?? "";
+  if (text !== "") return text;
+  if (question.id.endsWith("_multi")) {
+    const selected = state?.multi ?? [];
+    return selected.length > 0 ? JSON.stringify(selected) : "";
+  }
+  return state?.choice ?? "";
+}
+
+function QuestionBody({
+  interaction,
+  onRespond,
+}: {
+  interaction: PendingInteraction;
+  onRespond: (response: InteractionResponse) => Promise<void>;
+}) {
+  const questions = interaction.questions ?? [];
+  const [answers, setAnswers] = useState<Record<string, AnswerState>>({});
+  const [busy, setBusy] = useState(false);
+
+  const complete = questions.every(
+    (question) => answerValue(question, answers[question.id]) !== "",
+  );
+
+  async function submit() {
+    if (busy || !complete) return;
+    setBusy(true);
+    try {
+      await onRespond({
+        type: "tool-question",
+        answers: questions.map((question) => ({
+          questionId: question.id,
+          value: answerValue(question, answers[question.id]),
+        })),
+      });
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h3 className="text-pixel-title text-accent">The agent asks</h3>
+      <div className="mt-2 grid gap-2">
+        {questions.map((question) => {
+          const state = answers[question.id];
+          const multi = question.id.endsWith("_multi");
+          const typed = (state?.text.trim() ?? "") !== "";
+          const selected = state?.multi ?? [];
+          return (
+            <fieldset key={question.id} className="border-2 border-line bg-field p-2.5">
+              <legend className="px-1 text-[13px] text-ink">{question.text}</legend>
+              {question.choices && question.choices.length > 0 ? (
+                <div className="mt-1.5 grid gap-1.5">
+                  {question.choices.map((choice) => (
+                    <Checkbox
+                      key={choice.value}
+                      label={choice.label}
+                      checked={
+                        multi
+                          ? !typed && selected.includes(choice.value)
+                          : !typed && state?.choice === choice.value
+                      }
+                      disabled={busy}
+                      onChange={(next) =>
+                        setAnswers((current) => {
+                          const previous = current[question.id];
+                          if (multi) {
+                            const values = new Set(previous?.multi ?? []);
+                            if (next) values.add(choice.value);
+                            else values.delete(choice.value);
+                            return {
+                              ...current,
+                              [question.id]: { text: "", multi: [...values] },
+                            };
+                          }
+                          return {
+                            ...current,
+                            [question.id]: { text: "", choice: choice.value },
+                          };
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <Textarea
+                value={state?.text ?? ""}
+                aria-label={`Or answer in your own words: ${question.text}`}
+                placeholder="Or type your own answer…"
+                rows={1}
+                disabled={busy}
+                className="mt-2"
+                onChange={(event) =>
+                  setAnswers((current) => ({
+                    ...current,
+                    [question.id]: {
+                      ...current[question.id],
+                      text: event.target.value,
+                    },
+                  }))
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+              />
+            </fieldset>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <Button disabled={busy || !complete} onClick={() => void submit()}>
+          Continue
+        </Button>
+        {complete ? null : (
+          <span className="text-pixel-mono text-muted">
+            every question needs an answer
+          </span>
+        )}
+      </div>
+    </>
+  );
+}

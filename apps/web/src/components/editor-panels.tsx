@@ -32,7 +32,7 @@ import { base64ToBytes, type FrameDto } from "../lib/types.js";
 
 /* ------------------------------------------------------------------ frames */
 
-function FrameThumb({
+export function FrameThumb({
   frame,
   palette,
   size = 36,

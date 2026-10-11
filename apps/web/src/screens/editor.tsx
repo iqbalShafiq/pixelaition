@@ -22,6 +22,11 @@ import {
 import { Composer } from "../components/composer.js";
 import { PixelLoader } from "../components/pixel-loader.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
+import {
+  type InteractionResponse,
+  type PendingInteraction,
+  type StagedPlanFrame,
+} from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import {
@@ -89,6 +94,8 @@ const fallbackBuffer: FrameBuffer = {
 
 type ActiveRunResponse = {
   run: { id: string; status: string } | null;
+  /** The pending card of a waiting run; null when the run is not waiting. */
+  interaction: PendingInteraction | null;
   lastRun: {
     id: string;
     status: string;
@@ -151,6 +158,9 @@ export function EditorScreen() {
   const displayedRunIdRef = useRef<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
+    null,
+  );
   const [restoredMs, setRestoredMs] = useState<number | null>(null);
   const [runPrompt, setRunPrompt] = useState("");
   const [runHistory, setRunHistory] = useState<HistoryRun[]>([]);
@@ -165,6 +175,7 @@ export function EditorScreen() {
     setRightSheet(false);
   }, [wide]);
   const viewRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const fitted = useRef<string | null>(null);
 
@@ -471,6 +482,13 @@ export function EditorScreen() {
           }
           return;
         }
+        if (body.type === "interaction") {
+          // The card is the run's next move, not a step row; open the console
+          // so it is visible even if the user had collapsed it.
+          setPendingInteraction(body.data as PendingInteraction);
+          setConsoleOpen(true);
+          return;
+        }
         if (body.type === "done") {
           const data = body.data as { status?: string; error?: string };
           setMessage(
@@ -478,6 +496,7 @@ export function EditorScreen() {
               ? ""
               : (data.error ?? `The run ${data.status ?? "finished"}.`),
           );
+          setPendingInteraction(null);
           source.close();
           sourceRef.current = null;
           setRunId(null);
@@ -517,20 +536,22 @@ export function EditorScreen() {
       source.onerror = () => {
         source.close();
         sourceRef.current = null;
-        // A dropped stream does not mean the run stopped: ask the server.
-        void api<{ run: { id: string; status: string } | null }>(
-          `/api/assets/${assetId}/active-run`,
-        )
-          .catch(() => ({ run: null }))
+        // A dropped stream does not mean the run stopped: ask the server. The
+        // answer carries the pending card too, so a waiting run restores it
+        // even when the replayed stream no longer retains the interaction.
+        void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
+          .catch(() => ({ run: null, interaction: null }))
           .then((result) => {
             if (result.run) {
               setRunId(result.run.id);
+              setPendingInteraction(result.interaction);
               log("The stream dropped; rejoining the running agent");
               listen(result.run.id, "", 0);
               return;
             }
             setRunId(null);
             setRunFrameId(null);
+            setPendingInteraction(null);
             log("The activity stream closed");
           });
       };
@@ -543,14 +564,19 @@ export function EditorScreen() {
     async function check() {
       const result = await api<ActiveRunResponse>(
         `/api/assets/${assetId}/active-run`,
-      ).catch(() => ({ run: null, lastRun: null, history: [] }));
+      ).catch(() => ({ run: null, interaction: null, lastRun: null, history: [] }));
       if (cancelled || sourceRef.current) return;
       if (result.run) {
         setRunId(result.run.id);
         setConsoleOpen(true);
+        // A waiting run restores its card straight from the row's stored
+        // events; the stream alone cannot be trusted to retain it.
+        setPendingInteraction(result.interaction);
         log("Rejoined a run that was still going");
         listen(result.run.id, "", 0);
+        return;
       }
+      setPendingInteraction(null);
     }
     void check();
     window.addEventListener("focus", check);
@@ -868,6 +894,46 @@ export function EditorScreen() {
     }
   }
 
+  function focusComposer() {
+    composerRef.current?.querySelector("textarea")?.focus();
+  }
+
+  /**
+   * Answers the pending card. A plan-scope edit is staged against the very
+   * interaction it answers before the response travels, in that order; a
+   * failed call leaves the card up and names the cause in a toast.
+   */
+  async function respondToInteraction(
+    response: InteractionResponse,
+    stagedFrames?: StagedPlanFrame[],
+  ) {
+    if (!runId || !pendingInteraction) return;
+    try {
+      if (stagedFrames) {
+        await api(`/api/runs/${runId}/stage-override`, {
+          method: "POST",
+          body: JSON.stringify({
+            interactionId: pendingInteraction.id,
+            frames: stagedFrames,
+          }),
+        });
+      }
+      await api(`/api/runs/${runId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
+      });
+      setPendingInteraction(null);
+      setConsoleOpen(true);
+    } catch (reason) {
+      notify({
+        title: "The answer did not reach the agent",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+      // The card owns its busy state; a rejection re-arms its buttons.
+      throw reason;
+    }
+  }
+
   const usedColors = buffer ? usedColorCount(buffer) : 0;
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
@@ -1181,21 +1247,30 @@ export function EditorScreen() {
                 prompt={runPrompt}
                 history={runHistory}
                 restoredMs={restoredMs}
+                interaction={pendingInteraction}
+                frames={frames}
+                palette={buffer?.palette ?? asset.data?.palette ?? []}
+                onRespond={respondToInteraction}
+                onEscape={focusComposer}
               />
-              <Composer
-                prompt={prompt}
-                onPrompt={setPrompt}
-                modelId={modelId}
-                models={models}
-                onModel={setModelId}
-                effort={effort}
-                efforts={efforts}
-                onEffort={setEffort}
-                running={running}
-                modelReady={catalog.data?.modelReady ?? false}
-                onGenerate={() => void generate()}
-                onStop={() => void stop()}
-              />
+              {/* The ref hands Escape a real target: focus lands on the
+                  composer's prompt field, not on a guess from the DOM. */}
+              <div ref={composerRef} className="w-full" style={{ maxWidth: "40rem" }}>
+                <Composer
+                  prompt={prompt}
+                  onPrompt={setPrompt}
+                  modelId={modelId}
+                  models={models}
+                  onModel={setModelId}
+                  effort={effort}
+                  efforts={efforts}
+                  onEffort={setEffort}
+                  running={running}
+                  modelReady={catalog.data?.modelReady ?? false}
+                  onGenerate={() => void generate()}
+                  onStop={() => void stop()}
+                />
+              </div>
             </div>
           </div>
 
