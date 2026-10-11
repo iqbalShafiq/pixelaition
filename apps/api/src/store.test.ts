@@ -14,7 +14,7 @@ import {
 import { createAsset, defaultStyle, encodePixels } from "@pixelaition/pixel";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { restoreVersion } from "./store.js";
+import { ensureThread, restoreVersion } from "./store.js";
 
 /**
  * restoreVersion needs a live database; when DATABASE_URL is absent or the
@@ -236,5 +236,82 @@ describe.skipIf(!db)("restoreVersion", () => {
     expect(result.failure?.message).toBe(
       "That version's frames do not match this asset.",
     );
+  });
+});
+
+const threadsDb = await probe(process.env.DATABASE_URL);
+
+describe.skipIf(!threadsDb)("ensureThread", () => {
+  const userId = randomUUID();
+  const otherUserId = randomUUID();
+  const projectId = randomUUID();
+  const asset = createAsset({ name: "thread-test", width: 8, height: 8 });
+  const frame = asset.frames[0];
+  if (!frame) throw new Error("createAsset produced no frame");
+  let live: Database;
+
+  beforeAll(async () => {
+    if (!threadsDb) throw new Error("database probe did not resolve");
+    live = threadsDb;
+    await live.insert(user).values([
+      { id: userId, name: "Thread Test", email: `thread-${userId}@test.local` },
+      { id: otherUserId, name: "Other Test", email: `thread-${otherUserId}@test.local` },
+    ]);
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "threads",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    await live.insert(frames).values({
+      id: frame.id,
+      assetId: asset.id,
+      name: frame.name,
+      index: frame.index,
+      layers: frame.layers,
+    });
+  });
+
+  afterAll(async () => {
+    if (!live) return;
+    await live.delete(user).where(eq(user.id, userId));
+    await live.delete(user).where(eq(user.id, otherUserId));
+    await live.$client.end({ timeout: 5 });
+  });
+
+  it("keys an asset thread by the asset and reuses it", async () => {
+    const first = await ensureThread(live, userId, { assetId: asset.id });
+    expect(first.assetId).toBe(asset.id);
+    expect(first.projectId).toBeNull();
+    const again = await ensureThread(live, userId, { assetId: asset.id });
+    expect(again.id).toBe(first.id);
+  });
+
+  it("keys a workspace thread by the project with no asset", async () => {
+    const thread = await ensureThread(live, userId, { projectId });
+    expect(thread.projectId).toBe(projectId);
+    expect(thread.assetId).toBeNull();
+    const again = await ensureThread(live, userId, { projectId });
+    expect(again.id).toBe(thread.id);
+  });
+
+  it("keeps one thread per user for the same asset", async () => {
+    const mine = await ensureThread(live, userId, { assetId: asset.id });
+    const theirs = await ensureThread(live, otherUserId, { assetId: asset.id });
+    expect(theirs.id).not.toBe(mine.id);
+  });
+
+  it("refuses a thread with neither an asset nor a project", async () => {
+    await expect(
+      live.insert(generationThreads).values({ id: randomUUID(), userId }),
+    ).rejects.toThrow();
   });
 });

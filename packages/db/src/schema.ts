@@ -1,6 +1,7 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -150,16 +151,29 @@ export const versions = pgTable(
   ],
 );
 
-export const generationThreads = pgTable("generation_threads", {
-  id: text("id").primaryKey(),
-  assetId: text("asset_id")
-    .notNull()
-    .references(() => assets.id, { onDelete: "cascade" }),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * A thread is one conversation. It hangs off an asset (editor runs) or, for a
+ * workspace run that has not picked an asset yet, off its project. The check
+ * keeps a thread from existing with no home at all.
+ */
+export const generationThreads = pgTable(
+  "generation_threads",
+  {
+    id: text("id").primaryKey(),
+    assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "generation_threads_scope",
+      sql`${table.assetId} IS NOT NULL OR ${table.projectId} IS NOT NULL`,
+    ),
+  ],
+);
 
 export const generationMessages = pgTable("generation_messages", {
   id: text("id").primaryKey(),

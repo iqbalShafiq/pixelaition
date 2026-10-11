@@ -38,6 +38,7 @@ import {
   generationRuns,
   generationThreads,
   models,
+  projects,
 } from "@pixelaition/db";
 import {
   bufferToFrame,
@@ -50,7 +51,7 @@ import {
 import { asc, and, desc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
-import { buildRunPrompt } from "./prompt.js";
+import { buildRunPrompt, type RecentRun } from "./prompt.js";
 
 type PublicEvent = {
   sequence: number;
@@ -317,8 +318,10 @@ app.post("/internal/runs", async (req, res) => {
     .object({
       runId: z.string(),
       requestId: z.string(),
-      assetId: z.string(),
-      frameId: z.string(),
+      scope: z.enum(["asset", "workspace"]),
+      assetId: z.string().optional(),
+      frameId: z.string().optional(),
+      projectId: z.string().optional(),
       prompt: z.string(),
       modelId: z.string(),
       reasoningEffort: z.string(),
@@ -337,26 +340,38 @@ app.post("/internal/runs", async (req, res) => {
     return res.status(503).json({ message: "Add OPENAI_API_KEY to generate." });
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
-  const asset = await loadAsset(body.assetId);
-  if (!asset) return res.status(404).json({ message: "Asset was not found." });
-  const originFrame = asset.frames.find((frame) => frame.id === body.frameId);
-  if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
 
-  // A follow-up should build on what already happened, so the prompt carries
-  // the last finished runs on this asset. A run still queued, running, or
-  // waiting has no answer to show; only finished rows count.
-  const recent = await db
-    .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
-    .from(generationRuns)
-    .innerJoin(generationThreads, eq(generationThreads.id, generationRuns.threadId))
-    .where(
-      and(
-        eq(generationThreads.assetId, body.assetId),
-        notInArray(generationRuns.status, ["queued", "running", "waiting"]),
-      ),
-    )
-    .orderBy(desc(generationRuns.createdAt))
-    .limit(3);
+  // An asset run binds its asset up front. A workspace run stays unbound until
+  // a tool picks an asset, so its drawing tools fail closed in the meantime.
+  let asset: LoadedAsset | undefined;
+  let originFrameId: string | undefined;
+  let frameName: string | undefined;
+  let style: StyleGuide;
+  let recent: RecentRun[];
+  if (body.scope === "workspace") {
+    const projectId = body.projectId;
+    if (!projectId)
+      return res.status(422).json({ message: "A workspace run needs a projectId." });
+    const project = await loadProject(projectId);
+    if (!project) return res.status(404).json({ message: "Project was not found." });
+    style = project.style;
+    recent = await recentRuns({ projectId });
+  } else {
+    const assetId = body.assetId;
+    const frameId = body.frameId;
+    if (!assetId || !frameId)
+      return res
+        .status(422)
+        .json({ message: "An asset run needs an assetId and a frameId." });
+    asset = await loadAsset(assetId);
+    if (!asset) return res.status(404).json({ message: "Asset was not found." });
+    const originFrame = asset.frames.find((frame) => frame.id === frameId);
+    if (!originFrame) return res.status(404).json({ message: "Frame was not found." });
+    originFrameId = originFrame.id;
+    frameName = originFrame.name;
+    style = asset.style;
+    recent = await recentRuns({ assetId });
+  }
 
   const run = await runtime.submit({
     agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
@@ -364,8 +379,8 @@ app.post("/internal/runs", async (req, res) => {
     requestId: body.requestId,
     prompt: buildRunPrompt({
       prompt: body.prompt,
-      style: asset.style,
-      frameName: originFrame.name,
+      style,
+      ...(frameName !== undefined ? { frameName } : {}),
       recent,
     }),
   });
@@ -375,19 +390,22 @@ app.post("/internal/runs", async (req, res) => {
     sessionId: body.threadId,
     tags: ["pixelaition", "draw"],
     metadata: {
-      assetId: body.assetId,
-      frameId: originFrame.id,
+      ...(body.assetId ? { assetId: body.assetId } : {}),
+      ...(originFrameId ? { frameId: originFrameId } : {}),
+      ...(body.projectId ? { projectId: body.projectId } : {}),
       modelId: target.modelId,
       reasoningEffort: target.effort,
     },
   });
-  bindAssetRun({
-    durableRunId: run.id,
-    publicRunId: body.runId,
-    assetId: body.assetId,
-    asset,
-    originFrameId: originFrame.id,
-  });
+  if (asset && originFrameId) {
+    bindAssetRun({
+      durableRunId: run.id,
+      publicRunId: body.runId,
+      assetId: asset.id,
+      asset,
+      originFrameId,
+    });
+  }
   void follow(runtime, run.id, body.runId, target.effort);
   res.status(202).json({ durableRunId: run.id });
 });
@@ -798,6 +816,37 @@ async function loadAsset(assetId: string) {
 
 type LoadedAsset = NonNullable<Awaited<ReturnType<typeof loadAsset>>>;
 
+/** The style guide a workspace run draws under, read from its project. */
+async function loadProject(projectId: string) {
+  const [row] = await db
+    .select({ style: projects.style })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  if (!row) return undefined;
+  return { style: row.style as StyleGuide };
+}
+
+/**
+ * A follow-up should build on what already happened, so the prompt carries the
+ * last finished runs in the same scope. A run still queued, running, or waiting
+ * has no answer to show; only finished rows count.
+ */
+async function recentRuns(scope: { assetId: string } | { projectId: string }) {
+  const inScope =
+    "assetId" in scope
+      ? eq(generationThreads.assetId, scope.assetId)
+      : eq(generationThreads.projectId, scope.projectId);
+  return db
+    .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationThreads.id, generationRuns.threadId))
+    .where(
+      and(inScope, notInArray(generationRuns.status, ["queued", "running", "waiting"])),
+    )
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(3);
+}
+
 /** Asset-scoped version snapshot: the metadata plus the frames that existed. */
 function assetVersionSnapshot(asset: LoadedAsset) {
   return {
@@ -1018,7 +1067,7 @@ function bindAssetRun(options: {
  * that cannot be recovered is logged and skipped, never a boot failure.
  */
 async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
-  let rows: Array<{ run: typeof generationRuns.$inferSelect; assetId: string }>;
+  let rows: Array<{ run: typeof generationRuns.$inferSelect; assetId: string | null }>;
   try {
     rows = await db
       .select({ run: generationRuns, assetId: generationThreads.assetId })
@@ -1040,6 +1089,17 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
     // Idempotent: a run this process already follows is left alone.
     if (getRun(durableRunId)) continue;
     try {
+      // A workspace run has no asset to bind until its tools pick one, so only
+      // the follow loop is rebuilt; its events and terminal state still land.
+      if (!assetId) {
+        void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
+          (reason: unknown) => {
+            console.error(`[recovery] run ${run.id} stopped: ${boundedReason(reason)}`);
+          },
+        );
+        console.log(`[recovery] re-attached workspace run ${run.id} (${run.status})`);
+        continue;
+      }
       const asset = await loadAsset(assetId);
       if (!asset) {
         console.error(

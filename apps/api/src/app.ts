@@ -499,17 +499,46 @@ export function createApp() {
   app.post("/api/runs", async (req, res) => {
     const body = z
       .object({
-        assetId: z.string(),
-        frameId: z.string(),
+        scope: z.enum(["asset", "workspace"]).default("asset"),
+        assetId: z.string().optional(),
+        frameId: z.string().optional(),
+        projectId: z.string().optional(),
         prompt: z.string().min(1).max(4000),
         modelId: z.string().min(1),
         reasoningEffort: z.string().min(1),
       })
       .parse(req.body);
-    // Ownership first: the decision call spends the operator's key, so it must
-    // not run on behalf of an asset the caller does not own.
-    const asset = await getAssetRecord(db, res.locals.userId as string, body.assetId);
-    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const userId = res.locals.userId as string;
+    // A run has exactly one home: an asset with a frame, or a workspace project.
+    // Missing either names the cause instead of guessing a default.
+    let target:
+      | { scope: "asset"; assetId: string; frameId: string }
+      | { scope: "workspace"; projectId: string };
+    if (body.scope === "workspace") {
+      const projectId = body.projectId;
+      if (!projectId)
+        return fail(res, 422, "SCOPE_REQUIRED", "A workspace run needs a projectId.");
+      // Ownership first: the decision call spends the operator's key, so it
+      // must not run on behalf of a project the caller does not own.
+      const project = await getProjectRecord(db, userId, projectId);
+      if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
+      target = { scope: "workspace", projectId: project.id };
+    } else {
+      const assetId = body.assetId;
+      const frameId = body.frameId;
+      if (!assetId || !frameId)
+        return fail(
+          res,
+          422,
+          "SCOPE_REQUIRED",
+          "An asset run needs an assetId and a frameId.",
+        );
+      // Ownership first: the decision call spends the operator's key, so it
+      // must not run on behalf of an asset the caller does not own.
+      const asset = await getAssetRecord(db, userId, assetId);
+      if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+      target = { scope: "asset", assetId: asset.id, frameId };
+    }
     if (!process.env.OPENAI_API_KEY?.trim()) {
       return fail(
         res,
@@ -549,7 +578,13 @@ export function createApp() {
         "Set DECISION_MODEL to a model from the catalog before generating.",
       );
     }
-    const thread = await ensureThread(db, res.locals.userId as string, body.assetId);
+    const thread = await ensureThread(
+      db,
+      userId,
+      target.scope === "asset"
+        ? { assetId: target.assetId }
+        : { projectId: target.projectId },
+    );
     const requestId = crypto.randomUUID();
     const decisionStarted = Date.now();
     let decided: DrawDecision;
@@ -588,7 +623,10 @@ export function createApp() {
         userId: res.locals.userId as string,
         sessionId: thread.id,
         tags: ["pixelaition", "decide"],
-        metadata: { assetId: body.assetId },
+        metadata:
+          target.scope === "asset"
+            ? { assetId: target.assetId }
+            : { projectId: target.projectId },
       },
     );
     if (decided.intent === "clarify") {
@@ -604,7 +642,7 @@ export function createApp() {
       requestId,
       modelId: body.modelId,
       reasoningEffort: body.reasoningEffort,
-      frameId: body.frameId,
+      ...(target.scope === "asset" ? { frameId: target.frameId } : {}),
       prompt: body.prompt,
       status: "queued",
     });
@@ -619,10 +657,16 @@ export function createApp() {
             authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
           },
           body: JSON.stringify({
-            ...body,
+            scope: target.scope,
+            ...(target.scope === "asset"
+              ? { assetId: target.assetId, frameId: target.frameId }
+              : { projectId: target.projectId }),
+            prompt: body.prompt,
+            modelId: body.modelId,
+            reasoningEffort: body.reasoningEffort,
             runId,
             requestId,
-            userId: res.locals.userId,
+            userId,
             threadId: thread.id,
           }),
         },
@@ -810,7 +854,9 @@ export function createApp() {
       req.params.id ?? "",
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
-    const thread = await ensureThread(db, res.locals.userId as string, asset.id);
+    const thread = await ensureThread(db, res.locals.userId as string, {
+      assetId: asset.id,
+    });
     const frameId =
       typeof req.query.frameId === "string" && req.query.frameId
         ? req.query.frameId

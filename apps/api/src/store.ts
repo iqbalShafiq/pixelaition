@@ -804,17 +804,37 @@ export async function revokeApiKey(db: Database, userId: string, id: string) {
     .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
 }
 
-export async function ensureThread(db: Database, userId: string, assetId: string) {
-  const [existing] = await db
-    .select()
-    .from(generationThreads)
-    .where(
-      and(eq(generationThreads.assetId, assetId), eq(generationThreads.userId, userId)),
-    );
+/** A thread's home: the asset an editor run draws on, or a workspace project. */
+export type ThreadScope = { assetId: string } | { projectId: string };
+
+/**
+ * The one thread per user and scope. An asset thread and a workspace thread
+ * are separate conversations even when the workspace later picks that asset.
+ */
+export async function ensureThread(db: Database, userId: string, scope: ThreadScope) {
+  const where =
+    "assetId" in scope
+      ? and(
+          eq(generationThreads.assetId, scope.assetId),
+          eq(generationThreads.userId, userId),
+        )
+      : and(
+          eq(generationThreads.projectId, scope.projectId),
+          eq(generationThreads.userId, userId),
+        );
+  const [existing] = await db.select().from(generationThreads).where(where);
   if (existing) return existing;
   const id = randomUUID();
-  await db.insert(generationThreads).values({ id, assetId, userId });
-  return { id, assetId, userId };
+  const [created] = await db
+    .insert(generationThreads)
+    .values(
+      "assetId" in scope
+        ? { id, assetId: scope.assetId, userId }
+        : { id, projectId: scope.projectId, userId },
+    )
+    .returning();
+  if (!created) throw new Error("The thread row could not be created.");
+  return created;
 }
 
 export async function insertRun(
