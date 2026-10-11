@@ -118,6 +118,14 @@ export function buildOtlpPayload(
               if (span.model) push("langfuse.observation.model.name", span.model);
               if (span.usage) {
                 push("langfuse.observation.usage_details", JSON.stringify(span.usage));
+                // Langfuse reads USD cost from cost_details, not usage_details.
+                const cost = (span.usage as { cost?: unknown }).cost;
+                if (typeof cost === "number") {
+                  push(
+                    "langfuse.observation.cost_details",
+                    JSON.stringify({ total: cost }),
+                  );
+                }
               }
               if (span.input !== undefined)
                 push("langfuse.observation.input", span.input);

@@ -943,13 +943,10 @@ export function createApp() {
           body: JSON.stringify(body),
         },
       );
-    } catch (reason) {
-      return fail(
-        res,
-        502,
-        "WORKER_UNAVAILABLE",
-        reason instanceof Error ? reason.message : "The drawing worker is not available.",
-      );
+    } catch {
+      // A connection failure names the cause; the raw fetch error ("fetch
+      // failed") tells the caller nothing the status code does not.
+      return fail(res, 502, "WORKER_UNAVAILABLE", "The drawing worker is not available.");
     }
     if (!upstream.ok) {
       const detail = (await upstream.json().catch(() => null)) as {
