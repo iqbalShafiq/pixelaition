@@ -7,7 +7,9 @@ import {
   generationThreads,
   projects,
   userPreferences,
+  versions,
   type Database,
+  type VersionScope,
 } from "@pixelaition/db";
 import {
   addFrame,
@@ -23,7 +25,14 @@ import {
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  pruneOrder,
+  shouldCoalesce,
+  toVersionRow,
+  RETENTION_LIMIT,
+  type VersionInput,
+} from "./versions.js";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -494,4 +503,93 @@ export async function insertRun(
   const id = randomUUID();
   await db.insert(generationRuns).values({ id, ...input });
   return id;
+}
+
+export type VersionCursor = { createdAt: Date; id: string };
+
+async function pruneVersions(db: Database, assetId: string) {
+  const rows = await db
+    .select({ id: versions.id, label: versions.label, createdAt: versions.createdAt })
+    .from(versions)
+    .where(eq(versions.assetId, assetId));
+  const stale = pruneOrder(rows);
+  if (stale.length > 0) await db.delete(versions).where(inArray(versions.id, stale));
+}
+
+/**
+ * Records a snapshot for an asset. A recent unlabeled snapshot by the same
+ * author on the same kind of work is replaced in place instead of piling up a
+ * twin; every write then trims the asset back to its retention limit.
+ */
+export async function createVersion(db: Database, input: VersionInput) {
+  const now = new Date();
+  const frameId = input.frameId ?? null;
+  const [existing] = await db
+    .select()
+    .from(versions)
+    .where(
+      and(
+        eq(versions.assetId, input.assetId),
+        eq(versions.scope, input.scope),
+        eq(versions.kind, input.kind),
+        eq(versions.author, input.author),
+        frameId === null ? isNull(versions.frameId) : eq(versions.frameId, frameId),
+      ),
+    )
+    .orderBy(desc(versions.createdAt), desc(versions.id))
+    .limit(1);
+
+  if (existing && shouldCoalesce(existing, input, now)) {
+    const [updated] = await db
+      .update(versions)
+      .set({
+        snapshot: input.snapshot,
+        runId: input.runId ?? existing.runId,
+        label: input.label ?? existing.label,
+        createdAt: now,
+      })
+      .where(eq(versions.id, existing.id))
+      .returning();
+    await pruneVersions(db, input.assetId);
+    return updated;
+  }
+
+  const [inserted] = await db
+    .insert(versions)
+    .values(toVersionRow({ ...input, id: randomUUID(), createdAt: now }))
+    .returning();
+  await pruneVersions(db, input.assetId);
+  return inserted;
+}
+
+/** Newest first, paged by `(createdAt, id)` so equal timestamps stay ordered. */
+export async function listVersions(
+  db: Database,
+  assetId: string,
+  options: {
+    scope?: VersionScope;
+    frameId?: string;
+    limit?: number;
+    cursor?: VersionCursor;
+  },
+) {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), RETENTION_LIMIT);
+  const conditions = [eq(versions.assetId, assetId)];
+  if (options.scope) conditions.push(eq(versions.scope, options.scope));
+  if (options.frameId) conditions.push(eq(versions.frameId, options.frameId));
+  if (options.cursor) {
+    const { createdAt, id } = options.cursor;
+    conditions.push(
+      or(
+        lt(versions.createdAt, createdAt),
+        and(eq(versions.createdAt, createdAt), lt(versions.id, id)),
+      )!,
+    );
+  }
+  return db
+    .select()
+    .from(versions)
+    .where(and(...conditions))
+    .orderBy(desc(versions.createdAt), desc(versions.id))
+    .limit(limit);
 }

@@ -43,6 +43,13 @@
       "when": 1791703451620,
       "tag": "0005_perpetual_mikhail_rasputin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791708049561,
+      "tag": "0006_tearful_bucky",
+      "breakpoints": true
     }
   ]
 }

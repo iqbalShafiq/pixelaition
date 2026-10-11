@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -120,6 +121,35 @@ export const frames = pgTable(
   (table) => [uniqueIndex("frames_asset_index").on(table.assetId, table.index)],
 );
 
+export type VersionScope = "frame" | "asset";
+export type VersionAuthor = "user" | "agent";
+
+export const versions = pgTable(
+  "versions",
+  {
+    id: text("id").primaryKey(),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    frameId: text("frame_id").references(() => frames.id, { onDelete: "cascade" }),
+    scope: text("scope").$type<VersionScope>().notNull(),
+    kind: text("kind").notNull(),
+    author: text("author").$type<VersionAuthor>().notNull(),
+    runId: text("run_id"),
+    label: text("label"),
+    snapshot: jsonb("snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("versions_asset_created").on(
+      table.assetId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index("versions_frame_id").on(table.frameId),
+  ],
+);
+
 export const generationThreads = pgTable("generation_threads", {
   id: text("id").primaryKey(),
   assetId: text("asset_id")
@@ -201,8 +231,14 @@ export const projectRelations = relations(projects, ({ one, many }) => ({
 export const assetRelations = relations(assets, ({ one, many }) => ({
   project: one(projects, { fields: [assets.projectId], references: [projects.id] }),
   frames: many(frames),
+  versions: many(versions),
 }));
 
 export const frameRelations = relations(frames, ({ one }) => ({
   asset: one(assets, { fields: [frames.assetId], references: [assets.id] }),
+}));
+
+export const versionRelations = relations(versions, ({ one }) => ({
+  asset: one(assets, { fields: [versions.assetId], references: [assets.id] }),
+  frame: one(frames, { fields: [versions.frameId], references: [frames.id] }),
 }));
