@@ -197,6 +197,7 @@ function toolRecovery() {
   return {
     read_project: "safe" as const,
     read_frame: "safe" as const,
+    read_region: "safe" as const,
     critique_frame: "safe" as const,
     paint_stroke: "idempotent" as const,
     fill_rect: "idempotent" as const,

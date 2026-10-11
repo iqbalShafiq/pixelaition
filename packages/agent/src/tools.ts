@@ -1,7 +1,14 @@
 import { createTool } from "@anvia/core";
-import { applyCommand, type FrameBuffer } from "@pixelaition/pixel";
+import { applyCommand, composite, type FrameBuffer } from "@pixelaition/pixel";
 import { z } from "zod";
-import { paintStroke, refreshCritique, requireRun } from "./runs.js";
+import { encodeRowsRle } from "./format.js";
+import {
+  paintStroke,
+  refreshCritique,
+  requireRun,
+  type RunBinding,
+  type RunFrame,
+} from "./runs.js";
 
 const point = z.object({
   x: z.number().int(),
@@ -9,20 +16,80 @@ const point = z.object({
   color: z.number().int().nonnegative(),
 });
 
+const readView = z.enum(["composite", "layer"]);
+
+function resolveFrame(run: RunBinding, frameId?: string): RunFrame {
+  if (frameId !== undefined && frameId !== run.frameId) {
+    throw new Error(
+      `This run is drawing ${run.frameId}; ${frameId} is not the frame to read.`,
+    );
+  }
+  const frame = run.frames.find((item) => item.id === run.frameId);
+  if (!frame) throw new Error("The bound frame is missing from the run's frames.");
+  return frame;
+}
+
+function resolvePixels(
+  run: RunBinding,
+  view: "composite" | "layer",
+  layerId?: string,
+): { pixels: Uint8Array; layerId?: string } {
+  if (view === "composite") {
+    if (layerId !== undefined) {
+      throw new Error("A layer id cannot be combined with the composite view.");
+    }
+    return { pixels: composite(run.buffer) };
+  }
+  const layer =
+    layerId === undefined
+      ? (run.buffer.layers.find((item) => item.visible) ?? run.buffer.layers[0])
+      : run.buffer.layers.find((item) => item.id === layerId);
+  if (!layer) throw new Error("That layer is not on this frame.");
+  return { pixels: layer.pixels, layerId: layer.id };
+}
+
+function colorCounts(
+  pixels: Uint8Array,
+  palette: string[],
+): Array<{ index: number; hex: string; count: number }> {
+  const counts = new Map<number, number>();
+  for (const value of pixels) {
+    if (value === 0) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([index, count]) => {
+      const hex = palette[index];
+      if (hex === undefined) {
+        throw new Error(
+          `The frame uses palette index ${index}, which the palette does not define.`,
+        );
+      }
+      return { index, hex, count };
+    });
+}
+
 export function createPixelTools() {
   const readProject = createTool({
     name: "read_project",
-    description: "Read the style guide and frame names for the asset being drawn.",
+    description:
+      "Read the asset id, frames, current frame, palette legend, layers, and style guide before painting.",
     inputSchema: z.object({}),
     execute: (_input, context) => {
       const run = requireRun(context.operationId);
       return {
         assetId: run.assetId,
-        frameId: run.frameId,
+        frames: run.frames,
+        currentFrame: resolveFrame(run),
         width: run.buffer.width,
         height: run.buffer.height,
-        palette: run.buffer.palette,
-        layers: run.buffer.layers.map((layer) => layer.name),
+        palette: run.buffer.palette.map((hex, index) => ({ index, hex })),
+        layers: run.buffer.layers.map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+        })),
         style: run.style,
       };
     },
@@ -31,22 +98,70 @@ export function createPixelTools() {
   const readFrame = createTool({
     name: "read_frame",
     description:
-      "Read the current frame as rows of palette indexes. Zero is transparent.",
-    inputSchema: z.object({}),
-    execute: (_input, context) => {
+      "Read the frame as RLE rows (`colorxcount`). Defaults to the composite of visible layers; pass layerId to read one layer. Zero is transparent.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string().optional(),
+      view: readView.optional(),
+    }),
+    execute: (input, context) => {
       const run = requireRun(context.operationId);
-      const layer =
-        run.buffer.layers.find((item) => item.visible) ?? run.buffer.layers[0];
-      const rows: string[] = [];
-      if (!layer) return { rows };
-      for (let y = 0; y < run.buffer.height; y += 1) {
-        const row: number[] = [];
-        for (let x = 0; x < run.buffer.width; x += 1) {
-          row.push(layer.pixels[y * run.buffer.width + x] ?? 0);
-        }
-        rows.push(row.join(""));
+      const frame = resolveFrame(run, input.frameId);
+      const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
+      const read = resolvePixels(run, view, input.layerId);
+      return {
+        frameId: frame.id,
+        view,
+        layerId: read.layerId,
+        width: run.buffer.width,
+        height: run.buffer.height,
+        rows: encodeRowsRle(read.pixels, run.buffer.width, run.buffer.height),
+        colors: colorCounts(read.pixels, run.buffer.palette),
+      };
+    },
+  });
+
+  const readRegion = createTool({
+    name: "read_region",
+    description:
+      "Read a rectangle of the frame as RLE rows (`colorxcount`) and color counts. Coordinates are frame pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      view: readView.optional(),
+    }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      const frame = resolveFrame(run, input.frameId);
+      if (
+        input.x < 0 ||
+        input.y < 0 ||
+        input.x + input.width > run.buffer.width ||
+        input.y + input.height > run.buffer.height
+      ) {
+        throw new Error("That region is outside the frame.");
       }
-      return { layerId: layer.id, rows };
+      const view = input.view ?? "composite";
+      const read = resolvePixels(run, view);
+      const pixels = new Uint8Array(input.width * input.height);
+      for (let row = 0; row < input.height; row += 1) {
+        const start = (input.y + row) * run.buffer.width + input.x;
+        pixels.set(read.pixels.subarray(start, start + input.width), row * input.width);
+      }
+      return {
+        frameId: frame.id,
+        view,
+        layerId: read.layerId,
+        x: input.x,
+        y: input.y,
+        width: input.width,
+        height: input.height,
+        rows: encodeRowsRle(pixels, input.width, input.height),
+        colors: colorCounts(pixels, run.buffer.palette),
+      };
     },
   });
 
@@ -134,7 +249,16 @@ export function createPixelTools() {
     },
   });
 
-  return [readProject, readFrame, paint, fillRect, setPalette, critique, mirror];
+  return [
+    readProject,
+    readFrame,
+    readRegion,
+    paint,
+    fillRect,
+    setPalette,
+    critique,
+    mirror,
+  ];
 }
 
 export function activeLayerId(buffer: FrameBuffer): string {

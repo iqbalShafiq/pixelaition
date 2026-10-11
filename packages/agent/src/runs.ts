@@ -13,9 +13,16 @@ export type Stroke = {
   points: Array<{ x: number; y: number; color: number }>;
 };
 
+export type RunFrame = {
+  id: string;
+  name: string;
+  index: number;
+};
+
 export type RunBinding = {
   assetId: string;
   frameId: string;
+  frames: RunFrame[];
   style: StyleGuide;
   buffer: FrameBuffer;
   strokes: Stroke[];
@@ -25,9 +32,13 @@ export type RunBinding = {
 
 const runs = new Map<string, RunBinding>();
 
-export function bindRun(runId: string, binding: RunBinding): void {
+export function bindRun(
+  runId: string,
+  binding: Omit<RunBinding, "frames"> & { frames?: RunFrame[] },
+): void {
   runs.set(runId, {
     ...binding,
+    frames: binding.frames ?? [{ id: binding.frameId, name: "current", index: 0 }],
     buffer: cloneBuffer(binding.buffer),
     strokes: [...binding.strokes],
   });
