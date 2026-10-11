@@ -28,6 +28,7 @@ function bindFrames(
   if (!first) throw new Error("bindFrames needs at least one frame");
   bindRun(runId, {
     assetId: "asset",
+    assetName: "asset",
     originFrameId: first.id,
     currentFrameId: first.id,
     frames: new Map(
@@ -73,6 +74,7 @@ describe("generation decisions and tools", () => {
     const buffer = createBuffer({ width: 8, height: 8 });
     bindRun("run-1", {
       assetId: "asset",
+      assetName: "asset",
       originFrameId: "frame",
       currentFrameId: "frame",
       frames: new Map([["frame", { name: "frame", index: 0, buffer }]]),

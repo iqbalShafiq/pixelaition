@@ -268,8 +268,15 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       const frame = resolveFrame(run);
       return {
         assetId: run.assetId,
-        frames: [...run.frames].map(([id, item]) => ({ id, name: item.name })),
-        currentFrameId: run.currentFrameId,
+        name: run.assetName,
+        // The Map is insertion order, which the frame tools keep in index
+        // order; the index still travels so the model never has to assume it.
+        frames: [...run.frames].map(([id, item]) => ({
+          id,
+          name: item.name,
+          index: item.index,
+        })),
+        currentFrame: { id: frame.id, name: frame.name },
         width: run.width,
         height: run.height,
         palette: run.palette.map((hex, index) => ({ index, hex })),

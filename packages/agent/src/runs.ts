@@ -107,6 +107,7 @@ export type RunAsset = {
 export type RunBinding = {
   /** The asset the run draws on; absent until a workspace run chooses or creates one. */
   assetId?: string;
+  assetName?: string;
   originFrameId?: string;
   currentFrameId?: string;
   frames: Map<string, RunFrame>;
@@ -135,6 +136,7 @@ export type RunBinding = {
 /** A run that has an asset: the fields every drawing tool reads are present. */
 export type BoundRunBinding = RunBinding & {
   assetId: string;
+  assetName: string;
   originFrameId: string;
   currentFrameId: string;
   width: number;
@@ -187,6 +189,7 @@ export function requireRun(operationId: string | undefined): RunBinding {
 export function requireAsset(run: RunBinding): asserts run is BoundRunBinding {
   if (
     run.assetId === undefined ||
+    run.assetName === undefined ||
     run.originFrameId === undefined ||
     run.currentFrameId === undefined ||
     run.width === undefined ||
@@ -210,6 +213,7 @@ export function bindRunAsset(
   const origin = frames[0];
   if (!origin) throw new Error("That asset has no frames.");
   run.assetId = asset.id;
+  run.assetName = asset.name;
   run.originFrameId = origin.id;
   run.currentFrameId = origin.id;
   run.frames = new Map(

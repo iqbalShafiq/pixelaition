@@ -72,6 +72,7 @@ function boundRun(
 ): void {
   bindRun("run-1", {
     assetId: "asset-1",
+    assetName: "slime",
     originFrameId: "frame-1",
     currentFrameId: "frame-1",
     frames: new Map([
@@ -126,6 +127,7 @@ function boundFrameRun(
   };
   bindRun("run-1", {
     assetId: "asset-1",
+    assetName: "slime",
     originFrameId: "frame-1",
     currentFrameId: "frame-1",
     frames: new Map([
@@ -197,17 +199,19 @@ describe("read tools", () => {
     boundRun();
     const result = (await tool("read_project").call({}, { operationId: "run-1" })) as {
       assetId: string;
-      frames: Array<{ id: string; name: string }>;
-      currentFrameId: string;
+      name: string;
+      frames: Array<{ id: string; name: string; index: number }>;
+      currentFrame: { id: string; name: string };
       palette: Array<{ index: number; hex: string }>;
       layers: Array<{ id: string; name: string; visible: boolean }>;
     };
     expect(result.assetId).toBe("asset-1");
+    expect(result.name).toBe("slime");
     expect(result.frames).toEqual([
-      { id: "frame-1", name: "idle" },
-      { id: "frame-2", name: "hop" },
+      { id: "frame-1", name: "idle", index: 0 },
+      { id: "frame-2", name: "hop", index: 1 },
     ]);
-    expect(result.currentFrameId).toBe("frame-1");
+    expect(result.currentFrame).toEqual({ id: "frame-1", name: "idle" });
     expect(result.palette).toHaveLength(12);
     expect(result.palette[0]).toEqual({ index: 0, hex: "#00000000" });
     expect(result.layers).toEqual([
