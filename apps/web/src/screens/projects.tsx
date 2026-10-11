@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Folder, Plus } from "../components/pixel-icons.js";
 import { useState } from "react";
+import { motion } from "motion/react";
 import { SpriteThumb } from "../components/sprite-thumb.js";
 import {
   Button,
@@ -11,6 +12,7 @@ import {
   Field,
   PixelMark,
   TextInput,
+  motionToken,
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
@@ -179,7 +181,12 @@ function ProjectCard({ project }: { project: Project }) {
   const newest = assets.at(-1);
 
   return (
-    <Card interactive className="grid h-full grid-rows-[auto_auto_auto] gap-4">
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={motionToken}
+      className="pixel-window bg-raised shadow-pixel-md grid h-full grid-cols-1 grid-rows-[auto_auto_auto] gap-4 p-5 transition-transform duration-150 hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-pixel-lg"
+    >
       <div className="flex items-start gap-3">
         {newest ? (
           <SpriteThumb assetId={newest.id} />
@@ -192,7 +199,7 @@ function ProjectCard({ project }: { project: Project }) {
           <h3 className="truncate text-[17px] leading-tight font-medium text-ink">
             {project.name}
           </h3>
-          <p className="mt-1 text-[12px] text-muted">
+          <p className="mt-1 text-pixel-mono text-muted">
             {detail.isPending
               ? "Loading…"
               : assets.length === 0
@@ -251,6 +258,6 @@ function ProjectCard({ project }: { project: Project }) {
           {open ? "Hide" : `Browse ${assets.length > 0 ? `(${assets.length})` : ""}`}
         </Button>
       </div>
-    </Card>
+    </motion.article>
   );
 }
