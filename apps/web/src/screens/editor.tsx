@@ -161,6 +161,9 @@ export function EditorScreen() {
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
     null,
   );
+  // The ids this session already answered, so a replayed interaction event
+  // cannot bring an answered card back before its resolved marker arrives.
+  const answeredIdsRef = useRef<Set<string>>(new Set());
   const [restoredMs, setRestoredMs] = useState<number | null>(null);
   const [runPrompt, setRunPrompt] = useState("");
   const [runHistory, setRunHistory] = useState<HistoryRun[]>([]);
@@ -484,9 +487,25 @@ export function EditorScreen() {
         }
         if (body.type === "interaction") {
           // The card is the run's next move, not a step row; open the console
-          // so it is visible even if the user had collapsed it.
-          setPendingInteraction(body.data as PendingInteraction);
-          setConsoleOpen(true);
+          // so it is visible even if the user had collapsed it. A replayed
+          // interaction the run already answered must not resurrect.
+          const data = body.data as PendingInteraction;
+          if (!answeredIdsRef.current.has(data.id)) {
+            setPendingInteraction(data);
+            setConsoleOpen(true);
+          }
+          return;
+        }
+        if (body.type === "interaction-resolved") {
+          // The worker retires an answered card by id; a replay from 0 ends
+          // with the card cleared instead of re-showing it.
+          const data = body.data as { id?: string };
+          if (typeof data.id === "string") {
+            answeredIdsRef.current.add(data.id);
+            setPendingInteraction((current) =>
+              current?.id === data.id ? null : current,
+            );
+          }
           return;
         }
         if (body.type === "done") {
@@ -922,6 +941,7 @@ export function EditorScreen() {
         method: "POST",
         body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
       });
+      answeredIdsRef.current.add(pendingInteraction.id);
       setPendingInteraction(null);
       setConsoleOpen(true);
     } catch (reason) {

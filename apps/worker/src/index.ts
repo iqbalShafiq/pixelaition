@@ -61,6 +61,8 @@ type SanitizedInteraction = {
 type StoredInteraction = {
   sequence: number;
   data: SanitizedInteraction;
+  /** The sequence of the resolved marker once the interaction is answered. */
+  resolved?: number;
 };
 
 const agentPrefix = "pixel-draw";
@@ -578,6 +580,7 @@ function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
     "status",
     "done",
     "interaction",
+    "interaction-resolved",
   ];
   const stored = (events.get(runId) ?? [])
     .filter((event) => kept.includes(event.type))
@@ -588,11 +591,21 @@ function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
       data: sanitizeEvent(event.type, event.data),
     }));
   // Interactions that the retained-event bound already evicted are still part
-  // of the run's story; merge them back in sequence order.
+  // of the run's story; merge them back in sequence order, with their resolved
+  // marker when one answered them.
   const seen = new Set(stored.map((event) => event.sequence));
   for (const entry of extra) {
     if (seen.has(entry.sequence)) continue;
+    seen.add(entry.sequence);
     stored.push({ sequence: entry.sequence, type: "interaction", data: entry.data });
+    if (entry.resolved !== undefined && !seen.has(entry.resolved)) {
+      seen.add(entry.resolved);
+      stored.push({
+        sequence: entry.resolved,
+        type: "interaction-resolved",
+        data: { id: entry.data.id },
+      });
+    }
   }
   return stored.sort((a, b) => a.sequence - b.sequence);
 }
@@ -629,9 +642,10 @@ function sanitizeInteraction(request: AgentInteractionRequest): SanitizedInterac
 }
 
 function sanitizeEvent(type: string, raw: unknown): unknown {
-  // An interaction payload was already reduced to the console's fields when it
-  // was published; nothing here to strip.
-  if (type === "interaction") return raw;
+  // Interaction payloads were already reduced to the console's fields when
+  // they were published; the resolved marker is just `{ id }`. Nothing to
+  // strip from either.
+  if (type === "interaction" || type === "interaction-resolved") return raw;
   const data = raw as Record<string, unknown> | undefined;
   const operationId =
     typeof data?.operationId === "string" ? data.operationId : undefined;
@@ -728,14 +742,25 @@ async function follow(
       }
       // An answered run must leave "waiting" or active-run would hand the
       // console an answered card after a remount. The interaction stays in the
-      // persisted events; the pending derivation is status-gated. Written once
-      // per suspension.
+      // persisted events as history; the resolved marker retires it, so a
+      // late subscriber replaying from 0 ends in the answered state instead of
+      // resurrecting the card. Written once per suspension.
       if (
         (snapshot.run.status === "running" || snapshot.run.status === "queued") &&
         interactionsFor(publicId).length > 0 &&
         !leftWaiting.has(publicId)
       ) {
         leftWaiting.add(publicId);
+        const answered = interactionsFor(publicId).at(-1);
+        if (answered) {
+          const marker = publish(publicId, "interaction-resolved", {
+            id: answered.data.id,
+          });
+          // Remember the marker's sequence on the interaction: the retained
+          // event list may evict it long before the row is written, and the
+          // persisted history should keep the pair together.
+          answered.resolved = marker.sequence;
+        }
         await db
           .update(generationRuns)
           .set({ status: "running" })

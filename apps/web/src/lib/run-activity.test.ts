@@ -169,7 +169,7 @@ describe("run activity rows", () => {
     ).toEqual([]);
   });
 
-  it("leaves the rows unchanged for an interaction: the card is not a step row", () => {
+  it("leaves the rows unchanged for an interaction or its resolved marker", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(
       rows,
@@ -192,6 +192,9 @@ describe("run activity rows", () => {
     });
     expect(after).toEqual(before);
     expect(after.some((row) => JSON.stringify(row).includes("interaction"))).toBe(false);
+
+    const resolved = applyRunEvent(after, 3, "interaction-resolved", { id: "int-1" });
+    expect(resolved).toEqual(before);
   });
 });
 

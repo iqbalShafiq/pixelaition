@@ -85,8 +85,9 @@ export function applyRunEvent(
     if (rows.some((row) => row.id === id)) return rows;
     return [...rows, { id, kind: "phase", label: "thinking", state: "running" }];
   }
-  // An interaction renders as the card above the composer, never as a step row.
-  if (type === "interaction") return rows;
+  // Interactions render as the card above the composer, never as step rows;
+  // the resolved marker only retires the card.
+  if (type === "interaction" || type === "interaction-resolved") return rows;
   if (type === "model_completed") {
     return rows.map((row) =>
       row.id === id && row.kind === "phase" ? { ...row, state: "done" } : row,
