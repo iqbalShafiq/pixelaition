@@ -129,6 +129,7 @@ const observer = telemetry?.observer();
 const agents = completions.flatMap(({ spec, model }) =>
   spec.efforts.map((effort) => ({
     id: `${agentPrefix}:${spec.id}:${effort}`,
+    vision: spec.vision,
     agent: new Agent({
       id: `${agentPrefix}:${spec.id}:${effort}`,
       model,
@@ -169,7 +170,7 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
           agent: entry.agent,
           version: "1",
           stream: true,
-          toolRecovery: toolRecovery(),
+          toolRecovery: toolRecovery(entry.vision),
         })),
       }
     : {}),
@@ -194,13 +195,15 @@ async function runtimeOr503(res: express.Response): Promise<DurableRuntime | und
   return undefined;
 }
 
-function toolRecovery() {
+function toolRecovery(vision: boolean) {
   return {
     read_project: "safe" as const,
     read_frame: "safe" as const,
     read_region: "safe" as const,
     critique_frame: "safe" as const,
-    preview_frame: "safe" as const,
+    // Only vision agents register preview_frame, and the durable runtime
+    // rejects a recovery entry for a tool the agent does not have.
+    ...(vision ? { preview_frame: "safe" as const } : {}),
     use_frame: "safe" as const,
     paint_stroke: "idempotent" as const,
     fill_rect: "idempotent" as const,
