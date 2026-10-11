@@ -755,6 +755,30 @@ export function useToast() {
   );
 }
 
+/* ------------------------------------------------------------------- brand */
+
+/**
+ * The wordmark's mark: a 16px logo glyph drawn on a 16 grid, not a UI icon,
+ * so the 24/12 icon rule does not apply. `currentColor` keeps it on `accent`.
+ */
+export function PixelMark() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={16}
+      height={16}
+      shapeRendering="crispEdges"
+      aria-hidden
+      className="text-accent"
+    >
+      <rect x="1" y="1" width="6" height="6" fill="currentColor" />
+      <rect x="9" y="1" width="6" height="6" fill="currentColor" opacity="0.5" />
+      <rect x="1" y="9" width="6" height="6" fill="currentColor" opacity="0.5" />
+      <rect x="9" y="9" width="6" height="6" fill="currentColor" />
+    </svg>
+  );
+}
+
 /* --------------------------------------------------------- empty and error */
 
 export function EmptyState({
@@ -767,10 +791,14 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="pixel-corners-sm grid gap-2 border-2 border-dashed border-line p-4">
-      <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">{title}</p>
-      <p className="text-[13px] text-muted">{body}</p>
-      {action}
+    <div className="pixel-corners-sm dither-sm grid gap-2 border-2 border-dashed border-line p-4">
+      {/* The dither is the atmosphere around the message; the copy keeps a
+          solid surface so its contrast never rides the checker. */}
+      <div className="grid gap-2 bg-panel p-3">
+        <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">{title}</p>
+        <p className="text-[13px] text-muted">{body}</p>
+        {action}
+      </div>
     </div>
   );
 }

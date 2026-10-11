@@ -45,6 +45,7 @@ import {
   Callout,
   EmptyState,
   IconButton,
+  PixelMark,
   Sheet,
   useToast,
 } from "../components/ui.js";
@@ -959,7 +960,11 @@ export function EditorScreen() {
       className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
     >
       <header className="flex min-w-0 items-center gap-3 px-3 py-2">
-        <a href="/projects" className="text-pixel-display text-accent whitespace-nowrap">
+        <a
+          href="/projects"
+          className="flex items-center gap-2.5 text-pixel-display text-accent whitespace-nowrap"
+        >
+          <PixelMark />
           PIXELAITION
         </a>
         <p className="min-w-0 truncate text-sm text-muted">

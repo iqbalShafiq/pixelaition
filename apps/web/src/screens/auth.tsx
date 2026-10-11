@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Button, Field, PasswordInput, TextInput } from "../components/ui.js";
+import { Button, Field, PasswordInput, PixelMark, TextInput } from "../components/ui.js";
 import { authClient } from "../lib/auth.js";
 
 export function AuthScreen({ mode }: { mode: "login" | "register" }) {
@@ -42,18 +42,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
     <main className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4 py-10">
       <div className="w-full max-w-[26rem]">
         <header className="mb-6 flex items-center gap-2.5">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 8 8"
-            shapeRendering="crispEdges"
-            aria-hidden
-          >
-            <rect x="0" y="0" width="4" height="4" fill="var(--color-accent)" />
-            <rect x="4" y="0" width="4" height="4" fill="var(--color-ink)" />
-            <rect x="0" y="4" width="4" height="4" fill="var(--color-ink)" />
-            <rect x="4" y="4" width="4" height="4" fill="var(--color-accent)" />
-          </svg>
+          <PixelMark />
           <span className="text-pixel-display text-accent">PIXELAITION</span>
         </header>
 

@@ -9,6 +9,7 @@ import {
   Card,
   EmptyState,
   Field,
+  PixelMark,
   TextInput,
   useToast,
 } from "../components/ui.js";
@@ -145,17 +146,6 @@ export function ProjectsScreen() {
         </section>
       </div>
     </main>
-  );
-}
-
-function PixelMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 8 8" shapeRendering="crispEdges" aria-hidden>
-      <rect x="0" y="0" width="4" height="4" fill="var(--color-accent)" />
-      <rect x="4" y="0" width="4" height="4" fill="var(--color-ink)" />
-      <rect x="0" y="4" width="4" height="4" fill="var(--color-ink)" />
-      <rect x="4" y="4" width="4" height="4" fill="var(--color-accent)" />
-    </svg>
   );
 }
 
