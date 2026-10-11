@@ -99,7 +99,9 @@ function fromNode(headers: Request["headers"]): Headers {
 }
 
 // A run that is still live (queued, drawing, or paused for input) owns every
-// frame of its asset, so the mutation routes refuse to write under it.
+// frame of its asset — through its thread for editor runs, through its
+// frame_id for a workspace run that bound an asset — so the mutation routes
+// refuse to write under it.
 async function activeRunFor(assetId: string): Promise<boolean> {
   return assetHasActiveRun(db, assetId);
 }

@@ -495,16 +495,22 @@ export async function updateAssetRecord(
   return result;
 }
 
-/** The active-run guard shared by the store's restore and the API's routes. */
+/**
+ * The active-run guard shared by the store's restore and the API's routes.
+ * A live run owns an asset through its thread (editor runs) or through its
+ * frame_id (a workspace run that bound an asset mid-run keeps a project-scoped
+ * thread, so only the frame pointer identifies the asset it is drawing on).
+ */
 export async function assetHasActiveRun(db: Database, assetId: string): Promise<boolean> {
   const [run] = await db
     .select({ id: generationRuns.id })
     .from(generationRuns)
     .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+    .leftJoin(frames, eq(frames.id, generationRuns.frameId))
     .where(
       and(
-        eq(generationThreads.assetId, assetId),
         inArray(generationRuns.status, ["queued", "running", "waiting"]),
+        or(eq(generationThreads.assetId, assetId), eq(frames.assetId, assetId)),
       ),
     )
     .limit(1);

@@ -14,7 +14,7 @@ import {
 import { createAsset, defaultStyle, encodePixels } from "@pixelaition/pixel";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureThread, restoreVersion } from "./store.js";
+import { ensureThread, restoreVersion, assetHasActiveRun } from "./store.js";
 
 /**
  * restoreVersion needs a live database; when DATABASE_URL is absent or the
@@ -182,6 +182,69 @@ describe.skipIf(!db)("restoreVersion", () => {
 
     await live.delete(generationRuns).where(eq(generationRuns.id, runId));
     await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+  });
+
+  it("refuses while a workspace run is bound to one of the asset's frames", async () => {
+    const threadId = randomUUID();
+    const runId = randomUUID();
+    // A workspace thread keeps assetId NULL; the run's frame_id is the only
+    // pointer to the asset it is drawing on.
+    await live.insert(generationThreads).values({
+      id: threadId,
+      projectId,
+      userId,
+    });
+    await live.insert(generationRuns).values({
+      id: runId,
+      threadId,
+      requestId: randomUUID(),
+      status: "running",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      frameId: frame.id,
+    });
+    try {
+      expect(await assetHasActiveRun(live, asset.id)).toBe(true);
+      const [version] = await live
+        .select()
+        .from(versions)
+        .where(and(eq(versions.assetId, asset.id), eq(versions.kind, "edit")));
+      if (!version) throw new Error("the edit version was not found");
+      const result = await restoreVersion(live, userId, asset.id, version.id);
+      expect(result.asset).toBeUndefined();
+      expect(result.failure?.code).toBe("RUN_IN_PROGRESS");
+      expect(result.failure?.message).toBe(
+        "The agent is drawing on this asset right now.",
+      );
+    } finally {
+      await live.delete(generationRuns).where(eq(generationRuns.id, runId));
+      await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+    }
+  });
+
+  it("does not lock an asset for a run whose frame_id belongs to no frame of it", async () => {
+    const threadId = randomUUID();
+    const runId = randomUUID();
+    await live.insert(generationThreads).values({
+      id: threadId,
+      projectId,
+      userId,
+    });
+    await live.insert(generationRuns).values({
+      id: runId,
+      threadId,
+      requestId: randomUUID(),
+      status: "running",
+      modelId: "test-model",
+      reasoningEffort: "low",
+      frameId: randomUUID(),
+    });
+    try {
+      expect(await assetHasActiveRun(live, asset.id)).toBe(false);
+    } finally {
+      await live.delete(generationRuns).where(eq(generationRuns.id, runId));
+      await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+    }
   });
 
   it("replays the recorded frame order", async () => {

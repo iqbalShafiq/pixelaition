@@ -1154,13 +1154,27 @@ function bindWorkspaceRun(options: {
   const { durableRunId, publicRunId, userId, style } = options;
   let writes: ReturnType<typeof frameWrites> | undefined;
 
-  const register = (asset: LoadedAsset): RunAsset => {
+  // The single choke point where a workspace run acquires an asset, used by
+  // both create_asset and use_asset. Besides wiring the persistence callbacks,
+  // it pins the asset's origin frame on the run row: the API's active-run
+  // guard reads generation_runs.frame_id to lock a workspace run's asset while
+  // the run is live, since a workspace thread stays project-scoped.
+  const register = async (asset: LoadedAsset): Promise<RunAsset> => {
+    const framesByIndex = [...asset.frames].sort(
+      (left, right) => left.index - right.index,
+    );
+    const origin = framesByIndex[0];
+    if (!origin) throw new Error("That asset has no frames.");
     writes = frameWrites({
       durableRunId,
       publicRunId,
       assetId: asset.id,
       frames: asset.frames,
     });
+    await db
+      .update(generationRuns)
+      .set({ frameId: origin.id })
+      .where(eq(generationRuns.id, publicRunId));
     return {
       id: asset.id,
       name: asset.name,
@@ -1168,7 +1182,7 @@ function bindWorkspaceRun(options: {
       height: asset.height,
       palette: [...asset.palette],
       style: asset.style,
-      frames: asset.frames.map((frame) => ({
+      frames: framesByIndex.map((frame) => ({
         id: frame.id,
         name: frame.name,
         index: frame.index,
@@ -1287,8 +1301,9 @@ function bindWorkspaceRun(options: {
           layers: frame.layers,
         })),
       };
+      const bound = await register(loaded);
       // The console links a workspace run to the asset it made; the event is
-      // published once the rows exist, and never on a refused create.
+      // published once the rows exist and the run is locked to it.
       publish(publicRunId, "asset-created", {
         assetId: asset.id,
         projectId: input.projectId,
@@ -1297,7 +1312,7 @@ function bindWorkspaceRun(options: {
         height: asset.height,
         frameCount: asset.frames.length,
       });
-      return register(loaded);
+      return bound;
     },
     onLoadAsset: loadOwned,
     onStroke: (stroke, buffer, frameId) => {
