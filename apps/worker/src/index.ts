@@ -10,6 +10,7 @@ import {
 import { DurableRuntime } from "@anvia/durable";
 import { SqliteDurableStore } from "@anvia/durable/sqlite";
 import { OpenAIClient } from "@anvia/openai";
+import OpenAI from "openai";
 import {
   REASONING_EFFORT_CONTROL_ID,
   defineCompletionModelControls,
@@ -152,8 +153,14 @@ const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
 const baseUrl = process.env.OPENROUTER_BASE_URL?.trim();
 const openai = apiKey
   ? new OpenAIClient({
-      apiKey,
-      ...(baseUrl ? { baseUrl } : {}),
+      // Anvia builds its SDK client with zero retries; one transient 429 in
+      // the middle of a long agent run would end the run. The official SDK
+      // retries 429s and 5xx with backoff, honoring Retry-After.
+      client: new OpenAI({
+        apiKey,
+        ...(baseUrl ? { baseURL: baseUrl } : {}),
+        maxRetries: 2,
+      }),
     })
   : undefined;
 

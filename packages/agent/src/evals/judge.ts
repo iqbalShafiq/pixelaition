@@ -7,6 +7,7 @@ import {
   runEvalSuite,
 } from "@anvia/core/evals";
 import { OpenAIClient } from "@anvia/openai";
+import OpenAI from "openai";
 
 const key = process.env.OPENROUTER_API_KEY?.trim();
 if (!key) {
@@ -24,8 +25,12 @@ if (!evalModelId) {
 
 const evalBaseUrl = process.env.OPENROUTER_BASE_URL?.trim();
 const model = new OpenAIClient({
-  apiKey: key,
-  ...(evalBaseUrl ? { baseUrl: evalBaseUrl } : {}),
+  // Same retry posture as the worker: the judge must not fail on one 429.
+  client: new OpenAI({
+    apiKey: key,
+    ...(evalBaseUrl ? { baseURL: evalBaseUrl } : {}),
+    maxRetries: 2,
+  }),
 }).completionModel({
   modelId: evalModelId,
   api: "chat",
