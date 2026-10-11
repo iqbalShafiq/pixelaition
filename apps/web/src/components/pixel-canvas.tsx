@@ -34,6 +34,8 @@ type Props = {
   grid: boolean;
   checker: boolean;
   onionSkin: FrameBuffer[];
+  /** A version shown over the current frame: the current dims, the version draws. */
+  ghost?: FrameBuffer | null;
   selection: Rect | null;
   locked: boolean;
   onAction: (action: CanvasAction) => void;
@@ -207,6 +209,7 @@ export function PixelCanvas({
   grid,
   checker,
   onionSkin,
+  ghost = null,
   selection,
   locked,
   onAction,
@@ -230,8 +233,8 @@ export function PixelCanvas({
   const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
-  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera });
-  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera };
+  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera, ghost });
+  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera, ghost };
 
   useEffect(() => {
     function down(event: KeyboardEvent) {
@@ -325,13 +328,37 @@ export function PixelCanvas({
       }
       context.globalAlpha = 1;
 
-      context.drawImage(
-        bitmapFor(doc, bitmaps.current),
-        originX,
-        originY,
-        docWidth,
-        docHeight,
-      );
+      const ghost = latest.current.ghost;
+      if (ghost) {
+        // History preview: the current frame is dimmed to context and the
+        // version draws over it at reduced alpha, so the difference between
+        // the two reads as a shift in tone rather than two stacked sprites.
+        context.globalAlpha = 0.3;
+        context.drawImage(
+          bitmapFor(doc, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+        context.globalAlpha = 0.75;
+        context.drawImage(
+          bitmapFor(ghost, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+        context.globalAlpha = 1;
+      } else {
+        context.drawImage(
+          bitmapFor(doc, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+      }
 
       // The writable area is the document: an accent border marks exactly the
       // region the tools and the agent may touch.
@@ -404,7 +431,7 @@ export function PixelCanvas({
 
     repaint.current = draw;
     draw();
-  }, [buffer, camera, grid, checker, onionSkin, selection, locked]);
+  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked]);
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;

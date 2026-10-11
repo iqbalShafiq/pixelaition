@@ -29,6 +29,7 @@ import {
 } from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { ExportDialog } from "../components/export-dialog.js";
+import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import {
   FramePanel,
   LayerPanel,
@@ -93,7 +94,7 @@ const fallbackBuffer: FrameBuffer = {
 };
 
 type ActiveRunResponse = {
-  run: { id: string; status: string } | null;
+  run: { id: string; status: string; modelId?: string } | null;
   /** The pending card of a waiting run; null when the run is not waiting. */
   interaction: PendingInteraction | null;
   lastRun: {
@@ -153,6 +154,11 @@ export function EditorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
+  // The models of runs this session started or rejoined, so the history panel
+  // can badge a version `Agent · <model>` instead of a bare `Agent`. The
+  // versions API stores the run id only, not the model.
+  const [runModels, setRunModels] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<VersionPreview | null>(null);
   const runFrameIdRef = useRef<string | null>(null);
   runFrameIdRef.current = runFrameId;
   const displayedRunIdRef = useRef<string | null>(null);
@@ -446,6 +452,13 @@ export function EditorScreen() {
     ]);
   }, []);
 
+  const rememberRunModel = useCallback((id: string, model: string | undefined) => {
+    if (!model) return;
+    setRunModels((current) =>
+      current[id] === model ? current : { ...current, [id]: model },
+    );
+  }, []);
+
   const listen = useCallback(
     (id: string, fallbackFrameId: string, after = 0) => {
       sourceRef.current?.close();
@@ -533,6 +546,7 @@ export function EditorScreen() {
             });
           }
           void client.invalidateQueries({ queryKey: ["asset", assetId] });
+          void client.invalidateQueries({ queryKey: ["versions", assetId] });
           // The finished run is on screen already; only the earlier list needs
           // a refresh, and it is scoped to the frame the agent painted.
           const shown = runFrameIdRef.current;
@@ -563,6 +577,7 @@ export function EditorScreen() {
           .then((result) => {
             if (result.run) {
               setRunId(result.run.id);
+              rememberRunModel(result.run.id, result.run.modelId);
               setPendingInteraction(result.interaction);
               log("The stream dropped; rejoining the running agent");
               listen(result.run.id, "", 0);
@@ -575,7 +590,7 @@ export function EditorScreen() {
           });
       };
     },
-    [assetId, client, log],
+    [assetId, client, log, rememberRunModel],
   );
 
   useEffect(() => {
@@ -587,6 +602,7 @@ export function EditorScreen() {
       if (cancelled || sourceRef.current) return;
       if (result.run) {
         setRunId(result.run.id);
+        rememberRunModel(result.run.id, result.run.modelId);
         setConsoleOpen(true);
         // A waiting run restores its card straight from the row's stored
         // events; the stream alone cannot be trusted to retain it.
@@ -603,7 +619,7 @@ export function EditorScreen() {
       cancelled = true;
       window.removeEventListener("focus", check);
     };
-  }, [assetId, listen, log]);
+  }, [assetId, listen, log, rememberRunModel]);
 
   // Switching frames rewinds the console to that frame's story: its last run's
   // steps and answer, plus the prompts and answers of the runs before it.
@@ -637,6 +653,7 @@ export function EditorScreen() {
 
   function onAction(action: CanvasAction) {
     if (!frameId) return;
+    if (preview) return;
     if (action.kind === "pick") {
       setColor(action.index);
       setTool("pencil");
@@ -766,6 +783,17 @@ export function EditorScreen() {
 
   const refresh = () => client.invalidateQueries({ queryKey: ["asset", assetId] });
 
+  /**
+   * A restore rewrote the server's pixels; the drafts are dropped so the
+   * reloaded frame seeds a fresh buffer instead of the stale local one.
+   */
+  function reloadAfterRestore() {
+    setPreview(null);
+    setDrafts({});
+    void client.invalidateQueries({ queryKey: ["asset", assetId] });
+    void client.invalidateQueries({ queryKey: ["versions", assetId] });
+  }
+
   async function frameAction(
     kind: "add" | "duplicate" | "rename" | "delete",
     value?: string,
@@ -869,6 +897,8 @@ export function EditorScreen() {
     setRestoredMs(null);
     setRunPrompt(prompt);
     setRunHistory([]);
+    // A history preview must not sit over the strokes the agent is about to draw.
+    setPreview(null);
     try {
       // Local edits made before the run must land before the agent starts.
       await flush();
@@ -887,6 +917,7 @@ export function EditorScreen() {
         }),
       });
       setRunId(started.runId);
+      rememberRunModel(started.runId, modelId);
       displayedRunIdRef.current = started.runId;
       setRunFrameId(frameId);
       log(`Run ${started.runId.slice(0, 8)} started`);
@@ -957,6 +988,8 @@ export function EditorScreen() {
   const usedColors = buffer ? usedColorCount(buffer) : 0;
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+  const runModelMap = useMemo(() => new Map(Object.entries(runModels)), [runModels]);
+  const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
 
   const leftPanels = (
     <>
@@ -969,6 +1002,7 @@ export function EditorScreen() {
         onSelect={(id) => {
           setFrameId(id);
           setSelection(null);
+          setPreview(null);
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
         onAdd={() => void frameAction("add")}
@@ -1040,6 +1074,17 @@ export function EditorScreen() {
         height={asset.data?.height ?? 32}
         onResize={(width, height) => void updateAsset({ width, height })}
       />
+      <HistoryPanel
+        assetId={assetId}
+        frameId={frameId}
+        palette={buffer?.palette ?? asset.data?.palette ?? []}
+        width={asset.data?.width ?? buffer?.width ?? 32}
+        height={asset.data?.height ?? buffer?.height ?? 32}
+        runModels={runModelMap}
+        previewingId={preview?.versionId ?? null}
+        onPreview={setPreview}
+        onRestore={reloadAfterRestore}
+      />
     </>
   );
 
@@ -1082,7 +1127,7 @@ export function EditorScreen() {
             ☰
           </IconButton>
           <IconButton
-            label="Palette and style"
+            label="Palette, style, and history"
             className="lg:hidden"
             onClick={() => setRightSheet(true)}
           >
@@ -1170,8 +1215,9 @@ export function EditorScreen() {
                   grid={grid}
                   checker={checker}
                   onionSkin={onionSkin}
+                  ghost={ghost}
                   selection={selection}
-                  locked={locked}
+                  locked={locked || preview !== null}
                   onAction={onAction}
                   onCamera={(next) => {
                     setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
@@ -1183,6 +1229,20 @@ export function EditorScreen() {
                 <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 text-pixel-mono text-accent">
                   the agent is drawing on this frame
                 </p>
+              ) : null}
+              {preview && !running ? (
+                <div className="absolute top-2 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 border-2 border-accent bg-paper px-2 py-1">
+                  <span className="whitespace-nowrap text-pixel-mono text-accent">
+                    previewing an older version
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreview(null)}
+                    className="whitespace-nowrap text-pixel-mono text-ink underline decoration-dotted underline-offset-2 hover:text-accent"
+                  >
+                    exit preview
+                  </button>
+                </div>
               ) : null}
               <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
                 <span className="w-full text-center text-pixel-mono text-muted">
@@ -1313,7 +1373,7 @@ export function EditorScreen() {
           <Sheet
             open={rightSheet}
             onOpenChange={setRightSheet}
-            title="Palette and style"
+            title="Palette, style, and history"
             side="right"
           >
             <div className="grid gap-4">{rightPanels}</div>
