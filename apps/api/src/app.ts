@@ -13,7 +13,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { and, asc, desc, eq, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray } from "drizzle-orm";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
@@ -60,7 +60,7 @@ import {
   updateAssetRecord,
   userIdForToken,
 } from "./store.js";
-import { generationRuns, models } from "@pixelaition/db";
+import { generationRuns, generationThreads, models } from "@pixelaition/db";
 
 const scaleSchema = z.union([
   z.literal(1),
@@ -90,6 +90,24 @@ function fromNode(headers: Request["headers"]): Headers {
     else if (Array.isArray(value)) next.set(key, value.join(", "));
   }
   return next;
+}
+
+// A run that is still live (queued, drawing, or paused for input) owns every
+// frame of its asset, so the mutation routes refuse to write under it.
+async function activeRunFor(assetId: string): Promise<boolean> {
+  const [run] = await db
+    .select({ id: generationRuns.id })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+    .where(
+      and(
+        eq(generationThreads.assetId, assetId),
+        inArray(generationRuns.status, ["queued", "running", "waiting"]),
+      ),
+    )
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(1);
+  return run !== undefined;
 }
 
 export function createApp() {
@@ -217,25 +235,14 @@ export function createApp() {
         ),
       })
       .parse(req.body);
-    // Defence in depth: a live agent owns the frame, so the client cannot
+    // Defence in depth: a live agent owns every frame, so the client cannot
     // clobber streamed strokes even if its own suspension fails.
-    const thread = await ensureThread(
-      db,
-      res.locals.userId as string,
-      req.params.id ?? "",
-    );
-    const [latestRun] = await db
-      .select({ status: generationRuns.status })
-      .from(generationRuns)
-      .where(eq(generationRuns.threadId, thread.id))
-      .orderBy(desc(generationRuns.createdAt))
-      .limit(1);
-    if (latestRun && (latestRun.status === "queued" || latestRun.status === "running")) {
+    if (await activeRunFor(req.params.id ?? "")) {
       return fail(
         res,
         409,
         "RUN_IN_PROGRESS",
-        "The agent is drawing on this asset; the frame cannot be written right now.",
+        "The agent is drawing on this asset right now.",
       );
     }
     const saved = await saveFrame(
@@ -264,6 +271,14 @@ export function createApp() {
         palette: z.array(z.string()).min(2).max(33).optional(),
       })
       .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
     const result = await updateAssetRecord(
       db,
       res.locals.userId as string,
@@ -282,6 +297,14 @@ export function createApp() {
 
   app.post("/api/assets/:id/frames", async (req, res) => {
     const body = z.object({ name: z.string().max(80).default("") }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
     const result = await addFrameRecord(
       db,
       res.locals.userId as string,
@@ -294,6 +317,14 @@ export function createApp() {
 
   app.post("/api/assets/:id/frames/:frameId/duplicate", async (req, res) => {
     const body = z.object({ name: z.string().max(80).optional() }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
     const result = await duplicateFrameRecord(
       db,
       res.locals.userId as string,
@@ -321,6 +352,14 @@ export function createApp() {
         message: "Send a name or an index.",
       })
       .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
     const userId = res.locals.userId as string;
     const assetId = req.params.id ?? "";
     const frameId = req.params.frameId ?? "";
@@ -341,6 +380,14 @@ export function createApp() {
   });
 
   app.delete("/api/assets/:id/frames/:frameId", async (req, res) => {
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
     const result = await deleteFrameRecord(
       db,
       res.locals.userId as string,

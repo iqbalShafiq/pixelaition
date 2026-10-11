@@ -180,9 +180,10 @@ export function EditorScreen() {
       : (buffer?.layers[0]?.id ?? "");
   const running = runId !== null;
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
-  // Only the frame the agent is painting on is locked.
-  const lockedFrameId = running ? (runFrameId ?? frameId) : null;
-  const locked = lockedFrameId !== null && lockedFrameId === frameId;
+  // A live run can touch every frame of the asset, so the editor locks all of
+  // them; runFrameId still marks the frame the agent is painting on.
+  const locked = running;
+  const drawingHere = running && runFrameId === frameId;
   const bufferRef = useRef<FrameBuffer | undefined>(buffer);
   bufferRef.current = buffer;
 
@@ -600,7 +601,7 @@ export function EditorScreen() {
       setSelection(action.rect);
       return;
     }
-    if (locked || running) return;
+    if (running) return;
     const current = drafts[frameId];
     if (!current || !activeLayerId) return;
 
@@ -707,7 +708,7 @@ export function EditorScreen() {
   }
 
   function selectionCommand(mode: "fill" | "clear") {
-    if (running || locked) return;
+    if (running) return;
     if (!frameId || !selection || !activeLayerId) return;
     edit(frameId, drafts[frameId], {
       type: "region",
@@ -725,6 +726,7 @@ export function EditorScreen() {
     value?: string,
     targetId?: string,
   ) {
+    if (running) return;
     if (!frameId) return;
     const target = targetId ?? frameId;
     try {
@@ -786,6 +788,7 @@ export function EditorScreen() {
     height?: number;
     palette?: string[];
   }) {
+    if (running) return;
     if (
       (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
       (input.height !== undefined && (input.height < 8 || input.height > 128))
@@ -813,7 +816,7 @@ export function EditorScreen() {
   }
 
   async function generate() {
-    if (!frameId || locked) return;
+    if (!frameId || running) return;
     setError(null);
     setMessage("");
     setRows([]);
@@ -1090,7 +1093,7 @@ export function EditorScreen() {
                   }}
                 />
               )}
-              {locked ? (
+              {drawingHere ? (
                 <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 text-pixel-mono text-accent">
                   the agent is drawing on this frame
                 </p>
