@@ -198,7 +198,7 @@ const agents = completions.flatMap(({ spec, model }) =>
       model,
       instructions: pixelInstructions,
       tools: createPixelTools({ vision: spec.vision }),
-      maxTurns: 40,
+      maxTurns: 60,
       controls: { reasoningEffort: effort },
       ...(observer
         ? {
