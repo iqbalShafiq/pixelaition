@@ -123,6 +123,40 @@ describe("createSummarizer", () => {
     expect(errors.join(" ")).toContain("[summary] project p1: provider down");
   });
 
+  it("logs the provider's own words through the cause chain", async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (message: string) => void errors.push(message);
+    const runs: Array<() => void | Promise<void>> = [];
+    try {
+      const summarizer = createSummarizer({
+        loadFrame: vi.fn(),
+        loadAsset: async () => undefined,
+        loadProject: async () => ({
+          name: "p1",
+          description: "",
+          styleNotes: "",
+          assets: [],
+        }),
+        summarizeFrame: vi.fn(),
+        summarizeText: async () => {
+          throw new Error("400 Upstream request failed: Model is unavailable.", {
+            cause: new Error('{"error":"no deployment for this input"}'),
+          });
+        },
+        save: vi.fn(),
+        schedule: (run) => runs.push(run),
+      });
+      summarizer.queue("project", "p1");
+      await runs[0]?.();
+    } finally {
+      console.error = original;
+    }
+    expect(errors.join(" ")).toContain(
+      'Model is unavailable. ← {"error":"no deployment for this input"}',
+    );
+  });
+
   it("skips an entity that no longer exists", async () => {
     const save = vi.fn();
     const runs: Array<() => void | Promise<void>> = [];

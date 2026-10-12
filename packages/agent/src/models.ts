@@ -9,6 +9,12 @@ export type ModelSpec = {
    * unset cap means the model maximum on every call and a quick 429.
    */
   maxOutputTokens: number;
+  /**
+   * Jobs the catalog assigns to this model (`summary-vision`, `summary-text`).
+   * Selecting a summary model by capability and position once picked a test
+   * fixture over the real model; a role is an explicit choice.
+   */
+  roles: string[];
 };
 export type RunTarget = { modelId: string; effort: string };
 
@@ -22,6 +28,7 @@ export function parseModelSpecRow(row: {
   efforts: unknown;
   vision: unknown;
   maxOutputTokens: unknown;
+  roles: unknown;
 }): ModelSpec {
   if (row.api !== "chat" && row.api !== "responses") {
     throw new Error(`Model ${row.id} declares an invalid api: ${String(row.api)}`);
@@ -47,6 +54,14 @@ export function parseModelSpecRow(row: {
       `Model ${row.id} declares invalid maxOutputTokens: ${String(row.maxOutputTokens)}`,
     );
   }
+  if (
+    !Array.isArray(row.roles) ||
+    row.roles.some((role) => typeof role !== "string" || role.length === 0)
+  ) {
+    throw new Error(
+      `Model ${row.id} declares invalid roles: ${JSON.stringify(row.roles)}`,
+    );
+  }
   // The pinned OpenAI chat adapter flattens tool-result file parts to
   // `[file:image/png]` text, so a chat model cannot actually see a preview.
   // Only the responses adapter maps them to provider image input.
@@ -61,6 +76,7 @@ export function parseModelSpecRow(row: {
     efforts: [...(row.efforts as string[])],
     vision: row.vision,
     maxOutputTokens: row.maxOutputTokens,
+    roles: [...(row.roles as string[])],
   };
 }
 

@@ -694,8 +694,27 @@ async function saveSummary(
   }
 }
 
-const summaryClient = completions.find((entry) => entry.spec.api === "chat");
-const visionClient = completions.find((entry) => entry.spec.vision);
+// The catalog assigns the summary jobs with roles. Capability alone is not a
+// choice: selecting by position once picked an enabled test fixture over the
+// real vision model, and every frame summary failed with "Model is
+// unavailable" while the fixture stayed in the table.
+const summaryClient = completions.find((entry) =>
+  entry.spec.roles.includes("summary-text"),
+);
+const visionClient = completions.find((entry) =>
+  entry.spec.roles.includes("summary-vision"),
+);
+if (!summaryClient || !visionClient) {
+  console.error(
+    "[summary] disabled: " +
+      [
+        summaryClient ? undefined : "no enabled model carries the summary-text role",
+        visionClient ? undefined : "no enabled model carries the summary-vision role",
+      ]
+        .filter(Boolean)
+        .join("; "),
+  );
+}
 // A one-sentence summary never needs deep reasoning; the cheapest declared
 // effort keeps the provider's token window for the runs themselves.
 const summaryControls = (

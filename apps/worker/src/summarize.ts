@@ -7,6 +7,33 @@
 
 export type SummaryKind = "frame" | "asset" | "project";
 
+/**
+ * A provider failure often hides its real cause one level down (a 429 body,
+ * a connection drop). The log names the whole chain so an operator can see
+ * the provider's own words, never a bare "failed".
+ */
+function describeReason(reason: unknown): string {
+  if (!(reason instanceof Error)) return String(reason);
+  const parts = [reason.message];
+  let cause: unknown = reason.cause;
+  for (let depth = 0; cause instanceof Error && depth < 3; depth += 1) {
+    parts.push(cause.message);
+    cause = cause.cause;
+  }
+  // Provider errors often carry their own fields (status, code, payload);
+  // include them so the log never hides why the call failed.
+  const own = Object.fromEntries(
+    Object.getOwnPropertyNames(reason)
+      .filter((key) => !["message", "cause", "stack"].includes(key))
+      .map((key) => [key, (reason as unknown as Record<string, unknown>)[key]]),
+  );
+  const extra = JSON.stringify(own, (_key, value) =>
+    typeof value === "string" && value.length > 300 ? `${value.slice(0, 300)}…` : value,
+  );
+  if (extra !== undefined && extra !== "{}" && extra.length < 800) parts.push(extra);
+  return parts.join(" ← ");
+}
+
 export const SUMMARY_LIMIT = { frame: 160, asset: 240, project: 240 } as const;
 
 export type FrameSummaryInput = {
@@ -122,9 +149,7 @@ export function createSummarizer(deps: SummarizerDeps): Summarizer {
       const clamped = clampSummary(summary ?? "", SUMMARY_LIMIT[entry.kind]);
       if (clamped.length > 0) await deps.save(entry.kind, entry.id, clamped);
     } catch (reason) {
-      console.error(
-        `[summary] ${entry.kind} ${entry.id}: ${reason instanceof Error ? reason.message : reason}`,
-      );
+      console.error(`[summary] ${entry.kind} ${entry.id}: ${describeReason(reason)}`);
     }
   }
 

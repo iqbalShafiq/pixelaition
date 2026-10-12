@@ -10,6 +10,7 @@ describe("model specs", () => {
         efforts: ["low", "high"],
         vision: false,
         maxOutputTokens: 8192,
+        roles: ["summary-text"],
       }),
     ).toEqual({
       id: "m",
@@ -17,6 +18,7 @@ describe("model specs", () => {
       efforts: ["low", "high"],
       vision: false,
       maxOutputTokens: 8192,
+      roles: ["summary-text"],
     });
     expect(
       parseModelSpecRow({
@@ -25,6 +27,7 @@ describe("model specs", () => {
         efforts: ["high"],
         vision: true,
         maxOutputTokens: 1,
+        roles: [],
       }).vision,
     ).toBe(true);
     expect(() =>
@@ -34,6 +37,7 @@ describe("model specs", () => {
         efforts: ["low"],
         vision: false,
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/bad/);
     expect(() =>
@@ -43,6 +47,7 @@ describe("model specs", () => {
         efforts: ["low"],
         vision: false,
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/bad/);
     expect(() =>
@@ -52,6 +57,7 @@ describe("model specs", () => {
         efforts: [],
         vision: false,
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/bad/);
     expect(() =>
@@ -61,6 +67,7 @@ describe("model specs", () => {
         efforts: ["low", 7],
         vision: false,
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/bad/);
     expect(() =>
@@ -70,6 +77,7 @@ describe("model specs", () => {
         efforts: ["low"],
         vision: "yes",
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/bad/);
     expect(() =>
@@ -79,6 +87,7 @@ describe("model specs", () => {
         efforts: ["low"],
         vision: true,
         maxOutputTokens: 8192,
+        roles: [],
       }),
     ).toThrow(/vision/);
     // The output budget is what the provider charges against its rate limit,
@@ -91,8 +100,22 @@ describe("model specs", () => {
           efforts: ["low"],
           vision: false,
           maxOutputTokens: bad,
+          roles: [],
         }),
       ).toThrow(/maxOutputTokens/);
+    }
+    // Roles are an explicit catalog assignment; a malformed one fails loud.
+    for (const bad of ["summary-text", ["ok", 7], [""]]) {
+      expect(() =>
+        parseModelSpecRow({
+          id: "bad",
+          api: "chat",
+          efforts: ["low"],
+          vision: false,
+          maxOutputTokens: 8192,
+          roles: bad,
+        }),
+      ).toThrow(/roles/);
     }
   });
   it("selects only exact model and effort pairs", () => {
@@ -103,6 +126,7 @@ describe("model specs", () => {
         efforts: ["low", "high", "max"],
         vision: false,
         maxOutputTokens: 8192,
+        roles: ["summary-text"],
       },
     ];
     expect(selectRunTarget(specs, "deepseek-v4.1-flash", "max")).toEqual({

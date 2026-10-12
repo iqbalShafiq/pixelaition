@@ -131,6 +131,9 @@ describe.skipIf(!db)("home runs route", () => {
   });
 
   afterAll(async () => {
+    // The fixture model is this suite's own row; leaving it enabled once cost
+    // every frame summary ("home-test-model" won vision selection by position).
+    await live.delete(models).where(eq(models.id, "home-test-model"));
     await live.delete(user).where(eq(user.id, userId));
     await live.$client.end({ timeout: 5 });
   });
