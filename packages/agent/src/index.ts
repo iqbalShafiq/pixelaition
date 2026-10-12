@@ -5,6 +5,14 @@ export type {
   DrawDecision,
   DrawIntent,
 } from "./decide.js";
+export { decideHomeTarget, HomeDecisionError, HOME_PROJECT_LIMIT } from "./home.js";
+export type {
+  HomeAssetOption,
+  HomeContext,
+  HomeHistoryEntry,
+  HomeProjectOption,
+  HomeTarget,
+} from "./home.js";
 export {
   clearGateOutcomes,
   gateIsHarmless,
