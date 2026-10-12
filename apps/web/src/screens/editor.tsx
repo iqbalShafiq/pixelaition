@@ -1009,7 +1009,11 @@ export function EditorScreen() {
     try {
       await api(`/api/runs/${runId}/steer`, {
         method: "POST",
-        body: JSON.stringify({ messages: pending.map((item) => item.text) }),
+        body: JSON.stringify({
+          // One message per entry: the runtime applies them one per turn,
+          // FIFO, and the item id dedupes a retried batch.
+          messages: pending.map((item) => ({ text: item.text, requestId: item.id })),
+        }),
       });
       const ids = new Set(pending.map((item) => item.id));
       setQueue((current) => removeQueuedRuns(current, ids));

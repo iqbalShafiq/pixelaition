@@ -168,6 +168,50 @@ function persistScope(publicRunId: string, scope: string[]): void {
     });
 }
 
+/**
+ * Serialized steering: one message in flight per run. The next message is
+ * submitted only after the previous one lands at a turn boundary, so each
+ * follow-up gets its own turn (FIFO) instead of arriving as one batch — the
+ * delivery contract the durable runtime's drain expects clients to honor.
+ */
+type PendingSteer = { id: string; text: string };
+const steerQueues = new Map<string, PendingSteer[]>();
+const steerInFlight = new Map<string, string>();
+
+function submitNextSteer(runtime: DurableRuntime, durableRunId: string): void {
+  if (steerInFlight.has(durableRunId)) return;
+  const queue = steerQueues.get(durableRunId);
+  const next = queue?.shift();
+  if (!next) {
+    steerQueues.delete(durableRunId);
+    return;
+  }
+  try {
+    const receipt = runtime.steer(
+      durableRunId,
+      { messages: [{ role: "user" as const, content: next.text }] },
+      { requestId: next.id },
+    );
+    steerInFlight.set(durableRunId, receipt.id);
+  } catch (reason) {
+    console.error(`[steer] delivery refused: ${boundedReason(reason)}`);
+    submitNextSteer(runtime, durableRunId);
+  }
+}
+
+/** The applied receipt releases the next queued message for its own turn. */
+function steerApplied(runtime: DurableRuntime, durableRunId: string, id: string): void {
+  if (steerInFlight.get(durableRunId) !== id) return;
+  steerInFlight.delete(durableRunId);
+  submitNextSteer(runtime, durableRunId);
+}
+
+/** Drop every pending steer a finished run left behind. */
+function clearSteerQueue(durableRunId: string): void {
+  steerQueues.delete(durableRunId);
+  steerInFlight.delete(durableRunId);
+}
+
 /** The provider's normalized usage, as the agent observer reports it. */
 type ModelUsageLike = {
   inputTokens: number;
@@ -749,8 +793,17 @@ app.post("/internal/runs/:id/steer", async (req, res) => {
   if (!authorized(req)) return res.status(401).end();
   const body = z
     .object({
-      messages: z.array(z.string().min(1).max(4000)).min(1).max(20),
-      requestId: z.string().min(1).max(120).optional(),
+      messages: z
+        .array(
+          z.object({
+            text: z.string().min(1).max(4000),
+            // The queue item's id doubles as the delivery dedup key, so a
+            // retried batch can never steer the same message twice.
+            requestId: z.string().min(1).max(120).optional(),
+          }),
+        )
+        .min(1)
+        .max(20),
     })
     .safeParse(req.body);
   if (!body.success) {
@@ -768,28 +821,21 @@ app.post("/internal/runs/:id/steer", async (req, res) => {
   if (!["queued", "running", "waiting"].includes(row.status)) {
     return res.status(409).json({ message: "That run is no longer active." });
   }
-  try {
-    // One steer input carries the whole batch; the runtime applies the
-    // messages at the next turn boundary, FIFO, and persists the receipt.
-    const receipt = runtime.steer(
-      row.durableRunId,
-      {
-        messages: body.data.messages.map((text) => ({
-          role: "user" as const,
-          content: text,
-        })),
-      },
-      ...(body.data.requestId !== undefined ? [{ requestId: body.data.requestId }] : []),
-    );
-    res.status(202).json({ receipt });
-  } catch (reason) {
-    return res.status(409).json({
-      message:
-        reason instanceof Error
-          ? reason.message.slice(0, 200)
-          : "That run cannot take a follow-up.",
-    });
+  const durableRunId = row.durableRunId;
+  // Accept the whole batch, then deliver it one message per turn through the
+  // serialized queue; the queue item id is the runtime's dedup key.
+  const queue = steerQueues.get(durableRunId) ?? [];
+  let accepted = 0;
+  for (const message of body.data.messages) {
+    const id = message.requestId ?? crypto.randomUUID();
+    if (id === steerInFlight.get(durableRunId)) continue;
+    if (queue.some((item) => item.id === id)) continue;
+    queue.push({ id, text: message.text });
+    accepted += 1;
   }
+  if (queue.length > 0) steerQueues.set(durableRunId, queue);
+  submitNextSteer(runtime, durableRunId);
+  res.status(202).json({ queued: accepted });
 });
 
 app.post("/internal/runs/:id/cancel", async (req, res) => {
@@ -979,6 +1025,14 @@ async function follow(
       const batch = runtime.events(durableId, cursor);
       for (const event of batch) {
         cursor = event.sequence;
+        // An applied follow-up releases the next queued message, so each one
+        // gets its own turn instead of arriving as a batch.
+        if (event.type === "steering_applied") {
+          const appliedId = (event.data as { id?: unknown } | undefined)?.id;
+          if (typeof appliedId === "string") {
+            steerApplied(runtime, durableId, appliedId);
+          }
+        }
         // Runtime events are raw: a suspension's status event carries the whole
         // AgentInteractionRequest, call ids included. Sanitize before anything
         // leaves the worker; the SSE path forwards the published payload
@@ -1115,6 +1169,7 @@ async function follow(
   } finally {
     releaseRun(durableId);
     clearGateOutcomes(durableId);
+    clearSteerQueue(durableId);
     usageByRun.delete(durableId);
     publicIdByDurable.delete(durableId);
     // Give a subscriber a moment to read the tail, then drop the retained events.

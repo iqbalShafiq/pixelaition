@@ -996,7 +996,17 @@ export function createApp() {
       return fail(res, 404, "NOT_FOUND", "That run is not available.");
     }
     const body = z
-      .object({ messages: z.array(z.string().min(1).max(4000)).min(1).max(20) })
+      .object({
+        messages: z
+          .array(
+            z.object({
+              text: z.string().min(1).max(4000),
+              requestId: z.string().min(1).max(120).optional(),
+            }),
+          )
+          .min(1)
+          .max(20),
+      })
       .parse(req.body);
     const [row] = await db
       .select()
@@ -1043,9 +1053,9 @@ export function createApp() {
       );
     }
     const accepted = (await upstream.json().catch(() => null)) as {
-      receipt?: unknown;
+      queued?: unknown;
     } | null;
-    res.status(202).json({ receipt: accepted?.receipt ?? null });
+    res.status(202).json({ queued: accepted?.queued ?? 0 });
   });
 
   app.post("/api/runs/:id/stage-override", async (req, res) => {
