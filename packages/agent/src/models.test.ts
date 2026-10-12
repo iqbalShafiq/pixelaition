@@ -9,7 +9,6 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high"],
         vision: false,
-        maxOutputTokens: 8192,
         roles: ["summary-text"],
       }),
     ).toEqual({
@@ -17,7 +16,6 @@ describe("model specs", () => {
       api: "chat",
       efforts: ["low", "high"],
       vision: false,
-      maxOutputTokens: 8192,
       roles: ["summary-text"],
     });
     expect(
@@ -26,7 +24,6 @@ describe("model specs", () => {
         api: "responses",
         efforts: ["high"],
         vision: true,
-        maxOutputTokens: 1,
         roles: [],
       }).vision,
     ).toBe(true);
@@ -36,7 +33,6 @@ describe("model specs", () => {
         api: "respones",
         efforts: ["low"],
         vision: false,
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -46,7 +42,6 @@ describe("model specs", () => {
         api: "",
         efforts: ["low"],
         vision: false,
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -56,7 +51,6 @@ describe("model specs", () => {
         api: "chat",
         efforts: [],
         vision: false,
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -66,7 +60,6 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", 7],
         vision: false,
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -76,7 +69,6 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low"],
         vision: "yes",
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -86,24 +78,9 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low"],
         vision: true,
-        maxOutputTokens: 8192,
         roles: [],
       }),
     ).toThrow(/vision/);
-    // The output budget is what the provider charges against its rate limit,
-    // so a row without a valid one is a configuration error, not a default.
-    for (const bad of [undefined, 0, -1, 1.5, "8192", null]) {
-      expect(() =>
-        parseModelSpecRow({
-          id: "bad",
-          api: "chat",
-          efforts: ["low"],
-          vision: false,
-          maxOutputTokens: bad,
-          roles: [],
-        }),
-      ).toThrow(/maxOutputTokens/);
-    }
     // Roles are an explicit catalog assignment; a malformed one fails loud.
     for (const bad of ["summary-text", ["ok", 7], [""]]) {
       expect(() =>
@@ -112,7 +89,6 @@ describe("model specs", () => {
           api: "chat",
           efforts: ["low"],
           vision: false,
-          maxOutputTokens: 8192,
           roles: bad,
         }),
       ).toThrow(/roles/);
@@ -125,7 +101,6 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high", "max"],
         vision: false,
-        maxOutputTokens: 8192,
         roles: ["summary-text"],
       },
     ];

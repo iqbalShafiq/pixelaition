@@ -4,12 +4,6 @@ export type ModelSpec = {
   efforts: string[];
   vision: boolean;
   /**
-   * The output budget the worker sends as `max_output_tokens`. The provider
-   * charges a request's budget against its output-token rate limit, so an
-   * unset cap means the model maximum on every call and a quick 429.
-   */
-  maxOutputTokens: number;
-  /**
    * Jobs the catalog assigns to this model (`summary-vision`, `summary-text`).
    * Selecting a summary model by capability and position once picked a test
    * fixture over the real model; a role is an explicit choice.
@@ -27,7 +21,6 @@ export function parseModelSpecRow(row: {
   api: unknown;
   efforts: unknown;
   vision: unknown;
-  maxOutputTokens: unknown;
   roles: unknown;
 }): ModelSpec {
   if (row.api !== "chat" && row.api !== "responses") {
@@ -44,15 +37,6 @@ export function parseModelSpecRow(row: {
   }
   if (typeof row.vision !== "boolean") {
     throw new Error(`Model ${row.id} declares invalid vision: ${String(row.vision)}`);
-  }
-  if (
-    typeof row.maxOutputTokens !== "number" ||
-    !Number.isInteger(row.maxOutputTokens) ||
-    row.maxOutputTokens <= 0
-  ) {
-    throw new Error(
-      `Model ${row.id} declares invalid maxOutputTokens: ${String(row.maxOutputTokens)}`,
-    );
   }
   if (
     !Array.isArray(row.roles) ||
@@ -75,7 +59,6 @@ export function parseModelSpecRow(row: {
     api: row.api,
     efforts: [...(row.efforts as string[])],
     vision: row.vision,
-    maxOutputTokens: row.maxOutputTokens,
     roles: [...(row.roles as string[])],
   };
 }

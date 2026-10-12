@@ -37,9 +37,22 @@ describe("prompt builders", () => {
       paintedPixels: 210,
     });
     expect(prompt).toContain("one sentence");
+    expect(prompt).toContain("125 characters");
     expect(prompt).toContain("idle");
     expect(prompt).toContain("32×32");
-    expect(prompt).toContain("no markdown");
+    expect(prompt).toContain("No markdown");
+  });
+
+  it("caps the asset caption at two sentences", () => {
+    const prompt = buildAssetSummaryPrompt({
+      name: "potion",
+      width: 32,
+      height: 32,
+      paletteSize: 8,
+      projectDescription: "fantasy items",
+      frames: [{ name: "idle", summary: "a red potion with a cork" }],
+    });
+    expect(prompt).toContain("at most two sentences");
   });
 
   it("forbids inventing content in the asset prompt", () => {

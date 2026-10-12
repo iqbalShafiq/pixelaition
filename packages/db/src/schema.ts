@@ -252,7 +252,6 @@ export const models = pgTable("models", {
   position: integer("position").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   vision: boolean("vision").notNull().default(false),
-  maxOutputTokens: integer("max_output_tokens").notNull().default(8192),
   roles: jsonb("roles").notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

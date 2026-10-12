@@ -559,7 +559,6 @@ const agents = completions.flatMap(({ spec, model }) => {
         instructions: pixelInstructions,
         tools: drawingTools,
         maxTurns: 120,
-        maxTokens: spec.maxOutputTokens,
         controls: { reasoningEffort: effort },
         observability,
       }),
@@ -574,7 +573,6 @@ const agents = completions.flatMap(({ spec, model }) => {
         instructions: askInstructions,
         tools: askingTools,
         maxTurns: 8,
-        maxTokens: spec.maxOutputTokens,
         controls: { reasoningEffort: effort },
         observability,
       }),
@@ -733,7 +731,6 @@ const summarizer =
           const started = Date.now();
           const result = await generateCompletion({
             model: visionClient.model,
-            maxTokens: visionClient.spec.maxOutputTokens,
             ...summaryControls(visionClient.spec),
             messages: [
               {
@@ -766,7 +763,6 @@ const summarizer =
         summarizeText: async (prompt) => {
           const result = await generateCompletion({
             model: summaryClient.model,
-            maxTokens: summaryClient.spec.maxOutputTokens,
             ...summaryControls(summaryClient.spec),
             messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
           });

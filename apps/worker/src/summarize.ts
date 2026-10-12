@@ -34,6 +34,11 @@ function describeReason(reason: unknown): string {
   return parts.join(" ← ");
 }
 
+/**
+ * Storage guards, not the primary control: the prompts ask for alt-text
+ * length (one sentence for a frame, two for an asset or project), and the
+ * clamp only keeps a model that overshoots from storing a paragraph.
+ */
 export const SUMMARY_LIMIT = { frame: 160, asset: 240, project: 240 } as const;
 
 export type FrameSummaryInput = {
@@ -93,9 +98,9 @@ export function clampSummary(text: string, limit: number): string {
 
 export function buildFrameSummaryPrompt(input: FrameSummaryInput): string {
   return [
-    "Describe this pixel-art frame in one sentence (under 160 characters).",
+    "Describe this pixel-art frame as concise alt text: one sentence, at most 125 characters.",
     `Asset: ${input.assetName}. Frame: ${input.frameName}. Canvas: ${input.width}×${input.height}. Palette: ${input.paletteSize} colors. Painted pixels: ${input.paintedPixels}.`,
-    "Name the subject and its main colors. no markdown, no quotes, no invented detail.",
+    'Name the subject, its pose or action, and its main colors — nothing else. No markdown, no quotes, no "image of", no invented detail.',
   ].join("\n");
 }
 
@@ -104,10 +109,10 @@ export function buildAssetSummaryPrompt(input: AssetSummaryInput): string {
     .map((frame) => `- ${frame.name}: ${frame.summary || "(no summary yet)"}`)
     .join("\n");
   return [
-    "Summarize this pixel-art asset in one or two sentences (under 240 characters).",
+    "Summarize this pixel-art asset as a library caption: at most two sentences, under 240 characters.",
     `Name: ${input.name}. Canvas: ${input.width}×${input.height}. Palette: ${input.paletteSize} colors. Project: ${input.projectDescription || "(none)"}.`,
     `Frames:\n${frames}`,
-    "Use only what the frames show; do not invent content. No markdown.",
+    "Lead with the subject and the palette size, then the poses the frames show, in order. Use only what the frames show; do not invent content. No markdown.",
   ].join("\n");
 }
 
@@ -116,10 +121,10 @@ export function buildProjectSummaryPrompt(input: ProjectSummaryInput): string {
     .map((asset) => `- ${asset.name}: ${asset.summary || "(no summary yet)"}`)
     .join("\n");
   return [
-    "Summarize this pixel-art project in one or two sentences (under 240 characters).",
+    "Summarize this pixel-art project as a library caption: at most two sentences, under 240 characters.",
     `Name: ${input.name}. Description: ${input.description || "(none)"}. Style notes: ${input.styleNotes || "(none)"}.`,
     `Assets:\n${assets}`,
-    "Use only what the assets show; do not invent content. No markdown.",
+    "Lead with the project's theme, then name its assets in order. Use only what the assets show; do not invent content. No markdown.",
   ].join("\n");
 }
 
