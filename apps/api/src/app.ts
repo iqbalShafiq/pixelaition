@@ -578,9 +578,13 @@ export function createApp() {
           width: asset.width,
           height: asset.height,
           palette: asset.palette as string[],
+          ...(asset.summary.length > 0 ? { summary: asset.summary } : {}),
         },
         frames: asset.frames.map((item) => item.name),
         ...(originFrame ? { frameName: originFrame.name } : {}),
+        ...(originFrame !== undefined && originFrame.summary.length > 0
+          ? { frameSummary: originFrame.summary }
+          : {}),
       };
     }
     if (!process.env.AGENT_API_KEY?.trim()) {

@@ -20,10 +20,22 @@ export function buildRunPrompt(input: {
   frames?: Array<{ name: string; current: boolean }>;
   palette?: string[];
   attachments?: number;
+  projectSummary?: string;
+  assetSummary?: string;
+  frameSummary?: string;
   recent: RecentRun[];
 }): string {
   const lines = [input.prompt, `Style: ${JSON.stringify(input.style)}`];
   if (input.frameName !== undefined) lines.push(`Frame: ${input.frameName}`);
+  if (input.projectSummary !== undefined && input.projectSummary.length > 0) {
+    lines.push(`Project: ${input.projectSummary}`);
+  }
+  if (input.assetSummary !== undefined && input.assetSummary.length > 0) {
+    lines.push(`Asset: ${input.assetSummary}`);
+  }
+  if (input.frameSummary !== undefined && input.frameSummary.length > 0) {
+    lines.push(`Frame summary: ${input.frameSummary}`);
+  }
   if (input.frames !== undefined && input.frames.length > 0) {
     lines.push(
       `Frames: ${input.frames

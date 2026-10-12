@@ -32,9 +32,18 @@ export type DecisionHistoryEntry = {
 export type DecisionContext = {
   history?: DecisionHistoryEntry[];
   projectName?: string;
-  asset?: { name: string; width: number; height: number; palette: string[] };
+  asset?: {
+    name: string;
+    width: number;
+    height: number;
+    palette: string[];
+    /** Generated description of what the asset depicts. */
+    summary?: string;
+  };
   frames?: string[];
   frameName?: string;
+  /** Generated description of the current frame. */
+  frameSummary?: string;
   /** How many reference images the message carries. */
   attachments?: number;
 };
@@ -115,7 +124,16 @@ export async function decidePrompt(
         : {}),
       ...(context.asset !== undefined ? { asset: context.asset } : {}),
       ...(context.frames !== undefined ? { frames: context.frames } : {}),
-      ...(context.frameName !== undefined ? { frame: { name: context.frameName } } : {}),
+      ...(context.frameName !== undefined
+        ? {
+            frame: {
+              name: context.frameName,
+              ...(context.frameSummary !== undefined && context.frameSummary.length > 0
+                ? { summary: context.frameSummary }
+                : {}),
+            },
+          }
+        : {}),
       ...(context.attachments !== undefined && context.attachments > 0
         ? { attachments: context.attachments }
         : {}),

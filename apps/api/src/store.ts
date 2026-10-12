@@ -120,7 +120,7 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
     style: row.style as StyleGuide,
     projectId: row.projectId,
     projectName: row.projectName,
-    frames: frameRows as Array<Frame & { assetId: string }>,
+    frames: frameRows as Array<Frame & { assetId: string; summary: string }>,
   };
 }
 

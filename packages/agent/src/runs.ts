@@ -41,6 +41,8 @@ export type StagedPlanOverride = z.infer<typeof stagedOverrideSchema>;
 /** One frame of the asset, held in memory for the run's lifetime. */
 export type RunFrame = {
   name: string;
+  /** Generated description; absent until the summarizer has run. */
+  summary?: string;
   index: number;
   buffer: FrameBuffer;
 };
@@ -69,6 +71,8 @@ export type FrameChange =
 export type ProjectSummary = {
   id: string;
   name: string;
+  /** Generated description; empty until the summarizer has run. */
+  summary: string;
   updatedAt: string;
   assetCount: number;
 };
@@ -77,6 +81,8 @@ export type ProjectSummary = {
 export type AssetSummary = {
   id: string;
   name: string;
+  /** Generated description; empty until the summarizer has run. */
+  summary: string;
   width: number;
   height: number;
   frameCount: number;
@@ -99,11 +105,20 @@ export type CreateAssetInput = {
 export type RunAsset = {
   id: string;
   name: string;
+  /** Generated description; empty until the summarizer has run. */
+  summary: string;
   width: number;
   height: number;
   palette: string[];
   style: StyleGuide;
-  frames: Array<{ id: string; name: string; index: number; buffer: FrameBuffer }>;
+  frames: Array<{
+    id: string;
+    name: string;
+    /** Generated description; empty until the summarizer has run. */
+    summary: string;
+    index: number;
+    buffer: FrameBuffer;
+  }>;
 };
 
 /** One Jev gate call, for the run's trace. */
@@ -121,6 +136,8 @@ export type RunBinding = {
   /** The asset the run draws on; absent until a workspace run chooses or creates one. */
   assetId?: string;
   assetName?: string;
+  /** The asset's generated description; absent until the summarizer has run. */
+  summary?: string;
   /** The user's own words for this run; the Jev request check judges calls against it. */
   request?: string;
   originFrameId?: string;
@@ -244,12 +261,18 @@ export function bindRunAsset(
   if (!origin) throw new Error("That asset has no frames.");
   run.assetId = asset.id;
   run.assetName = asset.name;
+  run.summary = asset.summary;
   run.originFrameId = origin.id;
   run.currentFrameId = origin.id;
   run.frames = new Map(
     frames.map((frame) => [
       frame.id,
-      { name: frame.name, index: frame.index, buffer: cloneBuffer(frame.buffer) },
+      {
+        name: frame.name,
+        summary: frame.summary,
+        index: frame.index,
+        buffer: cloneBuffer(frame.buffer),
+      },
     ]),
   );
   run.palette = [...asset.palette];

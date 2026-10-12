@@ -1049,6 +1049,18 @@ app.post("/internal/runs", async (req, res) => {
             current: frame.id === originFrameId,
           })),
           palette: asset.palette,
+          ...(asset.projectSummary.length > 0
+            ? { projectSummary: asset.projectSummary }
+            : {}),
+          ...(asset.summary.length > 0 ? { assetSummary: asset.summary } : {}),
+          ...(originFrameId !== undefined
+            ? (() => {
+                const frame = asset.frames.find((item) => item.id === originFrameId);
+                return frame && frame.summary.length > 0
+                  ? { frameSummary: frame.summary }
+                  : {};
+              })()
+            : {}),
         }
       : {}),
     ...(body.attachments !== undefined && body.attachments.length > 0
@@ -1553,7 +1565,7 @@ async function follow(
 async function loadAsset(assetId: string, userId?: string) {
   const { assets, projects } = await import("@pixelaition/db");
   const [row] = await db
-    .select({ asset: assets, style: projects.style })
+    .select({ asset: assets, style: projects.style, projectSummary: projects.summary })
     .from(assets)
     .innerJoin(projects, eq(assets.projectId, projects.id))
     .where(
@@ -1571,9 +1583,11 @@ async function loadAsset(assetId: string, userId?: string) {
     ...row.asset,
     palette: row.asset.palette as string[],
     style: (row.style as StyleGuide) ?? defaultStyle,
+    projectSummary: row.projectSummary,
     frames: frameRows.map((frame) => ({
       id: frame.id,
       name: frame.name,
+      summary: frame.summary,
       index: frame.index,
       layers: frame.layers as Array<{
         id: string;
@@ -1953,6 +1967,7 @@ function bindWorkspaceRun(options: {
     return {
       id: asset.id,
       name: asset.name,
+      summary: asset.summary,
       width: asset.width,
       height: asset.height,
       palette: [...asset.palette],
@@ -1960,6 +1975,7 @@ function bindWorkspaceRun(options: {
       frames: framesByIndex.map((frame) => ({
         id: frame.id,
         name: frame.name,
+        summary: frame.summary,
         index: frame.index,
         buffer: frameToBuffer(frame, asset.width, asset.height, asset.palette),
       })),
@@ -1987,6 +2003,7 @@ function bindWorkspaceRun(options: {
         .select({
           id: projects.id,
           name: projects.name,
+          summary: projects.summary,
           updatedAt: projects.updatedAt,
           assetCount: count(assets.id),
         })
@@ -1998,6 +2015,7 @@ function bindWorkspaceRun(options: {
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
+        summary: row.summary,
         updatedAt: row.updatedAt.toISOString(),
         assetCount: row.assetCount,
       }));
@@ -2012,6 +2030,7 @@ function bindWorkspaceRun(options: {
         .select({
           id: assets.id,
           name: assets.name,
+          summary: assets.summary,
           width: assets.width,
           height: assets.height,
           updatedAt: assets.updatedAt,
@@ -2025,6 +2044,7 @@ function bindWorkspaceRun(options: {
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
+        summary: row.summary,
         width: row.width,
         height: row.height,
         frameCount: row.frameCount,
@@ -2033,7 +2053,7 @@ function bindWorkspaceRun(options: {
     },
     onCreateAsset: async (ownerId, input: CreateAssetInput): Promise<RunAsset> => {
       const [project] = await db
-        .select({ style: projects.style })
+        .select({ style: projects.style, summary: projects.summary })
         .from(projects)
         .where(and(eq(projects.id, input.projectId), eq(projects.userId, ownerId)));
       if (!project) throw new Error("That project is not available.");
@@ -2070,12 +2090,14 @@ function bindWorkspaceRun(options: {
         // A fresh asset has no generated summary yet; the summarizer fills it.
         summary: "",
         summaryAt: null,
+        projectSummary: project.summary,
         style: project.style as StyleGuide,
         createdAt: new Date(),
         updatedAt: new Date(),
         frames: asset.frames.map((frame) => ({
           id: frame.id,
           name: frame.name,
+          summary: "",
           index: frame.index,
           layers: frame.layers,
         })),

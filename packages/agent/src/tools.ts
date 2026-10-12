@@ -325,11 +325,13 @@ export function createPixelTools(
       return {
         assetId: run.assetId,
         name: run.assetName,
+        summary: run.summary ?? "",
         // The Map is insertion order, which the frame tools keep in index
         // order; the index still travels so the model never has to assume it.
         frames: [...run.frames].map(([id, item]) => ({
           id,
           name: item.name,
+          summary: item.summary ?? "",
           index: item.index,
         })),
         currentFrame: { id: frame.id, name: frame.name },
@@ -363,6 +365,8 @@ export function createPixelTools(
       const read = resolvePixels(frame.buffer, view, input.layerId);
       return {
         frameId: frame.id,
+        name: frame.name,
+        summary: frame.frame.summary ?? "",
         view,
         // Composite reads have no layer; an undefined key is not strict JSON.
         ...(read.layerId === undefined ? {} : { layerId: read.layerId }),

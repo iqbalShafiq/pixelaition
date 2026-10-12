@@ -226,9 +226,10 @@ function loadedAsset(): RunAsset {
     palette: [...palette],
     style: { outline: "#f4f4f4", maxColors: 12 } as never,
     frames: [
-      { id: "frame-a", name: "idle", index: 0, buffer: idleBuffer() },
-      { id: "frame-b", name: "hop", index: 1, buffer: hopBuffer() },
+      { id: "frame-a", name: "idle", summary: "", index: 0, buffer: idleBuffer() },
+      { id: "frame-b", name: "hop", summary: "", index: 1, buffer: hopBuffer() },
     ],
+    summary: "",
   };
 }
 
@@ -246,8 +247,8 @@ describe("read tools", () => {
     expect(result.assetId).toBe("asset-1");
     expect(result.name).toBe("slime");
     expect(result.frames).toEqual([
-      { id: "frame-1", name: "idle", index: 0 },
-      { id: "frame-2", name: "hop", index: 1 },
+      { id: "frame-1", name: "idle", summary: "", index: 0 },
+      { id: "frame-2", name: "hop", summary: "", index: 1 },
     ]);
     expect(result.currentFrame).toEqual({ id: "frame-1", name: "idle" });
     expect(result.palette).toHaveLength(12);
@@ -376,6 +377,24 @@ describe("read tools", () => {
       { operationId: "run-1" },
     );
     expect(normalizeToolResultOutput(region).type).toBe("json");
+    releaseRun("run-1");
+  });
+
+  it("returns the asset and frame summaries from the binding", async () => {
+    boundRun();
+    const run = getRun("run-1")!;
+    run.summary = "a red potion with a cork";
+    run.frames.get("frame-1")!.summary = "a red potion on transparent";
+    const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
+      summary?: string;
+      frames: Array<{ summary?: string }>;
+    };
+    expect(project.summary).toBe("a red potion with a cork");
+    expect(project.frames[0]?.summary).toBe("a red potion on transparent");
+    const frame = (await tool("read_frame").call({}, { operationId: "run-1" })) as {
+      summary?: string;
+    };
+    expect(frame.summary).toBe("a red potion on transparent");
     releaseRun("run-1");
   });
 });
@@ -1239,6 +1258,7 @@ describe("workspace tools", () => {
           {
             id: "project-1",
             name: "Pixelaition",
+            summary: "pixel assets",
             updatedAt: "2026-10-11T00:00:00.000Z",
             assetCount: 2,
           },
@@ -1250,6 +1270,7 @@ describe("workspace tools", () => {
           {
             id: "asset-2",
             name: "slime",
+            summary: "a green slime",
             width: 32,
             height: 32,
             frameCount: 4,
@@ -1262,6 +1283,7 @@ describe("workspace tools", () => {
       {
         id: "project-1",
         name: "Pixelaition",
+        summary: "pixel assets",
         updatedAt: "2026-10-11T00:00:00.000Z",
         assetCount: 2,
       },
@@ -1277,6 +1299,7 @@ describe("workspace tools", () => {
         name: "slime",
         width: 32,
         height: 32,
+        summary: "a green slime",
         frameCount: 4,
         updatedAt: "2026-10-11T00:00:00.000Z",
       },

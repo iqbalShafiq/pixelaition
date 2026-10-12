@@ -72,4 +72,26 @@ describe("buildRunPrompt", () => {
     expect(prompt).not.toContain("Frames:");
     expect(prompt).not.toContain("Palette:");
   });
+
+  it("carries project, asset, and frame summaries when present", () => {
+    const prompt = buildRunPrompt({
+      prompt: "make it walk",
+      style: {},
+      frameName: "idle",
+      projectSummary: "fantasy items",
+      assetSummary: "a red potion with a cork",
+      frameSummary: "a red potion on a transparent background",
+      recent: [],
+    });
+    expect(prompt).toContain("Project: fantasy items");
+    expect(prompt).toContain("Asset: a red potion with a cork");
+    expect(prompt).toContain("Frame summary: a red potion on a transparent background");
+  });
+
+  it("omits absent summaries entirely", () => {
+    const prompt = buildRunPrompt({ prompt: "draw", style: {}, recent: [] });
+    expect(prompt).not.toContain("Project:");
+    expect(prompt).not.toContain("Asset:");
+    expect(prompt).not.toContain("Frame summary:");
+  });
 });
