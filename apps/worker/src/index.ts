@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
+import { createQuestionTool } from "@anvia/core/tool";
 import type { AgentPrompt } from "@anvia/core/agent";
 import type { AgentGenerationEndArgs, AgentObserver } from "@anvia/core/observability";
 import {
@@ -525,6 +526,7 @@ const ASK_TOOL_NAMES = new Set([
   "think",
   "web_search",
   "view_image",
+  "ask_user",
 ]);
 
 const observability = {
@@ -541,7 +543,10 @@ const observability = {
 // chose. The ask agent shares the model and context but cannot paint; each
 // entry keeps its tool list so the recovery map matches exactly.
 const agents = completions.flatMap(({ spec, model }) => {
-  const drawingTools = createPixelTools({ vision: spec.vision, webSearch });
+  const drawingTools = [
+    ...createPixelTools({ vision: spec.vision, webSearch }),
+    createQuestionTool(),
+  ];
   const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
   return spec.efforts.flatMap((effort) => [
     {
@@ -851,6 +856,9 @@ function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
     // A repeated search or image fetch is a read: safe to replay.
     web_search: "safe" as const,
     view_image: "safe" as const,
+    // A question is a suspension the runtime persists and resumes; a replay
+    // after recovery re-publishes the card rather than asking twice.
+    ask_user: "safe" as const,
     use_frame: "safe" as const,
     think: "safe" as const,
     list_projects: "safe" as const,
@@ -1012,6 +1020,7 @@ app.post("/internal/runs", async (req, res) => {
   let originFrameId: string | undefined;
   let frameName: string | undefined;
   let style: StyleGuide;
+  let projectSummary: string | undefined;
   let recent: RecentRun[];
   if (body.scope === "workspace") {
     const projectId = body.projectId;
@@ -1020,6 +1029,7 @@ app.post("/internal/runs", async (req, res) => {
     const project = await loadProject(projectId);
     if (!project) return res.status(404).json({ message: "Project was not found." });
     style = project.style;
+    projectSummary = project.summary;
     recent = await recentRuns({ projectId });
   } else {
     const assetId = body.assetId;
@@ -1062,6 +1072,9 @@ app.post("/internal/runs", async (req, res) => {
               })()
             : {}),
         }
+      : {}),
+    ...(projectSummary !== undefined && projectSummary.length > 0
+      ? { projectSummary }
       : {}),
     ...(body.attachments !== undefined && body.attachments.length > 0
       ? { attachments: body.attachments.length }
@@ -1604,11 +1617,11 @@ type LoadedAsset = NonNullable<Awaited<ReturnType<typeof loadAsset>>>;
 /** The style guide a workspace run draws under, read from its project. */
 async function loadProject(projectId: string) {
   const [row] = await db
-    .select({ style: projects.style })
+    .select({ style: projects.style, summary: projects.summary, name: projects.name })
     .from(projects)
     .where(eq(projects.id, projectId));
   if (!row) return undefined;
-  return { style: row.style as StyleGuide };
+  return { style: row.style as StyleGuide, summary: row.summary, name: row.name };
 }
 
 /**
