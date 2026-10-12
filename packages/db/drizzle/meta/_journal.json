@@ -85,6 +85,13 @@
       "when": 1791778758212,
       "tag": "0011_opencode_go_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791791669938,
+      "tag": "0012_entity_summaries",
+      "breakpoints": true
     }
   ]
 }

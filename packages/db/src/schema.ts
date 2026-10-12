@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -88,6 +89,9 @@ export const projects = pgTable("projects", {
     .references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  /** Generated, read-only: what this project holds, for decisions and prompts. */
+  summary: text("summary").notNull().default(""),
+  summaryAt: timestamp("summary_at", { withTimezone: true }),
   style: jsonb("style").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -99,6 +103,9 @@ export const assets = pgTable("assets", {
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  /** Generated, read-only: what this asset depicts. */
+  summary: text("summary").notNull().default(""),
+  summaryAt: timestamp("summary_at", { withTimezone: true }),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   palette: jsonb("palette").notNull(),
@@ -114,6 +121,9 @@ export const frames = pgTable(
       .notNull()
       .references(() => assets.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /** Generated, read-only: what this frame shows. */
+    summary: text("summary").notNull().default(""),
+    summaryAt: timestamp("summary_at", { withTimezone: true }),
     index: integer("index").notNull(),
     layers: jsonb("layers").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -121,6 +131,29 @@ export const frames = pgTable(
   },
   (table) => [uniqueIndex("frames_asset_index").on(table.assetId, table.index)],
 );
+
+/**
+ * A home prompt's decision, held between the proposal response and the
+ * explicit confirm: the guardrail and Jev spend happens once, and the run
+ * starts only from a consumed proposal.
+ */
+export const runProposals = pgTable("run_proposals", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  intent: text("intent").notNull(),
+  projectId: text("project_id"),
+  assetId: text("asset_id"),
+  projectConfidence: real("project_confidence"),
+  assetConfidence: real("asset_confidence"),
+  guardrail: jsonb("guardrail"),
+  decision: jsonb("decision"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+});
 
 export type VersionScope = "frame" | "asset";
 export type VersionAuthor = "user" | "agent";
