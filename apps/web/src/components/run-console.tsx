@@ -77,6 +77,7 @@ export type HistoryRun = {
   status: string;
   prompt: string | null;
   answer: string | null;
+  usage?: { cost?: number } | null;
   durationMs: number | null;
 };
 
@@ -305,6 +306,9 @@ export function RunConsole({
                     <p className="truncate text-ink" title={item.answer ?? ""}>
                       <span className="text-accent">agent</span>{" "}
                       {item.answer ?? item.status}
+                      {typeof item.usage?.cost === "number" && item.usage.cost > 0
+                        ? ` · ${formatCost(item.usage.cost)}`
+                        : ""}
                     </p>
                   </li>
                 ))}
