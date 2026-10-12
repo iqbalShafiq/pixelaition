@@ -111,7 +111,16 @@ const decisionSuite: Suite = {
       input: "another state where the knight attacks",
       expected: "variant",
       ok: exact("variant"),
-      context: { frames: ["idle"], frameName: "idle" },
+      context: {
+        asset: {
+          name: "knight",
+          width: 32,
+          height: 32,
+          palette: ["#00000000", "#1a1c2c", "#f4f4f4", "#ef7d57"],
+        },
+        frames: ["idle"],
+        frameName: "idle",
+      },
     },
     { label: "new sword", input: "a 32x32 sword", expected: "draw", ok: exact("draw") },
     {

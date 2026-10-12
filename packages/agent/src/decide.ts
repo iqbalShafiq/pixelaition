@@ -63,9 +63,9 @@ const jevQuestions: Record<string, JevQuestion> = {
   actionable: {
     type: "noul",
     instructions:
-      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present; attached reference images count as saying what to change. For a request that draws something new, answer yes.",
+      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. A variant that names the state, direction, or action to add — even as a short noun phrase — says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present; attached reference images count as saying what to change. For a request that draws something new, answer yes.",
     criteria: {
-      true: "An edit or variant says what to change, directly, by referring to `history`, or with attached reference images, or the request does not edit existing art.",
+      true: "An edit or variant says what to change, directly, by naming the state or action to add, by referring to `history`, or with attached reference images, or the request does not edit existing art.",
       false:
         "It asks to change existing art but does not say what to change, even with `history` as context.",
     },
