@@ -525,7 +525,10 @@ export function EditorScreen() {
             setMessage(
               data.status === "completed"
                 ? ""
-                : (data.error ?? `The run ${data.status ?? "finished"}.`),
+                : (data.error ??
+                    (data.status === "cancelled"
+                      ? "The run was cancelled."
+                      : `The run ${data.status ?? "finished"}.`)),
             );
             setPendingInteraction(null);
             cancelRejoin();

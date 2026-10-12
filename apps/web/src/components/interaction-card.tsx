@@ -266,7 +266,7 @@ function ApprovalBody({
           Continue
         </Button>
         <Button tone="danger" disabled={busy} onClick={() => void submit(false)}>
-          Cancel run
+          {plan ? "Deny plan" : "Deny call"}
         </Button>
         {empty ? (
           <span className="text-pixel-mono text-erase">keep at least one frame</span>
