@@ -7,24 +7,34 @@
  * Run with `pnpm eval:jev` (root), which injects the root `.env`.
  */
 import { createBuffer, defaultStyle } from "@pixelaition/pixel";
+import { randomUUID } from "node:crypto";
 import { decidePrompt } from "../decide.js";
 import { gateToolCall } from "../gate.js";
 import { screenInput, screenOutput } from "../guardrails.js";
+import { openCodeGoHeaders } from "../models.js";
 import { bindRun, type RunBinding } from "../runs.js";
 
-const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-const jevModel = process.env.JEV_MODEL?.trim();
-const baseUrl = process.env.OPENROUTER_BASE_URL?.trim();
-const baselineModel =
-  process.env.EVAL_BASELINE_MODEL?.trim() ?? "meta/muse-spark-1.3-contributor";
+const apiKey = process.env.DECISION_MODEL_API_KEY?.trim();
+const jevModel = process.env.DECISION_MODEL?.trim();
+const baseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
+const agentKey = process.env.AGENT_API_KEY?.trim();
+const agentBaseUrl = process.env.AGENT_BASE_URL?.trim();
+const baselineModel = process.env.EVAL_BASELINE_MODEL?.trim() ?? "deepseek-v4.1-flash";
 if (!apiKey || !jevModel || !baseUrl) {
-  console.error("OPENROUTER_API_KEY, JEV_MODEL, and OPENROUTER_BASE_URL are required.");
+  console.error(
+    "DECISION_MODEL_API_KEY, DECISION_MODEL, and DECISION_MODEL_BASE_URL are required.",
+  );
+  process.exit(1);
+}
+if (!agentKey || !agentBaseUrl) {
+  console.error("AGENT_API_KEY and AGENT_BASE_URL are required for the baseline.");
   process.exit(1);
 }
 let observedCost = 0;
 const env = {
   apiKey,
   model: jevModel,
+  baseUrl,
   onCall: (call: { cost?: number }) => {
     observedCost = call.cost ?? 0;
   },
@@ -54,7 +64,7 @@ const decisionSuite: Suite = {
   name: "decisions (intent)",
   jev: async (sample) => (await decidePrompt(sample.input, env)).intent,
   baselinePrompt:
-    'You classify pixel-art requests. Answer with JSON only: {"intent":"draw"|"edit"|"variant"|"clarify"}. draw = a new sprite from scratch; edit = change pixels of the current frame; variant = another state, direction, or action of an existing frame; clarify = too vague to draw.',
+    'You classify pixel-art requests. Answer with JSON only: {"intent":"draw"|"edit"|"variant"|"ask"}. draw = a new sprite from scratch; edit = change pixels of the current frame; variant = another state, direction, or action of an existing frame; ask = a question, a remark, or anything that needs a reply instead of a drawing.',
   samples: [
     {
       label: "new potion",
@@ -100,16 +110,28 @@ const decisionSuite: Suite = {
     },
     { label: "new sword", input: "a 32x32 sword", expected: "draw", ok: exact("draw") },
     {
+      label: "question",
+      input: "what colors does the slime use right now?",
+      expected: "ask",
+      ok: exact("ask"),
+    },
+    {
+      label: "advice",
+      input: "what should I draw next for this character?",
+      expected: "ask",
+      ok: exact("ask"),
+    },
+    {
       label: "too vague",
       input: "draw something",
-      expected: "clarify",
-      ok: exact("clarify"),
+      expected: "ask",
+      ok: exact("ask"),
     },
     {
       label: "no subject",
       input: "make an animation",
-      expected: "clarify",
-      ok: exact("clarify"),
+      expected: "ask",
+      ok: exact("ask"),
     },
   ],
 };
@@ -322,9 +344,14 @@ async function measureJev(suite: Suite): Promise<Measurement> {
 }
 
 async function askBaseline(suite: Suite, prompt: string): Promise<string> {
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const headers = openCodeGoHeaders(agentBaseUrl, randomUUID()) ?? {};
+  const response = await fetch(`${agentBaseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    headers: {
+      authorization: `Bearer ${agentKey}`,
+      "content-type": "application/json",
+      ...headers,
+    },
     body: JSON.stringify({
       model: baselineModel,
       reasoning_effort: "low",

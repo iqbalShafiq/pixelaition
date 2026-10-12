@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
 import type { AgentGenerationEndArgs, AgentObserver } from "@anvia/core/observability";
@@ -17,11 +18,13 @@ import {
   defineCompletionModelControls,
 } from "@anvia/core/completion";
 import {
+  askInstructions,
   bindRun,
   clearGateOutcomes,
   createPixelTools,
   getRun,
   LangfuseTelemetry,
+  openCodeGoHeaders,
   parseModelSpecRow,
   pixelInstructions,
   releaseRun,
@@ -390,8 +393,9 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
   const started = Date.now();
   try {
     const report = await screenOutput(text, {
-      apiKey: process.env.OPENROUTER_API_KEY,
-      model: process.env.JEV_MODEL,
+      apiKey: process.env.DECISION_MODEL_API_KEY,
+      model: process.env.DECISION_MODEL,
+      baseUrl: process.env.DECISION_MODEL_BASE_URL,
     });
     recordJevUsage(durableRunId, report.usage);
     void telemetry?.recordRunSpan({
@@ -406,7 +410,7 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
         hazards: report.hazards,
         severity: report.severity,
       }),
-      model: process.env.JEV_MODEL,
+      model: process.env.DECISION_MODEL,
       ...(report.usage !== undefined ? { usage: { ...report.usage } } : {}),
       ...(report.action !== "pass"
         ? { level: "WARNING" as const, statusMessage: report.reason }
@@ -431,7 +435,7 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
       endMs: Date.now(),
       input: text.slice(0, 1000),
       output: JSON.stringify({ action: "unscreened" }),
-      model: process.env.JEV_MODEL,
+      model: process.env.DECISION_MODEL,
       level: "ERROR",
       statusMessage: boundedReason(reason),
     });
@@ -445,8 +449,12 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
   }
 }
 
-const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? "";
-const baseUrl = process.env.OPENROUTER_BASE_URL?.trim();
+const apiKey = process.env.AGENT_API_KEY?.trim() ?? "";
+const baseUrl = process.env.AGENT_BASE_URL?.trim();
+// The agent provider asks every client to identify itself and keep a stable
+// session so it can route one conversation to the same upstream and keep its
+// prompt cache warm; requests without the session header may start failing.
+const headers = openCodeGoHeaders(baseUrl, randomUUID());
 const openai = apiKey
   ? new OpenAIClient({
       // Anvia builds its SDK client with zero retries; one transient 429 in
@@ -455,6 +463,7 @@ const openai = apiKey
       client: new OpenAI({
         apiKey,
         ...(baseUrl ? { baseURL: baseUrl } : {}),
+        ...(headers ? { defaultHeaders: headers } : {}),
         maxRetries: 2,
       }),
     })
@@ -491,34 +500,66 @@ const completions = openai
 
 const observer = telemetry?.observer();
 
+/** Read-only tools the asking-only agent may use: it answers, never paints. */
+const ASK_TOOL_NAMES = new Set([
+  "read_project",
+  "read_frame",
+  "read_region",
+  "list_projects",
+  "list_assets",
+  "use_asset",
+  "think",
+]);
+
+const observability = {
+  observers: {
+    usage: usageObserver(undefined),
+    ...(observer ? { langfuse: observer } : {}),
+  },
+  primaryTrace: observer ? "langfuse" : "usage",
+  errorPolicy: "ignore" as const,
+};
+
 // Durable submits carry no model controls, so one agent is registered per
-// model and reasoning effort and the run picks the pair the composer chose.
+// model, reasoning effort, and mode and the run picks the trio the decision
+// chose. The ask agent shares the model and context but cannot paint.
 const agents = completions.flatMap(({ spec, model }) =>
-  spec.efforts.map((effort) => ({
-    id: `${agentPrefix}:${spec.id}:${effort}`,
-    vision: spec.vision,
-    agent: new Agent({
+  spec.efforts.flatMap((effort) => [
+    {
       id: `${agentPrefix}:${spec.id}:${effort}`,
-      model,
-      instructions: pixelInstructions,
-      tools: createPixelTools({ vision: spec.vision }),
-      maxTurns: 60,
-      controls: { reasoningEffort: effort },
-      observability: {
-        observers: {
-          usage: usageObserver(undefined),
-          ...(observer ? { langfuse: observer } : {}),
-        },
-        primaryTrace: observer ? "langfuse" : "usage",
-        errorPolicy: "ignore" as const,
-      },
-    }),
-  })),
+      vision: spec.vision,
+      agent: new Agent({
+        id: `${agentPrefix}:${spec.id}:${effort}`,
+        model,
+        instructions: pixelInstructions,
+        tools: createPixelTools({ vision: spec.vision }),
+        maxTurns: 60,
+        controls: { reasoningEffort: effort },
+        observability,
+      }),
+    },
+    {
+      id: `${agentPrefix}:ask:${spec.id}:${effort}`,
+      vision: spec.vision,
+      agent: new Agent({
+        id: `${agentPrefix}:ask:${spec.id}:${effort}`,
+        model,
+        instructions: askInstructions,
+        tools: createPixelTools({ vision: spec.vision }).filter((tool) =>
+          ASK_TOOL_NAMES.has(tool.name),
+        ),
+        maxTurns: 8,
+        controls: { reasoningEffort: effort },
+        observability,
+      }),
+    },
+  ]),
 );
 
-function agentForTarget(target: RunTarget): Agent | undefined {
+function agentForTarget(target: RunTarget, mode: "draw" | "ask"): Agent | undefined {
+  const prefix = mode === "ask" ? `${agentPrefix}:ask` : agentPrefix;
   return agents.find(
-    (entry) => entry.id === `${agentPrefix}:${target.modelId}:${target.effort}`,
+    (entry) => entry.id === `${prefix}:${target.modelId}:${target.effort}`,
   )?.agent;
 }
 
@@ -659,6 +700,8 @@ app.post("/internal/runs", async (req, res) => {
       reasoningEffort: z.string(),
       userId: z.string(),
       threadId: z.string(),
+      // The decision chooses the mode; the run picks the matching agent.
+      mode: z.enum(["draw", "ask"]).default("draw"),
       // What the API's decision and guardrail calls already spent; the run's
       // usage starts from these totals.
       usage: z
@@ -680,9 +723,9 @@ app.post("/internal/runs", async (req, res) => {
       message: `Unknown model or effort: ${body.modelId} / ${body.reasoningEffort}.`,
     });
   }
-  const chosen = agentForTarget(target);
+  const chosen = agentForTarget(target, body.mode);
   if (!chosen || !openai)
-    return res.status(503).json({ message: "Add OPENROUTER_API_KEY to generate." });
+    return res.status(503).json({ message: "Add AGENT_API_KEY to generate." });
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
 
@@ -719,7 +762,7 @@ app.post("/internal/runs", async (req, res) => {
   }
 
   const run = await runtime.submit({
-    agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
+    agentId: `${agentPrefix}${body.mode === "ask" ? ":ask" : ""}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
     prompt: buildRunPrompt({
@@ -742,6 +785,7 @@ app.post("/internal/runs", async (req, res) => {
       ...(body.projectId ? { projectId: body.projectId } : {}),
       modelId: target.modelId,
       reasoningEffort: target.effort,
+      mode: body.mode,
     },
   });
   if (asset && originFrameId) {

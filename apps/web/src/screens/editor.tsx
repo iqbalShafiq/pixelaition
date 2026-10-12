@@ -1017,18 +1017,8 @@ export function EditorScreen() {
         // Nothing was lost: the prompt comes back for a retry.
         if (textOverride === undefined) setPrompt(text);
         const message = reason instanceof Error ? reason.message : "Generation failed.";
-        const code =
-          reason instanceof Error
-            ? (reason as Error & { code?: string }).code
-            : undefined;
-        if (code === "PROMPT_NEEDS_DETAIL") {
-          // The agent is asking a question, not failing: show it as its reply
-          // and keep the prompt for editing instead of raising an error.
-          setMessage(message);
-        } else {
-          setError(message);
-          notify({ title: "Could not start the run", description: message });
-        }
+        setError(message);
+        notify({ title: "Could not start the run", description: message });
       }
     });
   }

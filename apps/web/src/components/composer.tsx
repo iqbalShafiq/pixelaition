@@ -80,7 +80,7 @@ export function Composer({
             ? "Starting the run…"
             : running
               ? "The agent is working — type a follow-up to queue it"
-              : "Describe the pixel asset, or ask for another state of this frame"
+              : "Describe the pixel asset, ask a question, or request another state of this frame"
         }
         className="min-h-[2.75rem] px-3 py-2.5"
         onKeyDown={(event) => {
@@ -114,7 +114,7 @@ export function Composer({
           <span className="text-pixel-mono text-muted">{blockedReason}</span>
         ) : !modelReady ? (
           <span className="text-pixel-mono text-muted">
-            OPENROUTER_API_KEY is missing on the server
+            AGENT_API_KEY is missing on the server
           </span>
         ) : noCatalog ? (
           <span className="text-pixel-mono text-muted">the model catalog is empty</span>
@@ -145,7 +145,7 @@ export function Composer({
               onClick={onGenerate}
               disabled={!hasText || !modelReady || noCatalog || !modelId || blocked}
             >
-              Generate
+              Send
             </Button>
           )}
         </span>

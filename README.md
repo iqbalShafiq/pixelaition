@@ -28,7 +28,7 @@ pnpm dev
 
 The web app is on port 3000 and proxies `/api` to port 3001. The worker listens on port 4002. One `.env` at the repository root feeds every package through `dotenv-cli`.
 
-Set `OPENAI_BASE_URL` to an OpenAI-compatible endpoint (the sample points at OpenRouter; OpenCode Go is `https://opencode.ai/zen/go/v1`) and `OPENAI_API_KEY` to its key. The drawing models and their reasoning-effort options live in the `models` table, seeded by migrations, and the composer reads them from there. `DECISION_MODEL` is required before Generate will draw and must name a model from that table; the prompt decision is a real model call, never a local heuristic. Manual editing works without any of them. `TYPESAFE_API_KEY` turns semantic routing over to Jev instead, and `pnpm eval:judge` requires `EVAL_MODEL`.
+Set `AGENT_BASE_URL` to an OpenAI-compatible endpoint that serves the drawing models (OpenCode Go is `https://opencode.ai/zen/go/v1`; the worker sends its required session header) and `AGENT_API_KEY` to its key. The drawing models and their reasoning-effort options live in the `models` table, seeded by migrations, and the composer reads them from there. Jev, the decision model, is configured by `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, and `DECISION_MODEL_API_KEY`; it is required before a run will start, decides between drawing and answering-only, and is a real model call, never a local heuristic. Manual editing works without any of them, and `pnpm eval:judge` requires `EVAL_MODEL`.
 
 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY` turn tracing on. Leave them empty to run without telemetry. For a local Langfuse, use its official Compose file and point `LANGFUSE_BASE_URL` at that UI.
 
@@ -107,7 +107,7 @@ pnpm test
 pnpm eval
 ```
 
-`pnpm eval:judge` calls the model-judged metrics (`faithfulness`, `answerRelevancy`, `promptAlignment`, `abstention`, `llmScore`) and needs `OPENAI_API_KEY`.
+`pnpm eval:judge` calls the model-judged metrics (`faithfulness`, `answerRelevancy`, `promptAlignment`, `abstention`, `llmScore`) and needs `AGENT_API_KEY`: the judge runs on the agent provider.
 
 ## Layout
 

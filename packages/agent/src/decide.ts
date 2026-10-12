@@ -6,11 +6,10 @@ import {
   type JevQuestion,
 } from "./jev.js";
 
-export type DrawIntent = "draw" | "edit" | "variant" | "clarify";
+export type DrawIntent = "draw" | "edit" | "variant" | "ask";
 export type DrawDecision = {
   intent: DrawIntent;
   confidence: number;
-  question?: string;
   source: "jev";
 };
 
@@ -19,19 +18,24 @@ export { JevNotConfiguredError as DecisionNotConfiguredError };
 
 const intentOptions = {
   draw: "Draw a new sprite, item, or tile from scratch.",
-  edit: "Change pixels or colors that already exist on the frame, including a follow-up that corrects the previous result.",
+  edit: "Change pixels or colors that already exist, including a follow-up that corrects the previous result.",
   variant: "Produce another state, direction, or action of an existing frame.",
-  clarify: "The request is too vague, so ask one question instead of drawing.",
+  ask: "The user is asking a question, chatting about the work, or the message needs a reply instead of a drawing.",
 } as const;
 
-const clarifyQuestion =
-  "What should the pixel asset show, and about how many pixels wide should it be?";
+/** One earlier exchange, oldest first, so a follow-up reads in context. */
+export type DecisionHistoryEntry = {
+  prompt: string;
+  answer?: string;
+};
 
-/** What the last run did, so a short follow-up reads as a correction. */
+/** Everything the decision may look at besides the new message. */
 export type DecisionContext = {
-  previousPrompt?: string;
-  previousAnswer?: string;
-  assetName?: string;
+  history?: DecisionHistoryEntry[];
+  projectName?: string;
+  asset?: { name: string; width: number; height: number; palette: string[] };
+  frames?: string[];
+  frameName?: string;
 };
 
 /** The typed questions Jev answers in one parallel request. */
@@ -39,7 +43,7 @@ const jevQuestions: Record<string, JevQuestion> = {
   intent: {
     type: "choice",
     instructions:
-      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists.",
+      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists. Prefer ask when the message is a question or a remark that wants an answer, not a drawing.",
     criteria: intentOptions,
   },
   // Two speculative specificity questions run in parallel; code picks the one
@@ -58,19 +62,19 @@ const jevQuestions: Record<string, JevQuestion> = {
   actionable: {
     type: "noul",
     instructions:
-      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `previous` (the last request and its result) — for example, 'it's not blue though' says what to change. Use `previous` whenever it is present. For a request that draws something new, answer yes.",
+      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present. For a request that draws something new, answer yes.",
     criteria: {
-      true: "An edit or variant says what to change, directly or by referring to `previous`, or the request does not edit existing art.",
+      true: "An edit or variant says what to change, directly or by referring to `history`, or the request does not edit existing art.",
       false:
-        "It asks to change existing art but does not say what to change, even with `previous` as context.",
+        "It asks to change existing art but does not say what to change, even with `history` as context.",
     },
   },
 };
 
 /**
- * Jev returns typed answers, never prose, so the clarifying question is ours.
- * The chosen intent is only trusted when its own specificity question agrees:
- * a drawing needs `drawable`, an edit or variant needs `actionable`.
+ * Jev returns typed answers, never prose. The chosen intent is only trusted
+ * when its own specificity question agrees: a drawing needs `drawable`, an
+ * edit or variant needs `actionable`, and an ask needs neither.
  */
 export function toDecision(answers: {
   intent: JevAnswer;
@@ -79,15 +83,17 @@ export function toDecision(answers: {
 }): DrawDecision {
   const chosen = answers.intent.choice;
   const intent =
-    chosen === undefined || chosen === "clarify" || !(chosen in intentOptions)
-      ? "clarify"
-      : (chosen as DrawIntent);
+    chosen === undefined || !(chosen in intentOptions) ? "ask" : (chosen as DrawIntent);
+  if (intent === "ask") {
+    return { intent, confidence: answers.intent.confidence ?? 0.5, source: "jev" };
+  }
   const drawable = answers.drawable.noul ?? 0;
   const actionable = answers.actionable.noul ?? 0;
   const support = intent === "draw" ? drawable : actionable;
   const confidence = Math.min(answers.intent.confidence ?? support, support);
-  if (intent === "clarify" || support < 0.7) {
-    return { intent: "clarify", confidence, question: clarifyQuestion, source: "jev" };
+  if (support < 0.7) {
+    // A vague draw request is a conversational turn: the agent asks back.
+    return { intent: "ask", confidence, source: "jev" };
   }
   return { intent, confidence, source: "jev" };
 }
@@ -97,22 +103,18 @@ export async function decidePrompt(
   env: JevEnv,
   context: DecisionContext = {},
 ): Promise<DrawDecision> {
-  const previous =
-    context.previousPrompt !== undefined || context.previousAnswer !== undefined
-      ? {
-          ...(context.previousPrompt !== undefined
-            ? { prompt: context.previousPrompt }
-            : {}),
-          ...(context.previousAnswer !== undefined
-            ? { answer: context.previousAnswer }
-            : {}),
-        }
-      : undefined;
   const { answers } = await askJev(
     {
       prompt,
-      ...(previous !== undefined ? { previous } : {}),
-      ...(context.assetName !== undefined ? { asset: { name: context.assetName } } : {}),
+      ...(context.history !== undefined && context.history.length > 0
+        ? { history: context.history }
+        : {}),
+      ...(context.projectName !== undefined
+        ? { project: { name: context.projectName } }
+        : {}),
+      ...(context.asset !== undefined ? { asset: context.asset } : {}),
+      ...(context.frames !== undefined ? { frames: context.frames } : {}),
+      ...(context.frameName !== undefined ? { frame: { name: context.frameName } } : {}),
     },
     jevQuestions,
     env,

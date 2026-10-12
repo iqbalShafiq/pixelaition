@@ -124,8 +124,9 @@ async function approval(
 
 /** Stub Jev's Decisions API so both request-check answers land on `noul`. */
 function stubJev(noul: number): void {
-  process.env.OPENROUTER_API_KEY = "test-key";
-  process.env.JEV_MODEL = "typesafe/jev-1.13";
+  process.env.DECISION_MODEL_API_KEY = "test-key";
+  process.env.DECISION_MODEL = "typesafe/jev-1.13";
+  process.env.DECISION_MODEL_BASE_URL = "https://decisions.test";
   vi.stubGlobal(
     "fetch",
     async () =>
@@ -144,8 +145,9 @@ function stubJev(noul: number): void {
 /** The gate reads the process env; leave the suite's env as it found it. */
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete process.env.OPENROUTER_API_KEY;
-  delete process.env.JEV_MODEL;
+  delete process.env.DECISION_MODEL_API_KEY;
+  delete process.env.DECISION_MODEL;
+  delete process.env.DECISION_MODEL_BASE_URL;
 });
 
 /**

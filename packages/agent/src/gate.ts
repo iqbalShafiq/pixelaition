@@ -193,8 +193,9 @@ export async function gateToolCall(
   };
   const started = Date.now();
   const { answers, usage, model } = await askJev(state, config.questions, {
-    apiKey: process.env.OPENROUTER_API_KEY,
-    model: process.env.JEV_MODEL,
+    apiKey: process.env.DECISION_MODEL_API_KEY,
+    model: process.env.DECISION_MODEL,
+    baseUrl: process.env.DECISION_MODEL_BASE_URL,
   });
   const checks: Record<string, number> = {};
   for (const name of Object.keys(config.questions)) {

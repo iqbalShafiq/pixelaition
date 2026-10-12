@@ -7,11 +7,13 @@ import {
   runEvalSuite,
 } from "@anvia/core/evals";
 import { OpenAIClient } from "@anvia/openai";
+import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
+import { openCodeGoHeaders } from "../models.js";
 
-const key = process.env.OPENROUTER_API_KEY?.trim();
+const key = process.env.AGENT_API_KEY?.trim();
 if (!key) {
-  console.error("OPENROUTER_API_KEY is required for judge evaluations.");
+  console.error("AGENT_API_KEY is required for judge evaluations.");
   process.exit(1);
 }
 
@@ -23,12 +25,14 @@ if (!evalModelId) {
   process.exit(1);
 }
 
-const evalBaseUrl = process.env.OPENROUTER_BASE_URL?.trim();
+const evalBaseUrl = process.env.AGENT_BASE_URL?.trim();
+const headers = openCodeGoHeaders(evalBaseUrl, randomUUID());
 const model = new OpenAIClient({
   // Same retry posture as the worker: the judge must not fail on one 429.
   client: new OpenAI({
     apiKey: key,
     ...(evalBaseUrl ? { baseURL: evalBaseUrl } : {}),
+    ...(headers ? { defaultHeaders: headers } : {}),
     maxRetries: 2,
   }),
 }).completionModel({

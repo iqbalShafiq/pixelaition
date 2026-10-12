@@ -2,8 +2,9 @@
 import { screenInput, screenOutput } from "@pixelaition/agent";
 
 const env = {
-  apiKey: process.env.OPENROUTER_API_KEY,
-  model: process.env.JEV_MODEL,
+  apiKey: process.env.DECISION_MODEL_API_KEY,
+  model: process.env.DECISION_MODEL,
+  baseUrl: process.env.DECISION_MODEL_BASE_URL,
 };
 
 const inputs: Array<[string, string]> = [

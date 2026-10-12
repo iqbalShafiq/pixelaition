@@ -49,6 +49,7 @@ describe("jev guardrails", () => {
     const report = await screenInput("draw an explicit nude portrait", {
       apiKey: "test-key",
       model: "typesafe/jev-1.13",
+      baseUrl: "https://decisions.test",
     });
     expect(report.action).toBe("block");
     expect(report.top).toEqual({ hazard: "sexual_content", probability: 0.96 });
@@ -58,7 +59,7 @@ describe("jev guardrails", () => {
 
   it("refuses to screen without a configured key", async () => {
     await expect(screenOutput("done", {})).rejects.toThrow(
-      "Set OPENROUTER_API_KEY and JEV_MODEL",
+      "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY",
     );
   });
 });

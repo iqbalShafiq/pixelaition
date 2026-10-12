@@ -12,8 +12,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       message?: string;
       code?: string;
     } | null;
-    // The code lets callers tell a refusal from a question (a clarify is the
-    // agent asking, not a failure).
+    // The code lets callers tell a named refusal (policy, unconfigured) from
+    // a generic failure.
     const error = new Error(
       body?.message ?? `Request failed (${response.status})`,
     ) as Error & { code?: string };

@@ -2,16 +2,17 @@ import { z } from "zod";
 
 /**
  * The one transport every Jev call goes through. Jev is a System One decision
- * model served by OpenRouter's Decisions API, not the OpenAI-compatible chat
- * endpoints: it answers typed questions about a state and never generates
- * prose. One OpenRouter key authenticates every call.
+ * model served by a Decisions API: the base URL comes from
+ * `DECISION_MODEL_BASE_URL` and the `/alpha/decisions` path is appended, so a
+ * different decision provider is a .env change. One key authenticates it.
  */
-export const JEV_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions";
 
 /** Generation refuses to start until Jev is configured. */
 export class JevNotConfiguredError extends Error {
   constructor() {
-    super("Set OPENROUTER_API_KEY and JEV_MODEL before generating.");
+    super(
+      "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY before generating.",
+    );
     this.name = "JevNotConfiguredError";
   }
 }
@@ -19,7 +20,9 @@ export class JevNotConfiguredError extends Error {
 export type JevEnv = {
   apiKey?: string | undefined;
   model?: string | undefined;
-  /** Test seam; production always uses the OpenRouter Decisions endpoint. */
+  /** The provider's API root; the Decisions path is appended to it. */
+  baseUrl?: string | undefined;
+  /** Test seam; production derives the URL from `baseUrl`. */
   decisionsUrl?: string | undefined;
   /** Called once per successful request with its usage, for telemetry. */
   onCall?: ((call: { model: string; latencyMs: number } & JevUsage) => void) | undefined;
@@ -78,9 +81,11 @@ export async function askJev(
 ): Promise<{ answers: Record<string, JevAnswer>; usage: JevUsage; model: string }> {
   const apiKey = env.apiKey?.trim();
   const model = env.model?.trim();
-  if (!apiKey || !model) throw new JevNotConfiguredError();
+  const baseUrl = env.baseUrl?.replace(/\/$/, "");
+  const url = env.decisionsUrl ?? (baseUrl ? `${baseUrl}/alpha/decisions` : undefined);
+  if (!apiKey || !model || !url) throw new JevNotConfiguredError();
   const started = Date.now();
-  const response = await fetch(env.decisionsUrl ?? JEV_DECISIONS_URL, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       authorization: `Bearer ${apiKey}`,

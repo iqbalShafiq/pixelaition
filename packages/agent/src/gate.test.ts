@@ -14,14 +14,17 @@ const run: RunBinding = {
   issues: [],
 };
 
-const savedKey = process.env.OPENROUTER_API_KEY;
-const savedModel = process.env.JEV_MODEL;
+const savedKey = process.env.DECISION_MODEL_API_KEY;
+const savedModel = process.env.DECISION_MODEL;
+const savedBaseUrl = process.env.DECISION_MODEL_BASE_URL;
 
 afterEach(() => {
-  if (savedKey === undefined) delete process.env.OPENROUTER_API_KEY;
-  else process.env.OPENROUTER_API_KEY = savedKey;
-  if (savedModel === undefined) delete process.env.JEV_MODEL;
-  else process.env.JEV_MODEL = savedModel;
+  if (savedKey === undefined) delete process.env.DECISION_MODEL_API_KEY;
+  else process.env.DECISION_MODEL_API_KEY = savedKey;
+  if (savedModel === undefined) delete process.env.DECISION_MODEL;
+  else process.env.DECISION_MODEL = savedModel;
+  if (savedBaseUrl === undefined) delete process.env.DECISION_MODEL_BASE_URL;
+  else process.env.DECISION_MODEL_BASE_URL = savedBaseUrl;
 });
 
 describe("jev tool gate", () => {
@@ -55,10 +58,11 @@ describe("jev tool gate", () => {
   });
 
   it("names the missing configuration instead of guessing", async () => {
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.JEV_MODEL;
+    delete process.env.DECISION_MODEL_API_KEY;
+    delete process.env.DECISION_MODEL;
+    delete process.env.DECISION_MODEL_BASE_URL;
     await expect(gateToolCall(run, "clear_region", { x: 0, y: 0 })).rejects.toThrow(
-      "Set OPENROUTER_API_KEY and JEV_MODEL",
+      "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY",
     );
   });
 

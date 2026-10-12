@@ -1,5 +1,10 @@
 export { DecisionNotConfiguredError, decidePrompt, toDecision } from "./decide.js";
-export type { DrawDecision, DrawIntent } from "./decide.js";
+export type {
+  DecisionContext,
+  DecisionHistoryEntry,
+  DrawDecision,
+  DrawIntent,
+} from "./decide.js";
 export {
   clearGateOutcomes,
   gateIsHarmless,
@@ -17,8 +22,8 @@ export {
 export type { GuardrailAction, GuardrailReport } from "./guardrails.js";
 export { askJev, JevNotConfiguredError } from "./jev.js";
 export type { JevAnswer, JevEnv, JevQuestion, JevUsage } from "./jev.js";
-export { pixelInstructions } from "./instructions.js";
-export { parseModelSpecRow, selectRunTarget } from "./models.js";
+export { askInstructions, pixelInstructions } from "./instructions.js";
+export { openCodeGoHeaders, parseModelSpecRow, selectRunTarget } from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";
 export {
   bindRun,

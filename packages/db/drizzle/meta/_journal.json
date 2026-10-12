@@ -78,6 +78,13 @@
       "when": 1791770545697,
       "tag": "0010_run_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791778758212,
+      "tag": "0011_opencode_go_catalog",
+      "breakpoints": true
     }
   ]
 }

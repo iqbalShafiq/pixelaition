@@ -57,3 +57,18 @@ export function selectRunTarget(
   if (!model || !model.efforts.includes(effort)) return undefined;
   return { modelId: model.id, effort };
 }
+
+/**
+ * OpenCode Go's usage guidelines ask every client to (1) identify itself with
+ * its own user agent rather than a generic SDK name and (2) send a stable
+ * session id in `x-opencode-session` for each conversation so routing and
+ * prompt caching stay warm; requests without it may start failing. Only
+ * requests to that endpoint get these headers.
+ */
+export function openCodeGoHeaders(
+  baseUrl: string | undefined,
+  sessionId: string,
+): Record<string, string> | undefined {
+  if (!baseUrl?.includes("opencode.ai")) return undefined;
+  return { "x-opencode-session": sessionId, "user-agent": "pixelaition/0.1" };
+}

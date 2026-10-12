@@ -34,27 +34,23 @@ describe("jev decisions", () => {
       }),
     ).toEqual({ intent: "variant", confidence: 0.82, source: "jev" });
 
+    // A vague draw request becomes an asking-only turn, never an error.
     expect(
       toDecision({
         intent: { choice: "draw", confidence: 0.9 },
         drawable: { noul: 0.4 },
         actionable: { noul: 0.9 },
       }),
-    ).toEqual({
-      intent: "clarify",
-      confidence: 0.4,
-      question:
-        "What should the pixel asset show, and about how many pixels wide should it be?",
-      source: "jev",
-    });
+    ).toEqual({ intent: "ask", confidence: 0.4, source: "jev" });
 
+    // A question is an ask whatever the specificity questions say.
     expect(
       toDecision({
-        intent: { choice: "clarify", confidence: 0.88 },
+        intent: { choice: "ask", confidence: 0.88 },
         drawable: { noul: 0.9 },
         actionable: { noul: 0.9 },
       }),
-    ).toMatchObject({ intent: "clarify", confidence: 0.88, source: "jev" });
+    ).toMatchObject({ intent: "ask", confidence: 0.88, source: "jev" });
 
     // An edit is judged by whether it says what to change, not by drawability.
     expect(
@@ -65,14 +61,14 @@ describe("jev decisions", () => {
       }),
     ).toEqual({ intent: "edit", confidence: 0.93, source: "jev" });
 
-    // An edit that says nothing to change is still clarified.
+    // An edit that says nothing to change turns conversational too.
     expect(
       toDecision({
         intent: { choice: "edit", confidence: 0.8 },
         drawable: { noul: 0.9 },
         actionable: { noul: 0.3 },
       }).intent,
-    ).toBe("clarify");
+    ).toBe("ask");
 
     // An answer outside the option set is not a decision to draw.
     expect(
@@ -81,10 +77,10 @@ describe("jev decisions", () => {
         drawable: { noul: 0.95 },
         actionable: { noul: 0.95 },
       }).intent,
-    ).toBe("clarify");
+    ).toBe("ask");
   });
 
-  it("carries the previous run into the request so a correction reads as an edit", async () => {
+  it("carries the thread history and asset so a correction reads as an edit", async () => {
     let sent: unknown;
     vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
       sent = JSON.parse(init.body);
@@ -101,19 +97,31 @@ describe("jev decisions", () => {
     });
     const decision = await decidePrompt(
       "it's not blue though",
-      { apiKey: "test-key", model: "typesafe/jev-1.13" },
       {
-        previousPrompt: "blue sword",
-        previousAnswer: "32x32, idle, 4 colors",
-        assetName: "sword",
+        apiKey: "test-key",
+        model: "typesafe/jev-1.13",
+        baseUrl: "https://decisions.test",
+      },
+      {
+        history: [{ prompt: "blue sword", answer: "32x32, idle, 4 colors" }],
+        asset: {
+          name: "sword",
+          width: 32,
+          height: 32,
+          palette: ["#00000000", "#38b764"],
+        },
+        frames: ["idle"],
+        frameName: "idle",
       },
     );
     expect(decision.intent).toBe("edit");
     expect(sent).toMatchObject({
       state: {
         prompt: "it's not blue though",
-        previous: { prompt: "blue sword", answer: "32x32, idle, 4 colors" },
-        asset: { name: "sword" },
+        history: [{ prompt: "blue sword", answer: "32x32, idle, 4 colors" }],
+        asset: { name: "sword", width: 32, height: 32 },
+        frames: ["idle"],
+        frame: { name: "idle" },
       },
     });
   });

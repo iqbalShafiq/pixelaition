@@ -27,6 +27,7 @@ import {
   screenInput,
   stagedOverrideSchema,
   traceIdFor,
+  type DecisionContext,
   type DrawDecision,
   type GuardrailReport,
   type ModelSpec,
@@ -179,7 +180,7 @@ export function createApp() {
     try {
       res.json({
         models: await listModels(),
-        modelReady: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+        modelReady: Boolean(process.env.AGENT_API_KEY?.trim()),
       });
     } catch (reason) {
       return fail(
@@ -528,7 +529,7 @@ export function createApp() {
       | { scope: "asset"; assetId: string; frameId: string }
       | { scope: "workspace"; projectId: string };
     /** What the run draws on, for the decision's context. */
-    let targetName: string | undefined;
+    let targetContext: DecisionContext | undefined;
     if (body.scope === "workspace") {
       const projectId = body.projectId;
       if (!projectId)
@@ -538,7 +539,7 @@ export function createApp() {
       const project = await getProjectRecord(db, userId, projectId);
       if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
       target = { scope: "workspace", projectId: project.id };
-      targetName = project.name;
+      targetContext = { projectName: project.name };
     } else {
       const assetId = body.assetId;
       const frameId = body.frameId;
@@ -554,14 +555,24 @@ export function createApp() {
       const asset = await getAssetRecord(db, userId, assetId);
       if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
       target = { scope: "asset", assetId: asset.id, frameId };
-      targetName = asset.name;
+      const originFrame = asset.frames.find((item) => item.id === frameId);
+      targetContext = {
+        asset: {
+          name: asset.name,
+          width: asset.width,
+          height: asset.height,
+          palette: asset.palette as string[],
+        },
+        frames: asset.frames.map((item) => item.name),
+        ...(originFrame ? { frameName: originFrame.name } : {}),
+      };
     }
-    if (!process.env.OPENROUTER_API_KEY?.trim()) {
+    if (!process.env.AGENT_API_KEY?.trim()) {
       return fail(
         res,
         503,
         "MODEL_UNCONFIGURED",
-        "Add OPENROUTER_API_KEY on the server to generate.",
+        "Add AGENT_API_KEY on the server to generate.",
       );
     }
     let catalog: ModelSpec[];
@@ -584,13 +595,15 @@ export function createApp() {
         "Pick a model and effort from the catalog.",
       );
     }
-    const jevModel = process.env.JEV_MODEL?.trim();
-    if (!jevModel) {
+    const decisionModel = process.env.DECISION_MODEL?.trim();
+    const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
+    const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
+    if (!decisionModel || !decisionBaseUrl || !decisionApiKey) {
       return fail(
         res,
         503,
         "DECISION_UNCONFIGURED",
-        "Set JEV_MODEL to the Jev model id before generating.",
+        "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY before generating.",
       );
     }
     const thread = await ensureThread(
@@ -607,8 +620,9 @@ export function createApp() {
     let guardrail: GuardrailReport;
     try {
       guardrail = await screenInput(body.prompt, {
-        apiKey: process.env.OPENROUTER_API_KEY,
-        model: jevModel,
+        apiKey: decisionApiKey,
+        model: decisionModel,
+        baseUrl: decisionBaseUrl,
       });
     } catch (reason) {
       if (reason instanceof JevNotConfiguredError) {
@@ -634,7 +648,7 @@ export function createApp() {
           hazards: guardrail.hazards,
           severity: guardrail.severity,
         }),
-        model: jevModel,
+        model: decisionModel,
         ...(guardrail.usage !== undefined ? { usage: { ...guardrail.usage } } : {}),
         ...(guardrail.action !== "pass"
           ? { level: "WARNING" as const, statusMessage: guardrail.reason }
@@ -667,14 +681,25 @@ export function createApp() {
         `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
       );
     }
-    // A follow-up like "it's not blue though" only reads as an edit against
-    // the last run; the decision gets that context.
-    const [previousRun] = await db
+    // The decision reads the thread's recent exchanges (a follow-up like
+    // "it's not blue though" only reads as an edit against them), plus what
+    // the run draws on: asset, frames, and the current frame.
+    const historyRows = await db
       .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
       .from(generationRuns)
       .where(eq(generationRuns.threadId, thread.id))
       .orderBy(desc(generationRuns.createdAt))
-      .limit(1);
+      .limit(4);
+    const history = historyRows.reverse().flatMap((row) =>
+      row.prompt
+        ? [
+            {
+              prompt: row.prompt,
+              ...(row.answer ? { answer: row.answer } : {}),
+            },
+          ]
+        : [],
+    );
     const decisionStarted = Date.now();
     let decided: DrawDecision;
     let decisionUsage: Record<string, number> | undefined;
@@ -682,17 +707,17 @@ export function createApp() {
       decided = await decidePrompt(
         body.prompt,
         {
-          apiKey: process.env.OPENROUTER_API_KEY,
-          model: jevModel,
+          apiKey: decisionApiKey,
+          model: decisionModel,
+          baseUrl: decisionBaseUrl,
           onCall: (call) => {
             const { model: _model, latencyMs: _latencyMs, ...usage } = call;
             decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
           },
         },
         {
-          ...(previousRun?.prompt ? { previousPrompt: previousRun.prompt } : {}),
-          ...(previousRun?.answer ? { previousAnswer: previousRun.answer } : {}),
-          ...(targetName !== undefined ? { assetName: targetName } : {}),
+          ...(history.length > 0 ? { history } : {}),
+          ...(targetContext ?? {}),
         },
       );
     } catch (reason) {
@@ -715,7 +740,7 @@ export function createApp() {
         endMs: Date.now(),
         input: body.prompt,
         output: JSON.stringify(decided),
-        model: jevModel,
+        model: decisionModel,
         ...(decisionUsage !== undefined ? { usage: decisionUsage } : {}),
       },
       {
@@ -729,14 +754,9 @@ export function createApp() {
             : { projectId: target.projectId },
       },
     );
-    if (decided.intent === "clarify") {
-      return fail(
-        res,
-        422,
-        "PROMPT_NEEDS_DETAIL",
-        decided.question ?? "Add a subject and a size.",
-      );
-    }
+    // The decision chose the mode: an ask is a conversational run that
+    // answers with the same context but no painting tools, never an error.
+    const mode = decided.intent === "ask" ? "ask" : "draw";
     const runId = await insertRun(db, {
       threadId: thread.id,
       requestId,
@@ -768,6 +788,7 @@ export function createApp() {
             requestId,
             userId,
             threadId: thread.id,
+            mode,
             // The guardrail and decision calls already spent; the run's usage
             // starts from their totals so the console shows the full cost.
             usage: {
