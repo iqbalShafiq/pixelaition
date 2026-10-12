@@ -9,6 +9,7 @@
 import { createBuffer, defaultStyle } from "@pixelaition/pixel";
 import { randomUUID } from "node:crypto";
 import { decidePrompt, type DecisionContext } from "../decide.js";
+import { decideHomeTarget, type HomeContext } from "../home.js";
 import { gateToolCall } from "../gate.js";
 import { screenInput, screenOutput } from "../guardrails.js";
 import { openCodeGoHeaders } from "../models.js";
@@ -49,6 +50,8 @@ type Sample = {
   side?: "input" | "output";
   /** Extra decision context, for fixtures that carry references. */
   context?: DecisionContext;
+  /** Home-target fixtures carry the user's library. */
+  home?: HomeContext;
 };
 
 type Suite = {
@@ -401,7 +404,10 @@ async function askBaseline(suite: Suite, prompt: string): Promise<string> {
   const match = text.match(/\{[^}]*\}/);
   if (!match) throw new Error(`baseline produced no JSON: ${text.slice(0, 80)}`);
   const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-  const value = parsed.intent ?? parsed.action ?? parsed.outcome;
+  const value =
+    typeof parsed.project === "string"
+      ? `${parsed.project}/${typeof parsed.asset === "string" ? parsed.asset : "-"}`
+      : (parsed.intent ?? parsed.action ?? parsed.outcome);
   return typeof value === "string" ? value : "unknown";
 }
 
@@ -430,7 +436,80 @@ async function measureBaseline(suite: Suite): Promise<Measurement> {
   return result;
 }
 
-const suites: Suite[] = [decisionSuite, guardrailSuite, gateSuite];
+const homeProjects = [
+  {
+    id: "p-knights",
+    name: "knights",
+    summary: "armored heroes with swords and shields",
+    assetCount: 3,
+  },
+  {
+    id: "p-potions",
+    name: "potions",
+    summary: "bottles, flasks, and alchemy items",
+    assetCount: 2,
+  },
+];
+const homeAssets = new Map([
+  [
+    "p-potions",
+    [
+      {
+        id: "a-potion-red",
+        name: "red potion",
+        summary: "a round red bottle with a cork",
+        width: 32,
+        height: 32,
+      },
+      {
+        id: "a-potion-blue",
+        name: "blue flask",
+        summary: "a tall blue flask with a stopper",
+        width: 32,
+        height: 32,
+      },
+    ],
+  ],
+]);
+const homeContext: HomeContext = { projects: homeProjects, assetsByProject: homeAssets };
+
+const homeSuite: Suite = {
+  name: "home (target)",
+  jev: async (sample) => {
+    const target = await decideHomeTarget(sample.input, env, sample.home ?? homeContext);
+    return `${target.project.id}/${target.asset?.id ?? "-"}`;
+  },
+  baselinePrompt:
+    'You route a pixel-art request to a project and asset. Projects: p-knights (knights, armored heroes with swords and shields, 3 assets); p-potions (potions, bottles, flasks, and alchemy items, 2 assets). Assets of p-potions: a-potion-red (red potion, a round red bottle with a cork); a-potion-blue (blue flask, a tall blue flask with a stopper). Answer with JSON only: {"project":"<id or new>","asset":"<id or - or new>"}. Use new only when no project fits; use - when the intent is a question rather than a drawing.',
+  samples: [
+    {
+      label: "obvious name",
+      input: "gambar botol ramuan merah 32x32",
+      expected: "p-potions/a-potion-red",
+      ok: exact("p-potions/a-potion-red"),
+    },
+    {
+      label: "summary match",
+      input: "buat sprite hero bersenjata lengkap dengan perisai",
+      expected: "p-knights/",
+      ok: (actual) => actual.startsWith("p-knights/"),
+    },
+    {
+      label: "asset by summary",
+      input: "tambahkan stopper ke botol biru tinggi itu",
+      expected: "p-potions/a-potion-blue",
+      ok: exact("p-potions/a-potion-blue"),
+    },
+    {
+      label: "new project",
+      input: "gambar pesawat luar angkasa kecil",
+      expected: "new/-",
+      ok: exact("new/-"),
+    },
+  ],
+};
+
+const suites: Suite[] = [decisionSuite, guardrailSuite, gateSuite, homeSuite];
 console.log(`Jev ${jevModel} vs baseline ${baselineModel}\n`);
 const summary: string[] = [];
 for (const suite of suites) {
