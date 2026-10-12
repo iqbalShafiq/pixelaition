@@ -206,6 +206,8 @@ export const generationRuns = pgTable("generation_runs", {
   override: jsonb("override"),
   /** Frames the user has approved for this run; survives a worker restart. */
   approvedScope: jsonb("approved_scope"),
+  /** Token counts and USD cost the run spent, model and Jev split out. */
+  usage: jsonb("usage"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });

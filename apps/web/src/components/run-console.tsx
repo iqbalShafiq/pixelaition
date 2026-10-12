@@ -57,7 +57,19 @@ const toolIcons: Record<string, ComponentType<IconProps>> = {
   plan: Checklist,
   think: Brain,
   mirror_frame: Flip,
+  follow_up: Checklist,
 };
+
+/** `$0.00042` — small costs keep five decimals; large ones keep two. */
+function formatCost(cost: number): string {
+  if (cost >= 0.01) return `$${cost.toFixed(2)}`;
+  return `$${cost.toFixed(5)}`;
+}
+
+/** `14.6k` over a thousand, otherwise the count. */
+function formatTokens(count: number): string {
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+}
 
 /** One earlier run, kept small: what was asked and what came back. */
 export type HistoryRun = {
@@ -133,6 +145,7 @@ export function RunConsole({
   const steps = rows.length;
   const lastStatus = [...rows].reverse().find((row) => row.kind === "status");
   const stateLabel = lastStatus?.kind === "status" ? lastStatus.label : "finished";
+  const usage = [...rows].reverse().find((row) => row.kind === "usage");
   const durationMs = running ? elapsed : (lastRunMs ?? restoredMs);
   const empty = !running && rows.length === 0 && !message && history.length === 0;
   // The asset a workspace run created; its row carries the editor link. The
@@ -142,14 +155,14 @@ export function RunConsole({
   const summary = interaction
     ? "waiting for your answer"
     : running
-      ? `working · ${formatDuration(elapsed)}`
+      ? `working · ${formatDuration(elapsed)}${usage && usage.cost > 0 ? ` · ${formatCost(usage.cost)}` : ""}`
       : empty
         ? "no activity yet"
         : steps === 0
           ? `${history.length} earlier run${history.length === 1 ? "" : "s"}`
           : `${steps} step${steps === 1 ? "" : "s"} · ${stateLabel}${
               durationMs !== null ? ` in ${formatDuration(durationMs)}` : ""
-            }`;
+            }${usage && usage.cost > 0 ? ` · ${formatCost(usage.cost)}` : ""}`;
 
   const rowIcon = (row: RunRow) => {
     if (row.kind === "phase") {
@@ -157,6 +170,9 @@ export function RunConsole({
     }
     if (row.kind === "asset") {
       return <Folder width={12} height={12} className="text-muted" />;
+    }
+    if (row.kind === "usage") {
+      return <Clipboard width={12} height={12} className="text-muted" />;
     }
     if (row.kind === "tool") {
       const Icon = toolIcons[row.name] ?? Wrench;
@@ -230,6 +246,15 @@ export function RunConsole({
                   </span>
                 ) : row.kind === "asset" ? (
                   <span className="text-ink">asset · {row.name}</span>
+                ) : row.kind === "usage" ? (
+                  <span
+                    className="text-ink"
+                    title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
+                  >
+                    usage · {formatCost(row.cost)}
+                    {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
+                    {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
+                  </span>
                 ) : row.kind === "tool" ? (
                   <span className={row.state === "error" ? "text-erase" : "text-ink"}>
                     {row.name}

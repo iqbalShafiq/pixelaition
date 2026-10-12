@@ -31,6 +31,17 @@ import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
+import { QueueDock } from "../components/queue-dock.js";
+import {
+  addQueuedRun,
+  nextQueuedRun,
+  readQueue,
+  removeQueuedRun,
+  removeQueuedRuns,
+  reorderQueuedRun,
+  writeQueue,
+  type QueuedRun,
+} from "../lib/run-queue.js";
 import {
   FramePanel,
   LayerPanel,
@@ -189,6 +200,21 @@ export function EditorScreen() {
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const fitted = useRef<string | null>(null);
+  // Follow-ups typed while a run works; persisted per asset, drained one by
+  // one as runs finish, and steerable into the live run on demand.
+  const [queue, setQueue] = useState<QueuedRun[]>(() => readQueue(assetId));
+  const queueRef = useRef(queue);
+  const queueAssetRef = useRef(assetId);
+  useEffect(() => {
+    if (queueAssetRef.current === assetId) {
+      writeQueue(assetId, queue);
+      return;
+    }
+    // A different asset: load its queue instead of writing this one's into it.
+    queueAssetRef.current = assetId;
+    setQueue(readQueue(assetId));
+  }, [assetId, queue]);
+  queueRef.current = queue;
 
   const frames = asset.data?.frames ?? [];
   const frame = frames.find((item) => item.id === frameId) ?? null;
@@ -564,6 +590,15 @@ export function EditorScreen() {
                   );
                 });
             }
+            // A queued follow-up starts the moment the run lands: the queue
+            // drains itself, one prompt per finished run. The effect below
+            // starts it once the running state has actually cleared.
+            const next = nextQueuedRun(queueRef.current);
+            if (next) {
+              setQueue((current) => removeQueuedRun(current, next.item.id));
+              log("Starting the next queued prompt");
+              autoFlushRef.current = next.item.text;
+            }
             return;
           }
           // Other events are already reflected in the row list above.
@@ -899,14 +934,15 @@ export function EditorScreen() {
     }
   }
 
-  async function generate() {
-    if (!frameId || running) return;
+  async function generate(textOverride?: string) {
+    const text = (textOverride ?? prompt).trim();
+    if (!frameId || running || text.length === 0) return;
     setError(null);
     setMessage("");
     setRows([]);
     setConsoleOpen(true);
     setRestoredMs(null);
-    setRunPrompt(prompt);
+    setRunPrompt(text);
     setRunHistory([]);
     // A history preview must not sit over the strokes the agent is about to draw.
     setPreview(null);
@@ -922,7 +958,7 @@ export function EditorScreen() {
         body: JSON.stringify({
           assetId,
           frameId,
-          prompt,
+          prompt: text,
           modelId,
           reasoningEffort: effort,
         }),
@@ -931,6 +967,9 @@ export function EditorScreen() {
       rememberRunModel(started.runId, modelId);
       displayedRunIdRef.current = started.runId;
       setRunFrameId(frameId);
+      // The composer clears on send, so the button falls back to Stop and the
+      // next text typed becomes a queued follow-up.
+      setPrompt("");
       log(`Run ${started.runId.slice(0, 8)} started`);
       listen(started.runId, frameId);
     } catch (reason) {
@@ -938,6 +977,58 @@ export function EditorScreen() {
       setError(text);
       notify({ title: "Could not start the run", description: text });
     }
+  }
+
+  // The SSE handlers keep a stable identity, so the auto-flush reaches the
+  // latest generate through a ref instead of a stale closure.
+  const generateRef = useRef(generate);
+  generateRef.current = generate;
+  const autoFlushRef = useRef<string | null>(null);
+  // A finished run clears `running` on the next render; the queued follow-up
+  // starts here, after that render, not inside the done handler where the old
+  // run still reads as running.
+  useEffect(() => {
+    if (running) return;
+    const text = autoFlushRef.current;
+    if (text === null) return;
+    autoFlushRef.current = null;
+    void generateRef.current(text);
+  }, [running]);
+
+  function queuePrompt() {
+    const text = prompt.trim();
+    if (text.length === 0) return;
+    setQueue((current) => addQueuedRun(current, text));
+    setPrompt("");
+    setConsoleOpen(true);
+  }
+
+  async function sendQueuedNow() {
+    const pending = queueRef.current;
+    if (pending.length === 0 || runId === null) return;
+    try {
+      await api(`/api/runs/${runId}/steer`, {
+        method: "POST",
+        body: JSON.stringify({ messages: pending.map((item) => item.text) }),
+      });
+      const ids = new Set(pending.map((item) => item.id));
+      setQueue((current) => removeQueuedRuns(current, ids));
+      log(`Follow-up${pending.length === 1 ? "" : "s"} sent to the running agent`);
+    } catch (reason) {
+      notify({
+        title: "The follow-up was not accepted",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
+  function recallQueued(id: string) {
+    const item = queueRef.current.find((entry) => entry.id === id);
+    if (!item) return;
+    setPrompt((current) =>
+      current.trim().length > 0 ? `${current}\n${item.text}` : item.text,
+    );
+    setQueue((current) => removeQueuedRun(current, id));
   }
 
   async function stop() {
@@ -1350,6 +1441,16 @@ export function EditorScreen() {
                 onRespond={respondToInteraction}
                 onEscape={focusComposer}
               />
+              <QueueDock
+                items={queue}
+                canSteer={runId !== null}
+                onSendNow={() => void sendQueuedNow()}
+                onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
+                onReorder={(from, to) =>
+                  setQueue((current) => reorderQueuedRun(current, from, to))
+                }
+                onRecall={recallQueued}
+              />
               {/* The ref hands Escape a real target: focus lands on the
                   composer's prompt field, not on a guess from the DOM. */}
               <div ref={composerRef} className="w-full" style={{ maxWidth: "40rem" }}>
@@ -1366,6 +1467,7 @@ export function EditorScreen() {
                   modelReady={catalog.data?.modelReady ?? false}
                   onGenerate={() => void generate()}
                   onStop={() => void stop()}
+                  onQueue={queuePrompt}
                 />
               </div>
             </div>

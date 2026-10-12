@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
+import type { AgentGenerationEndArgs, AgentObserver } from "@anvia/core/observability";
 import {
   parseAgentInteractionResponse,
   type AgentInteractionRequest,
@@ -32,6 +33,7 @@ import {
   type CreateAssetInput,
   type FrameChange,
   type JevGateCheck,
+  type JevUsage,
   type ModelSpec,
   type ProjectSummary,
   type RunAsset,
@@ -166,11 +168,157 @@ function persistScope(publicRunId: string, scope: string[]): void {
     });
 }
 
+/** The provider's normalized usage, as the agent observer reports it. */
+type ModelUsageLike = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens?: number;
+};
+
+/**
+ * Per-run usage, independent of Langfuse: every model generation and every
+ * Jev call adds to the run's totals, which stream to the console live and
+ * persist on the run row so the user can see what a run costs.
+ */
+type RunUsage = {
+  input: number;
+  output: number;
+  total: number;
+  cached: number;
+  cost: number;
+  modelCalls: number;
+  modelCost: number;
+  jevCalls: number;
+  jevCost: number;
+};
+
+const usageByRun = new Map<string, RunUsage>();
+/** Durable run id → public run id, so usage events reach the right console. */
+const publicIdByDurable = new Map<string, string>();
+
+function emptyUsage(): RunUsage {
+  return {
+    input: 0,
+    output: 0,
+    total: 0,
+    cached: 0,
+    cost: 0,
+    modelCalls: 0,
+    modelCost: 0,
+    jevCalls: 0,
+    jevCost: 0,
+  };
+}
+
+function usageFor(durableRunId: string): RunUsage {
+  const existing = usageByRun.get(durableRunId);
+  if (existing) return existing;
+  const fresh = emptyUsage();
+  usageByRun.set(durableRunId, fresh);
+  return fresh;
+}
+
+function publishUsage(durableRunId: string): void {
+  const publicId = publicIdByDurable.get(durableRunId);
+  if (!publicId) return;
+  publish(publicId, "usage", { ...usageFor(durableRunId) });
+}
+
+/** The API's decision and guardrail calls already spent before the run began. */
+function seedUsage(durableRunId: string, usage: Partial<RunUsage> | undefined): void {
+  if (!usage) return;
+  const totals = usageFor(durableRunId);
+  totals.input += usage.input ?? 0;
+  totals.output += usage.output ?? 0;
+  totals.total += usage.total ?? 0;
+  totals.cached += usage.cached ?? 0;
+  totals.cost += usage.cost ?? 0;
+  totals.jevCalls += usage.jevCalls ?? 0;
+  totals.jevCost += usage.jevCost ?? 0;
+  publishUsage(durableRunId);
+}
+
+function recordModelUsage(
+  durableRunId: string,
+  usage: ModelUsageLike | undefined,
+  cost: number | undefined,
+): void {
+  if (!usage) return;
+  const totals = usageFor(durableRunId);
+  const cached =
+    typeof usage.cachedInputTokens === "number" ? usage.cachedInputTokens : 0;
+  totals.input += Math.max(0, usage.inputTokens - cached);
+  totals.output += usage.outputTokens;
+  totals.total += usage.totalTokens;
+  totals.cached += cached;
+  totals.modelCalls += 1;
+  if (typeof cost === "number") {
+    totals.cost += cost;
+    totals.modelCost += cost;
+  }
+  publishUsage(durableRunId);
+}
+
+function recordJevUsage(durableRunId: string, usage: JevUsage | undefined): void {
+  if (!usage) return;
+  const totals = usageFor(durableRunId);
+  totals.input += usage.input ?? 0;
+  totals.output += usage.output ?? 0;
+  totals.total += usage.total ?? 0;
+  totals.cost += usage.cost ?? 0;
+  totals.jevCost += usage.cost ?? 0;
+  totals.jevCalls += 1;
+  publishUsage(durableRunId);
+}
+
+/**
+ * Wraps the telemetry observer with per-run usage accounting. Model cost comes
+ * from the provider's raw response (`usage.cost`), which the normalized usage
+ * drops; Jev reports its own cost through the request-check hook.
+ */
+function usageObserver(base: AgentObserver | undefined): AgentObserver {
+  return {
+    startRun: async (args) => {
+      const inner = await base?.startRun(args);
+      return {
+        startGeneration: async (generation) => {
+          const gen = await inner?.startGeneration?.(generation);
+          return {
+            ...(gen ?? {}),
+            end: (end: AgentGenerationEndArgs) => {
+              void gen?.end?.(end);
+              const response = end.response as {
+                usage?: ModelUsageLike;
+                rawResponse?: { usage?: { cost?: number } };
+              };
+              const cost = response.rawResponse?.usage?.cost;
+              recordModelUsage(
+                args.runId,
+                response.usage,
+                typeof cost === "number" ? cost : undefined,
+              );
+            },
+          };
+        },
+        startTool: (tool) => inner?.startTool?.(tool),
+        end: async (end) => {
+          await inner?.end?.(end);
+        },
+        error: async (error) => {
+          await inner?.error?.(error);
+        },
+      };
+    },
+  };
+}
+
 /**
  * One Jev request check lands on the run's own trace with its verdict and
  * cost. Telemetry is optional and must never disturb the run.
  */
 function recordGateCheck(durableRunId: string, check: JevGateCheck): void {
+  recordJevUsage(durableRunId, check.usage);
   void telemetry?.recordRunSpan({
     traceId: traceIdFor(durableRunId),
     kind: "generation",
@@ -201,6 +349,7 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
       apiKey: process.env.OPENROUTER_API_KEY,
       model: process.env.JEV_MODEL,
     });
+    recordJevUsage(durableRunId, report.usage);
     void telemetry?.recordRunSpan({
       traceId: traceIdFor(durableRunId),
       kind: "generation",
@@ -311,15 +460,14 @@ const agents = completions.flatMap(({ spec, model }) =>
       tools: createPixelTools({ vision: spec.vision }),
       maxTurns: 60,
       controls: { reasoningEffort: effort },
-      ...(observer
-        ? {
-            observability: {
-              observers: { langfuse: observer },
-              primaryTrace: "langfuse",
-              errorPolicy: "ignore" as const,
-            },
-          }
-        : {}),
+      observability: {
+        observers: {
+          usage: usageObserver(undefined),
+          ...(observer ? { langfuse: observer } : {}),
+        },
+        primaryTrace: observer ? "langfuse" : "usage",
+        errorPolicy: "ignore" as const,
+      },
     }),
   })),
 );
@@ -467,6 +615,19 @@ app.post("/internal/runs", async (req, res) => {
       reasoningEffort: z.string(),
       userId: z.string(),
       threadId: z.string(),
+      // What the API's decision and guardrail calls already spent; the run's
+      // usage starts from these totals.
+      usage: z
+        .object({
+          input: z.number().optional(),
+          output: z.number().optional(),
+          total: z.number().optional(),
+          cached: z.number().optional(),
+          cost: z.number().optional(),
+          jevCalls: z.number().optional(),
+          jevCost: z.number().optional(),
+        })
+        .optional(),
     })
     .parse(req.body);
   const target = selectRunTarget(specs, body.modelId, body.reasoningEffort);
@@ -524,6 +685,8 @@ app.post("/internal/runs", async (req, res) => {
       recent,
     }),
   });
+  publicIdByDurable.set(run.id, body.runId);
+  seedUsage(run.id, body.usage);
   telemetry?.setTraceContext(run.id, {
     name: "draw-sprite",
     userId: body.userId,
@@ -580,6 +743,53 @@ app.get("/internal/runs/:id/events", (req, res) => {
     set.delete(sink);
     if (set.size === 0 && !events.has(runId)) listeners.delete(runId);
   });
+});
+
+app.post("/internal/runs/:id/steer", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const body = z
+    .object({
+      messages: z.array(z.string().min(1).max(4000)).min(1).max(20),
+      requestId: z.string().min(1).max(120).optional(),
+    })
+    .safeParse(req.body);
+  if (!body.success) {
+    return res.status(400).json({ message: "The steering request is malformed." });
+  }
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  const [row] = await db
+    .select()
+    .from(generationRuns)
+    .where(eq(generationRuns.id, req.params.id ?? ""));
+  if (!row?.durableRunId) {
+    return res.status(404).json({ message: "That run is not available." });
+  }
+  if (!["queued", "running", "waiting"].includes(row.status)) {
+    return res.status(409).json({ message: "That run is no longer active." });
+  }
+  try {
+    // One steer input carries the whole batch; the runtime applies the
+    // messages at the next turn boundary, FIFO, and persists the receipt.
+    const receipt = runtime.steer(
+      row.durableRunId,
+      {
+        messages: body.data.messages.map((text) => ({
+          role: "user" as const,
+          content: text,
+        })),
+      },
+      ...(body.data.requestId !== undefined ? [{ requestId: body.data.requestId }] : []),
+    );
+    res.status(202).json({ receipt });
+  } catch (reason) {
+    return res.status(409).json({
+      message:
+        reason instanceof Error
+          ? reason.message.slice(0, 200)
+          : "That run cannot take a follow-up.",
+    });
+  }
 });
 
 app.post("/internal/runs/:id/cancel", async (req, res) => {
@@ -689,6 +899,9 @@ function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
     "interaction",
     "interaction-resolved",
     "asset-created",
+    "usage",
+    "steering_queued",
+    "steering_applied",
   ];
   const stored = (events.get(runId) ?? [])
     .filter((event) => kept.includes(event.type))
@@ -846,6 +1059,7 @@ async function follow(
             finishedAt: new Date(),
             events: stored,
             answer,
+            usage: { ...usageFor(durableId) },
           })
           .where(eq(generationRuns.id, publicId));
         // One snapshot per frame the run actually touched, written through the
@@ -901,6 +1115,8 @@ async function follow(
   } finally {
     releaseRun(durableId);
     clearGateOutcomes(durableId);
+    usageByRun.delete(durableId);
+    publicIdByDurable.delete(durableId);
     // Give a subscriber a moment to read the tail, then drop the retained events.
     if (finished) {
       setTimeout(() => forgetRun(publicId), 60_000).unref?.();
@@ -1481,6 +1697,7 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
     const approvedScope = Array.isArray(run.approvedScope)
       ? run.approvedScope.filter((id): id is string => typeof id === "string")
       : undefined;
+    publicIdByDurable.set(durableRunId, run.id);
     try {
       // The submission path set this context; recovery must rebuild it too so
       // gate and guardrail spans land on the same trace with user and session.

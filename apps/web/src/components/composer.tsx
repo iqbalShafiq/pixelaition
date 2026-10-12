@@ -19,6 +19,7 @@ export function Composer({
   modelReady,
   onGenerate,
   onStop,
+  onQueue,
   scope,
   blockedReason,
 }: {
@@ -34,6 +35,8 @@ export function Composer({
   modelReady: boolean;
   onGenerate: () => void;
   onStop: () => void;
+  /** While a run is working, text goes to the follow-up queue instead. */
+  onQueue?: (() => void) | undefined;
   /** An extra bar control before the model select (the home scope picker). */
   scope?: ReactNode;
   /** A named cause that keeps the run from starting; shown in the bar. */
@@ -50,6 +53,10 @@ export function Composer({
   const blocked = Boolean(blockedReason);
   const noCatalog = models.length === 0 || efforts.length === 0;
   const modelOptions = models.length > 0 ? models : ["no models"];
+  const hasText = prompt.trim().length > 0;
+  const canQueue =
+    running && hasText && onQueue !== undefined && modelReady && !noCatalog && !blocked;
+  const queueable = running && hasText && onQueue !== undefined;
 
   return (
     <section
@@ -62,12 +69,17 @@ export function Composer({
         ref={areaRef}
         value={prompt}
         aria-label="Prompt"
-        placeholder="Describe the pixel asset, or ask for another state of this frame"
+        placeholder={
+          running
+            ? "The agent is working — type a follow-up to queue it"
+            : "Describe the pixel asset, or ask for another state of this frame"
+        }
         className="min-h-[2.75rem] px-3 py-2.5"
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            if (!running && prompt.trim() && modelReady && !noCatalog && !blocked) {
+            if (canQueue) onQueue();
+            else if (!running && hasText && modelReady && !noCatalog && !blocked) {
               onGenerate();
             }
           }
@@ -99,15 +111,25 @@ export function Composer({
         ) : noCatalog ? (
           <span className="text-pixel-mono text-muted">the model catalog is empty</span>
         ) : null}
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-1.5">
           {running ? (
-            <Button tone="danger" onClick={onStop}>
-              Stop
-            </Button>
+            queueable ? (
+              <Button
+                onClick={onQueue}
+                disabled={!modelReady || noCatalog || blocked}
+                title="Run this when the current run finishes, or Send now from the queue"
+              >
+                Add to queue
+              </Button>
+            ) : (
+              <Button tone="danger" onClick={onStop}>
+                Stop
+              </Button>
+            )
           ) : (
             <Button
               onClick={onGenerate}
-              disabled={!prompt.trim() || !modelReady || noCatalog || !modelId || blocked}
+              disabled={!hasText || !modelReady || noCatalog || !modelId || blocked}
             >
               Generate
             </Button>

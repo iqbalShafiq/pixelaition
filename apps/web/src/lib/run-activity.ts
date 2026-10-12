@@ -22,6 +22,20 @@ export type RunRow =
       assetId: string;
       projectId: string;
       name: string;
+    }
+  | {
+      /** The run's live cost and token totals; replaced on every update. */
+      id: string;
+      kind: "usage";
+      input: number;
+      output: number;
+      total: number;
+      cached: number;
+      cost: number;
+      modelCalls: number;
+      modelCost: number;
+      jevCalls: number;
+      jevCost: number;
     };
 
 const TERMINAL: Record<string, "completed" | "failed" | "cancelled"> = {
@@ -225,6 +239,43 @@ export function applyRunEvent(
         label: state === "running" ? "running" : state,
         state,
         detail: typeof body?.error === "string" ? body.error : undefined,
+      },
+    ];
+  }
+  if (type === "usage") {
+    // Live events carry the flat totals; the persisted pass wraps them as
+    // `{ usage }`, and the console must read both shapes.
+    const wrapped = (body as { usage?: Record<string, unknown> } | undefined)?.usage;
+    const data = wrapped ?? body;
+    if (!data) return rows;
+    const number = (key: string) =>
+      typeof data[key] === "number" ? (data[key] as number) : 0;
+    return [
+      ...rows.filter((row) => row.kind !== "usage"),
+      {
+        id: `usage-${sequence}`,
+        kind: "usage",
+        input: number("input"),
+        output: number("output"),
+        total: number("total"),
+        cached: number("cached"),
+        cost: number("cost"),
+        modelCalls: number("modelCalls"),
+        modelCost: number("modelCost"),
+        jevCalls: number("jevCalls"),
+        jevCost: number("jevCost"),
+      },
+    ];
+  }
+  if (type === "steering_queued" || type === "steering_applied") {
+    return [
+      ...rows,
+      {
+        id: `steer-${sequence}`,
+        kind: "tool",
+        name: "follow_up",
+        summary: type === "steering_applied" ? "applied" : "queued for the next turn",
+        state: "ok",
       },
     ];
   }

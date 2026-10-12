@@ -65,5 +65,37 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
       name: typeof data?.name === "string" ? data.name : undefined,
     };
   }
+  // Usage totals stream to the console as the run spends. The persisted
+  // second pass meets its own `{ usage }` shape and must keep it.
+  if (type === "usage") {
+    const data = ((raw as { usage?: Record<string, unknown> } | undefined)?.usage ??
+      raw) as Record<string, unknown> | undefined;
+    const number = (key: string) =>
+      typeof data?.[key] === "number" ? (data[key] as number) : undefined;
+    return {
+      usage: {
+        input: number("input"),
+        output: number("output"),
+        total: number("total"),
+        cached: number("cached"),
+        cost: number("cost"),
+        modelCalls: number("modelCalls"),
+        modelCost: number("modelCost"),
+        jevCalls: number("jevCalls"),
+        jevCost: number("jevCost"),
+      },
+    };
+  }
+  // A steering receipt reaches the console as a follow-up row: queued when the
+  // runtime accepted it, applied when it lands at a turn boundary.
+  if (type === "steering_queued" || type === "steering_applied") {
+    const data = raw as { id?: unknown; turn?: unknown } | undefined;
+    return {
+      id: typeof data?.id === "string" ? data.id : undefined,
+      ...(type === "steering_applied" && typeof data?.turn === "number"
+        ? { turn: data.turn }
+        : {}),
+    };
+  }
   return {};
 }

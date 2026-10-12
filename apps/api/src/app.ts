@@ -748,6 +748,17 @@ export function createApp() {
             requestId,
             userId,
             threadId: thread.id,
+            // The guardrail and decision calls already spent; the run's usage
+            // starts from their totals so the console shows the full cost.
+            usage: {
+              input: (guardrail.usage?.input ?? 0) + (decisionUsage?.input ?? 0),
+              output: (guardrail.usage?.output ?? 0) + (decisionUsage?.output ?? 0),
+              total: (guardrail.usage?.total ?? 0) + (decisionUsage?.total ?? 0),
+              cached: 0,
+              cost: (guardrail.usage?.cost ?? 0) + (decisionUsage?.cost ?? 0),
+              jevCalls: (guardrail.usage ? 1 : 0) + (decisionUsage ? 1 : 0),
+              jevCost: (guardrail.usage?.cost ?? 0) + (decisionUsage?.cost ?? 0),
+            },
           }),
         },
       );
@@ -979,6 +990,64 @@ export function createApp() {
     res.status(204).end();
   });
 
+  app.post("/api/runs/:id/steer", async (req, res) => {
+    const runId = req.params.id ?? "";
+    if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That run is not available.");
+    }
+    const body = z
+      .object({ messages: z.array(z.string().min(1).max(4000)).min(1).max(20) })
+      .parse(req.body);
+    const [row] = await db
+      .select()
+      .from(generationRuns)
+      .where(eq(generationRuns.id, runId));
+    if (!row || !["queued", "running", "waiting"].includes(row.status)) {
+      return fail(res, 409, "NOT_ACTIVE", "That run is no longer active.");
+    }
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      upstream = await fetch(
+        `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${runId}/steer`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+    } catch {
+      return fail(res, 502, "WORKER_UNAVAILABLE", "The drawing worker is not available.");
+    }
+    if (!upstream.ok) {
+      const detail = (await upstream.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      // The worker refuses steering a run that already ended; pass that
+      // conflict through instead of inventing a retry.
+      if (upstream.status === 409) {
+        return fail(
+          res,
+          409,
+          "NOT_ACTIVE",
+          detail?.message ?? "That run is no longer active.",
+        );
+      }
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        detail?.message ?? "The follow-up was not accepted.",
+      );
+    }
+    const accepted = (await upstream.json().catch(() => null)) as {
+      receipt?: unknown;
+    } | null;
+    res.status(202).json({ receipt: accepted?.receipt ?? null });
+  });
+
   app.post("/api/runs/:id/stage-override", async (req, res) => {
     const runId = req.params.id ?? "";
     if (!(await runBelongsTo(db, runId, res.locals.userId as string))) {
@@ -1089,6 +1158,7 @@ export function createApp() {
       status: string;
       prompt: string | null;
       answer: string | null;
+      usage: unknown;
       createdAt: Date;
       finishedAt: Date | null;
     }> = [];
@@ -1105,6 +1175,7 @@ export function createApp() {
           status: generationRuns.status,
           prompt: generationRuns.prompt,
           answer: generationRuns.answer,
+          usage: generationRuns.usage,
           createdAt: generationRuns.createdAt,
           finishedAt: generationRuns.finishedAt,
         })
@@ -1137,6 +1208,7 @@ export function createApp() {
             prompt: lastRow.prompt,
             events,
             text,
+            usage: lastRow.usage,
             durationMs: lastRow.finishedAt
               ? new Date(lastRow.finishedAt).getTime() -
                 new Date(lastRow.createdAt).getTime()
@@ -1148,6 +1220,7 @@ export function createApp() {
         status: row.status,
         prompt: row.prompt,
         answer: row.answer,
+        usage: row.usage,
         durationMs: row.finishedAt
           ? new Date(row.finishedAt).getTime() - new Date(row.createdAt).getTime()
           : null,
