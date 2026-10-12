@@ -4,6 +4,7 @@ import {
   Check as RawCheck,
   CheckboxOn as RawCheckboxOn,
   ChevronDown as RawChevronDown,
+  CircleInfo as RawCircleInfo,
   Clipboard as RawClipboard,
   Close as RawClose,
   ColorsSwatch as RawColorsSwatch,
@@ -72,6 +73,7 @@ import type { ComponentType, SVGProps } from "react";
  * ChevronDown       ChevronDown         ChevronDown
  * Minus             Minus               Minus
  * Attach            (attach button)     Attachment
+ * Info              (attachment hint)   CircleInfo
  *
  * custom (the free set has no equivalent; drawn below on the same 24x24 grid
  * with 2x2 cells, no substitution is allowed here):
@@ -128,6 +130,7 @@ export const ArrowRight = crisp(RawArrowRight);
 export const ChevronDown = crisp(RawChevronDown);
 export const Minus = crisp(RawMinus);
 export const Attach = crisp(RawAttachment);
+export const Info = crisp(RawCircleInfo);
 
 /**
  * Draws a glyph from a bitmap: one character per 2x2 cell on the 24x24 grid,

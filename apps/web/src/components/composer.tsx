@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MAX_ATTACHMENTS, type PreparedAttachment } from "../lib/attachments.js";
-import { Attach } from "./pixel-icons.js";
+import { Attach, Info } from "./pixel-icons.js";
 import { Button, IconButton, SelectControl, Textarea } from "./ui.js";
 
 /**
@@ -116,18 +116,16 @@ export function Composer({
           {attachments.map((attachment) => (
             <span
               key={attachment.id}
-              className="inline-flex items-center gap-1.5 border-2 border-line-strong bg-panel py-0.5 pr-1 pl-0.5"
+              className="pixel-corners-sm inline-flex items-center gap-1.5 border-2 border-line-strong bg-panel py-0.5 pr-1 pl-0.5 transition-colors duration-150 hover:bg-raised"
+              title={`${attachment.name} — ${attachment.width}×${attachment.height}`}
             >
               <img
                 src={attachment.preview}
                 alt={attachment.name}
-                className="h-7 w-7 object-contain"
+                className="h-8 w-8 object-contain"
                 style={{ imageRendering: "pixelated" }}
               />
-              <span
-                className="text-pixel-mono max-w-[7rem] truncate text-muted"
-                title={`${attachment.name} — ${attachment.width}×${attachment.height}`}
-              >
+              <span className="text-pixel-mono max-w-[7rem] truncate text-muted">
                 {attachment.name}
               </span>
               {onRemoveAttachment ? (
@@ -142,11 +140,27 @@ export function Composer({
               ) : null}
             </span>
           ))}
+          {attachable ? (
+            <button
+              type="button"
+              aria-label="Add another reference image"
+              className="pixel-corners-sm inline-flex h-10 items-center gap-1 border-2 border-dashed border-line px-2 text-pixel-mono text-muted transition-colors duration-150 hover:border-line-strong hover:text-ink"
+              onClick={() => fileRef.current?.click()}
+            >
+              ＋ Add
+            </button>
+          ) : null}
           {attachmentError !== undefined ? (
-            <span className="text-pixel-mono text-muted">{attachmentError}</span>
+            <span className="flex items-center gap-1 text-pixel-mono text-muted">
+              <Info width={12} height={12} />
+              {attachmentError}
+            </span>
           ) : null}
           {attachmentIssue !== undefined ? (
-            <span className="text-pixel-mono text-muted">{attachmentIssue}</span>
+            <span className="flex items-center gap-1 text-pixel-mono text-muted">
+              <Info width={12} height={12} />
+              {attachmentIssue}
+            </span>
           ) : null}
         </div>
       ) : null}
