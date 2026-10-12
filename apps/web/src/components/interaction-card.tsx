@@ -1,16 +1,16 @@
 import { motion } from "motion/react";
 import { useState } from "react";
 import { FrameThumb } from "./editor-panels.js";
-import { Button, Checkbox, Textarea } from "./ui.js";
+import { Button, Checkbox, SelectControl, Textarea, TextInput } from "./ui.js";
+import {
+  answerValue,
+  isTargetQuestion,
+  type AnswerState,
+  type InteractionQuestion,
+} from "../lib/interaction-answers.js";
 import type { FrameDto } from "../lib/types.js";
 
-/** One prompt from a `tool-question` interaction (the Anvia question shape). */
-export type InteractionQuestion = {
-  id: string;
-  text: string;
-  choices?: Array<{ label: string; value: string }>;
-  allowCustom?: boolean;
-};
+export type { InteractionQuestion } from "../lib/interaction-answers.js";
 
 /**
  * The pending card as the worker publishes it: no call ids. An approval
@@ -72,12 +72,17 @@ export function InteractionCard({
   interaction,
   frames,
   palette,
+  projects,
+  assets,
   onRespond,
   onEscape,
 }: {
   interaction: PendingInteraction;
   frames: FrameDto[];
   palette: string[];
+  /** Live library for target questions; omitted keeps the default card. */
+  projects?: Array<{ id: string; name: string }>;
+  assets?: Array<{ id: string; projectId: string; name: string }>;
   /** Stages a scope edit (when one exists) before responding. Rejects on failure. */
   onRespond: (
     response: InteractionResponse,
@@ -111,7 +116,12 @@ export function InteractionCard({
             onRespond={onRespond}
           />
         ) : (
-          <QuestionBody interaction={interaction} onRespond={onRespond} />
+          <QuestionBody
+            interaction={interaction}
+            projects={projects}
+            assets={assets}
+            onRespond={onRespond}
+          />
         )}
       </div>
     </motion.section>
@@ -278,35 +288,26 @@ function ApprovalBody({
 
 /* ----------------------------------------------------------------- questions */
 
-type AnswerState = { choice?: string; multi?: string[]; text: string };
-
-/**
- * One string per question: typed text wins, otherwise the chosen value, with
- * `_multi` ids serialized as a JSON array string — the shape the worker parses.
- */
-function answerValue(
-  question: InteractionQuestion,
-  state: AnswerState | undefined,
-): string {
-  const text = state?.text.trim() ?? "";
-  if (text !== "") return text;
-  if (question.id.endsWith("_multi")) {
-    const selected = state?.multi ?? [];
-    return selected.length > 0 ? JSON.stringify(selected) : "";
-  }
-  return state?.choice ?? "";
-}
-
 function QuestionBody({
   interaction,
   onRespond,
+  projects = [],
+  assets = [],
 }: {
   interaction: PendingInteraction;
   onRespond: (response: InteractionResponse) => Promise<void>;
+  /** Live library for the target questions; empty keeps the default card. */
+  projects?: Array<{ id: string; name: string }>;
+  assets?: Array<{ id: string; projectId: string; name: string }>;
 }) {
   const questions = interaction.questions ?? [];
   const [answers, setAnswers] = useState<Record<string, AnswerState>>({});
   const [busy, setBusy] = useState(false);
+
+  const setChoice = (id: string, choice: string) =>
+    setAnswers((current) => ({ ...current, [id]: { text: "", choice } }));
+  const setText = (id: string, text: string) =>
+    setAnswers((current) => ({ ...current, [id]: { ...current[id], text } }));
 
   const complete = questions.every(
     (question) => answerValue(question, answers[question.id]) !== "",
@@ -337,66 +338,116 @@ function QuestionBody({
           const multi = question.id.endsWith("_multi");
           const typed = (state?.text.trim() ?? "") !== "";
           const selected = state?.multi ?? [];
+          const target = isTargetQuestion(question.id) ? question.id : undefined;
+          const chosenProject = answers.project?.choice;
+          const assetOptions =
+            chosenProject === undefined || chosenProject === "new"
+              ? assets
+              : assets.filter((asset) => asset.projectId === chosenProject);
           return (
             <fieldset key={question.id} className="border-2 border-line bg-field p-2.5">
               <legend className="px-1 text-[13px] text-ink">{question.text}</legend>
-              {question.choices && question.choices.length > 0 ? (
-                <div className="mt-1.5 grid gap-1.5">
-                  {question.choices.map((choice) => (
-                    <Checkbox
-                      key={choice.value}
-                      label={choice.label}
-                      checked={
-                        multi
-                          ? !typed && selected.includes(choice.value)
-                          : !typed && state?.choice === choice.value
-                      }
-                      disabled={busy}
-                      onChange={(next) =>
-                        setAnswers((current) => {
-                          const previous = current[question.id];
-                          if (multi) {
-                            const values = new Set(previous?.multi ?? []);
-                            if (next) values.add(choice.value);
-                            else values.delete(choice.value);
-                            return {
-                              ...current,
-                              [question.id]: { text: "", multi: [...values] },
-                            };
+              {target === "project" ? (
+                <SelectControl
+                  label="Project"
+                  value={state?.choice ?? ""}
+                  options={[
+                    ...projects.map((project) => ({
+                      value: project.id,
+                      label: project.name,
+                    })),
+                    { value: "new", label: "＋ New project" },
+                  ]}
+                  onChange={(value) => setChoice(question.id, value)}
+                  className="mt-1.5"
+                />
+              ) : target === "asset" ? (
+                <SelectControl
+                  label="Asset"
+                  value={state?.choice ?? ""}
+                  options={[
+                    ...assetOptions.map((asset) => ({
+                      value: asset.id,
+                      label: asset.name,
+                    })),
+                    { value: "new", label: "＋ New asset" },
+                    { value: "none", label: "No asset" },
+                  ]}
+                  onChange={(value) => setChoice(question.id, value)}
+                  className="mt-1.5"
+                />
+              ) : target === "project_name" || target === "asset_name" ? (
+                <TextInput
+                  value={state?.text ?? ""}
+                  aria-label={question.text}
+                  placeholder="name"
+                  disabled={busy}
+                  className="mt-1.5"
+                  onChange={(event) => setText(question.id, event.target.value)}
+                />
+              ) : (
+                <>
+                  {question.choices && question.choices.length > 0 ? (
+                    <div className="mt-1.5 grid gap-1.5">
+                      {question.choices.map((choice) => (
+                        <Checkbox
+                          key={choice.value}
+                          label={choice.label}
+                          checked={
+                            multi
+                              ? !typed && selected.includes(choice.value)
+                              : !typed && state?.choice === choice.value
                           }
-                          return {
-                            ...current,
-                            [question.id]: { text: "", choice: choice.value },
-                          };
-                        })
+                          disabled={busy}
+                          onChange={(next) =>
+                            setAnswers((current) => {
+                              const previous = current[question.id];
+                              if (multi) {
+                                const values = new Set(previous?.multi ?? []);
+                                if (next) values.add(choice.value);
+                                else values.delete(choice.value);
+                                return {
+                                  ...current,
+                                  [question.id]: { text: "", multi: [...values] },
+                                };
+                              }
+                              return {
+                                ...current,
+                                [question.id]: { text: "", choice: choice.value },
+                              };
+                            })
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  <Textarea
+                    value={state?.text ?? ""}
+                    aria-label={`Or answer in your own words: ${question.text}`}
+                    placeholder="Or type your own answer…"
+                    rows={1}
+                    disabled={busy}
+                    className="mt-2"
+                    onChange={(event) => setText(question.id, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void submit();
                       }
-                    />
-                  ))}
-                </div>
+                    }}
+                  />
+                </>
+              )}
+              {target === "project" || target === "asset" ? (
+                <TextInput
+                  value={state?.text ?? ""}
+                  aria-label={`Or answer in your own words: ${question.text}`}
+                  placeholder="Or type your own answer…"
+                  disabled={busy}
+                  className="mt-2"
+                  onChange={(event) => setText(question.id, event.target.value)}
+                />
               ) : null}
-              <Textarea
-                value={state?.text ?? ""}
-                aria-label={`Or answer in your own words: ${question.text}`}
-                placeholder="Or type your own answer…"
-                rows={1}
-                disabled={busy}
-                className="mt-2"
-                onChange={(event) =>
-                  setAnswers((current) => ({
-                    ...current,
-                    [question.id]: {
-                      ...current[question.id],
-                      text: event.target.value,
-                    },
-                  }))
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void submit();
-                  }
-                }}
-              />
             </fieldset>
           );
         })}

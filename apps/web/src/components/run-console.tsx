@@ -97,6 +97,8 @@ export function RunConsole({
   interaction,
   frames,
   palette,
+  projects,
+  assets,
   onRespond,
   onEscape,
 }: {
@@ -111,6 +113,9 @@ export function RunConsole({
   interaction: PendingInteraction | null;
   frames: FrameDto[];
   palette: string[];
+  /** Live library for target questions; omitted keeps the default card. */
+  projects?: Array<{ id: string; name: string }>;
+  assets?: Array<{ id: string; projectId: string; name: string }>;
   onRespond: (
     response: InteractionResponse,
     stagedFrames?: StagedPlanFrame[],
@@ -324,6 +329,8 @@ export function RunConsole({
             interaction={interaction}
             frames={frames}
             palette={palette}
+            projects={projects}
+            assets={assets}
             onRespond={onRespond}
             onEscape={onEscape}
           />

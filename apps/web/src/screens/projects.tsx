@@ -545,6 +545,15 @@ export function ProjectsScreen() {
                 interaction={pendingInteraction}
                 frames={[]}
                 palette={[]}
+                projects={list.map((project) => ({
+                  id: project.id,
+                  name: project.name,
+                }))}
+                assets={(assets.data?.assets ?? []).map((asset) => ({
+                  id: asset.id,
+                  projectId: asset.projectId,
+                  name: asset.name,
+                }))}
                 onRespond={respondToInteraction}
                 onEscape={focusComposer}
               />
