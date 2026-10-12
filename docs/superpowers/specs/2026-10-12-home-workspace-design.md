@@ -35,7 +35,7 @@
 - **Question tool limits.** `createQuestionTool` accepts 1–4 questions, each with 2–4 choices and `allowCustom`; answers resume via `runtime.respond` with `{ type: "tool-question", answers: [{ questionId, value }] }`. Long lists therefore cannot ride `choices`; the app enriches known question ids with live dropdowns while the model's choices stay visible as suggestions.
 - **Router.** `@tanstack/react-router` 1.170.41 exposes `viewTransition?: boolean | ViewTransitionOptions`, and route navigations run through `document.startViewTransition({ update, types })` — typed transitions are supported; unsupported browsers fall back to normal navigation.
 - **Image input.** Durable prompts carry image parts and the model sees them (verified live: attachment on an empty canvas answered "Magenta"; `view_image` returned a searched image the model described correctly). The frame summarizer can send a rendered PNG.
-- **Direct completions.** `@anvia/core/completion` exports `generateCompletion`, including the structured-output overload — the text summarizer can ask for `{ summary }` JSON directly.
+- **Direct completions.** `@anvia/core/completion` exports `generateCompletion` for plain text — enough for the summarizer: the prompt asks for one sentence and `clampSummary` enforces the bound, so no structured-output capability is assumed.
 - **Binding choke point.** The worker's `register()` inside `bindWorkspaceRun` is the single place a workspace run acquires an asset; `create_asset` publishes `asset-created` events, and the editor can already rejoin an active run — that is the hook for event-driven navigation.
 - **Current home pain points.** No search; assets hidden inside project cards; a required project select; recent runs mid-page; no direct path to an asset; the composer is inline instead of docked.
 
@@ -68,10 +68,20 @@ ALTER TABLE "frames"   ADD COLUMN "summary_at" timestamp with time zone;
 
 ### Generator (`apps/worker/src/summarize.ts`)
 
-- `summarizeFrame(assetId, frameId)` — renders the frame with the same rasterizer `preview_frame` uses (`frameToPng`), sends it to the vision model (muse) with `generateCompletion` structured output `{ summary: string }`, prompt: "One sentence, ≤ 160 characters, describing what this pixel-art frame shows; name colors and the subject; no markdown." Context: asset name, frame name, canvas size, palette size.
-- `summarizeAsset(assetId)` — deepseek chat, structured `{ summary }`, ≤ 240 characters: name, dimensions, palette size, frame names + frame summaries, plus the user's project description. Prompt forbids inventing content the frames do not show.
-- `summarizeProject(projectId)` — deepseek chat, structured `{ summary }`, ≤ 240 characters: name, user description, style notes, asset names + asset summaries.
+- `summarizeFrame(assetId, frameId)` — renders the frame with the same rasterizer `preview_frame` uses (`frameToPng`), sends it to the vision model (muse) as an image part plus a text instruction, and clamps the reply to 160 characters. Prompt: "One sentence describing what this pixel-art frame shows; name colors and the subject; no markdown." Context: asset name, frame name, canvas size, palette size.
+- `summarizeAsset(assetId)` — deepseek chat, clamped to 240 characters: name, dimensions, palette size, frame names + frame summaries, plus the user's project description. The prompt forbids inventing content the frames do not show.
+- `summarizeProject(projectId)` — deepseek chat, clamped to 240 characters: name, user description, style notes, asset names + asset summaries.
+- `clampSummary(text, limit)` collapses whitespace, strips markdown decorations, and cuts at a word boundary; it is unit-tested on its own.
 - Each call records a Langfuse span (`summarize-frame|asset|project`) with model, tokens, and USD cost. These calls are server overhead, not run usage; they do not enter the console's usage row.
+
+### Context wiring (home and editor both read summaries)
+
+Summaries are not only decision material; they become context for every agent:
+
+- **Editor runs:** `buildRunPrompt` gains `Project: <summary>`, `Asset: <summary>`, and `Frame summary: <summary>` lines (present only when the summary exists); `read_project` returns the asset `summary` plus a `summary` per frame; `read_frame` returns the frame's `summary`. The editor's Jev decision context gains `asset.summary` and `frameSummary` so intent classification sees what the frame depicts.
+- **Home runs:** the confirmed project's summary rides in the workspace run prompt; `list_projects` and `list_assets` return `summary` per entity, so the agent that must choose a target reads the same descriptions Jev did.
+- **Home decision:** project and asset options carry the summaries (Phase 2).
+- A missing summary is simply an absent line; nothing blocks on it.
 
 ### Triggers
 
@@ -268,7 +278,7 @@ Wide layout (≥ 1100px):
 ## Open questions & spikes
 
 - **Spike A (router):** exact `ViewTransitionOptions` shape on 1.170.41 and whether React 19 state updates during navigation need `flushSync` wrappers; confirm `types` reach `document.startViewTransition`.
-- **Spike B (structured output):** does the OpenCode Go chat endpoint honor structured outputs for `generateCompletion` with deepseek? If not, the summarizer parses plain text (a parsing choice, not a substitution) and the span records which path ran.
+- **Spike B (summarizer quality):** does the vision summarizer stay accurate for sparse, empty, or near-empty frames? If not, skip frame summaries below a painted-pixel threshold (a delivery choice recorded in the span).
 - **Spike C (cost):** measure a 50-option decision call; if token growth is unacceptable, lower the cap with a named cause and surface it in the card.
 - **Open:** should the confirmation card offer a frame picker for `edit` intents? Deferred; the editor owns frames in v1.
 
