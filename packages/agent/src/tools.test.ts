@@ -488,7 +488,9 @@ describe("drawing tools", () => {
 
   it("keeps the read_project palette legend in step with set_palette", async () => {
     boundRun();
-    const next = ["#00000000", "#111111", "#222222", "#333333"];
+    // The palette belongs to the asset: every frame adopts it (frame-2 uses
+    // index 4, so the new palette must keep it).
+    const next = ["#00000000", "#111111", "#222222", "#333333", "#444444"];
     await tool("set_palette").call({ palette: next }, { operationId: "run-1" });
     const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
       palette: Array<{ index: number; hex: string }>;
@@ -498,7 +500,10 @@ describe("drawing tools", () => {
       { index: 1, hex: "#111111" },
       { index: 2, hex: "#222222" },
       { index: 3, hex: "#333333" },
+      { index: 4, hex: "#444444" },
     ]);
+    // Both frames carry the new palette, not just the current one.
+    expect(getRun("run-1")!.frames.get("frame-2")!.buffer.palette).toEqual(next);
     // The frame reads legend from the same live palette.
     const frame = await tool("read_frame").call({}, { operationId: "run-1" });
     expect(frame).toMatchObject({
@@ -508,6 +513,17 @@ describe("drawing tools", () => {
         { index: 3, hex: "#333333", count: 2 },
       ],
     });
+    releaseRun("run-1");
+  });
+
+  it("refuses a palette that drops a color another frame still uses", async () => {
+    boundRun();
+    await expect(
+      tool("set_palette").call(
+        { palette: ["#00000000", "#111111"] },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow();
     releaseRun("run-1");
   });
 });

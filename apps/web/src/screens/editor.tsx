@@ -516,8 +516,27 @@ export function EditorScreen() {
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
           if (body.type === "canvas-stroke") {
-            const data = body.data as { frameId?: string; layers?: FrameDto["layers"] };
+            const data = body.data as {
+              frameId?: string;
+              layers?: FrameDto["layers"];
+              palette?: string[];
+            };
             const target = data.frameId ?? fallbackFrameId;
+            // A set_palette repaint carries the asset's new palette: every
+            // frame adopts it, exactly like the editor's palette panel.
+            if (data.palette) {
+              const palette = [...data.palette];
+              setDrafts((current) => {
+                let changed = false;
+                const next = { ...current };
+                for (const [id, entry] of Object.entries(next)) {
+                  if (entry.present.palette.join(",") === palette.join(",")) continue;
+                  next[id] = { ...entry, present: { ...entry.present, palette } };
+                  changed = true;
+                }
+                return changed ? next : current;
+              });
+            }
             if (data.layers && target) {
               setRunFrameId(target);
               const layers = data.layers.map((layer) => ({
@@ -998,8 +1017,18 @@ export function EditorScreen() {
         // Nothing was lost: the prompt comes back for a retry.
         if (textOverride === undefined) setPrompt(text);
         const message = reason instanceof Error ? reason.message : "Generation failed.";
-        setError(message);
-        notify({ title: "Could not start the run", description: message });
+        const code =
+          reason instanceof Error
+            ? (reason as Error & { code?: string }).code
+            : undefined;
+        if (code === "PROMPT_NEEDS_DETAIL") {
+          // The agent is asking a question, not failing: show it as its reply
+          // and keep the prompt for editing instead of raising an error.
+          setMessage(message);
+        } else {
+          setError(message);
+          notify({ title: "Could not start the run", description: message });
+        }
       }
     });
   }

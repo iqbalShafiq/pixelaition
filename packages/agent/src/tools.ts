@@ -719,9 +719,11 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const setPaletteDescription =
+    "Replace the asset's palette; every frame uses it. Index 0 must stay #00000000. Add the colours the request needs before painting with them.";
   const setPalette = createTool({
     name: "set_palette",
-    description: "Replace the palette of the current frame. Index 0 must stay #00000000.",
+    description: setPaletteDescription,
     inputSchema: z.object({
       frameId: z.string().optional(),
       palette: z.array(z.string()).min(2).max(33),
@@ -732,13 +734,32 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
-      const edited = editFrame(run, input.frameId, {
-        type: "setPalette",
-        palette: input.palette,
+      const current = resolveFrame(run, input.frameId);
+      // The palette belongs to the asset, exactly like the editor's palette
+      // panel: every frame must be able to adopt it before any of them
+      // changes, and the change is persisted with the run, so painted pixels
+      // never outlive the palette they were painted against.
+      const adopted = [...run.frames.entries()].map(([id, frame]) => {
+        const result = applyCommand(frame.buffer, {
+          type: "setPalette",
+          palette: input.palette,
+        });
+        if (!result.ok) throw new Error(result.message);
+        return { id, buffer: result.buffer };
       });
-      // read_project's legend must never disagree with the frame it describes.
+      for (const item of adopted) {
+        replaceFrameBuffer(run, item.id, item.buffer);
+        run.touchedFrames.add(item.id);
+      }
+      const edited = adopted.find((item) => item.id === current.id);
+      if (!edited) throw new Error("The palette change did not reach the frame.");
+      // read_project's legend must never disagree with the frames it describes.
       run.palette = [...edited.buffer.palette];
-      return { palette: edited.buffer.palette };
+      // The canvas feed repaints with the new palette everywhere, and the
+      // worker persists the asset palette and records its version.
+      run.onStroke?.({ label: "palette", points: [] }, edited.buffer, current.id);
+      void run.onFrameChange?.({ type: "palette", palette: run.palette });
+      return { palette: run.palette };
     },
   });
 

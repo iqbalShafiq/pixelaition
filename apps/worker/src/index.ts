@@ -1312,6 +1312,9 @@ function frameWrites(options: {
     publish(publicRunId, "canvas-stroke", {
       assetId,
       frameId: editedFrameId,
+      // The palette rides along: a set_palette repaint must reach every open
+      // editor, and the palette is the asset's, not this frame's.
+      palette: [...buffer.palette],
       layers: buffer.layers.map((layer) => ({
         ...layer,
         pixels: encodePixels(layer.pixels),
@@ -1387,6 +1390,26 @@ function frameWrites(options: {
           assetId,
           scope: "asset",
           kind: "frame-delete",
+          author: "agent",
+          runId: publicRunId,
+          snapshot: assetVersionSnapshot(after),
+        });
+      } else if (change.type === "palette") {
+        // The palette belongs to the asset; persisting it here is what keeps
+        // the run's painted pixels readable after the run (their indices
+        // would otherwise point at a palette that no longer exists).
+        await db
+          .update(assets)
+          .set({ palette: change.palette, updatedAt: new Date() })
+          .where(eq(assets.id, assetId));
+        const after = await loadAsset(assetId);
+        if (!after) {
+          throw new Error("The asset could not be read after the palette change.");
+        }
+        await createVersion(db, {
+          assetId,
+          scope: "asset",
+          kind: "palette",
           author: "agent",
           runId: publicRunId,
           snapshot: assetVersionSnapshot(after),

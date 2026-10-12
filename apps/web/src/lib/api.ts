@@ -12,7 +12,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       message?: string;
       code?: string;
     } | null;
-    throw new Error(body?.message ?? `Request failed (${response.status})`);
+    // The code lets callers tell a refusal from a question (a clarify is the
+    // agent asking, not a failure).
+    const error = new Error(
+      body?.message ?? `Request failed (${response.status})`,
+    ) as Error & { code?: string };
+    if (body?.code !== undefined) error.code = body.code;
+    throw error;
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

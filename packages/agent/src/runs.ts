@@ -58,6 +58,7 @@ export type FrameChange =
     }
   | { type: "rename"; frameId: string; name: string }
   | { type: "move"; order: Array<{ id: string; index: number }> }
+  | { type: "palette"; palette: string[] }
   | {
       type: "delete";
       frameId: string;

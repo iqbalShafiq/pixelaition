@@ -19,13 +19,20 @@ export { JevNotConfiguredError as DecisionNotConfiguredError };
 
 const intentOptions = {
   draw: "Draw a new sprite, item, or tile from scratch.",
-  edit: "Change pixels or colors that already exist on the frame.",
+  edit: "Change pixels or colors that already exist on the frame, including a follow-up that corrects the previous result.",
   variant: "Produce another state, direction, or action of an existing frame.",
   clarify: "The request is too vague, so ask one question instead of drawing.",
 } as const;
 
 const clarifyQuestion =
   "What should the pixel asset show, and about how many pixels wide should it be?";
+
+/** What the last run did, so a short follow-up reads as a correction. */
+export type DecisionContext = {
+  previousPrompt?: string;
+  previousAnswer?: string;
+  assetName?: string;
+};
 
 /** The typed questions Jev answers in one parallel request. */
 const jevQuestions: Record<string, JevQuestion> = {
@@ -51,10 +58,11 @@ const jevQuestions: Record<string, JevQuestion> = {
   actionable: {
     type: "noul",
     instructions:
-      "If the request asks to change or extend existing art, does it say what to change? For a request that draws something new, answer yes.",
+      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `previous` (the last request and its result) — for example, 'it's not blue though' says what to change. Use `previous` whenever it is present. For a request that draws something new, answer yes.",
     criteria: {
-      true: "An edit or variant says what to change, or the request does not edit existing art.",
-      false: "It asks to change existing art but does not say what to change.",
+      true: "An edit or variant says what to change, directly or by referring to `previous`, or the request does not edit existing art.",
+      false:
+        "It asks to change existing art but does not say what to change, even with `previous` as context.",
     },
   },
 };
@@ -84,8 +92,31 @@ export function toDecision(answers: {
   return { intent, confidence, source: "jev" };
 }
 
-export async function decidePrompt(prompt: string, env: JevEnv): Promise<DrawDecision> {
-  const { answers } = await askJev({ prompt }, jevQuestions, env);
+export async function decidePrompt(
+  prompt: string,
+  env: JevEnv,
+  context: DecisionContext = {},
+): Promise<DrawDecision> {
+  const previous =
+    context.previousPrompt !== undefined || context.previousAnswer !== undefined
+      ? {
+          ...(context.previousPrompt !== undefined
+            ? { prompt: context.previousPrompt }
+            : {}),
+          ...(context.previousAnswer !== undefined
+            ? { answer: context.previousAnswer }
+            : {}),
+        }
+      : undefined;
+  const { answers } = await askJev(
+    {
+      prompt,
+      ...(previous !== undefined ? { previous } : {}),
+      ...(context.assetName !== undefined ? { asset: { name: context.assetName } } : {}),
+    },
+    jevQuestions,
+    env,
+  );
   return toDecision({
     intent: answers.intent ?? {},
     drawable: answers.drawable ?? {},

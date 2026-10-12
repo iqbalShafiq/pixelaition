@@ -72,7 +72,7 @@ const TOOL_GATES: Record<
   },
   set_palette: {
     description:
-      "Choose the colors the frame will paint with by replacing the frame's palette. Drawing a sprite in specific colors requires setting a palette; index 0 stays transparent.",
+      "Choose the colors the asset will paint with by replacing its palette; every frame adopts it. Drawing a sprite in specific colors requires setting a palette; index 0 stays transparent.",
     questions: { supported: supportedQuestion },
   },
   remove_layer: {

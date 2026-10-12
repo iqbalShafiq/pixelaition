@@ -116,10 +116,11 @@ Wide screens keep frames and layers on the left, the canvas in the center, and t
 
 Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32, and always aims at the cursor. Opening an asset frames the whole sprite instead of a corner of it.
 
-`set_palette` is **run-scoped**: the agent's palette change lives in the run's
-binding and in the frames it streams, and the run's `read_project` legend
-describes it, but it is not written back to the asset's palette row. Only the
-editor's palette panel persists; a run's palette lasts as long as the run.
+`set_palette` replaces the **asset's** palette and persists it, exactly like the
+editor's palette panel: every frame adopts the change, the run's `read_project`
+legend follows, and the pixels a run paints can never outlive the palette they
+were painted against. A palette that would drop a colour another frame still
+uses is refused before anything changes.
 
 A sheet is unmounted at desktop widths rather than hidden with `display: none`. Base UI waits for an exit animation to unmount its portal, and a `display: none` popup never fires one, so the dialog stays mounted with an inert overlay that swallows every click on the page.
 

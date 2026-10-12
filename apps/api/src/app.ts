@@ -527,6 +527,8 @@ export function createApp() {
     let target:
       | { scope: "asset"; assetId: string; frameId: string }
       | { scope: "workspace"; projectId: string };
+    /** What the run draws on, for the decision's context. */
+    let targetName: string | undefined;
     if (body.scope === "workspace") {
       const projectId = body.projectId;
       if (!projectId)
@@ -536,6 +538,7 @@ export function createApp() {
       const project = await getProjectRecord(db, userId, projectId);
       if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
       target = { scope: "workspace", projectId: project.id };
+      targetName = project.name;
     } else {
       const assetId = body.assetId;
       const frameId = body.frameId;
@@ -551,6 +554,7 @@ export function createApp() {
       const asset = await getAssetRecord(db, userId, assetId);
       if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
       target = { scope: "asset", assetId: asset.id, frameId };
+      targetName = asset.name;
     }
     if (!process.env.OPENROUTER_API_KEY?.trim()) {
       return fail(
@@ -663,18 +667,34 @@ export function createApp() {
         `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
       );
     }
+    // A follow-up like "it's not blue though" only reads as an edit against
+    // the last run; the decision gets that context.
+    const [previousRun] = await db
+      .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
+      .from(generationRuns)
+      .where(eq(generationRuns.threadId, thread.id))
+      .orderBy(desc(generationRuns.createdAt))
+      .limit(1);
     const decisionStarted = Date.now();
     let decided: DrawDecision;
     let decisionUsage: Record<string, number> | undefined;
     try {
-      decided = await decidePrompt(body.prompt, {
-        apiKey: process.env.OPENROUTER_API_KEY,
-        model: jevModel,
-        onCall: (call) => {
-          const { model: _model, latencyMs: _latencyMs, ...usage } = call;
-          decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
+      decided = await decidePrompt(
+        body.prompt,
+        {
+          apiKey: process.env.OPENROUTER_API_KEY,
+          model: jevModel,
+          onCall: (call) => {
+            const { model: _model, latencyMs: _latencyMs, ...usage } = call;
+            decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
+          },
         },
-      });
+        {
+          ...(previousRun?.prompt ? { previousPrompt: previousRun.prompt } : {}),
+          ...(previousRun?.answer ? { previousAnswer: previousRun.answer } : {}),
+          ...(targetName !== undefined ? { assetName: targetName } : {}),
+        },
+      );
     } catch (reason) {
       if (reason instanceof DecisionNotConfiguredError) {
         return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
