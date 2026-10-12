@@ -12,6 +12,7 @@ import type { QueuedRun } from "../lib/run-queue.js";
 export function QueueDock({
   items,
   canSteer,
+  busy = false,
   onSendNow,
   onRemove,
   onReorder,
@@ -20,6 +21,8 @@ export function QueueDock({
   items: QueuedRun[];
   /** A live run exists; without one the queue drains as runs finish. */
   canSteer: boolean;
+  /** A steer request is in flight; Send now waits for it. */
+  busy?: boolean;
   onSendNow: () => void;
   onRemove: (id: string) => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
@@ -41,7 +44,7 @@ export function QueueDock({
         <span className="text-pixel-mono text-muted">{items.length}</span>
         <span className="ml-auto flex items-center gap-1.5">
           {canSteer ? (
-            <Button onClick={onSendNow} className="min-h-7 px-2 py-0.5">
+            <Button onClick={onSendNow} disabled={busy} className="min-h-7 px-2 py-0.5">
               Send now
             </Button>
           ) : null}

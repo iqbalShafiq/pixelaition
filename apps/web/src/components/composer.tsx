@@ -16,6 +16,8 @@ export function Composer({
   efforts,
   onEffort,
   running,
+  starting = false,
+  stopping = false,
   modelReady,
   onGenerate,
   onStop,
@@ -32,6 +34,10 @@ export function Composer({
   efforts: string[];
   onEffort: (value: string) => void;
   running: boolean;
+  /** An optimistic start is in flight; the button says so immediately. */
+  starting?: boolean;
+  /** An optimistic stop is in flight; the button says so immediately. */
+  stopping?: boolean;
   modelReady: boolean;
   onGenerate: () => void;
   onStop: () => void;
@@ -70,9 +76,11 @@ export function Composer({
         value={prompt}
         aria-label="Prompt"
         placeholder={
-          running
-            ? "The agent is working — type a follow-up to queue it"
-            : "Describe the pixel asset, or ask for another state of this frame"
+          starting
+            ? "Starting the run…"
+            : running
+              ? "The agent is working — type a follow-up to queue it"
+              : "Describe the pixel asset, or ask for another state of this frame"
         }
         className="min-h-[2.75rem] px-3 py-2.5"
         onKeyDown={(event) => {
@@ -112,8 +120,14 @@ export function Composer({
           <span className="text-pixel-mono text-muted">the model catalog is empty</span>
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
-          {running ? (
-            queueable ? (
+          {starting ? (
+            <Button disabled>Starting…</Button>
+          ) : running ? (
+            stopping ? (
+              <Button tone="danger" disabled>
+                Stopping…
+              </Button>
+            ) : queueable ? (
               <Button
                 onClick={onQueue}
                 disabled={!modelReady || noCatalog || blocked}

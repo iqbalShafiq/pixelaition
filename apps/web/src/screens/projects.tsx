@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Folder, Plus } from "../components/pixel-icons.js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useOptimistic,
+  useRef,
+  useState,
+} from "react";
 import { motion } from "motion/react";
 import { SpriteThumb } from "../components/sprite-thumb.js";
 import { Composer } from "../components/composer.js";
@@ -114,6 +121,10 @@ export function ProjectsScreen() {
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const running = runId !== null;
+  // Optimistic overlays: the composer and console react the moment the user
+  // acts, and each overlay reverts by itself when the action fails.
+  const [optimisticStart, setOptimisticStart] = useOptimistic<string | null>(null);
+  const [optimisticStopping, setOptimisticStopping] = useOptimistic(false);
 
   useEffect(() => {
     if (preferences.data?.lastModelId) setModelId(preferences.data.lastModelId);
@@ -268,51 +279,65 @@ export function ProjectsScreen() {
         ? "a workspace run needs a project — create one first"
         : undefined;
 
-  async function generate() {
+  function generate() {
     if (running || !projectId) return;
+    const text = prompt.trim();
+    if (text.length === 0) return;
+    // Urgent updates: the console reacts before any await.
     setError(null);
     setMessage("");
     setRows([]);
     setConsoleOpen(true);
-    setRunPrompt(prompt);
-    try {
-      await api("/api/preferences", {
-        method: "PATCH",
-        body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
-      });
-      const started = await api<{ runId: string }>("/api/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          scope: "workspace",
-          projectId,
-          prompt,
-          modelId,
-          reasoningEffort: effort,
-        }),
-      });
-      setRunId(started.runId);
-      log(`Run ${started.runId.slice(0, 8)} started`);
-      listen(started.runId);
-    } catch (reason) {
-      const text = reason instanceof Error ? reason.message : "Generation failed.";
-      setError(text);
-      notify({ title: "Could not start the run", description: text });
-    }
+    setRunPrompt(text);
+    setPrompt("");
+    startTransition(async () => {
+      // Optimistic "starting…" until the run exists; a failure reverts it and
+      // hands the prompt back.
+      setOptimisticStart(text);
+      try {
+        await api("/api/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
+        });
+        const started = await api<{ runId: string }>("/api/runs", {
+          method: "POST",
+          body: JSON.stringify({
+            scope: "workspace",
+            projectId,
+            prompt: text,
+            modelId,
+            reasoningEffort: effort,
+          }),
+        });
+        setRunId(started.runId);
+        log(`Run ${started.runId.slice(0, 8)} started`);
+        listen(started.runId);
+      } catch (reason) {
+        setPrompt(text);
+        const message = reason instanceof Error ? reason.message : "Generation failed.";
+        setError(message);
+        notify({ title: "Could not start the run", description: message });
+      }
+    });
   }
 
-  async function stop() {
-    if (!runId) return;
-    try {
-      await api(`/api/runs/${runId}/cancel`, { method: "POST" });
-      log("Stopped; waiting for the agent to acknowledge");
-      // The stream stays open: the worker's cancelled status and done event
-      // clear the run state.
-    } catch (reason) {
-      notify({
-        title: "Could not stop the run",
-        description: reason instanceof Error ? reason.message : "Unknown error",
-      });
-    }
+  function stop() {
+    if (!runId || optimisticStopping) return;
+    startTransition(async () => {
+      // The button says "Stopping…" immediately; a refused cancel reverts it.
+      setOptimisticStopping(true);
+      try {
+        await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+        log("Stopped; waiting for the agent to acknowledge");
+        // The stream stays open: the worker's cancelled status and done event
+        // clear the run state.
+      } catch (reason) {
+        notify({
+          title: "Could not stop the run",
+          description: reason instanceof Error ? reason.message : "Unknown error",
+        });
+      }
+    });
   }
 
   /**
@@ -402,9 +427,11 @@ export function ProjectsScreen() {
                 efforts={efforts}
                 onEffort={setEffort}
                 running={running}
+                starting={optimisticStart !== null}
+                stopping={optimisticStopping}
                 modelReady={catalog.data?.modelReady ?? false}
-                onGenerate={() => void generate()}
-                onStop={() => void stop()}
+                onGenerate={generate}
+                onStop={stop}
                 scope={
                   <SelectControl
                     label="Project"
@@ -422,7 +449,7 @@ export function ProjectsScreen() {
               />
               <RunConsole
                 rows={rows}
-                running={running}
+                running={running || optimisticStart !== null}
                 open={consoleOpen}
                 onOpen={setConsoleOpen}
                 message={message || (error ?? "")}

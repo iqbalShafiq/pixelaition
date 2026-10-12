@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useOptimistic,
+  useRef,
+  useState,
+  startTransition,
+} from "react";
 import {
   applyCommand,
   centerCamera,
@@ -215,6 +223,17 @@ export function EditorScreen() {
     setQueue(readQueue(assetId));
   }, [assetId, queue]);
   queueRef.current = queue;
+  // Optimistic overlays: the UI reacts the moment the user acts, and each
+  // overlay reverts by itself when the action fails (the base state is only
+  // updated on success).
+  const [optimisticStart, setOptimisticStart] = useOptimistic<string | null>(null);
+  const [optimisticStopping, setOptimisticStopping] = useOptimistic(false);
+  const [optimisticQueue, setOptimisticQueue] = useOptimistic(
+    queue,
+    (current: QueuedRun[], sentIds: ReadonlySet<string>) =>
+      current.filter((item) => !sentIds.has(item.id)),
+  );
+  const steering = optimisticQueue !== queue;
 
   const frames = asset.data?.frames ?? [];
   const frame = frames.find((item) => item.id === frameId) ?? null;
@@ -934,9 +953,10 @@ export function EditorScreen() {
     }
   }
 
-  async function generate(textOverride?: string) {
+  function generate(textOverride?: string) {
     const text = (textOverride ?? prompt).trim();
-    if (!frameId || running || text.length === 0) return;
+    if (!frameId || running || optimisticStart !== null || text.length === 0) return;
+    // Urgent updates: the console and the composer react before any await.
     setError(null);
     setMessage("");
     setRows([]);
@@ -946,37 +966,42 @@ export function EditorScreen() {
     setRunHistory([]);
     // A history preview must not sit over the strokes the agent is about to draw.
     setPreview(null);
-    try {
-      // Local edits made before the run must land before the agent starts.
-      await flush();
-      await api("/api/preferences", {
-        method: "PATCH",
-        body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
-      });
-      const started = await api<{ runId: string }>("/api/runs", {
-        method: "POST",
-        body: JSON.stringify({
-          assetId,
-          frameId,
-          prompt: text,
-          modelId,
-          reasoningEffort: effort,
-        }),
-      });
-      setRunId(started.runId);
-      rememberRunModel(started.runId, modelId);
-      displayedRunIdRef.current = started.runId;
-      setRunFrameId(frameId);
-      // The composer clears on send, so the button falls back to Stop and the
-      // next text typed becomes a queued follow-up.
-      setPrompt("");
-      log(`Run ${started.runId.slice(0, 8)} started`);
-      listen(started.runId, frameId);
-    } catch (reason) {
-      const text = reason instanceof Error ? reason.message : "Generation failed.";
-      setError(text);
-      notify({ title: "Could not start the run", description: text });
-    }
+    if (textOverride === undefined) setPrompt("");
+    startTransition(async () => {
+      // The optimistic marker shows "starting…" until the run exists; on a
+      // failure the base state never changes, so it reverts by itself.
+      setOptimisticStart(text);
+      try {
+        // Local edits made before the run must land before the agent starts.
+        await flush();
+        await api("/api/preferences", {
+          method: "PATCH",
+          body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
+        });
+        const started = await api<{ runId: string }>("/api/runs", {
+          method: "POST",
+          body: JSON.stringify({
+            assetId,
+            frameId,
+            prompt: text,
+            modelId,
+            reasoningEffort: effort,
+          }),
+        });
+        setRunId(started.runId);
+        rememberRunModel(started.runId, modelId);
+        displayedRunIdRef.current = started.runId;
+        setRunFrameId(frameId);
+        log(`Run ${started.runId.slice(0, 8)} started`);
+        listen(started.runId, frameId);
+      } catch (reason) {
+        // Nothing was lost: the prompt comes back for a retry.
+        if (textOverride === undefined) setPrompt(text);
+        const message = reason instanceof Error ? reason.message : "Generation failed.";
+        setError(message);
+        notify({ title: "Could not start the run", description: message });
+      }
+    });
   }
 
   // The SSE handlers keep a stable identity, so the auto-flush reaches the
@@ -1003,27 +1028,32 @@ export function EditorScreen() {
     setConsoleOpen(true);
   }
 
-  async function sendQueuedNow() {
+  function sendQueuedNow() {
     const pending = queueRef.current;
-    if (pending.length === 0 || runId === null) return;
-    try {
-      await api(`/api/runs/${runId}/steer`, {
-        method: "POST",
-        body: JSON.stringify({
-          // One message per entry: the runtime applies them one per turn,
-          // FIFO, and the item id dedupes a retried batch.
-          messages: pending.map((item) => ({ text: item.text, requestId: item.id })),
-        }),
-      });
-      const ids = new Set(pending.map((item) => item.id));
-      setQueue((current) => removeQueuedRuns(current, ids));
-      log(`Follow-up${pending.length === 1 ? "" : "s"} sent to the running agent`);
-    } catch (reason) {
-      notify({
-        title: "The follow-up was not accepted",
-        description: reason instanceof Error ? reason.message : "Unknown error",
-      });
-    }
+    if (pending.length === 0 || runId === null || steering) return;
+    const ids = new Set(pending.map((item) => item.id));
+    startTransition(async () => {
+      // The dock empties immediately; a failure restores the items because
+      // the base queue only changes on success.
+      setOptimisticQueue(ids);
+      try {
+        await api(`/api/runs/${runId}/steer`, {
+          method: "POST",
+          body: JSON.stringify({
+            // One message per entry: the runtime applies them one per turn,
+            // FIFO, and the item id dedupes a retried batch.
+            messages: pending.map((item) => ({ text: item.text, requestId: item.id })),
+          }),
+        });
+        setQueue((current) => removeQueuedRuns(current, ids));
+        log(`Follow-up${pending.length === 1 ? "" : "s"} sent to the running agent`);
+      } catch (reason) {
+        notify({
+          title: "The follow-up was not accepted",
+          description: reason instanceof Error ? reason.message : "Unknown error",
+        });
+      }
+    });
   }
 
   function recallQueued(id: string) {
@@ -1035,19 +1065,24 @@ export function EditorScreen() {
     setQueue((current) => removeQueuedRun(current, id));
   }
 
-  async function stop() {
-    if (!runId) return;
-    try {
-      await api(`/api/runs/${runId}/cancel`, { method: "POST" });
-      log("Stopped; waiting for the agent to acknowledge");
-      // The stream stays open: the worker's cancelled status and done event
-      // clear the run state and reload the frame.
-    } catch (reason) {
-      notify({
-        title: "Could not stop the run",
-        description: reason instanceof Error ? reason.message : "Unknown error",
-      });
-    }
+  function stop() {
+    if (!runId || optimisticStopping) return;
+    startTransition(async () => {
+      // The button says "Stopping…" the moment it is clicked; a refused
+      // cancel reverts it and names the cause.
+      setOptimisticStopping(true);
+      try {
+        await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+        log("Stopped; waiting for the agent to acknowledge");
+        // The stream stays open: the worker's cancelled status and done event
+        // clear the run state and reload the frame.
+      } catch (reason) {
+        notify({
+          title: "Could not stop the run",
+          description: reason instanceof Error ? reason.message : "Unknown error",
+        });
+      }
+    });
   }
 
   function focusComposer() {
@@ -1432,7 +1467,7 @@ export function EditorScreen() {
             <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center gap-2 overflow-y-auto px-3">
               <RunConsole
                 rows={rows}
-                running={running}
+                running={running || optimisticStart !== null}
                 open={consoleOpen}
                 onOpen={setConsoleOpen}
                 message={message || (error ?? "")}
@@ -1446,9 +1481,10 @@ export function EditorScreen() {
                 onEscape={focusComposer}
               />
               <QueueDock
-                items={queue}
+                items={optimisticQueue}
                 canSteer={runId !== null}
-                onSendNow={() => void sendQueuedNow()}
+                busy={steering}
+                onSendNow={sendQueuedNow}
                 onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
                 onReorder={(from, to) =>
                   setQueue((current) => reorderQueuedRun(current, from, to))
@@ -1468,9 +1504,11 @@ export function EditorScreen() {
                   efforts={efforts}
                   onEffort={setEffort}
                   running={running}
+                  starting={optimisticStart !== null}
+                  stopping={optimisticStopping}
                   modelReady={catalog.data?.modelReady ?? false}
-                  onGenerate={() => void generate()}
-                  onStop={() => void stop()}
+                  onGenerate={() => generate()}
+                  onStop={stop}
                   onQueue={queuePrompt}
                 />
               </div>
