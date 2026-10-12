@@ -1261,7 +1261,7 @@ export function createPixelTools(
   const webSearch = createTool({
     name: "web_search",
     description:
-      "Search the web for text and real reference images. Ground the work in what you find: search before drawing a real subject you cannot picture, then view_image to look at a result.",
+      "Search the web for text and real reference images. Call this first whenever the message asks for a search, a reference, or a real-world subject you cannot picture; then view_image to look at a result.",
     inputSchema: z.object({
       query: z.string().min(2).max(400),
       maxResults: z.number().int().min(1).max(8).default(5),
