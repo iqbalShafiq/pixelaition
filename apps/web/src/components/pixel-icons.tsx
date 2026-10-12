@@ -1,5 +1,6 @@
 import {
   ArrowRight as RawArrowRight,
+  Attachment as RawAttachment,
   Check as RawCheck,
   CheckboxOn as RawCheckboxOn,
   ChevronDown as RawChevronDown,
@@ -70,6 +71,7 @@ import type { ComponentType, SVGProps } from "react";
  * ArrowRight        ArrowRight          ArrowRight
  * ChevronDown       ChevronDown         ChevronDown
  * Minus             Minus               Minus
+ * Attach            (attach button)     Attachment
  *
  * custom (the free set has no equivalent; drawn below on the same 24x24 grid
  * with 2x2 cells, no substitution is allowed here):
@@ -125,6 +127,7 @@ export const Palette = crisp(RawColorsSwatch);
 export const ArrowRight = crisp(RawArrowRight);
 export const ChevronDown = crisp(RawChevronDown);
 export const Minus = crisp(RawMinus);
+export const Attach = crisp(RawAttachment);
 
 /**
  * Draws a glyph from a bitmap: one character per 2x2 cell on the 24x24 grid,

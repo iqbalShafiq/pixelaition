@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MAX_ATTACHMENTS, type PreparedAttachment } from "../lib/attachments.js";
-import { Button, SelectControl, Textarea } from "./ui.js";
+import { Attach } from "./pixel-icons.js";
+import { Button, IconButton, SelectControl, Textarea } from "./ui.js";
 
 /**
  * The floating well over the canvas column: prompt, model, effort, go.
@@ -183,13 +184,15 @@ export function Composer({
       />
       <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
         {scope}
-        <Button
-          onClick={() => fileRef.current?.click()}
+        <IconButton
+          label="Attach reference images"
+          hint={`PNG, JPEG, WebP, or GIF, up to ${MAX_ATTACHMENTS}`}
+          size="lg"
           disabled={!attachable || !modelReady || noCatalog || blocked}
-          title={`Attach up to ${MAX_ATTACHMENTS} reference images`}
+          onClick={() => fileRef.current?.click()}
         >
-          Attach
-        </Button>
+          <Attach />
+        </IconButton>
         <input
           ref={fileRef}
           type="file"

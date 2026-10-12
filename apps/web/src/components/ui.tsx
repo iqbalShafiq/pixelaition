@@ -67,12 +67,13 @@ export function IconButton({
   /** Active state shown as an accent edge rather than a solid fill. */
   subtle?: boolean;
   disabled?: boolean;
-  size?: "sm" | "md";
+  /** sm 28px, md 36px, lg 40px — lg matches the composer bar's controls. */
+  size?: "sm" | "md" | "lg";
   onClick?: () => void;
   children: ReactNode;
   className?: string;
 }) {
-  const box = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+  const box = size === "sm" ? "h-7 w-7" : size === "lg" ? "h-10 w-10" : "h-9 w-9";
   const state = !active
     ? "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
     : subtle
