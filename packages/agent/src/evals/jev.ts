@@ -104,12 +104,14 @@ const decisionSuite: Suite = {
       input: "add a jump animation frame to the slime",
       expected: "variant",
       ok: exact("variant"),
+      context: { frames: ["idle"], frameName: "idle" },
     },
     {
       label: "attack state",
       input: "another state where the knight attacks",
       expected: "variant",
       ok: exact("variant"),
+      context: { frames: ["idle"], frameName: "idle" },
     },
     { label: "new sword", input: "a 32x32 sword", expected: "draw", ok: exact("draw") },
     {

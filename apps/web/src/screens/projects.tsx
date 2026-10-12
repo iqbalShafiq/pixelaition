@@ -83,7 +83,7 @@ export function ProjectsScreen() {
     queryKey: ["models"],
     queryFn: () =>
       api<{
-        models: Array<{ id: string; efforts: string[] }>;
+        models: Array<{ id: string; efforts: string[]; vision: boolean }>;
         modelReady: boolean;
       }>("/api/models"),
   });
@@ -271,6 +271,15 @@ export function ProjectsScreen() {
     : (list[0]?.id ?? "");
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+  // Attached pixels need a model that can see; the API refuses the run, so the
+  // composer names the cause before anything is spent.
+  const selectedModel = catalog.data?.models.find((item) => item.id === modelId);
+  const attachmentIssue =
+    attachments.items.length > 0 &&
+    selectedModel !== undefined &&
+    selectedModel.vision !== true
+      ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
+      : undefined;
   // A workspace run belongs to one project; without one the composer names the
   // cause instead of starting a run against a guessed home.
   const blockedReason = projects.isPending
@@ -460,6 +469,7 @@ export function ProjectsScreen() {
                 blockedReason={blockedReason}
                 attachments={attachments.items}
                 attachmentError={attachments.error}
+                attachmentIssue={attachmentIssue}
                 onAttach={attachments.add}
                 onRemoveAttachment={attachments.remove}
               />

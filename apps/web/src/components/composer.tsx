@@ -27,6 +27,7 @@ export function Composer({
   blockedReason,
   attachments = [],
   attachmentError,
+  attachmentIssue,
   onAttach,
   onRemoveAttachment,
 }: {
@@ -56,6 +57,8 @@ export function Composer({
   attachments?: PreparedAttachment[];
   /** Why the last attach was refused. */
   attachmentError?: string | undefined;
+  /** Why the staged attachments cannot reach the selected model. */
+  attachmentIssue?: string | undefined;
   onAttach?: ((files: Iterable<File>) => void) | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
 }) {
@@ -82,7 +85,10 @@ export function Composer({
     !starting &&
     onAttach !== undefined &&
     attachments.length < MAX_ATTACHMENTS;
-  const showAttachments = attachments.length > 0 || attachmentError !== undefined;
+  const showAttachments =
+    attachments.length > 0 ||
+    attachmentError !== undefined ||
+    attachmentIssue !== undefined;
 
   return (
     <section
@@ -138,6 +144,9 @@ export function Composer({
           {attachmentError !== undefined ? (
             <span className="text-pixel-mono text-muted">{attachmentError}</span>
           ) : null}
+          {attachmentIssue !== undefined ? (
+            <span className="text-pixel-mono text-muted">{attachmentIssue}</span>
+          ) : null}
         </div>
       ) : null}
       <Textarea
@@ -157,7 +166,14 @@ export function Composer({
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             if (canQueue) onQueue();
-            else if (!running && hasText && modelReady && !noCatalog && !blocked) {
+            else if (
+              !running &&
+              hasText &&
+              modelReady &&
+              !noCatalog &&
+              !blocked &&
+              attachmentIssue === undefined
+            ) {
               onGenerate();
             }
           }
@@ -232,7 +248,14 @@ export function Composer({
           ) : (
             <Button
               onClick={onGenerate}
-              disabled={!hasText || !modelReady || noCatalog || !modelId || blocked}
+              disabled={
+                !hasText ||
+                !modelReady ||
+                noCatalog ||
+                !modelId ||
+                blocked ||
+                attachmentIssue !== undefined
+              }
             >
               Send
             </Button>

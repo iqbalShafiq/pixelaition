@@ -611,6 +611,21 @@ export function createApp() {
         "Pick a model and effort from the catalog.",
       );
     }
+    // Attached pixels reach the model only through a model that can see; the
+    // request fails before the guardrail spends anything on a run that cannot
+    // read it, instead of letting the provider error out mid-run.
+    if (
+      body.attachments !== undefined &&
+      body.attachments.length > 0 &&
+      pair.vision !== true
+    ) {
+      return fail(
+        res,
+        422,
+        "MODEL_CANNOT_READ_IMAGES",
+        `Model ${pair.id} cannot read attached images; pick a vision model or remove the attachments.`,
+      );
+    }
     const decisionModel = process.env.DECISION_MODEL?.trim();
     const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
     const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
@@ -838,6 +853,16 @@ export function createApp() {
         message?: string;
       } | null;
       await failUnacceptedRun(runId, detail?.message);
+      // One run per frame is the app's own rule: keep the worker's conflict
+      // status and name it, so the composer can say what to do about it.
+      if (worker.status === 409) {
+        return fail(
+          res,
+          409,
+          "RUN_IN_PROGRESS",
+          detail?.message ?? "This frame already has an unfinished run.",
+        );
+      }
       return fail(
         res,
         502,

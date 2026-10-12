@@ -10,7 +10,7 @@ import {
   type AgentInteractionResponse,
   type AgentQuestionPrompt,
 } from "@anvia/core/agent/interactions";
-import { DurableRuntime } from "@anvia/durable";
+import { DurableConflictError, DurableRuntime } from "@anvia/durable";
 import { SqliteDurableStore } from "@anvia/durable/sqlite";
 import { OpenAIClient } from "@anvia/openai";
 import OpenAI from "openai";
@@ -759,6 +759,18 @@ app.post("/internal/runs", async (req, res) => {
       message: `Unknown model or effort: ${body.modelId} / ${body.reasoningEffort}.`,
     });
   }
+  // The API already refuses this; the worker re-checks so a direct internal
+  // call cannot hand pixels to a model that cannot read them.
+  const targetSpec = specs.find((spec) => spec.id === target.modelId);
+  if (
+    body.attachments !== undefined &&
+    body.attachments.length > 0 &&
+    targetSpec?.vision !== true
+  ) {
+    return res.status(422).json({
+      message: `Model ${target.modelId} cannot read attached images; pick a vision model or remove the attachments.`,
+    });
+  }
   const chosen = agentForTarget(target, body.mode);
   if (!chosen || !openai)
     return res.status(503).json({ message: "Add AGENT_API_KEY to generate." });
@@ -832,12 +844,27 @@ app.post("/internal/runs", async (req, res) => {
         }
       : promptText;
 
-  const run = await runtime.submit({
-    agentId: `${agentPrefix}${body.mode === "ask" ? ":ask" : ""}:${target.modelId}:${target.effort}`,
-    sessionId: body.threadId,
-    requestId: body.requestId,
-    prompt,
-  });
+  let run: Awaited<ReturnType<typeof runtime.submit>>;
+  try {
+    run = await runtime.submit({
+      agentId: `${agentPrefix}${body.mode === "ask" ? ":ask" : ""}:${target.modelId}:${target.effort}`,
+      sessionId: body.threadId,
+      requestId: body.requestId,
+      prompt,
+    });
+  } catch (reason) {
+    // One run per session: a second submission while the first is unfinished
+    // is a conflict with a clear cause, not an outage.
+    if (reason instanceof DurableConflictError) {
+      return res.status(409).json({
+        message:
+          "This frame already has an unfinished run; wait for it to finish or cancel it first.",
+      });
+    }
+    return res.status(502).json({
+      message: `The run could not start: ${boundedReason(reason)}`,
+    });
+  }
   publicIdByDurable.set(run.id, body.runId);
   seedUsage(run.id, body.usage);
   telemetry?.setTraceContext(run.id, {

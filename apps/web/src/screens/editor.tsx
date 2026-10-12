@@ -149,7 +149,7 @@ export function EditorScreen() {
     queryKey: ["models"],
     queryFn: () =>
       api<{
-        models: Array<{ id: string; efforts: string[] }>;
+        models: Array<{ id: string; efforts: string[]; vision: boolean }>;
         modelReady: boolean;
       }>("/api/models"),
   });
@@ -1162,6 +1162,15 @@ export function EditorScreen() {
   const usedColors = buffer ? usedColorCount(buffer) : 0;
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
+  // Attached pixels need a model that can see; the API refuses the run, so the
+  // composer names the cause before anything is spent.
+  const selectedModel = catalog.data?.models.find((item) => item.id === modelId);
+  const attachmentIssue =
+    attachments.items.length > 0 &&
+    selectedModel !== undefined &&
+    selectedModel.vision !== true
+      ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
+      : undefined;
   const runModelMap = useMemo(() => new Map(Object.entries(runModels)), [runModels]);
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
 
@@ -1545,6 +1554,7 @@ export function EditorScreen() {
                   onQueue={queuePrompt}
                   attachments={attachments.items}
                   attachmentError={attachments.error}
+                  attachmentIssue={attachmentIssue}
                   onAttach={attachments.add}
                   onRemoveAttachment={attachments.remove}
                 />
