@@ -1833,6 +1833,9 @@ function bindWorkspaceRun(options: {
         width: asset.width,
         height: asset.height,
         palette: asset.palette,
+        // A fresh asset has no generated summary yet; the summarizer fills it.
+        summary: "",
+        summaryAt: null,
         style: project.style as StyleGuide,
         createdAt: new Date(),
         updatedAt: new Date(),
