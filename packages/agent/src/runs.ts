@@ -308,6 +308,24 @@ export function replaceFrameBuffer(
   frame.buffer = buffer;
 }
 
+/**
+ * A layer reference is an id or a name; every layer tool accepts either so the
+ * model can work with the names read_project prints. An unknown reference
+ * fails with its cause instead of painting on the wrong layer.
+ */
+export function resolveLayerRef(buffer: FrameBuffer, ref: string): string {
+  const byId = buffer.layers.find((layer) => layer.id === ref);
+  if (byId) return byId.id;
+  const wanted = ref.trim().toLowerCase();
+  const byName = buffer.layers.find(
+    (layer) => layer.name.trim().toLowerCase() === wanted,
+  );
+  if (!byName) {
+    throw new Error(`No layer named or identified by "${ref}" on this frame.`);
+  }
+  return byName.id;
+}
+
 export function paintStroke(
   run: BoundRunBinding,
   frameId: string | undefined,
@@ -316,9 +334,10 @@ export function paintStroke(
   points: Stroke["points"],
 ): Stroke {
   const id = frameId ?? run.currentFrameId;
-  const result = applyCommand(frameBuffer(run, frameId), {
+  const buffer = frameBuffer(run, frameId);
+  const result = applyCommand(buffer, {
     type: "paint",
-    layerId,
+    layerId: resolveLayerRef(buffer, layerId),
     points,
   });
   if (!result.ok) throw new Error(result.message);

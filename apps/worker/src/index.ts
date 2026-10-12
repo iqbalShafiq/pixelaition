@@ -558,7 +558,7 @@ const agents = completions.flatMap(({ spec, model }) => {
         model,
         instructions: pixelInstructions,
         tools: drawingTools,
-        maxTurns: 60,
+        maxTurns: 120,
         controls: { reasoningEffort: effort },
         observability,
       }),
@@ -1064,7 +1064,10 @@ app.post("/internal/runs", async (req, res) => {
           ...(asset.projectSummary.length > 0
             ? { projectSummary: asset.projectSummary }
             : {}),
-          ...(asset.summary.length > 0 ? { assetSummary: asset.summary } : {}),
+          // The asset's name always travels, so a fresh asset with no summary
+          // still reads as a pinned target and the agent never asks for it.
+          assetSummary:
+            asset.summary.length > 0 ? `${asset.name} — ${asset.summary}` : asset.name,
           ...(originFrameId !== undefined
             ? (() => {
                 const frame = asset.frames.find((item) => item.id === originFrameId);

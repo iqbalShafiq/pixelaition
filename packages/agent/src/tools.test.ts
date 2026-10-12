@@ -1594,6 +1594,57 @@ describe("preview_frame", () => {
   });
 });
 
+describe("layer references by name", () => {
+  it("paints, reads, renames, hides, and removes a layer by its name", async () => {
+    boundRun();
+    const added = (await tool("add_layer").call(
+      { name: "shade" },
+      { operationId: "run-1" },
+    )) as {
+      layerId: string;
+    };
+    await tool("paint_stroke").call(
+      { layerId: "shade", label: "dot", points: [{ x: 1, y: 1, color: 1 }] },
+      { operationId: "run-1" },
+    );
+    const frame = (await tool("read_frame").call(
+      { layerId: "shade" },
+      { operationId: "run-1" },
+    )) as { layerId?: string; rows: string[] };
+    expect(frame.layerId).toBe(added.layerId);
+    expect(frame.rows.join(" ")).toContain("1x1");
+    await tool("rename_layer").call(
+      { layerId: "shade", name: "shadow" },
+      { operationId: "run-1" },
+    );
+    const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
+      layers: Array<{ name: string }>;
+    };
+    expect(project.layers.map((layer) => layer.name)).toContain("shadow");
+    await tool("set_layer_visible").call(
+      { layerId: "shadow", visible: false },
+      { operationId: "run-1" },
+    );
+    const removed = (await tool("remove_layer").call(
+      { layerId: "shadow" },
+      { operationId: "run-1" },
+    )) as { removed: string };
+    expect(removed.removed).toBe("shadow");
+    releaseRun("run-1");
+  });
+
+  it("names the cause for an unknown layer reference", async () => {
+    boundRun();
+    await expect(
+      tool("paint_stroke").call(
+        { layerId: "nope", label: "x", points: [{ x: 0, y: 0, color: 1 }] },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow('No layer named or identified by "nope"');
+    releaseRun("run-1");
+  });
+});
+
 describe("web search and reference images", () => {
   it("registers web_search with a key and view_image only with vision too", () => {
     const names = (tools: ReturnType<typeof createPixelTools>) =>

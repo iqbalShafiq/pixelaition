@@ -37,6 +37,7 @@ import {
   replaceFrameBuffer,
   requireAsset,
   requireRun,
+  resolveLayerRef,
   runIdFromOperation,
   searchImagesFor,
   stagedOverrideSchema,
@@ -92,7 +93,7 @@ function resolvePixels(
   const layer =
     layerId === undefined
       ? (buffer.layers.find((item) => item.visible) ?? buffer.layers[0])
-      : buffer.layers.find((item) => item.id === layerId);
+      : buffer.layers.find((item) => item.id === resolveLayerRef(buffer, layerId));
   if (!layer) throw new Error("That layer is not on this frame.");
   return { pixels: layer.pixels, layerId: layer.id };
 }
@@ -104,7 +105,14 @@ function editFrame(
   command: Command,
 ): { id: string; buffer: FrameBuffer } {
   const frame = resolveFrame(run, frameId);
-  const result = applyCommand(frame.buffer, command);
+  // Every command that names a layer takes an id or a name; normalize here so
+  // no layer tool has to know the difference.
+  const ref = (command as { layerId?: unknown }).layerId;
+  const normalized: Command =
+    typeof ref === "string"
+      ? ({ ...command, layerId: resolveLayerRef(frame.buffer, ref) } as Command)
+      : command;
+  const result = applyCommand(frame.buffer, normalized);
   if (!result.ok) throw new Error(result.message);
   replaceFrameBuffer(run, frame.id, result.buffer);
   run.touchedFrames.add(frame.id);
@@ -351,7 +359,7 @@ export function createPixelTools(
   const readFrame = createTool({
     name: "read_frame",
     description:
-      "Read a frame as RLE rows (`colorxcount`). Defaults to the current frame and to the composite of visible layers; pass frameId or layerId to read another frame or one layer. Zero is transparent.",
+      "Read a frame as RLE rows (`colorxcount`). Defaults to the current frame and to the composite of visible layers; pass frameId or layerId (id or name) to read another frame or one layer. Zero is transparent.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -428,7 +436,7 @@ export function createPixelTools(
   const paint = createTool({
     name: "paint_stroke",
     description:
-      "Paint up to 48 pixels on a layer of the current frame. Colors are palette indexes. The server stores only the pixels it accepts.",
+      "Paint up to 48 pixels on a layer of the current frame. layerId takes the layer id or its name. Colors are palette indexes. The server stores only the pixels it accepts.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -453,7 +461,7 @@ export function createPixelTools(
   const fillRect = createTool({
     name: "fill_rect",
     description:
-      "Fill a rectangle on a layer of the current frame. Pass frameId to fill another frame.",
+      "Fill a rectangle on a layer of the current frame. layerId takes the layer id or its name. Pass frameId to fill another frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -477,7 +485,7 @@ export function createPixelTools(
   const eraseStroke = createTool({
     name: "erase_stroke",
     description:
-      "Erase up to 48 pixels on a layer of the current frame, clearing them to transparency. Pass frameId to erase another frame.",
+      "Erase up to 48 pixels on a layer of the current frame, clearing them to transparency. layerId takes the layer id or its name. Pass frameId to erase another frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -505,7 +513,7 @@ export function createPixelTools(
   const drawLine = createTool({
     name: "draw_line",
     description:
-      "Draw a straight line between two pixels on a layer of the current frame. Pass frameId to draw on another frame.",
+      "Draw a straight line between two pixels on a layer of the current frame. layerId takes the layer id or its name. Pass frameId to draw on another frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -543,7 +551,7 @@ export function createPixelTools(
   const floodFill = createTool({
     name: "flood_fill",
     description:
-      "Flood-fill the connected run of one color around (x, y) on a layer of the current frame. Pass frameId to fill another frame.",
+      "Flood-fill the connected run of one color around (x, y) on a layer of the current frame. layerId takes the layer id or its name. Pass frameId to fill another frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -565,7 +573,7 @@ export function createPixelTools(
   const fillRegion = createTool({
     name: "fill_region",
     description:
-      "Fill a rectangle on a layer of the current frame. Pass frameId to fill another frame.",
+      "Fill a rectangle on a layer of the current frame. layerId takes the layer id or its name. Pass frameId to fill another frame.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -619,7 +627,7 @@ export function createPixelTools(
   const replaceColorTool = createTool({
     name: "replace_color",
     description:
-      "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given, every layer otherwise.",
+      "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given (id or name), every layer otherwise.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -642,7 +650,7 @@ export function createPixelTools(
   const applyOutline = createTool({
     name: "apply_outline",
     description:
-      "Ring the silhouette of the current frame with the style guide's outline color, or the palette color you pass. Paints on the active layer unless layerId names one.",
+      "Ring the silhouette of the current frame with the style guide's outline color, or the palette color you pass. Paints on the active layer unless layerId names one (id or name).",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -779,7 +787,7 @@ export function createPixelTools(
   const addLayerTool = createTool({
     name: "add_layer",
     description:
-      "Add a layer to the current frame (a frame holds at most four). It starts blank and visible; paint on it by its layerId.",
+      "Add a layer to the current frame (a frame holds at most four). It starts blank and visible; paint on it by its layer id or the name you gave.",
     inputSchema: z.object({
       name: z.string().min(1).max(40).optional(),
     }),
@@ -803,7 +811,7 @@ export function createPixelTools(
   const renameLayerTool = createTool({
     name: "rename_layer",
     description:
-      "Rename a layer on the current frame. The name is trimmed and must not be blank.",
+      "Rename a layer on the current frame; layerId takes the layer id or its current name. The new name is trimmed and must not be blank.",
     inputSchema: z.object({
       layerId: z.string(),
       name: z.string().min(1).max(40),
@@ -825,7 +833,7 @@ export function createPixelTools(
   const setLayerVisibleTool = createTool({
     name: "set_layer_visible",
     description:
-      "Show or hide a layer on the current frame. A hidden layer stays in the frame but leaves the composite.",
+      "Show or hide a layer on the current frame; layerId takes the layer id or its name. A hidden layer stays in the frame but leaves the composite.",
     inputSchema: z.object({
       layerId: z.string(),
       visible: z.boolean(),
@@ -846,7 +854,7 @@ export function createPixelTools(
   const removeLayerTool = createTool({
     name: "remove_layer",
     description:
-      "Remove a layer from the current frame. A frame keeps at least one layer, so the last layer cannot be removed.",
+      "Remove a layer from the current frame; layerId takes the layer id or its name. A frame keeps at least one layer, so the last layer cannot be removed.",
     inputSchema: z.object({ layerId: z.string() }),
     requiresApproval: gatedApproval("remove_layer", frameNeedsApproval),
     execute: (input, context) => {
