@@ -13,6 +13,7 @@ import { motion } from "motion/react";
 import { SpriteThumb } from "../components/sprite-thumb.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole } from "../components/run-console.js";
+import { ConfirmTargetCard } from "../components/confirm-target-card.js";
 import {
   type InteractionResponse,
   type PendingInteraction,
@@ -25,7 +26,6 @@ import {
   EmptyState,
   Field,
   PixelMark,
-  SelectControl,
   TextInput,
   motionToken,
   useToast,
@@ -33,10 +33,15 @@ import {
 import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
 import { useAttachments } from "../lib/use-attachments.js";
+import {
+  buildConfirmPayload,
+  type ConfirmChoice,
+  type TargetProposal,
+} from "../lib/target-proposal.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 
-type Project = { id: string; name: string; description: string };
+type Project = { id: string; name: string; description: string; summary?: string };
 type Asset = { id: string; name: string; width: number; height: number };
 type RecentRun = {
   id: string;
@@ -98,18 +103,38 @@ export function ProjectsScreen() {
     queryKey: ["recent-runs"],
     queryFn: () => api<{ runs: RecentRun[] }>("/api/runs/recent"),
   });
+  const assets = useQuery({
+    queryKey: ["assets"],
+    queryFn: () =>
+      api<{
+        assets: Array<{
+          id: string;
+          projectId: string;
+          name: string;
+          summary: string;
+          width: number;
+          height: number;
+          updatedAt: string;
+        }>;
+      }>("/api/assets"),
+  });
 
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
-  const [pickedProjectId, setPickedProjectId] = useState("");
   const [rows, setRows] = useState<RunRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [runPrompt, setRunPrompt] = useState("");
+  // The proposal phase: Jev's target, held until the user confirms.
+  const [proposal, setProposal] = useState<{
+    proposalId: string;
+    proposal: TargetProposal;
+  } | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
     null,
   );
@@ -266,9 +291,6 @@ export function ProjectsScreen() {
   }, [recent.data, runId, listen, log]);
 
   const list = projects.data?.projects ?? [];
-  const projectId = list.some((project) => project.id === pickedProjectId)
-    ? pickedProjectId
-    : (list[0]?.id ?? "");
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
   // Attached pixels need a model that can see; the API refuses the run, so the
@@ -280,18 +302,16 @@ export function ProjectsScreen() {
     selectedModel.vision !== true
       ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
       : undefined;
-  // A workspace run belongs to one project; without one the composer names the
-  // cause instead of starting a run against a guessed home.
+  // The card needs a target before a run exists; an empty library is fine
+  // because the card can create the first project.
   const blockedReason = projects.isPending
     ? "your projects are still loading"
     : projects.isError
       ? "your projects could not be loaded"
-      : list.length === 0
-        ? "a workspace run needs a project — create one first"
-        : undefined;
+      : undefined;
 
   function generate() {
-    if (running || !projectId) return;
+    if (running || proposal !== null) return;
     const text = prompt.trim();
     if (text.length === 0) return;
     const staged = attachments.items;
@@ -311,12 +331,49 @@ export function ProjectsScreen() {
           method: "PATCH",
           body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
         });
-        const started = await api<{ runId: string }>("/api/runs", {
+        // Phase A: Jev proposes a target; no run exists until the confirm.
+        const proposed = await api<{ proposalId: string; proposal: TargetProposal }>(
+          "/api/home/runs",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              prompt: text,
+              modelId,
+              reasoningEffort: effort,
+              ...(staged.length > 0
+                ? {
+                    attachments: staged.map(({ mediaType, data }) => ({
+                      mediaType,
+                      data,
+                    })),
+                  }
+                : {}),
+            }),
+          },
+        );
+        setProposal(proposed);
+      } catch (reason) {
+        setPrompt(text);
+        const message = reason instanceof Error ? reason.message : "Generation failed.";
+        setError(message);
+        notify({ title: "Could not start the run", description: message });
+      } finally {
+        setOptimisticStart(null);
+      }
+    });
+  }
+
+  function confirm(choice: ConfirmChoice) {
+    if (proposal === null || confirming) return;
+    const staged = attachments.items;
+    setConfirming(true);
+    startTransition(async () => {
+      try {
+        const payload = buildConfirmPayload(proposal.proposalId, choice);
+        const started = await api<{ runId: string }>("/api/home/runs", {
           method: "POST",
           body: JSON.stringify({
-            scope: "workspace",
-            projectId,
-            prompt: text,
+            prompt: runPrompt,
             modelId,
             reasoningEffort: effort,
             ...(staged.length > 0
@@ -327,17 +384,21 @@ export function ProjectsScreen() {
                   })),
                 }
               : {}),
+            ...payload,
           }),
         });
         if (staged.length > 0) attachments.clear();
+        setProposal(null);
         setRunId(started.runId);
         log(`Run ${started.runId.slice(0, 8)} started`);
         listen(started.runId);
       } catch (reason) {
-        setPrompt(text);
-        const message = reason instanceof Error ? reason.message : "Generation failed.";
+        const message =
+          reason instanceof Error ? reason.message : "The run could not start.";
         setError(message);
         notify({ title: "Could not start the run", description: message });
+      } finally {
+        setConfirming(false);
       }
     });
   }
@@ -453,19 +514,6 @@ export function ProjectsScreen() {
                 modelReady={catalog.data?.modelReady ?? false}
                 onGenerate={generate}
                 onStop={stop}
-                scope={
-                  <SelectControl
-                    label="Project"
-                    value={projectId}
-                    options={list.map((project) => ({
-                      value: project.id,
-                      label: project.name,
-                    }))}
-                    onChange={setPickedProjectId}
-                    placeholder="no projects"
-                    className="max-w-[12rem]"
-                  />
-                }
                 blockedReason={blockedReason}
                 attachments={attachments.items}
                 attachmentError={attachments.error}
@@ -473,6 +521,20 @@ export function ProjectsScreen() {
                 onAttach={attachments.add}
                 onRemoveAttachment={attachments.remove}
               />
+              {proposal !== null ? (
+                <ConfirmTargetCard
+                  proposal={proposal.proposal}
+                  projects={list.map((project) => ({
+                    id: project.id,
+                    name: project.name,
+                    summary: project.summary ?? "",
+                  }))}
+                  assets={assets.data?.assets ?? []}
+                  busy={confirming}
+                  onConfirm={confirm}
+                  onCancel={() => setProposal(null)}
+                />
+              ) : null}
               <RunConsole
                 rows={rows}
                 running={running || optimisticStart !== null}

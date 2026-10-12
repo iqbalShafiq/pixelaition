@@ -970,6 +970,25 @@ export function createApp() {
   // retained-event bound can evict an early `asset-created` on a long run, so
   // the run's pinned frame (set when a workspace run binds an asset) is the
   // fallback: it names the asset the run actually touched.
+  // Every asset of the user, for the home library and the confirmation card.
+  app.get("/api/assets", async (_req, res) => {
+    const rows = await db
+      .select({
+        id: assets.id,
+        projectId: assets.projectId,
+        name: assets.name,
+        summary: assets.summary,
+        width: assets.width,
+        height: assets.height,
+        updatedAt: assets.updatedAt,
+      })
+      .from(assets)
+      .innerJoin(projects, eq(assets.projectId, projects.id))
+      .where(eq(projects.userId, res.locals.userId as string))
+      .orderBy(desc(assets.updatedAt));
+    res.json({ assets: rows });
+  });
+
   // The home runs in two phases: a proposal (guardrail + Jev target, spending
   // Jev once) that starts nothing, then a confirm that starts the run from the
   // stored proposal. The card always appears, even at high confidence.
