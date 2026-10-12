@@ -507,7 +507,7 @@ export function ProjectsScreen() {
 
   return (
     <main id="content" className="pixel-grid-lg min-h-dvh bg-paper">
-      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-8">
+      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-8 pb-48">
         <header className="flex items-center justify-between gap-4 border-b-2 border-line pb-4">
           <span className="flex items-center gap-2.5">
             <PixelMark />
@@ -538,67 +538,6 @@ export function ProjectsScreen() {
                 a project below. One project keeps one palette and one style guide, so
                 every asset inside it stays recognisably related.
               </p>
-            </div>
-
-            <div ref={composerRef} className="grid gap-2">
-              <Composer
-                prompt={prompt}
-                onPrompt={setPrompt}
-                modelId={modelId}
-                models={models}
-                onModel={setModelId}
-                effort={effort}
-                efforts={efforts}
-                onEffort={setEffort}
-                running={running}
-                starting={optimisticStart !== null}
-                stopping={optimisticStopping}
-                modelReady={catalog.data?.modelReady ?? false}
-                onGenerate={generate}
-                onStop={stop}
-                blockedReason={blockedReason}
-                attachments={attachments.items}
-                attachmentError={attachments.error}
-                attachmentIssue={attachmentIssue}
-                onAttach={attachments.add}
-                onRemoveAttachment={attachments.remove}
-              />
-              {proposal !== null ? (
-                <ConfirmTargetCard
-                  proposal={proposal.proposal}
-                  projects={list.map((project) => ({
-                    id: project.id,
-                    name: project.name,
-                    summary: project.summary ?? "",
-                  }))}
-                  assets={assets.data?.assets ?? []}
-                  busy={confirming}
-                  onConfirm={confirm}
-                  onCancel={() => setProposal(null)}
-                />
-              ) : null}
-              <RunConsole
-                rows={rows}
-                running={running || optimisticStart !== null}
-                open={consoleOpen}
-                onOpen={setConsoleOpen}
-                message={message || (error ?? "")}
-                prompt={runPrompt}
-                interaction={pendingInteraction}
-                frames={[]}
-                palette={[]}
-                projects={list.map((project) => ({
-                  id: project.id,
-                  name: project.name,
-                }))}
-                assets={(assets.data?.assets ?? []).map((asset) => ({
-                  id: asset.id,
-                  projectId: asset.projectId,
-                  name: asset.name,
-                }))}
-                onRespond={respondToInteraction}
-                onEscape={focusComposer}
-              />
             </div>
           </div>
 
@@ -682,6 +621,75 @@ export function ProjectsScreen() {
             <RecentRunsRail runs={recent.data?.runs ?? []} />
           </div>
         </section>
+      </div>
+
+      {/* The dock: the same composer as the editor, fixed at the bottom
+          centre with the console and the confirmation card stacked above it. */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
+        <div
+          ref={composerRef}
+          className="pointer-events-auto grid w-full gap-2"
+          style={{ maxWidth: "40rem" }}
+        >
+          {proposal !== null ? (
+            <ConfirmTargetCard
+              proposal={proposal.proposal}
+              projects={list.map((project) => ({
+                id: project.id,
+                name: project.name,
+                summary: project.summary ?? "",
+              }))}
+              assets={assets.data?.assets ?? []}
+              busy={confirming}
+              onConfirm={confirm}
+              onCancel={() => setProposal(null)}
+            />
+          ) : null}
+          <RunConsole
+            rows={rows}
+            running={running || optimisticStart !== null}
+            open={consoleOpen}
+            onOpen={setConsoleOpen}
+            message={message || (error ?? "")}
+            prompt={runPrompt}
+            interaction={pendingInteraction}
+            frames={[]}
+            palette={[]}
+            projects={list.map((project) => ({
+              id: project.id,
+              name: project.name,
+            }))}
+            assets={(assets.data?.assets ?? []).map((asset) => ({
+              id: asset.id,
+              projectId: asset.projectId,
+              name: asset.name,
+            }))}
+            onRespond={respondToInteraction}
+            onEscape={focusComposer}
+          />
+          <Composer
+            prompt={prompt}
+            onPrompt={setPrompt}
+            modelId={modelId}
+            models={models}
+            onModel={setModelId}
+            effort={effort}
+            efforts={efforts}
+            onEffort={setEffort}
+            running={running}
+            starting={optimisticStart !== null}
+            stopping={optimisticStopping}
+            modelReady={catalog.data?.modelReady ?? false}
+            onGenerate={generate}
+            onStop={stop}
+            blockedReason={blockedReason}
+            attachments={attachments.items}
+            attachmentError={attachments.error}
+            attachmentIssue={attachmentIssue}
+            onAttach={attachments.add}
+            onRemoveAttachment={attachments.remove}
+          />
+        </div>
       </div>
     </main>
   );
