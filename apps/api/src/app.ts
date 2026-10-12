@@ -13,14 +13,16 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { and, asc, desc, eq, inArray, notInArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
 import {
+  decideHomeTarget,
   decidePrompt,
   DecisionNotConfiguredError,
+  HomeDecisionError,
   JevNotConfiguredError,
   LangfuseTelemetry,
   parseModelSpecRow,
@@ -30,6 +32,9 @@ import {
   type DecisionContext,
   type DrawDecision,
   type GuardrailReport,
+  type HomeAssetOption,
+  type HomeContext,
+  type HomeTarget,
   type ModelSpec,
 } from "@pixelaition/agent";
 
@@ -47,6 +52,7 @@ const telemetry =
 import {
   addFrameRecord,
   assetHasActiveRun,
+  consumeProposal,
   createApiKey,
   createAssetRecord,
   createProjectRecord,
@@ -56,6 +62,7 @@ import {
   getAssetRecord,
   getPreferences,
   getProjectRecord,
+  insertProposal,
   insertRun,
   listProjects,
   listVersions,
@@ -77,6 +84,7 @@ import {
   generationRuns,
   generationThreads,
   models,
+  projects,
   RETENTION_LIMIT,
 } from "@pixelaition/db";
 
@@ -143,6 +151,184 @@ async function failUnacceptedRun(runId: string, workerMessage?: string | null) {
       answer: workerMessage?.slice(0, 2000) ?? null,
     })
     .where(eq(generationRuns.id, runId));
+}
+
+/** The Jev spend a proposal already carries, shaped like the run's usage seed. */
+export function usageSeedFromSpend(spend: {
+  guardrailUsage?:
+    { input?: number; output?: number; total?: number; cost?: number } | undefined;
+  decisionUsage?:
+    { input?: number; output?: number; total?: number; cost?: number } | undefined;
+}): {
+  input: number;
+  output: number;
+  total: number;
+  cached: number;
+  cost: number;
+  jevCalls: number;
+  jevCost: number;
+} {
+  const guardrail = spend.guardrailUsage;
+  const decision = spend.decisionUsage;
+  return {
+    input: (guardrail?.input ?? 0) + (decision?.input ?? 0),
+    output: (guardrail?.output ?? 0) + (decision?.output ?? 0),
+    total: (guardrail?.total ?? 0) + (decision?.total ?? 0),
+    cached: 0,
+    cost: (guardrail?.cost ?? 0) + (decision?.cost ?? 0),
+    jevCalls: (guardrail ? 1 : 0) + (decision ? 1 : 0),
+    jevCost: (guardrail?.cost ?? 0) + (decision?.cost ?? 0),
+  };
+}
+
+/**
+ * The model checks every generation route shares: the key, the catalog pair,
+ * and the vision requirement for attachments. Returns the pair or sends the
+ * named failure itself.
+ */
+async function modelPairFor(
+  res: express.Response,
+  modelId: string,
+  reasoningEffort: string,
+  attachmentCount: number,
+): Promise<ModelSpec | undefined> {
+  if (!process.env.AGENT_API_KEY?.trim()) {
+    fail(res, 503, "MODEL_UNCONFIGURED", "Add AGENT_API_KEY on the server to generate.");
+    return undefined;
+  }
+  let catalog: ModelSpec[];
+  try {
+    catalog = await listModels();
+  } catch (reason) {
+    fail(
+      res,
+      503,
+      "CATALOG_INVALID",
+      reason instanceof Error ? reason.message : "The model catalog is malformed.",
+    );
+    return undefined;
+  }
+  const pair = catalog.find((model) => model.id === modelId);
+  if (!pair || !pair.efforts.includes(reasoningEffort)) {
+    fail(res, 422, "MODEL_NOT_AVAILABLE", "Pick a model and effort from the catalog.");
+    return undefined;
+  }
+  if (attachmentCount > 0 && pair.vision !== true) {
+    fail(
+      res,
+      422,
+      "MODEL_CANNOT_READ_IMAGES",
+      `Model ${pair.id} cannot read attached images; pick a vision model or remove the attachments.`,
+    );
+    return undefined;
+  }
+  return pair;
+}
+
+/**
+ * Insert the run row and hand it to the worker; every failure names its cause
+ * and leaves the row failed rather than queued. Shared by the editor route and
+ * the home's confirm phase.
+ */
+async function startRunViaWorker(
+  res: express.Response,
+  input: {
+    userId: string;
+    prompt: string;
+    modelId: string;
+    reasoningEffort: string;
+    attachments?: Array<{ mediaType: string; data: string }> | undefined;
+    target:
+      | { scope: "asset"; assetId: string; frameId: string }
+      | { scope: "workspace"; projectId: string };
+    threadId: string;
+    requestId: string;
+    mode: "draw" | "ask";
+    usage: {
+      input: number;
+      output: number;
+      total: number;
+      cached: number;
+      cost: number;
+      jevCalls: number;
+      jevCost: number;
+    };
+  },
+): Promise<void> {
+  const runId = await insertRun(db, {
+    threadId: input.threadId,
+    requestId: input.requestId,
+    modelId: input.modelId,
+    reasoningEffort: input.reasoningEffort,
+    ...(input.target.scope === "asset" ? { frameId: input.target.frameId } : {}),
+    prompt: input.prompt,
+    status: "queued",
+  });
+  let worker: Awaited<ReturnType<typeof fetch>>;
+  try {
+    worker = await fetch(
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+        },
+        body: JSON.stringify({
+          scope: input.target.scope,
+          ...(input.target.scope === "asset"
+            ? { assetId: input.target.assetId, frameId: input.target.frameId }
+            : { projectId: input.target.projectId }),
+          prompt: input.prompt,
+          modelId: input.modelId,
+          reasoningEffort: input.reasoningEffort,
+          runId,
+          requestId: input.requestId,
+          userId: input.userId,
+          threadId: input.threadId,
+          mode: input.mode,
+          ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+          usage: input.usage,
+        }),
+      },
+    );
+  } catch (reason) {
+    await failUnacceptedRun(runId);
+    return fail(
+      res,
+      502,
+      "WORKER_UNAVAILABLE",
+      reason instanceof Error ? reason.message : "The drawing worker is not available.",
+    );
+  }
+  if (!worker.ok) {
+    const detail = (await worker.json().catch(() => null)) as {
+      message?: string;
+    } | null;
+    await failUnacceptedRun(runId, detail?.message);
+    if (worker.status === 409) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        detail?.message ?? "This frame already has an unfinished run.",
+      );
+    }
+    return fail(
+      res,
+      502,
+      "WORKER_UNAVAILABLE",
+      detail?.message ?? "The drawing worker is not available.",
+    );
+  }
+  const started = (await worker.json()) as { durableRunId?: string };
+  if (started.durableRunId) {
+    await db
+      .update(generationRuns)
+      .set({ durableRunId: started.durableRunId, status: "running" })
+      .where(eq(generationRuns.id, runId));
+  }
+  res.status(202).json({ runId, streamId: runId });
 }
 
 export function createApp() {
@@ -587,49 +773,13 @@ export function createApp() {
           : {}),
       };
     }
-    if (!process.env.AGENT_API_KEY?.trim()) {
-      return fail(
-        res,
-        503,
-        "MODEL_UNCONFIGURED",
-        "Add AGENT_API_KEY on the server to generate.",
-      );
-    }
-    let catalog: ModelSpec[];
-    try {
-      catalog = await listModels();
-    } catch (reason) {
-      return fail(
-        res,
-        503,
-        "CATALOG_INVALID",
-        reason instanceof Error ? reason.message : "The model catalog is malformed.",
-      );
-    }
-    const pair = catalog.find((model) => model.id === body.modelId);
-    if (!pair || !pair.efforts.includes(body.reasoningEffort)) {
-      return fail(
-        res,
-        422,
-        "MODEL_NOT_AVAILABLE",
-        "Pick a model and effort from the catalog.",
-      );
-    }
-    // Attached pixels reach the model only through a model that can see; the
-    // request fails before the guardrail spends anything on a run that cannot
-    // read it, instead of letting the provider error out mid-run.
-    if (
-      body.attachments !== undefined &&
-      body.attachments.length > 0 &&
-      pair.vision !== true
-    ) {
-      return fail(
-        res,
-        422,
-        "MODEL_CANNOT_READ_IMAGES",
-        `Model ${pair.id} cannot read attached images; pick a vision model or remove the attachments.`,
-      );
-    }
+    const pair = await modelPairFor(
+      res,
+      body.modelId,
+      body.reasoningEffort,
+      body.attachments?.length ?? 0,
+    );
+    if (!pair) return;
     const decisionModel = process.env.DECISION_MODEL?.trim();
     const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
     const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
@@ -795,93 +945,21 @@ export function createApp() {
     // The decision chose the mode: an ask is a conversational run that
     // answers with the same context but no painting tools, never an error.
     const mode = decided.intent === "ask" ? "ask" : "draw";
-    const runId = await insertRun(db, {
-      threadId: thread.id,
-      requestId,
+    return startRunViaWorker(res, {
+      userId,
+      prompt: body.prompt,
       modelId: body.modelId,
       reasoningEffort: body.reasoningEffort,
-      ...(target.scope === "asset" ? { frameId: target.frameId } : {}),
-      prompt: body.prompt,
-      status: "queued",
+      ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
+      target,
+      threadId: thread.id,
+      requestId,
+      mode,
+      usage: usageSeedFromSpend({
+        guardrailUsage: guardrail.usage,
+        decisionUsage,
+      }),
     });
-    let worker: Awaited<ReturnType<typeof fetch>>;
-    try {
-      worker = await fetch(
-        `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
-          },
-          body: JSON.stringify({
-            scope: target.scope,
-            ...(target.scope === "asset"
-              ? { assetId: target.assetId, frameId: target.frameId }
-              : { projectId: target.projectId }),
-            prompt: body.prompt,
-            modelId: body.modelId,
-            reasoningEffort: body.reasoningEffort,
-            runId,
-            requestId,
-            userId,
-            threadId: thread.id,
-            mode,
-            ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
-            // The guardrail and decision calls already spent; the run's usage
-            // starts from their totals so the console shows the full cost.
-            usage: {
-              input: (guardrail.usage?.input ?? 0) + (decisionUsage?.input ?? 0),
-              output: (guardrail.usage?.output ?? 0) + (decisionUsage?.output ?? 0),
-              total: (guardrail.usage?.total ?? 0) + (decisionUsage?.total ?? 0),
-              cached: 0,
-              cost: (guardrail.usage?.cost ?? 0) + (decisionUsage?.cost ?? 0),
-              jevCalls: (guardrail.usage ? 1 : 0) + (decisionUsage ? 1 : 0),
-              jevCost: (guardrail.usage?.cost ?? 0) + (decisionUsage?.cost ?? 0),
-            },
-          }),
-        },
-      );
-    } catch (reason) {
-      // No fallback: the worker never took the run, so it must not stay queued.
-      await failUnacceptedRun(runId);
-      return fail(
-        res,
-        502,
-        "WORKER_UNAVAILABLE",
-        reason instanceof Error ? reason.message : "The drawing worker is not available.",
-      );
-    }
-    if (!worker.ok) {
-      const detail = (await worker.json().catch(() => null)) as {
-        message?: string;
-      } | null;
-      await failUnacceptedRun(runId, detail?.message);
-      // One run per frame is the app's own rule: keep the worker's conflict
-      // status and name it, so the composer can say what to do about it.
-      if (worker.status === 409) {
-        return fail(
-          res,
-          409,
-          "RUN_IN_PROGRESS",
-          detail?.message ?? "This frame already has an unfinished run.",
-        );
-      }
-      return fail(
-        res,
-        502,
-        "WORKER_UNAVAILABLE",
-        detail?.message ?? "The drawing worker is not available.",
-      );
-    }
-    const started = (await worker.json()) as { durableRunId?: string };
-    if (started.durableRunId) {
-      await db
-        .update(generationRuns)
-        .set({ durableRunId: started.durableRunId, status: "running" })
-        .where(eq(generationRuns.id, runId));
-    }
-    res.status(202).json({ runId, streamId: runId });
   });
 
   // The home composer's run list. An editor run's asset hangs off its thread;
@@ -892,6 +970,357 @@ export function createApp() {
   // retained-event bound can evict an early `asset-created` on a long run, so
   // the run's pinned frame (set when a workspace run binds an asset) is the
   // fallback: it names the asset the run actually touched.
+  // The home runs in two phases: a proposal (guardrail + Jev target, spending
+  // Jev once) that starts nothing, then a confirm that starts the run from the
+  // stored proposal. The card always appears, even at high confidence.
+  app.post("/api/home/runs", async (req, res) => {
+    const body = z
+      .object({
+        prompt: z.string().min(1).max(4000),
+        modelId: z.string().min(1),
+        reasoningEffort: z.string().min(1),
+        attachments: z
+          .array(
+            z.object({
+              mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+              data: z.string().min(16).max(1_500_000),
+            }),
+          )
+          .max(4)
+          .refine(
+            (list) => list.reduce((sum, item) => sum + item.data.length, 0) <= 5_000_000,
+            { message: "The attachments are too large together." },
+          )
+          .optional(),
+        proposalId: z.string().optional(),
+        confirm: z
+          .object({
+            projectId: z.union([z.string().min(1), z.literal("new")]),
+            assetId: z.union([z.string().min(1), z.literal("new"), z.null()]).optional(),
+            projectName: z.string().min(1).max(80).optional(),
+            assetName: z.string().min(1).max(80).optional(),
+            mode: z.enum(["generate", "agent"]),
+          })
+          .optional(),
+      })
+      .parse(req.body);
+    const userId = res.locals.userId as string;
+    const pair = await modelPairFor(
+      res,
+      body.modelId,
+      body.reasoningEffort,
+      body.attachments?.length ?? 0,
+    );
+    if (!pair) return;
+    const decisionModel = process.env.DECISION_MODEL?.trim();
+    const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
+    const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
+    if (!decisionModel || !decisionBaseUrl || !decisionApiKey) {
+      return fail(
+        res,
+        503,
+        "DECISION_UNCONFIGURED",
+        "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY before generating.",
+      );
+    }
+
+    if (body.confirm === undefined) {
+      // Phase A: guardrail, then Jev reads the library and proposes a target.
+      const requestId = crypto.randomUUID();
+      const guardrailStarted = Date.now();
+      let guardrail: GuardrailReport;
+      try {
+        guardrail = await screenInput(body.prompt, {
+          apiKey: decisionApiKey,
+          model: decisionModel,
+          baseUrl: decisionBaseUrl,
+        });
+      } catch (reason) {
+        if (reason instanceof JevNotConfiguredError) {
+          return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+        }
+        return fail(
+          res,
+          502,
+          "GUARDRAIL_FAILED",
+          reason instanceof Error ? reason.message : "The content guardrail failed.",
+        );
+      }
+      void telemetry?.recordSpan(
+        {
+          traceId: traceIdFor(requestId),
+          kind: "generation",
+          name: "guardrail-input",
+          startMs: guardrailStarted,
+          endMs: Date.now(),
+          input: body.prompt,
+          output: JSON.stringify({
+            action: guardrail.action,
+            hazards: guardrail.hazards,
+            severity: guardrail.severity,
+          }),
+          model: decisionModel,
+          ...(guardrail.usage !== undefined ? { usage: { ...guardrail.usage } } : {}),
+          ...(guardrail.action !== "pass"
+            ? { level: "WARNING" as const, statusMessage: guardrail.reason }
+            : {}),
+        },
+        {
+          name: "home-propose",
+          userId,
+          sessionId: `home:${userId}`,
+          tags: ["pixelaition", "decide", "guardrail", "home"],
+          metadata: {},
+        },
+      );
+      if (guardrail.action === "block") {
+        return fail(
+          res,
+          422,
+          "POLICY_BLOCKED",
+          `This request breaks the content policy (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}, severity=${guardrail.severity.toFixed(2)}).`,
+        );
+      }
+      if (guardrail.action === "review") {
+        return fail(
+          res,
+          422,
+          "POLICY_REVIEW",
+          `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
+        );
+      }
+      const projectRows = await db
+        .select({
+          id: projects.id,
+          name: projects.name,
+          summary: projects.summary,
+          updatedAt: projects.updatedAt,
+          assetCount: count(assets.id),
+        })
+        .from(projects)
+        .leftJoin(assets, eq(assets.projectId, projects.id))
+        .where(eq(projects.userId, userId))
+        .groupBy(projects.id)
+        .orderBy(desc(projects.updatedAt));
+      const assetRows = await db
+        .select({
+          id: assets.id,
+          projectId: assets.projectId,
+          name: assets.name,
+          summary: assets.summary,
+          width: assets.width,
+          height: assets.height,
+        })
+        .from(assets)
+        .innerJoin(projects, eq(assets.projectId, projects.id))
+        .where(eq(projects.userId, userId))
+        .orderBy(desc(assets.updatedAt));
+      const assetsByProject = new Map<string, HomeAssetOption[]>();
+      for (const row of assetRows) {
+        const list = assetsByProject.get(row.projectId) ?? [];
+        list.push({
+          id: row.id,
+          name: row.name,
+          summary: row.summary,
+          width: row.width,
+          height: row.height,
+        });
+        assetsByProject.set(row.projectId, list);
+      }
+      const homeContext: HomeContext = {
+        projects: projectRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          summary: row.summary,
+          assetCount: row.assetCount,
+        })),
+        assetsByProject,
+      };
+      const decisionStarted = Date.now();
+      let decided: HomeTarget;
+      let decisionUsage: Record<string, number> | undefined;
+      try {
+        decided = await decideHomeTarget(
+          body.prompt,
+          {
+            apiKey: decisionApiKey,
+            model: decisionModel,
+            baseUrl: decisionBaseUrl,
+            onCall: (call) => {
+              const { model: _model, latencyMs: _latencyMs, ...usage } = call;
+              decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
+            },
+          },
+          homeContext,
+        );
+      } catch (reason) {
+        if (reason instanceof HomeDecisionError) {
+          // The card still appears; the agent will ask instead of guessing.
+          const stored = await insertProposal(db, {
+            userId,
+            prompt: body.prompt,
+            intent: "draw",
+            project: { id: "new", confidence: 0 },
+            guardrail,
+            decision: { reason: reason.message, usage: decisionUsage },
+            expiresAt: new Date(Date.now() + 15 * 60_000),
+          });
+          return res.json({
+            proposalId: stored.id,
+            proposal: {
+              intent: "draw",
+              project: { id: "new", confidence: 0 },
+              reason: reason.message,
+            },
+          });
+        }
+        if (reason instanceof JevNotConfiguredError) {
+          return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+        }
+        return fail(
+          res,
+          502,
+          "DECISION_FAILED",
+          reason instanceof Error ? reason.message : "The decision provider failed.",
+        );
+      }
+      void telemetry?.recordSpan(
+        {
+          traceId: traceIdFor(requestId),
+          kind: "generation",
+          name: "decide-request",
+          startMs: decisionStarted,
+          endMs: Date.now(),
+          input: body.prompt,
+          output: JSON.stringify(decided),
+          model: decisionModel,
+          ...(decisionUsage !== undefined ? { usage: decisionUsage } : {}),
+        },
+        {
+          name: "home-propose",
+          userId,
+          sessionId: `home:${userId}`,
+          tags: ["pixelaition", "decide", "home"],
+          metadata: {},
+        },
+      );
+      const stored = await insertProposal(db, {
+        userId,
+        prompt: body.prompt,
+        intent: decided.intent,
+        project: decided.project,
+        ...(decided.asset !== undefined ? { asset: decided.asset } : {}),
+        guardrail,
+        decision: { target: decided, usage: decisionUsage },
+        expiresAt: new Date(Date.now() + 15 * 60_000),
+      });
+      const projectName =
+        decided.project.id === "new"
+          ? undefined
+          : projectRows.find((row) => row.id === decided.project.id)?.name;
+      const assetName =
+        decided.asset === undefined || decided.asset.id === "new"
+          ? undefined
+          : assetRows.find((row) => row.id === decided.asset?.id)?.name;
+      return res.json({
+        proposalId: stored.id,
+        proposal: {
+          intent: decided.intent,
+          project: {
+            id: decided.project.id,
+            ...(projectName !== undefined ? { name: projectName } : {}),
+            confidence: decided.project.confidence,
+          },
+          ...(decided.asset !== undefined
+            ? {
+                asset: {
+                  id: decided.asset.id,
+                  ...(assetName !== undefined ? { name: assetName } : {}),
+                  confidence: decided.asset.confidence,
+                },
+              }
+            : {}),
+        },
+      });
+    }
+
+    // Phase B: consume the proposal, resolve the confirmed target, start.
+    if (body.proposalId === undefined) {
+      return fail(
+        res,
+        422,
+        "PROPOSAL_REQUIRED",
+        "A confirm needs the proposalId it confirms.",
+      );
+    }
+    const consumed = await consumeProposal(db, userId, body.proposalId);
+    if ("failure" in consumed) {
+      const status = consumed.failure.code === "NOT_FOUND" ? 404 : 409;
+      return fail(res, status, consumed.failure.code, consumed.failure.message);
+    }
+    const stored = consumed.proposal;
+    const confirm = body.confirm;
+    let projectId: string;
+    if (confirm.projectId === "new") {
+      if (confirm.projectName === undefined) {
+        return fail(res, 422, "PROJECT_NAME_REQUIRED", "Give the new project a name.");
+      }
+      const created = await createProjectRecord(db, userId, confirm.projectName);
+      projectId = created.id;
+    } else {
+      const project = await getProjectRecord(db, userId, confirm.projectId);
+      if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
+      projectId = project.id;
+    }
+    let target:
+      | { scope: "asset"; assetId: string; frameId: string }
+      | { scope: "workspace"; projectId: string };
+    let prompt = body.prompt;
+    if (
+      confirm.mode === "generate" &&
+      confirm.assetId !== undefined &&
+      confirm.assetId !== null &&
+      confirm.assetId !== "new"
+    ) {
+      const asset = await getAssetRecord(db, userId, confirm.assetId);
+      if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+      const origin = asset.frames[0];
+      if (!origin) return fail(res, 422, "ASSET_EMPTY", "That asset has no frames.");
+      target = { scope: "asset", assetId: asset.id, frameId: origin.id };
+    } else {
+      // The agent creates the asset (or asks) inside the confirmed project.
+      target = { scope: "workspace", projectId };
+      if (confirm.assetName !== undefined) {
+        prompt = `${prompt}\n\nAsset name to use: ${confirm.assetName}`;
+      }
+    }
+    const thread = await ensureThread(
+      db,
+      userId,
+      target.scope === "asset"
+        ? { assetId: target.assetId }
+        : { projectId: target.projectId },
+    );
+    const requestId = crypto.randomUUID();
+    const guardrailReport = stored.guardrail as GuardrailReport | null;
+    const decisionStored = stored.decision as { usage?: Record<string, number> } | null;
+    return startRunViaWorker(res, {
+      userId,
+      prompt,
+      modelId: body.modelId,
+      reasoningEffort: body.reasoningEffort,
+      ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
+      target,
+      threadId: thread.id,
+      requestId,
+      mode: stored.intent === "ask" ? "ask" : "draw",
+      usage: usageSeedFromSpend({
+        guardrailUsage: guardrailReport?.usage,
+        decisionUsage: decisionStored?.usage,
+      }),
+    });
+  });
+
   app.get("/api/runs/recent", async (_req, res) => {
     const bound = alias(assets, "bound_assets");
     const rows = await db

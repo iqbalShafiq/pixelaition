@@ -7,6 +7,7 @@ import {
   generationRuns,
   generationThreads,
   projects,
+  runProposals,
   userPreferences,
   versions,
   RETENTION_LIMIT,
@@ -859,6 +860,79 @@ export async function insertRun(
   const id = randomUUID();
   await db.insert(generationRuns).values({ id, ...input });
   return id;
+}
+
+export type ProposalRow = typeof runProposals.$inferSelect;
+
+export type ProposalInput = {
+  userId: string;
+  prompt: string;
+  intent: string;
+  project: { id: string | "new"; confidence: number };
+  asset?: { id: string | "new"; confidence: number };
+  guardrail: unknown;
+  decision: unknown;
+  expiresAt: Date;
+};
+
+/** Hold a home decision between the proposal response and the confirm. */
+export async function insertProposal(
+  db: Database,
+  input: ProposalInput,
+): Promise<ProposalRow> {
+  const id = randomUUID();
+  const [row] = await db
+    .insert(runProposals)
+    .values({
+      id,
+      userId: input.userId,
+      prompt: input.prompt,
+      intent: input.intent,
+      projectId: input.project.id,
+      assetId: input.asset?.id ?? null,
+      projectConfidence: input.project.confidence,
+      assetConfidence: input.asset?.confidence ?? null,
+      guardrail: input.guardrail as never,
+      decision: input.decision as never,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  if (!row) throw new Error("The proposal could not be stored.");
+  return row;
+}
+
+/** One-shot: an expired, consumed, or foreign proposal fails with its cause. */
+export async function consumeProposal(
+  db: Database,
+  userId: string,
+  id: string,
+): Promise<{ proposal: ProposalRow } | { failure: StoreFailure }> {
+  const [row] = await db
+    .select()
+    .from(runProposals)
+    .where(and(eq(runProposals.id, id), eq(runProposals.userId, userId)));
+  if (!row) {
+    return { failure: { code: "NOT_FOUND", message: "That proposal is not available." } };
+  }
+  if (row.consumedAt !== null) {
+    return {
+      failure: { code: "PROPOSAL_CONSUMED", message: "That proposal was already used." },
+    };
+  }
+  if (row.expiresAt.getTime() <= Date.now()) {
+    return {
+      failure: {
+        code: "PROPOSAL_EXPIRED",
+        message: "That proposal expired; send the prompt again.",
+      },
+    };
+  }
+  const [consumed] = await db
+    .update(runProposals)
+    .set({ consumedAt: new Date() })
+    .where(eq(runProposals.id, id))
+    .returning();
+  return { proposal: consumed ?? row };
 }
 
 export type VersionCursor = { createdAt: Date; id: string };
