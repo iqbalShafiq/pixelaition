@@ -28,7 +28,7 @@ import {
   type StagedPlanFrame,
 } from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
-import { useRunStream } from "../lib/run-stream.js";
+import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import {
@@ -187,6 +187,7 @@ export function EditorScreen() {
   const viewRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
+  const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const fitted = useRef<string | null>(null);
 
   const frames = asset.data?.frames ?? [];
@@ -465,6 +466,7 @@ export function EditorScreen() {
       openStream(id, {
         after,
         onMessage: (body) => {
+          resetRejoin();
           setRows((current) =>
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
@@ -526,6 +528,7 @@ export function EditorScreen() {
                 : (data.error ?? `The run ${data.status ?? "finished"}.`),
             );
             setPendingInteraction(null);
+            cancelRejoin();
             closeStream();
             setRunId(null);
             setRunFrameId(null);
@@ -566,6 +569,7 @@ export function EditorScreen() {
           // A dropped stream does not mean the run stopped: ask the server. The
           // answer carries the pending card too, so a waiting run restores it
           // even when the replayed stream no longer retains the interaction.
+          // Rejoins are paced: an unreachable worker must not spin the console.
           void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
             .catch(() => ({ run: null, interaction: null }))
             .then((result) => {
@@ -573,8 +577,9 @@ export function EditorScreen() {
                 setRunId(result.run.id);
                 rememberRunModel(result.run.id, result.run.modelId);
                 setPendingInteraction(result.interaction);
-                log("The stream dropped; rejoining the running agent");
-                listen(result.run.id, "", 0);
+                const runId = result.run.id;
+                const firstDrop = paceRejoin(() => listen(runId, "", 0));
+                if (firstDrop) log("The stream dropped; rejoining the running agent");
                 return;
               }
               setRunId(null);
@@ -585,7 +590,17 @@ export function EditorScreen() {
         },
       });
     },
-    [assetId, client, closeStream, log, openStream, rememberRunModel, sourceRef],
+    [
+      assetId,
+      client,
+      closeStream,
+      log,
+      openStream,
+      paceRejoin,
+      rememberRunModel,
+      resetRejoin,
+      sourceRef,
+    ],
   );
 
   useEffect(() => {

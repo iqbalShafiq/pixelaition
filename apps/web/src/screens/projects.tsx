@@ -26,7 +26,7 @@ import {
 import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
-import { useRunStream } from "../lib/run-stream.js";
+import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 
 type Project = { id: string; name: string; description: string };
 type Asset = { id: string; name: string; width: number; height: number };
@@ -112,6 +112,7 @@ export function ProjectsScreen() {
   const rejoinedRef = useRef(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
+  const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const running = runId !== null;
 
   useEffect(() => {
@@ -146,6 +147,7 @@ export function ProjectsScreen() {
     (id: string) => {
       openStream(id, {
         onMessage: (body) => {
+          resetRejoin();
           setRows((current) =>
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
@@ -184,6 +186,7 @@ export function ProjectsScreen() {
                 : (data.error ?? `The run ${data.status ?? "finished"}.`),
             );
             setPendingInteraction(null);
+            cancelRejoin();
             closeStream();
             setRunId(null);
             void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
@@ -193,15 +196,16 @@ export function ProjectsScreen() {
         },
         onDrop: () => {
           // A dropped stream does not mean the run stopped: ask the run list.
-          // A still-active run rejoins from the top; a finished one closes.
+          // A still-active run rejoins from the top, paced so an unreachable
+          // worker cannot spin the console; a finished one closes.
           void api<{ runs: RecentRun[] }>("/api/runs/recent")
             .catch(() => null)
             .then((result) => {
               if (sourceRef.current) return;
               const row = result?.runs.find((item) => item.id === id);
               if (row && ["queued", "running", "waiting"].includes(row.status)) {
-                log("The stream dropped; rejoining the running agent");
-                listen(id);
+                const firstDrop = paceRejoin(() => listen(id));
+                if (firstDrop) log("The stream dropped; rejoining the running agent");
                 return;
               }
               setRunId(null);
@@ -212,7 +216,16 @@ export function ProjectsScreen() {
         },
       });
     },
-    [closeStream, log, openStream, queryClient, sourceRef],
+    [
+      cancelRejoin,
+      closeStream,
+      log,
+      openStream,
+      paceRejoin,
+      queryClient,
+      resetRejoin,
+      sourceRef,
+    ],
   );
 
   // A home refresh must not strand a workspace run: on the first load of the
