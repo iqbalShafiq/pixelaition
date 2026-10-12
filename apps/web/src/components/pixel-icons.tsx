@@ -25,6 +25,7 @@ import {
   Play as RawPlay,
   Plus as RawPlus,
   Robot as RawRobot,
+  Search as RawSearch,
   Send as RawSend,
   Square as RawSquare,
   Stop as RawStop,
@@ -74,6 +75,7 @@ import type { ComponentType, SVGProps } from "react";
  * Minus             Minus               Minus
  * Attach            (attach button)     Attachment
  * Info              (attachment hint)   CircleInfo
+ * Search            (library search)    Search
  *
  * custom (the free set has no equivalent; drawn below on the same 24x24 grid
  * with 2x2 cells, no substitution is allowed here):
@@ -131,6 +133,7 @@ export const ChevronDown = crisp(RawChevronDown);
 export const Minus = crisp(RawMinus);
 export const Attach = crisp(RawAttachment);
 export const Info = crisp(RawCircleInfo);
+export const Search = crisp(RawSearch);
 
 /**
  * Draws a glyph from a bitmap: one character per 2x2 cell on the 24x24 grid,

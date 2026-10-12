@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight } from "../components/pixel-icons.js";
+import { ArrowRight, Close, Search } from "../components/pixel-icons.js";
 import {
   startTransition,
   useCallback,
@@ -13,6 +13,7 @@ import { Composer } from "../components/composer.js";
 import { RunConsole } from "../components/run-console.js";
 import { ConfirmTargetCard } from "../components/confirm-target-card.js";
 import { LibraryGrid } from "../components/library-grid.js";
+import { PixelLoader } from "../components/pixel-loader.js";
 import { RecentRunsRail } from "../components/recent-runs-rail.js";
 import { filterLibrary } from "../lib/library.js";
 import { markFlight, viewTransitionOption } from "../lib/transition.js";
@@ -595,7 +596,7 @@ export function ProjectsScreen() {
           </Button>
         </header>
 
-        <section className="grid gap-8 lg:grid-cols-[1fr_24rem] lg:items-start">
+        <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
           <div className="grid gap-5">
             <div>
               <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
@@ -642,31 +643,53 @@ export function ProjectsScreen() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
-          <div className="grid gap-4">
-            <div className="flex flex-wrap items-center gap-3 border-b-2 border-line pb-2">
-              <h2 className="text-pixel-title text-muted">Library</h2>
-              <span className="text-pixel-mono text-muted">
-                {library.assets.length.toString().padStart(2, "0")}
-              </span>
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <TextInput
-                  value={search}
-                  aria-label="Search projects and assets"
-                  placeholder="Search projects and assets…"
-                  className="max-w-[16rem]"
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                <div className="flex items-center gap-1">
-                  {(["recent", "project"] as const).map((value) => (
+          <div className="grid min-w-0 gap-4">
+            <div className="grid gap-3 border-b-2 border-line pb-3">
+              <div className="flex items-baseline gap-3">
+                <h2 className="text-pixel-title text-muted">Library</h2>
+                <span className="pixel-corners-sm border-2 border-line px-1.5 py-0.5 text-pixel-mono text-muted">
+                  {library.assets.length.toString().padStart(2, "0")}
+                </span>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative min-w-0 flex-1 sm:max-w-[20rem]">
+                  <Search
+                    aria-hidden
+                    width={12}
+                    height={12}
+                    className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
+                  />
+                  <TextInput
+                    value={search}
+                    aria-label="Search projects and assets"
+                    placeholder="Search projects and assets…"
+                    className="pl-7"
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
+                  {search.length > 0 ? (
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      className="absolute top-1/2 right-1.5 grid h-6 w-6 -translate-y-1/2 place-items-center text-muted transition-colors duration-150 hover:text-ink"
+                      onClick={() => setSearch("")}
+                    >
+                      <Close width={12} height={12} />
+                    </button>
+                  ) : null}
+                </div>
+                <div className="pixel-corners-sm inline-flex w-fit border-2 border-line sm:ml-auto">
+                  {(["recent", "project"] as const).map((value, index) => (
                     <button
                       key={value}
                       type="button"
                       aria-pressed={group === value}
-                      className={
+                      className={`px-3 py-1.5 text-xs transition-colors duration-150 ${
+                        index > 0 ? "border-l-2 border-line" : ""
+                      } ${
                         group === value
-                          ? "pixel-corners-sm border-2 border-accent bg-accent/15 px-2.5 py-1.5 text-xs text-accent"
-                          : "pixel-corners-sm border-2 border-line px-2.5 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-line-strong hover:text-ink"
-                      }
+                          ? "bg-accent/15 text-accent"
+                          : "text-muted hover:text-ink"
+                      }`}
                       onClick={() => setGroup(value)}
                     >
                       {value === "recent" ? "Recent" : "By project"}
@@ -676,7 +699,10 @@ export function ProjectsScreen() {
               </div>
             </div>
             {projects.isPending || assets.isPending ? (
-              <p className="text-pixel-mono text-muted">Reading your library…</p>
+              <p className="flex items-center gap-2 text-pixel-mono text-muted">
+                <PixelLoader size={12} />
+                Reading your library…
+              </p>
             ) : projects.isError || assets.isError ? (
               <Callout tone="danger">The library could not be loaded.</Callout>
             ) : (
@@ -688,7 +714,7 @@ export function ProjectsScreen() {
               />
             )}
           </div>
-          <div className="grid gap-4">
+          <div className="grid min-w-0 gap-4">
             <RecentRunsRail runs={recent.data?.runs ?? []} />
           </div>
         </section>
