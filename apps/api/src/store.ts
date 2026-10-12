@@ -28,18 +28,21 @@ import {
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
 export async function listProjects(db: Database, userId: string) {
-  return db
-    .select()
+  const rows = await db
+    .select({ project: projects, assetCount: count(assets.id) })
     .from(projects)
+    .leftJoin(assets, eq(assets.projectId, projects.id))
     .where(eq(projects.userId, userId))
+    .groupBy(projects.id)
     .orderBy(desc(projects.updatedAt));
+  return rows.map((row) => ({ ...row.project, assetCount: row.assetCount }));
 }
 
 export async function createProjectRecord(

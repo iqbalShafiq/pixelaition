@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { ArrowRight, Folder, Plus } from "../components/pixel-icons.js";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowRight } from "../components/pixel-icons.js";
 import {
   startTransition,
   useCallback,
@@ -9,11 +9,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { motion } from "motion/react";
-import { SpriteThumb } from "../components/sprite-thumb.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole } from "../components/run-console.js";
 import { ConfirmTargetCard } from "../components/confirm-target-card.js";
+import { LibraryGrid } from "../components/library-grid.js";
+import { RecentRunsRail } from "../components/recent-runs-rail.js";
+import { filterLibrary } from "../lib/library.js";
 import {
   type InteractionResponse,
   type PendingInteraction,
@@ -23,11 +24,9 @@ import {
   Button,
   Callout,
   Card,
-  EmptyState,
   Field,
   PixelMark,
   TextInput,
-  motionToken,
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
@@ -41,8 +40,14 @@ import {
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 
-type Project = { id: string; name: string; description: string; summary?: string };
-type Asset = { id: string; name: string; width: number; height: number };
+type Project = {
+  id: string;
+  name: string;
+  description: string;
+  summary?: string;
+  updatedAt?: string;
+  assetCount?: number;
+};
 type RecentRun = {
   id: string;
   status: string;
@@ -59,6 +64,7 @@ type RecentRun = {
 export function ProjectsScreen() {
   const queryClient = useQueryClient();
   const notify = useToast();
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const projects = useQuery({
     queryKey: ["projects"],
@@ -123,6 +129,8 @@ export function ProjectsScreen() {
   const attachments = useAttachments();
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
+  const [search, setSearch] = useState("");
+  const [group, setGroup] = useState<"recent" | "project">("recent");
   const [rows, setRows] = useState<RunRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -291,6 +299,40 @@ export function ProjectsScreen() {
   }, [recent.data, runId, listen, log]);
 
   const list = projects.data?.projects ?? [];
+  const projectNames = Object.fromEntries(
+    list.map((project) => [project.id, project.name]),
+  );
+  const library = filterLibrary({
+    projects: list.map((project) => ({
+      id: project.id,
+      name: project.name,
+      summary: project.summary ?? "",
+      updatedAt: project.updatedAt ?? "",
+    })),
+    assets: assets.data?.assets ?? [],
+    query: search,
+    group,
+  });
+  const newAsset = useMutation({
+    mutationFn: (projectId: string) =>
+      api<{ id: string }>(`/api/projects/${projectId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({ name: "Untitled" }),
+      }),
+    onSuccess: async (asset, projectId) => {
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void navigate({
+        to: "/projects/$projectId/assets/$assetId",
+        params: { projectId, assetId: asset.id },
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not create an asset",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
   const models = catalog.data?.models.map((item) => item.id) ?? [];
   const efforts = catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
   // Attached pixels need a model that can see; the API refuses the run, so the
@@ -589,220 +631,58 @@ export function ProjectsScreen() {
           </Card>
         </section>
 
-        <section className="grid gap-4">
-          <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
-            <h2 className="text-pixel-title text-muted">Recent runs</h2>
-            <span className="text-pixel-mono text-muted">
-              {(recent.data?.runs.length ?? 0).toString().padStart(2, "0")}
-            </span>
-          </div>
-
-          {recent.isPending ? (
-            <p className="text-pixel-mono text-muted">
-              Reading your recent runs from the server…
-            </p>
-          ) : recent.isError ? (
-            <Callout tone="danger">
-              {recent.error instanceof Error
-                ? recent.error.message
-                : "The recent runs could not be loaded."}
-            </Callout>
-          ) : (recent.data?.runs.length ?? 0) === 0 ? (
-            <EmptyState
-              title="No runs yet"
-              body="Describe a sprite above and the agent's work will show up here."
-            />
-          ) : (
-            <ul className="grid gap-2">
-              {recent.data?.runs.map((run) => (
-                <li
-                  key={run.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 border-2 border-line bg-raised px-3 py-2"
-                >
-                  <span
-                    className="min-w-0 flex-1 truncate text-[13px] text-ink"
-                    title={run.prompt ?? ""}
-                  >
-                    {run.prompt ?? "—"}
-                  </span>
-                  <span className={`text-pixel-mono ${runStatusTone(run.status)}`}>
-                    {run.status}
-                  </span>
-                  <span className="text-pixel-mono text-muted">
-                    {new Date(run.createdAt).toLocaleString()}
-                  </span>
-                  {run.assetId && run.projectId ? (
-                    <Link
-                      to="/projects/$projectId/assets/$assetId"
-                      params={{ projectId: run.projectId, assetId: run.assetId }}
-                      className="text-pixel-mono text-accent underline decoration-dotted underline-offset-2 hover:text-ink"
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
+          <div className="grid gap-4">
+            <div className="flex flex-wrap items-center gap-3 border-b-2 border-line pb-2">
+              <h2 className="text-pixel-title text-muted">Library</h2>
+              <span className="text-pixel-mono text-muted">
+                {library.assets.length.toString().padStart(2, "0")}
+              </span>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <TextInput
+                  value={search}
+                  aria-label="Search projects and assets"
+                  placeholder="Search projects and assets…"
+                  className="max-w-[16rem]"
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                <div className="flex items-center gap-1">
+                  {(["recent", "project"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={group === value}
+                      className={
+                        group === value
+                          ? "pixel-corners-sm border-2 border-accent bg-accent/15 px-2.5 py-1.5 text-xs text-accent"
+                          : "pixel-corners-sm border-2 border-line px-2.5 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-line-strong hover:text-ink"
+                      }
+                      onClick={() => setGroup(value)}
                     >
-                      Open {run.assetName ?? "asset"}
-                    </Link>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="grid gap-4">
-          <div className="flex items-baseline justify-between gap-4 border-b-2 border-line pb-2">
-            <h2 className="text-pixel-title text-muted">Projects</h2>
-            <span className="text-pixel-mono text-muted">
-              {list.length.toString().padStart(2, "0")}
-            </span>
+                      {value === "recent" ? "Recent" : "By project"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {projects.isPending || assets.isPending ? (
+              <p className="text-pixel-mono text-muted">Reading your library…</p>
+            ) : projects.isError || assets.isError ? (
+              <Callout tone="danger">The library could not be loaded.</Callout>
+            ) : (
+              <LibraryGrid
+                result={library}
+                group={group}
+                projectNames={projectNames}
+                onNewAsset={(projectId) => newAsset.mutate(projectId)}
+              />
+            )}
           </div>
-
-          {projects.isPending ? (
-            <p className="text-pixel-mono text-muted">
-              Reading your projects from the server…
-            </p>
-          ) : projects.isError ? (
-            <Callout tone="danger">
-              {projects.error instanceof Error
-                ? projects.error.message
-                : "The project list could not be loaded."}
-            </Callout>
-          ) : list.length === 0 ? (
-            <EmptyState
-              title="No projects yet"
-              body="Create one above. Every asset inside it inherits the same palette and style guide."
-            />
-          ) : (
-            <ul className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-              {list.map((project) => (
-                <li key={project.id}>
-                  <ProjectCard project={project} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="grid gap-4">
+            <RecentRunsRail runs={recent.data?.runs ?? []} />
+          </div>
         </section>
       </div>
     </main>
-  );
-}
-
-/**
- * A finished run reads in the accent, a dead one in the erase colour, and a
- * waiting one in the accent too — it needs the user's answer to go on.
- */
-function runStatusTone(status: string): string {
-  if (status === "succeeded" || status === "completed" || status === "waiting") {
-    return "text-accent";
-  }
-  if (status === "failed" || status === "cancelled") return "text-erase";
-  return "text-muted";
-}
-
-function ProjectCard({ project }: { project: Project }) {
-  const notify = useToast();
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const detail = useQuery({
-    queryKey: ["project-assets", project.id],
-    // Loaded eagerly so the shelf can show a real sprite instead of a folder.
-    queryFn: () => api<{ assets: Asset[] }>(`/api/projects/${project.id}`),
-  });
-  const createAsset = useMutation({
-    mutationFn: () =>
-      api<{ id: string }>(`/api/projects/${project.id}/assets`, {
-        method: "POST",
-        body: JSON.stringify({ name: "Untitled" }),
-      }),
-    onSuccess: async (asset) => {
-      await queryClient.invalidateQueries({ queryKey: ["project-assets", project.id] });
-      window.location.assign(`/projects/${project.id}/assets/${asset.id}`);
-    },
-    onError: (reason: unknown) =>
-      notify({
-        title: "Could not open a new asset",
-        description: reason instanceof Error ? reason.message : "Unknown error",
-      }),
-  });
-
-  const assets = detail.data?.assets ?? [];
-  const newest = assets.at(-1);
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={motionToken}
-      className="pixel-window bg-raised shadow-pixel-md grid h-full grid-cols-1 grid-rows-[auto_auto_auto] gap-4 p-5 transition-transform duration-150 hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-pixel-lg"
-    >
-      <div className="flex items-start gap-3">
-        {newest ? (
-          <SpriteThumb assetId={newest.id} />
-        ) : (
-          <span className="grid h-12 w-12 shrink-0 place-items-center border-2 border-dashed border-line text-muted">
-            <Folder />
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[17px] leading-tight font-medium text-ink">
-            {project.name}
-          </h3>
-          <p className="mt-1 text-pixel-mono text-muted">
-            {detail.isPending
-              ? "Loading…"
-              : assets.length === 0
-                ? "Nothing drawn yet"
-                : `${assets.length} asset${assets.length === 1 ? "" : "s"}`}
-          </p>
-        </div>
-      </div>
-
-      <div className="min-h-0">
-        <p className="text-[13px] leading-relaxed text-muted">
-          {project.description || "No description yet."}
-        </p>
-        {open ? (
-          detail.isPending ? (
-            <p className="mt-3 text-pixel-mono text-muted">Loading…</p>
-          ) : assets.length === 0 ? (
-            <p className="mt-3 text-pixel-mono text-muted">Nothing drawn here yet.</p>
-          ) : (
-            <ul className="mt-3 grid gap-1">
-              {assets.map((asset) => (
-                <li key={asset.id}>
-                  <Link
-                    to="/projects/$projectId/assets/$assetId"
-                    params={{ projectId: project.id, assetId: asset.id }}
-                    className="flex items-center gap-2 border-2 border-transparent px-2 py-1.5 text-[13px] text-ink transition-colors duration-150 hover:border-line hover:bg-raised"
-                  >
-                    <SpriteThumb assetId={asset.id} display={26} />
-                    <span className="min-w-0 flex-1 truncate">{asset.name}</span>
-                    <span className="text-pixel-mono text-muted">
-                      {asset.width}×{asset.height}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )
-        ) : null}
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Button
-          className="flex-1 px-3 py-1.5 text-[12px]"
-          disabled={createAsset.isPending}
-          onClick={() => createAsset.mutate()}
-        >
-          <Plus />
-          New asset
-        </Button>
-        <Button
-          tone="ghost"
-          className="px-3 py-1.5 text-[12px]"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {open ? "Hide" : `Browse ${assets.length > 0 ? `(${assets.length})` : ""}`}
-        </Button>
-      </div>
-    </motion.article>
   );
 }
