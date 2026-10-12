@@ -428,6 +428,60 @@
   }
 }
 
+/* Typed view transitions: the home's composer, console, and target card
+   assemble into the editor's counterparts. `data-flight` marks the source
+   elements; the editor side carries the same names statically. */
+[data-flight="composer"] {
+  view-transition-name: composer-flight;
+}
+
+[data-flight="console"] {
+  view-transition-name: console-flight;
+}
+
+[data-flight="asset"] {
+  view-transition-name: asset-flight;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 160ms;
+}
+
+::view-transition-group(asset-flight) {
+  animation-duration: 260ms;
+}
+
+::view-transition-group(console-flight) {
+  animation-duration: 200ms;
+  animation-delay: 40ms;
+}
+
+::view-transition-group(composer-flight) {
+  animation-duration: 200ms;
+  animation-delay: 80ms;
+}
+
+@keyframes assemble-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+::view-transition-new(console-flight),
+::view-transition-new(composer-flight) {
+  animation: assemble-rise 200ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(asset-flight),
+  ::view-transition-group(console-flight),
+  ::view-transition-group(composer-flight) {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -15,6 +15,7 @@ import { ConfirmTargetCard } from "../components/confirm-target-card.js";
 import { LibraryGrid } from "../components/library-grid.js";
 import { RecentRunsRail } from "../components/recent-runs-rail.js";
 import { filterLibrary } from "../lib/library.js";
+import { markFlight, viewTransitionOption } from "../lib/transition.js";
 import {
   type InteractionResponse,
   type PendingInteraction,
@@ -153,6 +154,11 @@ export function ProjectsScreen() {
   // that is still going or waiting for an answer.
   const rejoinedRef = useRef(false);
   const composerRef = useRef<HTMLDivElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+  const targetRef = useRef<HTMLDivElement>(null);
+  // Set when a run will bind its asset mid-flight; the asset-created event
+  // then assembles into the editor exactly once.
+  const pendingAutoNavRef = useRef(false);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const running = runId !== null;
@@ -189,6 +195,30 @@ export function ProjectsScreen() {
     ]);
   }, []);
 
+  /** The typed view transition: the dock, console, and target card assemble
+   *  into the editor's canvas, console, and composer. */
+  const navigateToEditor = useCallback(
+    (projectId: string, assetId: string) => {
+      const marks: Array<[Element | null, "composer" | "console" | "asset"]> = [
+        [composerRef.current, "composer"],
+        [consoleRef.current, "console"],
+        [targetRef.current, "asset"],
+      ];
+      for (const [element, name] of marks) markFlight([element], true, name);
+      void navigate({
+        to: "/projects/$projectId/assets/$assetId",
+        params: { projectId, assetId },
+        viewTransition: viewTransitionOption(),
+      });
+      // Clearing during the transition aborts it; the home unmounts on a
+      // successful navigation, so this only tidies a failed one.
+      window.setTimeout(() => {
+        for (const [element] of marks) markFlight([element], false);
+      }, 600);
+    },
+    [navigate],
+  );
+
   const listen = useCallback(
     (id: string) => {
       openStream(id, {
@@ -197,6 +227,13 @@ export function ProjectsScreen() {
           setRows((current) =>
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
+          if (body.type === "asset-created" && pendingAutoNavRef.current) {
+            const data = body.data as { assetId?: string; projectId?: string };
+            if (typeof data.assetId === "string" && typeof data.projectId === "string") {
+              pendingAutoNavRef.current = false;
+              navigateToEditor(data.projectId, data.assetId);
+            }
+          }
           if (body.type === "status") {
             const data = body.data as { status?: string; outcome?: { text?: string } };
             if (data.status === "completed" && typeof data.outcome?.text === "string") {
@@ -434,6 +471,30 @@ export function ProjectsScreen() {
         setRunId(started.runId);
         log(`Run ${started.runId.slice(0, 8)} started`);
         listen(started.runId);
+        const pinnedAsset =
+          choice.mode === "generate" &&
+          choice.assetId !== undefined &&
+          choice.assetId !== null &&
+          choice.assetId !== "new"
+            ? choice.assetId
+            : undefined;
+        if (pinnedAsset !== undefined) {
+          // Show the binding as the console's last row, then assemble.
+          const asset = (assets.data?.assets ?? []).find(
+            (item) => item.id === pinnedAsset,
+          );
+          setRows((current) =>
+            applyRunEvent(current, Date.now(), "asset-created", {
+              assetId: pinnedAsset,
+              projectId: asset?.projectId ?? choice.projectId,
+              name: asset?.name ?? "asset",
+            }),
+          );
+          navigateToEditor(asset?.projectId ?? choice.projectId, pinnedAsset);
+        } else {
+          // The agent binds mid-run; the asset-created event navigates.
+          pendingAutoNavRef.current = true;
+        }
       } catch (reason) {
         const message =
           reason instanceof Error ? reason.message : "The run could not start.";
@@ -632,41 +693,45 @@ export function ProjectsScreen() {
           style={{ maxWidth: "40rem" }}
         >
           {proposal !== null ? (
-            <ConfirmTargetCard
-              proposal={proposal.proposal}
+            <div ref={targetRef} className="grid gap-2">
+              <ConfirmTargetCard
+                proposal={proposal.proposal}
+                projects={list.map((project) => ({
+                  id: project.id,
+                  name: project.name,
+                  summary: project.summary ?? "",
+                }))}
+                assets={assets.data?.assets ?? []}
+                busy={confirming}
+                onConfirm={confirm}
+                onCancel={() => setProposal(null)}
+              />
+            </div>
+          ) : null}
+          <div ref={consoleRef} className="grid gap-2">
+            <RunConsole
+              rows={rows}
+              running={running || optimisticStart !== null}
+              open={consoleOpen}
+              onOpen={setConsoleOpen}
+              message={message || (error ?? "")}
+              prompt={runPrompt}
+              interaction={pendingInteraction}
+              frames={[]}
+              palette={[]}
               projects={list.map((project) => ({
                 id: project.id,
                 name: project.name,
-                summary: project.summary ?? "",
               }))}
-              assets={assets.data?.assets ?? []}
-              busy={confirming}
-              onConfirm={confirm}
-              onCancel={() => setProposal(null)}
+              assets={(assets.data?.assets ?? []).map((asset) => ({
+                id: asset.id,
+                projectId: asset.projectId,
+                name: asset.name,
+              }))}
+              onRespond={respondToInteraction}
+              onEscape={focusComposer}
             />
-          ) : null}
-          <RunConsole
-            rows={rows}
-            running={running || optimisticStart !== null}
-            open={consoleOpen}
-            onOpen={setConsoleOpen}
-            message={message || (error ?? "")}
-            prompt={runPrompt}
-            interaction={pendingInteraction}
-            frames={[]}
-            palette={[]}
-            projects={list.map((project) => ({
-              id: project.id,
-              name: project.name,
-            }))}
-            assets={(assets.data?.assets ?? []).map((asset) => ({
-              id: asset.id,
-              projectId: asset.projectId,
-              name: asset.name,
-            }))}
-            onRespond={respondToInteraction}
-            onEscape={focusComposer}
-          />
+          </div>
           <Composer
             prompt={prompt}
             onPrompt={setPrompt}
