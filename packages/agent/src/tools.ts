@@ -875,6 +875,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         }
       }
       run.approvedScope = scope;
+      run.onScopeChange?.([...scope]);
       return {
         approved: true,
         plan: { summary: input.summary, frames },
@@ -1060,6 +1061,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
       run.frames.set(added.id, frame);
       run.currentFrameId = added.id;
       run.approvedScope.add(added.id);
+      run.onScopeChange?.([...run.approvedScope]);
       run.touchedFrames.add(added.id);
       return {
         frameId: added.id,
@@ -1170,6 +1172,7 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
         run.frames.set(replacement.id, replacement.frame);
         run.approvedScope.add(replacement.id);
       }
+      run.onScopeChange?.([...run.approvedScope]);
       run.currentFrameId = nextCurrent;
       return {
         deleted: id,

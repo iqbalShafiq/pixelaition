@@ -204,6 +204,8 @@ export const generationRuns = pgTable("generation_runs", {
   errorCode: text("error_code"),
   events: jsonb("events"),
   override: jsonb("override"),
+  /** Frames the user has approved for this run; survives a worker restart. */
+  approvedScope: jsonb("approved_scope"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });

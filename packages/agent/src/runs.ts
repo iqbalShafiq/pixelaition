@@ -132,6 +132,8 @@ export type RunBinding = {
   approvedScope: Set<string>;
   /** Frames this run edited or changed; the run terminal snapshots exactly these. */
   touchedFrames: Set<string>;
+  /** Fires whenever the approved frame scope grows or shrinks, for persistence. */
+  onScopeChange?: (scope: string[]) => void;
   /** A user-edited plan staged for the next present_plan call; consumed once. */
   stagedOverride?: StagedPlanOverride;
   strokes: Stroke[];

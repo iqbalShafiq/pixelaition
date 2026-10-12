@@ -153,6 +153,20 @@ const telemetry =
     : undefined;
 
 /**
+ * The frames the user has approved are durable state: a worker restart must
+ * not re-ask for frames the run was already allowed to draw on.
+ */
+function persistScope(publicRunId: string, scope: string[]): void {
+  void db
+    .update(generationRuns)
+    .set({ approvedScope: scope })
+    .where(eq(generationRuns.id, publicRunId))
+    .catch((reason: unknown) => {
+      console.error(`[scope] persist failed: ${boundedReason(reason)}`);
+    });
+}
+
+/**
  * One Jev request check lands on the run's own trace with its verdict and
  * cost. Telemetry is optional and must never disturb the run.
  */
@@ -337,8 +351,12 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
   maxConcurrentRuns: 2,
 })
   .then(async (runtime) => {
-    await runtime.resume();
+    // Bindings and follow loops come first: resume() starts pending runs
+    // immediately, and a run that executes a tool before its binding exists
+    // would see an unbound run (every frame "unapproved") and ask the human
+    // for scope it was already granted.
     await recoverInterruptedRuns(runtime);
+    await runtime.resume();
     return runtime;
   })
   .catch((reason: unknown) => {
@@ -628,6 +646,19 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
           ? reason.message.slice(0, 200)
           : "That interaction is not pending.",
     });
+  }
+  // An approved call on a frame approves the frame itself: the user granted
+  // that scope, so the next call on it must not ask again — including after
+  // a worker restart, which is why the scope is persisted.
+  if (response.type === "tool-approval" && response.approved && binding) {
+    const stored = interactions.get(row.id)?.get(body.data.interactionId);
+    const input = stored?.data.input as { frameId?: unknown } | undefined;
+    const frameId =
+      typeof input?.frameId === "string" ? input.frameId : binding.currentFrameId;
+    if (frameId !== undefined && !binding.approvedScope.has(frameId)) {
+      binding.approvedScope.add(frameId);
+      persistScope(row.id, [...binding.approvedScope]);
+    }
   }
   // A rejected proposal must never seed a later plan: drop the edit outright.
   // An approved one is consumed once present_plan executes, so only the row
@@ -1172,6 +1203,8 @@ function bindAssetRun(options: {
   originFrameId: string;
   /** The user's own words; absent when the row never recorded them. */
   request?: string;
+  /** Frames the user already approved; absent means only the origin frame. */
+  approvedScope?: string[];
 }): void {
   const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
   const writes = frameWrites({
@@ -1200,12 +1233,13 @@ function bindAssetRun(options: {
     width: asset.width,
     height: asset.height,
     style: asset.style,
-    approvedScope: new Set([originFrameId]),
+    approvedScope: new Set(options.approvedScope ?? [originFrameId]),
     touchedFrames: new Set(),
     strokes: [],
     issues: [],
     onStroke: writes.onStroke,
     onFrameChange: writes.onFrameChange,
+    onScopeChange: (scope) => persistScope(publicRunId, scope),
     onJevCheck: (check) => recordGateCheck(durableRunId, check),
   });
 }
@@ -1224,6 +1258,8 @@ function bindWorkspaceRun(options: {
   style: StyleGuide;
   /** The user's own words; absent when the row never recorded them. */
   request?: string;
+  /** Frames the user already approved; a workspace run starts empty. */
+  approvedScope?: string[];
 }): void {
   const { durableRunId, publicRunId, userId, style, request } = options;
   let writes: ReturnType<typeof frameWrites> | undefined;
@@ -1276,7 +1312,7 @@ function bindWorkspaceRun(options: {
     frames: new Map(),
     palette: [],
     style,
-    approvedScope: new Set(),
+    approvedScope: new Set(options.approvedScope ?? []),
     touchedFrames: new Set(),
     strokes: [],
     issues: [],
@@ -1398,6 +1434,7 @@ function bindWorkspaceRun(options: {
       if (!writes) throw new Error("The run is not bound to an asset.");
       await writes.onFrameChange(change);
     },
+    onScopeChange: (scope) => persistScope(publicRunId, scope),
     onJevCheck: (check) => recordGateCheck(durableRunId, check),
   });
 }
@@ -1441,6 +1478,9 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
     if (!durableRunId) continue;
     // Idempotent: a run this process already follows is left alone.
     if (getRun(durableRunId)) continue;
+    const approvedScope = Array.isArray(run.approvedScope)
+      ? run.approvedScope.filter((id): id is string => typeof id === "string")
+      : undefined;
     try {
       // The submission path set this context; recovery must rebuild it too so
       // gate and guardrail spans land on the same trace with user and session.
@@ -1474,6 +1514,7 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
           userId,
           style: project.style,
           request: run.prompt ?? undefined,
+          ...(approvedScope !== undefined ? { approvedScope } : {}),
         });
         void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
           (reason: unknown) => {
@@ -1507,6 +1548,7 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
         asset,
         originFrameId,
         request: run.prompt ?? undefined,
+        ...(approvedScope !== undefined ? { approvedScope } : {}),
       });
       void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
         (reason: unknown) => {
