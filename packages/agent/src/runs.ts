@@ -150,7 +150,18 @@ export type RunBinding = {
   onListAssets?: (userId: string, projectId: string) => Promise<AssetSummary[]>;
   onCreateAsset?: (userId: string, input: CreateAssetInput) => Promise<RunAsset>;
   onLoadAsset?: (userId: string, assetId: string) => Promise<RunAsset>;
+  /**
+   * Image URLs this run's web searches returned; view_image may look at these
+   * and nothing else, so the model cannot point the worker at arbitrary hosts.
+   */
+  searchImages?: Set<string>;
 };
+
+/** The run's seen-image set, created on first use. */
+export function searchImagesFor(run: RunBinding): Set<string> {
+  run.searchImages ??= new Set();
+  return run.searchImages;
+}
 
 /** A run that has an asset: the fields every drawing tool reads are present. */
 export type BoundRunBinding = RunBinding & {

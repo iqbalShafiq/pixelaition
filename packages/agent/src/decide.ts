@@ -22,7 +22,6 @@ const intentOptions = {
   variant: "Produce another state, direction, or action of an existing frame.",
   ask: "The user is asking a question, chatting about the work, or the message needs a reply instead of a drawing.",
 } as const;
-
 /** One earlier exchange, oldest first, so a follow-up reads in context. */
 export type DecisionHistoryEntry = {
   prompt: string;
@@ -36,6 +35,8 @@ export type DecisionContext = {
   asset?: { name: string; width: number; height: number; palette: string[] };
   frames?: string[];
   frameName?: string;
+  /** How many reference images the message carries. */
+  attachments?: number;
 };
 
 /** The typed questions Jev answers in one parallel request. */
@@ -43,7 +44,7 @@ const jevQuestions: Record<string, JevQuestion> = {
   intent: {
     type: "choice",
     instructions:
-      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists. Prefer ask when the message is a question or a remark that wants an answer, not a drawing.",
+      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists; a short noun phrase naming a new state or action is variant, not ask. Prefer ask when the message is a question or a remark that wants an answer, not a drawing. A message that asks for a drawing of attached reference images is still draw or edit, not ask.",
     criteria: intentOptions,
   },
   // Two speculative specificity questions run in parallel; code picks the one
@@ -52,9 +53,9 @@ const jevQuestions: Record<string, JevQuestion> = {
   drawable: {
     type: "noul",
     instructions:
-      "If the request asks for something new to be drawn, does it name a concrete subject? A subject with a size or a couple of qualities is enough detail; it does not need a full description. For a request that only changes or extends existing art, answer yes.",
+      "If the request asks for something new to be drawn, does it name a concrete subject? A subject with a size or a couple of qualities is enough detail; it does not need a full description. When the message carries attached reference images, the subject is already concrete: answer yes. For a request that only changes or extends existing art, answer yes.",
     criteria: {
-      true: "A new drawing names a concrete subject, optionally with a size or a few qualities.",
+      true: "A new drawing names a concrete subject, optionally with a size or a few qualities, or the message carries attached reference images.",
       false:
         "It asks for a new drawing but names no subject at all, or only a placeholder like 'something'.",
     },
@@ -62,9 +63,9 @@ const jevQuestions: Record<string, JevQuestion> = {
   actionable: {
     type: "noul",
     instructions:
-      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present. For a request that draws something new, answer yes.",
+      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present; attached reference images count as saying what to change. For a request that draws something new, answer yes.",
     criteria: {
-      true: "An edit or variant says what to change, directly or by referring to `history`, or the request does not edit existing art.",
+      true: "An edit or variant says what to change, directly, by referring to `history`, or with attached reference images, or the request does not edit existing art.",
       false:
         "It asks to change existing art but does not say what to change, even with `history` as context.",
     },
@@ -115,6 +116,9 @@ export async function decidePrompt(
       ...(context.asset !== undefined ? { asset: context.asset } : {}),
       ...(context.frames !== undefined ? { frames: context.frames } : {}),
       ...(context.frameName !== undefined ? { frame: { name: context.frameName } } : {}),
+      ...(context.attachments !== undefined && context.attachments > 0
+        ? { attachments: context.attachments }
+        : {}),
     },
     jevQuestions,
     env,

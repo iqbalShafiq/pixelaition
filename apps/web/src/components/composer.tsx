@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { MAX_ATTACHMENTS, type PreparedAttachment } from "../lib/attachments.js";
 import { Button, SelectControl, Textarea } from "./ui.js";
 
 /**
@@ -24,6 +25,10 @@ export function Composer({
   onQueue,
   scope,
   blockedReason,
+  attachments = [],
+  attachmentError,
+  onAttach,
+  onRemoveAttachment,
 }: {
   prompt: string;
   onPrompt: (value: string) => void;
@@ -47,8 +52,16 @@ export function Composer({
   scope?: ReactNode;
   /** A named cause that keeps the run from starting; shown in the bar. */
   blockedReason?: string;
+  /** Reference images staged for the next message. */
+  attachments?: PreparedAttachment[];
+  /** Why the last attach was refused. */
+  attachmentError?: string | undefined;
+  onAttach?: ((files: Iterable<File>) => void) | undefined;
+  onRemoveAttachment?: ((id: string) => void) | undefined;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
   useEffect(() => {
     const area = areaRef.current;
     if (!area) return;
@@ -63,13 +76,70 @@ export function Composer({
   const canQueue =
     running && hasText && onQueue !== undefined && modelReady && !noCatalog && !blocked;
   const queueable = running && hasText && onQueue !== undefined;
+  // Attachments belong to a fresh message; a live run takes queue text only.
+  const attachable =
+    !running &&
+    !starting &&
+    onAttach !== undefined &&
+    attachments.length < MAX_ATTACHMENTS;
+  const showAttachments = attachments.length > 0 || attachmentError !== undefined;
 
   return (
     <section
       aria-label="Prompt composer"
-      className="pointer-events-auto pixel-corners-sm w-full border-2 border-line-strong bg-field shadow-[0_3px_0_0_var(--color-panel)] transition-colors duration-150 focus-within:border-accent"
+      className={`pointer-events-auto pixel-corners-sm w-full border-2 bg-field shadow-[0_3px_0_0_var(--color-panel)] transition-colors duration-150 focus-within:border-accent ${
+        dragging ? "border-accent" : "border-line-strong"
+      }`}
       style={{ maxWidth: "40rem" }}
+      onDragOver={(event) => {
+        if (!attachable) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        if (!attachable) return;
+        event.preventDefault();
+        setDragging(false);
+        if (event.dataTransfer.files.length > 0) onAttach?.(event.dataTransfer.files);
+      }}
     >
+      {showAttachments ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-b-2 border-line px-2 py-1.5">
+          {attachments.map((attachment) => (
+            <span
+              key={attachment.id}
+              className="inline-flex items-center gap-1.5 border-2 border-line-strong bg-panel py-0.5 pr-1 pl-0.5"
+            >
+              <img
+                src={attachment.preview}
+                alt={attachment.name}
+                className="h-7 w-7 object-contain"
+                style={{ imageRendering: "pixelated" }}
+              />
+              <span
+                className="text-pixel-mono max-w-[7rem] truncate text-muted"
+                title={`${attachment.name} — ${attachment.width}×${attachment.height}`}
+              >
+                {attachment.name}
+              </span>
+              {onRemoveAttachment ? (
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.name}`}
+                  className="text-pixel-mono px-0.5 text-muted hover:text-accent"
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                >
+                  ×
+                </button>
+              ) : null}
+            </span>
+          ))}
+          {attachmentError !== undefined ? (
+            <span className="text-pixel-mono text-muted">{attachmentError}</span>
+          ) : null}
+        </div>
+      ) : null}
       <Textarea
         bare
         ref={areaRef}
@@ -80,7 +150,7 @@ export function Composer({
             ? "Starting the run…"
             : running
               ? "The agent is working — type a follow-up to queue it"
-              : "Describe the pixel asset, ask a question, or request another state of this frame"
+              : "Describe the pixel asset, ask a question, or attach a reference image"
         }
         className="min-h-[2.75rem] px-3 py-2.5"
         onKeyDown={(event) => {
@@ -97,6 +167,25 @@ export function Composer({
       />
       <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
         {scope}
+        <Button
+          onClick={() => fileRef.current?.click()}
+          disabled={!attachable || !modelReady || noCatalog || blocked}
+          title={`Attach up to ${MAX_ATTACHMENTS} reference images`}
+        >
+          Attach
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          hidden
+          onChange={(event) => {
+            const files = event.target.files;
+            if (files && files.length > 0) onAttach?.(files);
+            event.target.value = "";
+          }}
+        />
         <SelectControl
           label="Model"
           value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}

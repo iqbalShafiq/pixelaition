@@ -32,6 +32,7 @@ import {
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
+import { useAttachments } from "../lib/use-attachments.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 
@@ -99,6 +100,7 @@ export function ProjectsScreen() {
   });
 
   const [prompt, setPrompt] = useState("");
+  const attachments = useAttachments();
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
   const [pickedProjectId, setPickedProjectId] = useState("");
@@ -283,6 +285,7 @@ export function ProjectsScreen() {
     if (running || !projectId) return;
     const text = prompt.trim();
     if (text.length === 0) return;
+    const staged = attachments.items;
     // Urgent updates: the console reacts before any await.
     setError(null);
     setMessage("");
@@ -307,8 +310,17 @@ export function ProjectsScreen() {
             prompt: text,
             modelId,
             reasoningEffort: effort,
+            ...(staged.length > 0
+              ? {
+                  attachments: staged.map(({ mediaType, data }) => ({
+                    mediaType,
+                    data,
+                  })),
+                }
+              : {}),
           }),
         });
+        if (staged.length > 0) attachments.clear();
         setRunId(started.runId);
         log(`Run ${started.runId.slice(0, 8)} started`);
         listen(started.runId);
@@ -446,6 +458,10 @@ export function ProjectsScreen() {
                   />
                 }
                 blockedReason={blockedReason}
+                attachments={attachments.items}
+                attachmentError={attachments.error}
+                onAttach={attachments.add}
+                onRemoveAttachment={attachments.remove}
               />
               <RunConsole
                 rows={rows}

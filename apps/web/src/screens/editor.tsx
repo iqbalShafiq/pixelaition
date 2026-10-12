@@ -76,6 +76,7 @@ import {
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
+import { useAttachments } from "../lib/use-attachments.js";
 import { useMediaQuery } from "../lib/use-media.js";
 import {
   base64ToBytes,
@@ -167,6 +168,7 @@ export function EditorScreen() {
   const [onion, setOnion] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const attachments = useAttachments();
   const [modelId, setModelId] = useState("");
   const [effort, setEffort] = useState("medium");
   const [rows, setRows] = useState<RunRow[]>([]);
@@ -972,9 +974,12 @@ export function EditorScreen() {
     }
   }
 
-  function generate(textOverride?: string) {
+  function generate(textOverride?: string, withAttachments = true) {
     const text = (textOverride ?? prompt).trim();
     if (!frameId || running || optimisticStart !== null || text.length === 0) return;
+    // Reference images belong to a fresh manual message, never to a queued
+    // follow-up that arrives while a run is live.
+    const staged = withAttachments ? attachments.items : [];
     // Urgent updates: the console and the composer react before any await.
     setError(null);
     setMessage("");
@@ -1005,8 +1010,17 @@ export function EditorScreen() {
             prompt: text,
             modelId,
             reasoningEffort: effort,
+            ...(staged.length > 0
+              ? {
+                  attachments: staged.map(({ mediaType, data }) => ({
+                    mediaType,
+                    data,
+                  })),
+                }
+              : {}),
           }),
         });
+        if (staged.length > 0) attachments.clear();
         setRunId(started.runId);
         rememberRunModel(started.runId, modelId);
         displayedRunIdRef.current = started.runId;
@@ -1036,7 +1050,7 @@ export function EditorScreen() {
     const text = autoFlushRef.current;
     if (text === null) return;
     autoFlushRef.current = null;
-    void generateRef.current(text);
+    void generateRef.current(text, false);
   }, [running]);
 
   function queuePrompt() {
@@ -1529,6 +1543,10 @@ export function EditorScreen() {
                   onGenerate={() => generate()}
                   onStop={stop}
                   onQueue={queuePrompt}
+                  attachments={attachments.items}
+                  attachmentError={attachments.error}
+                  onAttach={attachments.add}
+                  onRemoveAttachment={attachments.remove}
                 />
               </div>
             </div>

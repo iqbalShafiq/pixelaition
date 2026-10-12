@@ -40,4 +40,36 @@ describe("buildRunPrompt", () => {
     expect(asked).toHaveLength(200);
     expect(answered).toHaveLength(200);
   });
+
+  it("lists the frames, palette, and attached references when present", () => {
+    const prompt = buildRunPrompt({
+      prompt: "add a jump frame",
+      style: {},
+      frameName: "idle",
+      frames: [
+        { name: "idle", current: true },
+        { name: "walk", current: false },
+      ],
+      palette: ["#00000000", "#38b764"],
+      attachments: 1,
+      recent: [],
+    });
+    expect(prompt).toContain("Frames: idle*, walk (* = current)");
+    expect(prompt).toContain("Palette: #00000000, #38b764");
+    expect(prompt).toContain("Attachments: 1 reference image with this message");
+  });
+
+  it("counts attachments in the plural and omits empty blocks", () => {
+    const prompt = buildRunPrompt({
+      prompt: "draw this",
+      style: {},
+      frames: [],
+      palette: [],
+      attachments: 2,
+      recent: [],
+    });
+    expect(prompt).toContain("Attachments: 2 reference images with this message");
+    expect(prompt).not.toContain("Frames:");
+    expect(prompt).not.toContain("Palette:");
+  });
 });

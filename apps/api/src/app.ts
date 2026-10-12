@@ -148,7 +148,8 @@ async function failUnacceptedRun(runId: string, workerMessage?: string | null) {
 export function createApp() {
   const app = express();
   app.use("/api/auth", toNodeHandler(auth));
-  app.use(express.json({ limit: "4mb" }));
+  // Reference images arrive as base64 with the generate request.
+  app.use(express.json({ limit: "12mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -520,6 +521,21 @@ export function createApp() {
         prompt: z.string().min(1).max(4000),
         modelId: z.string().min(1),
         reasoningEffort: z.string().min(1),
+        // Reference images: the web app downscales each one well under these
+        // caps, so a body over them is a bug or an abuse, not a big picture.
+        attachments: z
+          .array(
+            z.object({
+              mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+              data: z.string().min(16).max(1_500_000),
+            }),
+          )
+          .max(4)
+          .refine(
+            (list) => list.reduce((sum, item) => sum + item.data.length, 0) <= 5_000_000,
+            { message: "The attachments are too large together." },
+          )
+          .optional(),
       })
       .parse(req.body);
     const userId = res.locals.userId as string;
@@ -717,6 +733,9 @@ export function createApp() {
         },
         {
           ...(history.length > 0 ? { history } : {}),
+          ...(body.attachments !== undefined && body.attachments.length > 0
+            ? { attachments: body.attachments.length }
+            : {}),
           ...(targetContext ?? {}),
         },
       );
@@ -789,6 +808,7 @@ export function createApp() {
             userId,
             threadId: thread.id,
             mode,
+            ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
             // The guardrail and decision calls already spent; the run's usage
             // starts from their totals so the console shows the full cost.
             usage: {

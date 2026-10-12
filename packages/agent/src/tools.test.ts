@@ -148,6 +148,7 @@ afterEach(() => {
   delete process.env.DECISION_MODEL_API_KEY;
   delete process.env.DECISION_MODEL;
   delete process.env.DECISION_MODEL_BASE_URL;
+  delete process.env.TAVILY_API_KEY;
 });
 
 /**
@@ -183,7 +184,7 @@ function boundFrameRun(
   });
 }
 
-function tool(name: string, options?: { vision?: boolean }): Tool {
+function tool(name: string, options?: { vision?: boolean; webSearch?: boolean }): Tool {
   const found = createPixelTools(options).find((item) => item.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return found as unknown as Tool;
@@ -1566,6 +1567,159 @@ describe("preview_frame", () => {
     };
     expect(output.content[0]?.text).toContain("2 frames");
     expect(output.content[0]?.text).toContain("8×4");
+    releaseRun("run-1");
+  });
+});
+
+describe("web search and reference images", () => {
+  it("registers web_search with a key and view_image only with vision too", () => {
+    const names = (tools: ReturnType<typeof createPixelTools>) =>
+      tools.map((item) => item.name);
+    expect(names(createPixelTools())).not.toContain("web_search");
+    expect(names(createPixelTools({ webSearch: true }))).toContain("web_search");
+    expect(names(createPixelTools({ webSearch: true }))).not.toContain("view_image");
+    expect(names(createPixelTools({ vision: true }))).not.toContain("view_image");
+    expect(names(createPixelTools({ vision: true, webSearch: true }))).toContain(
+      "view_image",
+    );
+  });
+
+  it("names the missing Tavily key instead of searching without one", async () => {
+    boundRun();
+    delete process.env.TAVILY_API_KEY;
+    await expect(
+      tool("web_search", { webSearch: true }).call(
+        { query: "pixel art slime" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("Set TAVILY_API_KEY");
+    releaseRun("run-1");
+  });
+
+  it("lists results and only the viewable image URLs", async () => {
+    boundRun();
+    process.env.TAVILY_API_KEY = "tvly-test";
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              {
+                title: "Slime sprite",
+                url: "https://example.com/slime",
+                content: "A green slime.",
+              },
+            ],
+            images: [
+              { url: "https://cdn.example.com/slime.png", description: "green slime" },
+              { url: "http://cdn.example.com/plain.png", description: "no https" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const output = (await tool("web_search", { webSearch: true }).call(
+      { query: "slime pixel art" },
+      { operationId: "run-1" },
+    )) as string;
+    expect(output).toContain("Slime sprite");
+    expect(output).toContain("https://example.com/slime");
+    expect(output).toContain("https://cdn.example.com/slime.png");
+    expect(output).not.toContain("plain.png");
+    releaseRun("run-1");
+  });
+
+  it("fetches a searched image as a file part the model can see", async () => {
+    boundRun();
+    process.env.TAVILY_API_KEY = "tvly-test";
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [],
+            images: [{ url: "https://cdn.example.com/slime.png" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    await tool("web_search", { webSearch: true }).call(
+      { query: "slime pixel art" },
+      { operationId: "run-1" },
+    );
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      url: "https://cdn.example.com/slime.png",
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: async () => png,
+    }));
+    const output = (await tool("view_image", { vision: true, webSearch: true }).call(
+      { url: "https://cdn.example.com/slime.png" },
+      { operationId: "run-1" },
+    )) as {
+      content: Array<{
+        type: string;
+        text?: string;
+        mediaType?: string;
+        data?: { type: string; data: string };
+      }>;
+    };
+    expect(output.content[0]?.text).toContain("image/png");
+    const image = output.content[1];
+    expect(image?.type).toBe("file");
+    expect(image?.mediaType).toBe("image/png");
+    expect(Buffer.from(image?.data?.data ?? "", "base64").equals(png)).toBe(true);
+    // The Anvia message schema must accept the rich output, or the run fails
+    // at tool-result serialization instead of the model seeing the image.
+    expect(normalizeToolResultOutput(output).type).toBe("content");
+    releaseRun("run-1");
+  });
+
+  it("refuses an image URL the run never searched", async () => {
+    boundRun();
+    await expect(
+      tool("view_image", { vision: true, webSearch: true }).call(
+        { url: "https://evil.example.com/tracker.png" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("only accepts https image URLs returned by web_search");
+    releaseRun("run-1");
+  });
+
+  it("refuses an image that redirects to a private host", async () => {
+    boundRun();
+    process.env.TAVILY_API_KEY = "tvly-test";
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [],
+            images: [{ url: "https://cdn.example.com/slime.png" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    await tool("web_search", { webSearch: true }).call(
+      { query: "slime pixel art" },
+      { operationId: "run-1" },
+    );
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      url: "https://127.0.0.1/private.png",
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: async () => Buffer.from([0]),
+    }));
+    await expect(
+      tool("view_image", { vision: true, webSearch: true }).call(
+        { url: "https://cdn.example.com/slime.png" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("redirected to a host the worker will not fetch");
     releaseRun("run-1");
   });
 });

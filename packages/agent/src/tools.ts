@@ -38,6 +38,7 @@ import {
   requireAsset,
   requireRun,
   runIdFromOperation,
+  searchImagesFor,
   stagedOverrideSchema,
   type BoundRunBinding,
   type RunAsset,
@@ -45,6 +46,12 @@ import {
   type RunFrame,
   type Stroke,
 } from "./runs.js";
+import {
+  fetchReferenceImage,
+  parseHttpsPublicUrl,
+  searchWeb,
+  tavilyApiKey,
+} from "./search.js";
 
 const point = z.object({
   x: z.number().int(),
@@ -303,7 +310,9 @@ function bindResult(asset: RunAsset, run: BoundRunBinding) {
   };
 }
 
-export function createPixelTools(options: { vision?: boolean } = {}) {
+export function createPixelTools(
+  options: { vision?: boolean; webSearch?: boolean } = {},
+) {
   const readProject = createTool({
     name: "read_project",
     description:
@@ -1245,6 +1254,84 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  // Search and reference images. Registered only when the server holds a
+  // Tavily key; the tool re-checks at call time so a missing key always names
+  // itself. The text results serve the asking-only agent too, while view_image
+  // needs a model that can actually see.
+  const webSearch = createTool({
+    name: "web_search",
+    description:
+      "Search the web for text and real reference images. Ground the work in what you find: search before drawing a real subject you cannot picture, then view_image to look at a result.",
+    inputSchema: z.object({
+      query: z.string().min(2).max(400),
+      maxResults: z.number().int().min(1).max(8).default(5),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const apiKey = tavilyApiKey();
+      if (!apiKey) {
+        throw new Error("Set TAVILY_API_KEY on the server to search the web.");
+      }
+      const outcome = await searchWeb(input.query, {
+        apiKey,
+        maxResults: input.maxResults,
+      });
+      const seen = searchImagesFor(run);
+      for (const image of outcome.images) {
+        const url = parseHttpsPublicUrl(image.url);
+        if (url) seen.add(url.href);
+      }
+      const results = outcome.results
+        .map(
+          (result, index) =>
+            `${index + 1}. ${result.title}\n   ${result.url}\n   ${result.content}`,
+        )
+        .join("\n");
+      const images = outcome.images
+        .map((image, index) => {
+          const url = parseHttpsPublicUrl(image.url);
+          if (!url) return undefined;
+          return `${index + 1}. ${url.href}${image.description ? ` — ${image.description}` : ""}`;
+        })
+        .filter((line): line is string => line !== undefined)
+        .join("\n");
+      return [
+        `Results for "${input.query}":`,
+        results.length > 0 ? results : "(no text results)",
+        "",
+        images.length > 0
+          ? `Images — call view_image with a URL to look at one:\n${images}`
+          : "No viewable images came back for this query.",
+      ].join("\n");
+    },
+  });
+
+  const viewImage = createTool({
+    name: "view_image",
+    description:
+      "Look at one image a web_search in this run returned. The picture arrives for you to see; describe only what you actually saw.",
+    inputSchema: z.object({ url: z.string().url() }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      const url = parseHttpsPublicUrl(input.url);
+      if (!url || !searchImagesFor(run).has(url.href)) {
+        throw new Error(
+          "view_image only accepts https image URLs returned by web_search in this run.",
+        );
+      }
+      const image = await fetchReferenceImage(url);
+      return ToolOutput.content([
+        { type: "text", text: `${url.href} — ${image.mediaType}, ${image.bytes} bytes.` },
+        {
+          type: "file",
+          data: { type: "data", data: image.data },
+          mediaType: image.mediaType,
+          filename: "reference",
+        },
+      ]);
+    },
+  });
+
   return [
     readProject,
     readFrame,
@@ -1280,6 +1367,8 @@ export function createPixelTools(options: { vision?: boolean } = {}) {
     renameFrameTool,
     moveFrameTool,
     deleteFrameTool,
+    ...(options.webSearch === true ? [webSearch] : []),
+    ...(options.vision === true && options.webSearch === true ? [viewImage] : []),
     ...(options.vision === true ? [preview] : []),
   ];
 }

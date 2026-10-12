@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Agent } from "@anvia/core";
+import type { AgentPrompt } from "@anvia/core/agent";
 import type { AgentGenerationEndArgs, AgentObserver } from "@anvia/core/observability";
 import {
   parseAgentInteractionResponse,
@@ -500,6 +501,9 @@ const completions = openai
 
 const observer = telemetry?.observer();
 
+/** Web search turns on with its key; a missing key keeps the tools out. */
+const webSearch = Boolean(process.env.TAVILY_API_KEY?.trim());
+
 /** Read-only tools the asking-only agent may use: it answers, never paints. */
 const ASK_TOOL_NAMES = new Set([
   "read_project",
@@ -509,6 +513,8 @@ const ASK_TOOL_NAMES = new Set([
   "list_assets",
   "use_asset",
   "think",
+  "web_search",
+  "view_image",
 ]);
 
 const observability = {
@@ -522,17 +528,21 @@ const observability = {
 
 // Durable submits carry no model controls, so one agent is registered per
 // model, reasoning effort, and mode and the run picks the trio the decision
-// chose. The ask agent shares the model and context but cannot paint.
-const agents = completions.flatMap(({ spec, model }) =>
-  spec.efforts.flatMap((effort) => [
+// chose. The ask agent shares the model and context but cannot paint; each
+// entry keeps its tool list so the recovery map matches exactly.
+const agents = completions.flatMap(({ spec, model }) => {
+  const drawingTools = createPixelTools({ vision: spec.vision, webSearch });
+  const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
+  return spec.efforts.flatMap((effort) => [
     {
       id: `${agentPrefix}:${spec.id}:${effort}`,
       vision: spec.vision,
+      tools: drawingTools,
       agent: new Agent({
         id: `${agentPrefix}:${spec.id}:${effort}`,
         model,
         instructions: pixelInstructions,
-        tools: createPixelTools({ vision: spec.vision }),
+        tools: drawingTools,
         maxTurns: 60,
         controls: { reasoningEffort: effort },
         observability,
@@ -541,20 +551,19 @@ const agents = completions.flatMap(({ spec, model }) =>
     {
       id: `${agentPrefix}:ask:${spec.id}:${effort}`,
       vision: spec.vision,
+      tools: askingTools,
       agent: new Agent({
         id: `${agentPrefix}:ask:${spec.id}:${effort}`,
         model,
         instructions: askInstructions,
-        tools: createPixelTools({ vision: spec.vision }).filter((tool) =>
-          ASK_TOOL_NAMES.has(tool.name),
-        ),
+        tools: askingTools,
         maxTurns: 8,
         controls: { reasoningEffort: effort },
         observability,
       }),
     },
-  ]),
-);
+  ]);
+});
 
 function agentForTarget(target: RunTarget, mode: "draw" | "ask"): Agent | undefined {
   const prefix = mode === "ask" ? `${agentPrefix}:ask` : agentPrefix;
@@ -577,11 +586,14 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
           agent: entry.agent,
           version: "1",
           stream: true,
-          toolRecovery: toolRecovery(entry.vision),
+          toolRecovery: toolRecovery(entry.tools),
         })),
       }
     : {}),
   maxConcurrentRuns: 2,
+  // Reference images travel as base64 media parts; the 1 MB default payload
+  // cap would reject a run that carries two or three attachments.
+  limits: { maxPayloadBytes: 8 * 1024 * 1024 },
 })
   .then(async (runtime) => {
     // Bindings and follow loops come first: resume() starts pending runs
@@ -607,8 +619,14 @@ async function runtimeOr503(res: express.Response): Promise<DurableRuntime | und
   return undefined;
 }
 
-function toolRecovery(vision: boolean) {
-  return {
+/**
+ * Recovery classification for the tools an agent actually has: the durable
+ * runtime rejects an entry for a tool the agent does not register, and the
+ * asking-only agent carries a strict subset of the drawing toolset, so the
+ * map is filtered by tool name.
+ */
+function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
+  const classified = {
     read_project: "safe" as const,
     read_frame: "safe" as const,
     read_region: "safe" as const,
@@ -616,9 +634,10 @@ function toolRecovery(vision: boolean) {
     check_animation: "safe" as const,
     plan: "safe" as const,
     present_plan: "safe" as const,
-    // Only vision agents register preview_frame, and the durable runtime
-    // rejects a recovery entry for a tool the agent does not have.
-    ...(vision ? { preview_frame: "safe" as const } : {}),
+    preview_frame: "safe" as const,
+    // A repeated search or image fetch is a read: safe to replay.
+    web_search: "safe" as const,
+    view_image: "safe" as const,
     use_frame: "safe" as const,
     think: "safe" as const,
     list_projects: "safe" as const,
@@ -654,10 +673,15 @@ function toolRecovery(vision: boolean) {
     add_layer: "manual" as const,
     remove_layer: "manual" as const,
   };
+  const present = new Set(tools.map((tool) => tool.name));
+  return Object.fromEntries(
+    Object.entries(classified).filter(([name]) => present.has(name)),
+  );
 }
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+// Reference images arrive as base64; the API caps them well below this.
+app.use(express.json({ limit: "12mb" }));
 
 function authorized(req: express.Request): boolean {
   const expected = process.env.WORKER_INTERNAL_TOKEN ?? "";
@@ -702,6 +726,18 @@ app.post("/internal/runs", async (req, res) => {
       threadId: z.string(),
       // The decision chooses the mode; the run picks the matching agent.
       mode: z.enum(["draw", "ask"]).default("draw"),
+      // Reference images ride as media parts; the durable runtime persists them
+      // for restart and retry. The web app downscales before sending, and the
+      // API validates the sizes again before forwarding.
+      attachments: z
+        .array(
+          z.object({
+            mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+            data: z.string().min(16),
+          }),
+        )
+        .max(4)
+        .optional(),
       // What the API's decision and guardrail calls already spent; the run's
       // usage starts from these totals.
       usage: z
@@ -761,16 +797,46 @@ app.post("/internal/runs", async (req, res) => {
     recent = await recentRuns({ assetId });
   }
 
+  const promptText = buildRunPrompt({
+    prompt: body.prompt,
+    style,
+    ...(frameName !== undefined ? { frameName } : {}),
+    ...(asset
+      ? {
+          frames: asset.frames.map((frame) => ({
+            name: frame.name,
+            current: frame.id === originFrameId,
+          })),
+          palette: asset.palette,
+        }
+      : {}),
+    ...(body.attachments !== undefined && body.attachments.length > 0
+      ? { attachments: body.attachments.length }
+      : {}),
+    recent,
+  });
+  // Attachments become media parts the model sees directly; a message without
+  // them stays a plain string, which keeps old journals and replay simple.
+  const prompt: AgentPrompt =
+    body.attachments !== undefined && body.attachments.length > 0
+      ? {
+          role: "user",
+          content: [
+            { type: "text", text: promptText },
+            ...body.attachments.map((attachment) => ({
+              type: "image" as const,
+              image: { type: "data" as const, data: attachment.data },
+              mediaType: attachment.mediaType,
+            })),
+          ],
+        }
+      : promptText;
+
   const run = await runtime.submit({
     agentId: `${agentPrefix}${body.mode === "ask" ? ":ask" : ""}:${target.modelId}:${target.effort}`,
     sessionId: body.threadId,
     requestId: body.requestId,
-    prompt: buildRunPrompt({
-      prompt: body.prompt,
-      style,
-      ...(frameName !== undefined ? { frameName } : {}),
-      recent,
-    }),
+    prompt,
   });
   publicIdByDurable.set(run.id, body.runId);
   seedUsage(run.id, body.usage);

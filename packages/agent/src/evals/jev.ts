@@ -8,7 +8,7 @@
  */
 import { createBuffer, defaultStyle } from "@pixelaition/pixel";
 import { randomUUID } from "node:crypto";
-import { decidePrompt } from "../decide.js";
+import { decidePrompt, type DecisionContext } from "../decide.js";
 import { gateToolCall } from "../gate.js";
 import { screenInput, screenOutput } from "../guardrails.js";
 import { openCodeGoHeaders } from "../models.js";
@@ -47,6 +47,8 @@ type Sample = {
   ok: (actual: string) => boolean;
   /** Guardrail samples screen one side of the run; default input. */
   side?: "input" | "output";
+  /** Extra decision context, for fixtures that carry references. */
+  context?: DecisionContext;
 };
 
 type Suite = {
@@ -62,9 +64,10 @@ const exact = (expected: string) => (actual: string) => actual === expected;
 
 const decisionSuite: Suite = {
   name: "decisions (intent)",
-  jev: async (sample) => (await decidePrompt(sample.input, env)).intent,
+  jev: async (sample) =>
+    (await decidePrompt(sample.input, env, sample.context ?? {})).intent,
   baselinePrompt:
-    'You classify pixel-art requests. Answer with JSON only: {"intent":"draw"|"edit"|"variant"|"ask"}. draw = a new sprite from scratch; edit = change pixels of the current frame; variant = another state, direction, or action of an existing frame; ask = a question, a remark, or anything that needs a reply instead of a drawing.',
+    'You classify pixel-art requests. Answer with JSON only: {"intent":"draw"|"edit"|"variant"|"ask"}. draw = a new sprite from scratch; edit = change pixels of the current frame; variant = another state, direction, or action of an existing frame; ask = a question, a remark, or anything that needs a reply instead of a drawing. A message may carry attached reference images; asking to draw them is draw or edit, not ask.',
   samples: [
     {
       label: "new potion",
@@ -132,6 +135,20 @@ const decisionSuite: Suite = {
       input: "make an animation",
       expected: "ask",
       ok: exact("ask"),
+    },
+    {
+      label: "reference attached",
+      input: "buatkan pixel art seperti gambar ini",
+      expected: "draw",
+      ok: exact("draw"),
+      context: { attachments: 1 },
+    },
+    {
+      label: "question with reference",
+      input: "warna apa yang cocok untuk gambar ini?",
+      expected: "ask",
+      ok: exact("ask"),
+      context: { attachments: 1 },
     },
   ],
 };
@@ -410,7 +427,8 @@ for (const suite of suites) {
   const baseline = await measureBaseline(suite);
   const pct = (m: Measurement) => `${Math.round((m.correct / m.total) * 100)}%`;
   const avg = (m: Measurement) => `${Math.round(m.ms / m.total)}ms`;
-  const spend = (m: Measurement) => `$${m.cost.toFixed(5)}`;
+  const spend = (m: Measurement) =>
+    m.cost > 0 ? `$${m.cost.toFixed(5)}` : "n/a (provider reports no cost)";
   console.log(`== ${suite.name} (${jev.total} fixtures)`);
   console.log(
     `   jev:      ${jev.correct}/${jev.total}  ${pct(jev)}  ${avg(jev)}/call  ${spend(jev)}`,
