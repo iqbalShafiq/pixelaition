@@ -696,6 +696,14 @@ async function saveSummary(
 
 const summaryClient = completions.find((entry) => entry.spec.api === "chat");
 const visionClient = completions.find((entry) => entry.spec.vision);
+// A one-sentence summary never needs deep reasoning; the cheapest declared
+// effort keeps the provider's token window for the runs themselves.
+const summaryControls = (
+  spec: ModelSpec,
+): { controls: { reasoningEffort: string } } | Record<string, never> => {
+  const effort = spec.efforts[0];
+  return effort === undefined ? {} : { controls: { reasoningEffort: effort } };
+};
 const summarizer =
   summaryClient && visionClient
     ? createSummarizer({
@@ -707,6 +715,7 @@ const summarizer =
           const result = await generateCompletion({
             model: visionClient.model,
             maxTokens: visionClient.spec.maxOutputTokens,
+            ...summaryControls(visionClient.spec),
             messages: [
               {
                 role: "user",
@@ -739,6 +748,7 @@ const summarizer =
           const result = await generateCompletion({
             model: summaryClient.model,
             maxTokens: summaryClient.spec.maxOutputTokens,
+            ...summaryControls(summaryClient.spec),
             messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
           });
           return result.output;
