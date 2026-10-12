@@ -15,9 +15,11 @@ import { SqliteDurableStore } from "@anvia/durable/sqlite";
 import { OpenAIClient } from "@anvia/openai";
 import OpenAI from "openai";
 import {
+  generateCompletion,
   REASONING_EFFORT_CONTROL_ID,
   defineCompletionModelControls,
 } from "@anvia/core/completion";
+import { frameToPng } from "@pixelaition/export";
 import {
   askInstructions,
   bindRun,
@@ -61,6 +63,7 @@ import {
   defaultStyle,
   encodePixels,
   frameToBuffer,
+  type Frame,
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
@@ -78,6 +81,13 @@ import {
 import express from "express";
 import { z } from "zod";
 import { sanitizeEvent } from "./events.js";
+import {
+  buildFrameSummaryPrompt,
+  clampSummary,
+  createSummarizer,
+  SUMMARY_LIMIT,
+  type SummaryKind,
+} from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
 
 type PublicEvent = {
@@ -572,6 +582,205 @@ function agentForTarget(target: RunTarget, mode: "draw" | "ask"): Agent | undefi
   )?.agent;
 }
 
+// --- Entity summaries -------------------------------------------------------
+// One short, read-only description per frame, asset, and project. Frames are
+// described by the vision model from a rendered PNG; asset and project text
+// comes from the cheap chat model. Failures log and keep the old value.
+
+async function loadFrameForSummary(frameId: string) {
+  const [row] = await db
+    .select({ frame: frames, asset: assets, project: projects })
+    .from(frames)
+    .innerJoin(assets, eq(frames.assetId, assets.id))
+    .innerJoin(projects, eq(assets.projectId, projects.id))
+    .where(eq(frames.id, frameId));
+  if (!row) return undefined;
+  const palette = row.asset.palette as string[];
+  const buffer = frameToBuffer(
+    {
+      id: row.frame.id,
+      name: row.frame.name,
+      index: row.frame.index,
+      layers: row.frame.layers as Frame["layers"],
+    },
+    row.asset.width,
+    row.asset.height,
+    palette,
+  );
+  return {
+    input: {
+      assetName: row.asset.name,
+      frameName: row.frame.name,
+      width: buffer.width,
+      height: buffer.height,
+      paletteSize: palette.length,
+      paintedPixels: buffer.layers.reduce(
+        (total, layer) => total + [...layer.pixels].filter((value) => value !== 0).length,
+        0,
+      ),
+    },
+    png: Buffer.from(frameToPng(buffer, 4)),
+  };
+}
+
+async function loadAssetForSummary(assetId: string) {
+  const [row] = await db.select().from(assets).where(eq(assets.id, assetId));
+  if (!row) return undefined;
+  const [project] = await db
+    .select({ description: projects.description })
+    .from(projects)
+    .where(eq(projects.id, row.projectId));
+  const frameRows = await db
+    .select({ name: frames.name, summary: frames.summary })
+    .from(frames)
+    .where(eq(frames.assetId, assetId))
+    .orderBy(asc(frames.index));
+  return {
+    name: row.name,
+    width: row.width,
+    height: row.height,
+    paletteSize: (row.palette as string[]).length,
+    projectDescription: project?.description ?? "",
+    frames: frameRows,
+  };
+}
+
+async function loadProjectForSummary(projectId: string) {
+  const [row] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!row) return undefined;
+  const assetRows = await db
+    .select({ name: assets.name, summary: assets.summary })
+    .from(assets)
+    .where(eq(assets.projectId, projectId))
+    .orderBy(desc(assets.updatedAt));
+  return {
+    name: row.name,
+    description: row.description,
+    styleNotes: (row.style as StyleGuide).notes ?? "",
+    assets: assetRows,
+  };
+}
+
+async function saveSummary(
+  kind: SummaryKind,
+  id: string,
+  summary: string,
+): Promise<void> {
+  const at = new Date();
+  if (kind === "frame") {
+    await db.update(frames).set({ summary, summaryAt: at }).where(eq(frames.id, id));
+    // Cascade: the parent asset reads fresh frame text, then its project.
+    const [row] = await db
+      .select({ assetId: frames.assetId })
+      .from(frames)
+      .where(eq(frames.id, id));
+    if (row) summarizer?.queue("asset", row.assetId);
+  } else if (kind === "asset") {
+    await db.update(assets).set({ summary, summaryAt: at }).where(eq(assets.id, id));
+    const [row] = await db
+      .select({ projectId: assets.projectId })
+      .from(assets)
+      .where(eq(assets.id, id));
+    if (row) summarizer?.queue("project", row.projectId);
+  } else {
+    await db.update(projects).set({ summary, summaryAt: at }).where(eq(projects.id, id));
+  }
+}
+
+const summaryClient = completions.find((entry) => entry.spec.api === "chat");
+const visionClient = completions.find((entry) => entry.spec.vision);
+const summarizer =
+  summaryClient && visionClient
+    ? createSummarizer({
+        loadFrame: loadFrameForSummary,
+        loadAsset: loadAssetForSummary,
+        loadProject: loadProjectForSummary,
+        summarizeFrame: async (input) => {
+          const started = Date.now();
+          const result = await generateCompletion({
+            model: visionClient.model,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: buildFrameSummaryPrompt(input) },
+                  {
+                    type: "image",
+                    image: { type: "data", data: input.png.toString("base64") },
+                    mediaType: "image/png",
+                  },
+                ],
+              },
+            ],
+          });
+          const summary = clampSummary(result.output, SUMMARY_LIMIT.frame);
+          void telemetry?.recordRunSpan({
+            traceId: "summary",
+            kind: "generation",
+            name: "summarize-frame",
+            startMs: started,
+            endMs: Date.now(),
+            input: input.frameName,
+            output: summary,
+            model: visionClient.spec.id,
+            ...(result.usage !== undefined ? { usage: { ...result.usage } } : {}),
+          });
+          return summary;
+        },
+        summarizeText: async (prompt) => {
+          const result = await generateCompletion({
+            model: summaryClient.model,
+            messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+          });
+          return result.output;
+        },
+        save: saveSummary,
+      })
+    : undefined;
+
+/** Queue the frames a run touched, their asset, and its project. */
+async function queueRunSummaries(
+  assetId: string,
+  touched: Iterable<string>,
+): Promise<void> {
+  if (!summarizer) return;
+  for (const frameId of touched) summarizer.queue("frame", frameId);
+  summarizer.queue("asset", assetId);
+  const [row] = await db
+    .select({ projectId: assets.projectId })
+    .from(assets)
+    .where(eq(assets.id, assetId));
+  if (row) summarizer.queue("project", row.projectId);
+}
+
+/** Fill entities that have no summary yet, bounded per boot. */
+async function backfillSummaries(): Promise<void> {
+  if (!summarizer) return;
+  const [projectRows, assetRows, frameRows] = await Promise.all([
+    db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.summary, ""))
+      .orderBy(asc(projects.updatedAt))
+      .limit(50),
+    db
+      .select({ id: assets.id })
+      .from(assets)
+      .where(eq(assets.summary, ""))
+      .orderBy(asc(assets.updatedAt))
+      .limit(50),
+    db
+      .select({ id: frames.id })
+      .from(frames)
+      .where(eq(frames.summary, ""))
+      .orderBy(asc(frames.updatedAt))
+      .limit(50),
+  ]);
+  for (const row of frameRows) summarizer.queue("frame", row.id);
+  for (const row of assetRows) summarizer.queue("asset", row.id);
+  for (const row of projectRows) summarizer.queue("project", row.id);
+}
+
 // A store that cannot be acquired — usually a second worker on the same file —
 // must surface as a 503 on every endpoint, not as a crash on boot. The promise
 // resolves to undefined rather than rejecting, because a rejection with no
@@ -602,6 +811,10 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
     // for scope it was already granted.
     await recoverInterruptedRuns(runtime);
     await runtime.resume();
+    // Backfill runs in the background: boot never waits on a model call.
+    void backfillSummaries().catch((reason) => {
+      console.error(`[summary] backfill failed: ${boundedReason(reason)}`);
+    });
     return runtime;
   })
   .catch((reason: unknown) => {
@@ -706,6 +919,22 @@ app.get("/internal/agents", (req, res) => {
     })),
     agents: agents.map((entry) => entry.id),
   });
+});
+
+app.post("/internal/summaries/refresh", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const body = z
+    .object({ kind: z.enum(["frame", "asset", "project"]), id: z.string().min(1) })
+    .safeParse(req.body);
+  if (!body.success) {
+    return res.status(422).json({ message: "kind and id are required." });
+  }
+  if (!summarizer) {
+    return res.status(503).json({ message: "Add AGENT_API_KEY to summarize." });
+  }
+  summarizer.queue(body.data.kind, body.data.id);
+  await summarizer.flush();
+  res.status(204).end();
 });
 
 app.post("/internal/runs", async (req, res) => {
@@ -1283,6 +1512,11 @@ async function follow(
           } catch (reason) {
             console.error(`[follow] run version write failed: ${boundedReason(reason)}`);
           }
+          // Summaries follow the run: the frames it touched, their asset, and
+          // the project. Failures there never touch the terminal state.
+          void queueRunSummaries(assetId, binding.touchedFrames).catch((reason) => {
+            console.error(`[summary] queue failed: ${boundedReason(reason)}`);
+          });
         }
         publish(publicId, "done", { status: snapshot.run.status, effort });
         finished = true;

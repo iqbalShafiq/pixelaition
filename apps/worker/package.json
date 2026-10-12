@@ -17,6 +17,7 @@
     "@anvia/openai": "^1.3.0",
     "@pixelaition/agent": "workspace:*",
     "@pixelaition/db": "workspace:*",
+    "@pixelaition/export": "workspace:*",
     "@pixelaition/pixel": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "express": "^5.2.1",
