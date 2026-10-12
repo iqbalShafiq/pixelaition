@@ -218,6 +218,9 @@ importers:
       '@pixelaition/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@pixelaition/export':
+        specifier: workspace:*
+        version: link:../../packages/export
       '@pixelaition/pixel':
         specifier: workspace:*
         version: link:../../packages/pixel

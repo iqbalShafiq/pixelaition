@@ -227,7 +227,10 @@ export function ProjectsScreen() {
           setRows((current) =>
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
-          if (body.type === "asset-created" && pendingAutoNavRef.current) {
+          if (
+            (body.type === "asset-created" || body.type === "asset-bound") &&
+            pendingAutoNavRef.current
+          ) {
             const data = body.data as { assetId?: string; projectId?: string };
             if (typeof data.assetId === "string" && typeof data.projectId === "string") {
               pendingAutoNavRef.current = false;

@@ -215,7 +215,7 @@ export function applyRunEvent(
         : row,
     );
   }
-  if (type === "asset-created") {
+  if (type === "asset-created" || type === "asset-bound") {
     // The event is the only source of the link target; a payload missing the
     // id, project, or name is ignored rather than guessed.
     const assetId = typeof body?.assetId === "string" ? body.assetId : undefined;

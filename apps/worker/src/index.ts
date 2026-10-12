@@ -1029,7 +1029,9 @@ app.post("/internal/runs", async (req, res) => {
     const project = await loadProject(projectId);
     if (!project) return res.status(404).json({ message: "Project was not found." });
     style = project.style;
-    projectSummary = project.summary;
+    // The prompt names the confirmed project so the agent never re-asks it.
+    projectSummary =
+      project.summary.length > 0 ? `${project.name} — ${project.summary}` : project.name;
     recent = await recentRuns({ projectId });
   } else {
     const assetId = body.assetId;
@@ -1336,6 +1338,7 @@ function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
     "interaction",
     "interaction-resolved",
     "asset-created",
+    "asset-bound",
     "usage",
     "steering_queued",
     "steering_applied",
@@ -1977,6 +1980,16 @@ function bindWorkspaceRun(options: {
       .update(generationRuns)
       .set({ frameId: origin.id })
       .where(eq(generationRuns.id, publicRunId));
+    // Every binding (use_asset or create_asset) announces itself: the console
+    // shows the target and the home assembles into the editor on this event.
+    publish(publicRunId, "asset-bound", {
+      assetId: asset.id,
+      projectId: asset.projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      frameCount: asset.frames.length,
+    });
     return {
       id: asset.id,
       name: asset.name,

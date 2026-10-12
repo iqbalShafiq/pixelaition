@@ -58,7 +58,7 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
   if (type === "done") return { status: data?.status };
   // The console links a workspace run to the asset it created; the event is
   // small and worth restoring after a refresh.
-  if (type === "asset-created") {
+  if (type === "asset-created" || type === "asset-bound") {
     return {
       assetId: typeof data?.assetId === "string" ? data.assetId : undefined,
       projectId: typeof data?.projectId === "string" ? data.projectId : undefined,
