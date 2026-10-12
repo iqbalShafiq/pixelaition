@@ -155,6 +155,20 @@ export function EditorScreen() {
   });
 
   const [frameId, setFrameId] = useState<string | null>(null);
+  // The interaction card's target questions render live dropdowns; the editor
+  // needs the same library the home uses.
+  const libraryProjects = useQuery({
+    queryKey: ["projects"],
+    queryFn: () =>
+      api<{ projects: Array<{ id: string; name: string }> }>("/api/projects"),
+  });
+  const libraryAssets = useQuery({
+    queryKey: ["assets"],
+    queryFn: () =>
+      api<{
+        assets: Array<{ id: string; projectId: string; name: string }>;
+      }>("/api/assets"),
+  });
   const [drafts, setDrafts] = useState<Record<string, History>>({});
   const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(1);
@@ -1520,6 +1534,8 @@ export function EditorScreen() {
                   interaction={pendingInteraction}
                   frames={frames}
                   palette={buffer?.palette ?? asset.data?.palette ?? []}
+                  projects={libraryProjects.data?.projects ?? []}
+                  assets={libraryAssets.data?.assets ?? []}
                   onRespond={respondToInteraction}
                   onEscape={focusComposer}
                 />

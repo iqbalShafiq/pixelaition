@@ -90,4 +90,28 @@ describe.skipIf(!db)("run proposals", () => {
     const result = await consumeProposal(live, randomUUID(), row.id);
     expect("failure" in result && result.failure.code).toBe("NOT_FOUND");
   });
+
+  it("claims a proposal exactly once under parallel confirms", async () => {
+    const row = await insertProposal(live, {
+      userId,
+      prompt: "x",
+      intent: "draw",
+      project: { id: "new", confidence: 0.5 },
+      guardrail: { action: "pass" },
+      decision: {},
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const results = await Promise.all([
+      consumeProposal(live, userId, row.id),
+      consumeProposal(live, userId, row.id),
+      consumeProposal(live, userId, row.id),
+    ]);
+    const wins = results.filter((item) => "proposal" in item);
+    const losses = results.filter((item) => "failure" in item);
+    expect(wins).toHaveLength(1);
+    expect(losses).toHaveLength(2);
+    for (const loss of losses) {
+      expect("failure" in loss && loss.failure.code).toBe("PROPOSAL_CONSUMED");
+    }
+  });
 });

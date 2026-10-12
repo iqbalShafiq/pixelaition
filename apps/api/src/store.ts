@@ -910,6 +910,31 @@ export async function consumeProposal(
   userId: string,
   id: string,
 ): Promise<{ proposal: ProposalRow } | { failure: StoreFailure }> {
+  // Atomic: only an unconsumed row can be claimed, so two parallel confirms
+  // cannot both start a run.
+  const [claimed] = await db
+    .update(runProposals)
+    .set({ consumedAt: new Date() })
+    .where(
+      and(
+        eq(runProposals.id, id),
+        eq(runProposals.userId, userId),
+        isNull(runProposals.consumedAt),
+      ),
+    )
+    .returning();
+  if (claimed) {
+    if (claimed.expiresAt.getTime() <= Date.now()) {
+      return {
+        failure: {
+          code: "PROPOSAL_EXPIRED",
+          message: "That proposal expired; send the prompt again.",
+        },
+      };
+    }
+    return { proposal: claimed };
+  }
+  // The claim failed: name why from the current row.
   const [row] = await db
     .select()
     .from(runProposals)
@@ -922,20 +947,12 @@ export async function consumeProposal(
       failure: { code: "PROPOSAL_CONSUMED", message: "That proposal was already used." },
     };
   }
-  if (row.expiresAt.getTime() <= Date.now()) {
-    return {
-      failure: {
-        code: "PROPOSAL_EXPIRED",
-        message: "That proposal expired; send the prompt again.",
-      },
-    };
-  }
-  const [consumed] = await db
-    .update(runProposals)
-    .set({ consumedAt: new Date() })
-    .where(eq(runProposals.id, id))
-    .returning();
-  return { proposal: consumed ?? row };
+  return {
+    failure: {
+      code: "PROPOSAL_EXPIRED",
+      message: "That proposal expired; send the prompt again.",
+    },
+  };
 }
 
 export type VersionCursor = { createdAt: Date; id: string };

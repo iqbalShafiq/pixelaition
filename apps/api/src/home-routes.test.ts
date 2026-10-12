@@ -11,7 +11,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Express } from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createApiKey, insertProposal } from "./store.js";
+import { createApiKey, createAssetRecord, insertProposal } from "./store.js";
 
 /**
  * The home route needs a live database and stubbed providers; when
@@ -51,20 +51,15 @@ const guardrailAnswers = {
   usage: { input_tokens: 400, output_tokens: 40, cost: 0.00002 },
 };
 
-const homeAnswers = {
-  answers: {
-    intent: { type: "choice", choice: "draw", confidence: 0.9 },
-    project: { type: "choice", choice: "new", confidence: 0.8 },
-  },
-  usage: { input_tokens: 500, output_tokens: 60, cost: 0.00003 },
-};
-
 describe.skipIf(!db)("home runs route", () => {
   const userId = randomUUID();
   const projectId = randomUUID();
+  const otherProjectId = randomUUID();
   let live: Database;
   let app: Express;
   let token: string;
+  let assetId: string;
+  let otherAssetId: string;
 
   beforeAll(async () => {
     if (!db) throw new Error("database probe did not resolve");
@@ -76,21 +71,44 @@ describe.skipIf(!db)("home runs route", () => {
       name: "Home Route Test",
       email: `home-${userId}@test.local`,
     });
-    await live.insert(projects).values({
-      id: projectId,
-      userId,
-      name: "knights",
-      description: "",
-      summary: "armored heroes",
-      style: {
-        notes: "",
-        outline: "#1a1c2c",
-        maxColors: 8,
-        defaultWidth: 32,
-        defaultHeight: 32,
-        shadowDirection: "down",
+    await live.insert(projects).values([
+      {
+        id: projectId,
+        userId,
+        name: "knights",
+        description: "",
+        summary: "armored heroes",
+        style: {
+          notes: "",
+          outline: "#1a1c2c",
+          maxColors: 8,
+          defaultWidth: 32,
+          defaultHeight: 32,
+          shadowDirection: "down",
+        },
       },
-    });
+      {
+        id: otherProjectId,
+        userId,
+        name: "potions",
+        description: "",
+        summary: "bottles",
+        style: {
+          notes: "",
+          outline: "#1a1c2c",
+          maxColors: 8,
+          defaultWidth: 32,
+          defaultHeight: 32,
+          shadowDirection: "down",
+        },
+      },
+    ]);
+    const created = await createAssetRecord(live, userId, projectId, "fixture");
+    if (!created) throw new Error("fixture asset was not created");
+    assetId = created.id;
+    const other = await createAssetRecord(live, userId, otherProjectId, "other");
+    if (!other) throw new Error("other asset was not created");
+    otherAssetId = other.id;
     await live
       .insert(models)
       .values({
@@ -127,14 +145,40 @@ describe.skipIf(!db)("home runs route", () => {
     mode?: string;
   } | null = null;
 
-  function stubProviders(options: { workerStatus?: number } = {}) {
+  function stubProviders(
+    options: { workerStatus?: number; projectChoice?: string; assetChoice?: string } = {},
+  ) {
     vi.stubGlobal("fetch", async (url: string | URL, init?: { body?: unknown }) => {
       const href = String(url);
       if (href.includes("/alpha/decisions")) {
         const parsed = JSON.parse(String(init?.body)) as {
           questions: Record<string, unknown>;
         };
-        const body = "intent" in parsed.questions ? homeAnswers : guardrailAnswers;
+        const keys = Object.keys(parsed.questions);
+        const body = keys.includes("asset")
+          ? {
+              answers: {
+                asset: {
+                  type: "choice",
+                  choice: options.assetChoice ?? "new",
+                  confidence: 0.77,
+                },
+              },
+              usage: { input_tokens: 300, output_tokens: 30, cost: 0.00001 },
+            }
+          : keys.includes("intent")
+            ? {
+                answers: {
+                  intent: { type: "choice", choice: "draw", confidence: 0.9 },
+                  project: {
+                    type: "choice",
+                    choice: options.projectChoice ?? "new",
+                    confidence: 0.8,
+                  },
+                },
+                usage: { input_tokens: 500, output_tokens: 60, cost: 0.00003 },
+              }
+            : guardrailAnswers;
         return new Response(JSON.stringify(body), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -156,6 +200,76 @@ describe.skipIf(!db)("home runs route", () => {
     modelId: "home-test-model",
     reasoningEffort: "low",
   };
+
+  it("refuses a confirm whose prompt differs from the proposal", async () => {
+    const row = await insertProposal(live, {
+      userId,
+      prompt: "draw a cute cat",
+      intent: "draw",
+      project: { id: projectId, confidence: 0.8 },
+      guardrail: { action: "pass" },
+      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    stubProviders();
+    const res = await request(app)
+      .post("/api/home/runs")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        ...homeBody,
+        prompt: "draw something the guardrail would block",
+        proposalId: row.id,
+        confirm: { projectId, assetId: null, mode: "generate" },
+      });
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe("PROMPT_MISMATCH");
+  });
+
+  it("refuses an asset that belongs to another project", async () => {
+    const row = await insertProposal(live, {
+      userId,
+      prompt: homeBody.prompt,
+      intent: "draw",
+      project: { id: projectId, confidence: 0.8 },
+      guardrail: { action: "pass" },
+      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    stubProviders();
+    const res = await request(app)
+      .post("/api/home/runs")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        ...homeBody,
+        proposalId: row.id,
+        confirm: { projectId, assetId: otherAssetId, mode: "generate" },
+      });
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe("ASSET_NOT_IN_PROJECT");
+  });
+
+  it("accumulates every decision call's usage into the proposal", async () => {
+    stubProviders({ projectChoice: projectId, assetChoice: assetId });
+    const res = await request(app)
+      .post("/api/home/runs")
+      .set("authorization", `Bearer ${token}`)
+      .send(homeBody);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.proposal).toMatchObject({
+      project: { id: projectId },
+      asset: { id: assetId },
+    });
+    const [row] = await live
+      .select()
+      .from((await import("@pixelaition/db")).runProposals)
+      .where(eq((await import("@pixelaition/db")).runProposals.id, res.body.proposalId));
+    const decision = row?.decision as {
+      usage?: { input?: number; cost?: number };
+    } | null;
+    // 500 from the intent+project call plus 300 from the asset call.
+    expect(decision?.usage?.input).toBe(800);
+    expect(decision?.usage?.cost).toBeCloseTo(0.00004, 6);
+  });
 
   it("proposes a target and starts no run", async () => {
     stubProviders();

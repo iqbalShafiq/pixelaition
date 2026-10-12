@@ -309,6 +309,66 @@ function QuestionBody({
   const setText = (id: string, text: string) =>
     setAnswers((current) => ({ ...current, [id]: { ...current[id], text } }));
 
+  /** The default card: the model's choices plus an always-available free text. */
+  function defaultBody(question: InteractionQuestion, state: AnswerState | undefined) {
+    const multi = question.id.endsWith("_multi");
+    const typed = (state?.text.trim() ?? "") !== "";
+    const selected = state?.multi ?? [];
+    return (
+      <>
+        {question.choices && question.choices.length > 0 ? (
+          <div className="mt-1.5 grid gap-1.5">
+            {question.choices.map((choice) => (
+              <Checkbox
+                key={choice.value}
+                label={choice.label}
+                checked={
+                  multi
+                    ? !typed && selected.includes(choice.value)
+                    : !typed && state?.choice === choice.value
+                }
+                disabled={busy}
+                onChange={(next) =>
+                  setAnswers((current) => {
+                    const previous = current[question.id];
+                    if (multi) {
+                      const values = new Set(previous?.multi ?? []);
+                      if (next) values.add(choice.value);
+                      else values.delete(choice.value);
+                      return {
+                        ...current,
+                        [question.id]: { text: "", multi: [...values] },
+                      };
+                    }
+                    return {
+                      ...current,
+                      [question.id]: { text: "", choice: choice.value },
+                    };
+                  })
+                }
+              />
+            ))}
+          </div>
+        ) : null}
+        <Textarea
+          value={state?.text ?? ""}
+          aria-label={`Or answer in your own words: ${question.text}`}
+          placeholder="Or type your own answer…"
+          rows={1}
+          disabled={busy}
+          className="mt-2"
+          onChange={(event) => setText(question.id, event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        />
+      </>
+    );
+  }
+
   const complete = questions.every(
     (question) => answerValue(question, answers[question.id]) !== "",
   );
@@ -335,9 +395,6 @@ function QuestionBody({
       <div className="mt-2 grid gap-2">
         {questions.map((question) => {
           const state = answers[question.id];
-          const multi = question.id.endsWith("_multi");
-          const typed = (state?.text.trim() ?? "") !== "";
-          const selected = state?.multi ?? [];
           const target = isTargetQuestion(question.id) ? question.id : undefined;
           const chosenProject = answers.project?.choice;
           const assetOptions =
@@ -347,21 +404,18 @@ function QuestionBody({
           return (
             <fieldset key={question.id} className="border-2 border-line bg-field p-2.5">
               <legend className="px-1 text-[13px] text-ink">{question.text}</legend>
-              {target === "project" ? (
+              {target === "project" && projects.length > 0 ? (
                 <SelectControl
                   label="Project"
                   value={state?.choice ?? ""}
-                  options={[
-                    ...projects.map((project) => ({
-                      value: project.id,
-                      label: project.name,
-                    })),
-                    { value: "new", label: "＋ New project" },
-                  ]}
+                  options={projects.map((project) => ({
+                    value: project.id,
+                    label: project.name,
+                  }))}
                   onChange={(value) => setChoice(question.id, value)}
                   className="mt-1.5"
                 />
-              ) : target === "asset" ? (
+              ) : target === "asset" && assetOptions.length > 0 ? (
                 <SelectControl
                   label="Asset"
                   value={state?.choice ?? ""}
@@ -386,59 +440,10 @@ function QuestionBody({
                   onChange={(event) => setText(question.id, event.target.value)}
                 />
               ) : (
-                <>
-                  {question.choices && question.choices.length > 0 ? (
-                    <div className="mt-1.5 grid gap-1.5">
-                      {question.choices.map((choice) => (
-                        <Checkbox
-                          key={choice.value}
-                          label={choice.label}
-                          checked={
-                            multi
-                              ? !typed && selected.includes(choice.value)
-                              : !typed && state?.choice === choice.value
-                          }
-                          disabled={busy}
-                          onChange={(next) =>
-                            setAnswers((current) => {
-                              const previous = current[question.id];
-                              if (multi) {
-                                const values = new Set(previous?.multi ?? []);
-                                if (next) values.add(choice.value);
-                                else values.delete(choice.value);
-                                return {
-                                  ...current,
-                                  [question.id]: { text: "", multi: [...values] },
-                                };
-                              }
-                              return {
-                                ...current,
-                                [question.id]: { text: "", choice: choice.value },
-                              };
-                            })
-                          }
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                  <Textarea
-                    value={state?.text ?? ""}
-                    aria-label={`Or answer in your own words: ${question.text}`}
-                    placeholder="Or type your own answer…"
-                    rows={1}
-                    disabled={busy}
-                    className="mt-2"
-                    onChange={(event) => setText(question.id, event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        void submit();
-                      }
-                    }}
-                  />
-                </>
+                defaultBody(question, state)
               )}
-              {target === "project" || target === "asset" ? (
+              {(target === "project" && projects.length > 0) ||
+              (target === "asset" && assetOptions.length > 0) ? (
                 <TextInput
                   value={state?.text ?? ""}
                   aria-label={`Or answer in your own words: ${question.text}`}

@@ -21,7 +21,12 @@ export function supportsViewTransition(target?: Document): boolean {
 }
 
 export function viewTransitionOption(target?: Document): { types: string[] } | boolean {
-  return supportsViewTransition(target) ? { types: [FLIGHT_TYPE] } : false;
+  if (!supportsViewTransition(target)) return false;
+  // Chromium aborts a transition in a hidden document; a plain navigation is
+  // what the user gets anyway when they come back to the tab.
+  const doc = target ?? (typeof document !== "undefined" ? document : undefined);
+  if (doc !== undefined && doc.visibilityState === "hidden") return false;
+  return { types: [FLIGHT_TYPE] };
 }
 
 export type FlightName = "composer" | "console" | "asset";

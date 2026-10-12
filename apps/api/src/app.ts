@@ -225,6 +225,18 @@ async function modelPairFor(
   return pair;
 }
 
+/** Sums the Jev usage of several calls into one shape. */
+function sumUsage(
+  current: Record<string, number> | undefined,
+  next: Record<string, number>,
+): Record<string, number> | undefined {
+  const keys = Object.keys(next);
+  if (keys.length === 0) return current;
+  const summed: Record<string, number> = { ...(current ?? {}) };
+  for (const key of keys) summed[key] = (summed[key] ?? 0) + (next[key] ?? 0);
+  return summed;
+}
+
 /**
  * Insert the run row and hand it to the worker; every failure names its cause
  * and leaves the row failed rather than queued. Shared by the editor route and
@@ -1167,7 +1179,7 @@ export function createApp() {
             baseUrl: decisionBaseUrl,
             onCall: (call) => {
               const { model: _model, latencyMs: _latencyMs, ...usage } = call;
-              decisionUsage = Object.keys(usage).length > 0 ? usage : undefined;
+              decisionUsage = sumUsage(decisionUsage, usage);
             },
           },
           homeContext,
@@ -1279,6 +1291,17 @@ export function createApp() {
     }
     const stored = consumed.proposal;
     const confirm = body.confirm;
+    // The run always starts from the prompt the guardrail screened; a client
+    // that changed it must send a fresh proposal instead of smuggling text
+    // past the guardrail.
+    if (body.prompt !== stored.prompt) {
+      return fail(
+        res,
+        422,
+        "PROMPT_MISMATCH",
+        "The prompt changed after the proposal; send it again.",
+      );
+    }
     let projectId: string;
     if (confirm.projectId === "new") {
       if (confirm.projectName === undefined) {
@@ -1294,7 +1317,7 @@ export function createApp() {
     let target:
       | { scope: "asset"; assetId: string; frameId: string }
       | { scope: "workspace"; projectId: string };
-    let prompt = body.prompt;
+    let prompt = stored.prompt;
     if (
       confirm.mode === "generate" &&
       confirm.assetId !== undefined &&
@@ -1303,6 +1326,14 @@ export function createApp() {
     ) {
       const asset = await getAssetRecord(db, userId, confirm.assetId);
       if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+      if (asset.projectId !== projectId) {
+        return fail(
+          res,
+          422,
+          "ASSET_NOT_IN_PROJECT",
+          "That asset belongs to another project; pick an asset of the confirmed project.",
+        );
+      }
       const origin = asset.frames[0];
       if (!origin) return fail(res, 422, "ASSET_EMPTY", "That asset has no frames.");
       target = { scope: "asset", assetId: asset.id, frameId: origin.id };

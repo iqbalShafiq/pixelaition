@@ -98,31 +98,44 @@ export async function decideHomeTarget(
           "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists; a short noun phrase naming a new state or action is variant, not ask. Prefer ask when the message is a question or a remark that wants an answer, not a drawing.",
         criteria: intentOptions,
       },
-      project: {
-        type: "choice",
-        instructions:
-          "Which project should this request go to? Use each project's name and summary; pick `new` only when none of them fits the request.",
-        criteria: projectCriteria,
-      },
+      // A single-option choice is a question with one answer; with no projects
+      // there is nothing to choose, so the intent question carries alone.
+      ...(context.projects.length > 0
+        ? {
+            project: {
+              type: "choice",
+              instructions:
+                "Which project should this request go to? Use each project's name and summary; pick `new` only when none of them fits the request.",
+              criteria: projectCriteria,
+            },
+          }
+        : {}),
     },
     env,
   );
   const intent = readIntent(first.answers.intent);
   const projectChoice = first.answers.project?.choice;
   const projectId =
-    projectChoice !== undefined &&
-    (projectChoice === "new" ||
-      context.projects.some((item) => item.id === projectChoice))
-      ? projectChoice
-      : "new";
+    context.projects.length === 0
+      ? "new"
+      : projectChoice !== undefined &&
+          (projectChoice === "new" ||
+            context.projects.some((item) => item.id === projectChoice))
+        ? projectChoice
+        : "new";
   const project: HomeTarget["project"] = {
     id: projectId,
-    confidence: first.answers.project?.confidence ?? 0,
+    confidence:
+      context.projects.length === 0 ? 1 : (first.answers.project?.confidence ?? 0),
   };
   if (intent === "ask" || projectId === "new") {
     return { intent, project, source: "jev" };
   }
   const assets = context.assetsByProject.get(projectId) ?? [];
+  if (assets.length === 0) {
+    // Nothing to choose between; the agent creates the first asset.
+    return { intent, project, asset: { id: "new", confidence: 1 }, source: "jev" };
+  }
   const assetCriteria: Record<string, string> = {};
   for (const asset of assets) {
     assetCriteria[asset.id] = optionText(

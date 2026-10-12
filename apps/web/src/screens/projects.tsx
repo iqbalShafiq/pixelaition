@@ -209,6 +209,13 @@ export function ProjectsScreen() {
         to: "/projects/$projectId/assets/$assetId",
         params: { projectId, assetId },
         viewTransition: viewTransitionOption(),
+      }).catch(() => {
+        // A transition the browser aborted (hidden tab, another transition)
+        // must not strand the user on the home; navigate plainly.
+        void navigate({
+          to: "/projects/$projectId/assets/$assetId",
+          params: { projectId, assetId },
+        });
       });
       // Clearing during the transition aborts it; the home unmounts on a
       // successful navigation, so this only tidies a failed one.

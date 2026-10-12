@@ -13,9 +13,17 @@ describe("view transitions", () => {
     expect(supportsViewTransition(undefined)).toBe(false);
   });
 
-  it("returns the typed option only when the API exists", () => {
-    const fake = { startViewTransition: () => undefined } as unknown as Document;
-    expect(viewTransitionOption(fake)).toEqual({ types: ["editor"] });
+  it("returns the typed option only when the API exists and the tab is visible", () => {
+    const visible = {
+      startViewTransition: () => undefined,
+      visibilityState: "visible",
+    } as unknown as Document;
+    expect(viewTransitionOption(visible)).toEqual({ types: ["editor"] });
+    const hidden = {
+      startViewTransition: () => undefined,
+      visibilityState: "hidden",
+    } as unknown as Document;
+    expect(viewTransitionOption(hidden)).toBe(false);
     expect(viewTransitionOption({} as unknown as Document)).toBe(false);
   });
 

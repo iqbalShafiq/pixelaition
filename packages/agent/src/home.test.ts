@@ -101,25 +101,52 @@ describe("decideHomeTarget", () => {
   });
 
   it("proposes a new project when the user has none", async () => {
-    vi.stubGlobal(
-      "fetch",
-      async () =>
-        new Response(
-          JSON.stringify({
-            answers: {
-              intent: { type: "choice", choice: "draw", confidence: 0.8 },
-              project: { type: "choice", choice: "new", confidence: 0.9 },
-            },
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    );
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(
+        JSON.stringify({
+          answers: {
+            intent: { type: "choice", choice: "draw", confidence: 0.8 },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
     const target = await decideHomeTarget("gambar slime", env, {
       projects: [],
       assetsByProject: new Map(),
     });
     expect(target.project.id).toBe("new");
     expect(target.asset).toBeUndefined();
+    // One question, not a one-option choice: the project question is skipped.
+    expect(bodies).toHaveLength(1);
+    expect(
+      (bodies[0] as { questions: Record<string, unknown> }).questions,
+    ).not.toHaveProperty("project");
+  });
+
+  it("skips the asset call when the chosen project has no assets", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(
+        JSON.stringify({
+          answers: {
+            intent: { type: "choice", choice: "draw", confidence: 0.9 },
+            project: { type: "choice", choice: "p1", confidence: 0.85 },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const target = await decideHomeTarget("gambar slime", env, {
+      projects,
+      assetsByProject: new Map(),
+    });
+    expect(target.project.id).toBe("p1");
+    expect(target.asset).toEqual({ id: "new", confidence: 1 });
+    expect(bodies).toHaveLength(1);
   });
 
   it("falls back to new for an unknown project choice, never a guess", async () => {
