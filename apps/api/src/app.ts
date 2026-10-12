@@ -893,12 +893,18 @@ export function createApp() {
     res.setHeader("cache-control", "no-cache");
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      res.write(decoder.decode(chunk.value));
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        res.write(decoder.decode(chunk.value));
+      }
+    } catch {
+      // The worker died mid-stream. The client treats the closed stream as a
+      // drop and rejoins through active-run; nothing to log here.
+    } finally {
+      res.end();
     }
-    res.end();
   });
 
   app.post("/api/runs/:id/cancel", async (req, res) => {
