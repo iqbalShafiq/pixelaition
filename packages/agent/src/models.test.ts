@@ -9,35 +9,91 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high"],
         vision: false,
+        maxOutputTokens: 8192,
       }),
     ).toEqual({
       id: "m",
       api: "chat",
       efforts: ["low", "high"],
       vision: false,
+      maxOutputTokens: 8192,
     });
     expect(
-      parseModelSpecRow({ id: "m", api: "responses", efforts: ["high"], vision: true })
-        .vision,
+      parseModelSpecRow({
+        id: "m",
+        api: "responses",
+        efforts: ["high"],
+        vision: true,
+        maxOutputTokens: 1,
+      }).vision,
     ).toBe(true);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "respones", efforts: ["low"], vision: false }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "respones",
+        efforts: ["low"],
+        vision: false,
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/bad/);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "", efforts: ["low"], vision: false }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "",
+        efforts: ["low"],
+        vision: false,
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/bad/);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "chat", efforts: [], vision: false }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "chat",
+        efforts: [],
+        vision: false,
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/bad/);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low", 7], vision: false }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "chat",
+        efforts: ["low", 7],
+        vision: false,
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/bad/);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low"], vision: "yes" }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "chat",
+        efforts: ["low"],
+        vision: "yes",
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/bad/);
     expect(() =>
-      parseModelSpecRow({ id: "bad", api: "chat", efforts: ["low"], vision: true }),
+      parseModelSpecRow({
+        id: "bad",
+        api: "chat",
+        efforts: ["low"],
+        vision: true,
+        maxOutputTokens: 8192,
+      }),
     ).toThrow(/vision/);
+    // The output budget is what the provider charges against its rate limit,
+    // so a row without a valid one is a configuration error, not a default.
+    for (const bad of [undefined, 0, -1, 1.5, "8192", null]) {
+      expect(() =>
+        parseModelSpecRow({
+          id: "bad",
+          api: "chat",
+          efforts: ["low"],
+          vision: false,
+          maxOutputTokens: bad,
+        }),
+      ).toThrow(/maxOutputTokens/);
+    }
   });
   it("selects only exact model and effort pairs", () => {
     const specs: ModelSpec[] = [
@@ -46,6 +102,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high", "max"],
         vision: false,
+        maxOutputTokens: 8192,
       },
     ];
     expect(selectRunTarget(specs, "deepseek-v4.1-flash", "max")).toEqual({

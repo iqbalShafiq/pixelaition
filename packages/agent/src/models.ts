@@ -3,6 +3,12 @@ export type ModelSpec = {
   api: "chat" | "responses";
   efforts: string[];
   vision: boolean;
+  /**
+   * The output budget the worker sends as `max_output_tokens`. The provider
+   * charges a request's budget against its output-token rate limit, so an
+   * unset cap means the model maximum on every call and a quick 429.
+   */
+  maxOutputTokens: number;
 };
 export type RunTarget = { modelId: string; effort: string };
 
@@ -15,6 +21,7 @@ export function parseModelSpecRow(row: {
   api: unknown;
   efforts: unknown;
   vision: unknown;
+  maxOutputTokens: unknown;
 }): ModelSpec {
   if (row.api !== "chat" && row.api !== "responses") {
     throw new Error(`Model ${row.id} declares an invalid api: ${String(row.api)}`);
@@ -31,6 +38,15 @@ export function parseModelSpecRow(row: {
   if (typeof row.vision !== "boolean") {
     throw new Error(`Model ${row.id} declares invalid vision: ${String(row.vision)}`);
   }
+  if (
+    typeof row.maxOutputTokens !== "number" ||
+    !Number.isInteger(row.maxOutputTokens) ||
+    row.maxOutputTokens <= 0
+  ) {
+    throw new Error(
+      `Model ${row.id} declares invalid maxOutputTokens: ${String(row.maxOutputTokens)}`,
+    );
+  }
   // The pinned OpenAI chat adapter flattens tool-result file parts to
   // `[file:image/png]` text, so a chat model cannot actually see a preview.
   // Only the responses adapter maps them to provider image input.
@@ -44,6 +60,7 @@ export function parseModelSpecRow(row: {
     api: row.api,
     efforts: [...(row.efforts as string[])],
     vision: row.vision,
+    maxOutputTokens: row.maxOutputTokens,
   };
 }
 
