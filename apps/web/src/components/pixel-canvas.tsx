@@ -307,8 +307,6 @@ export function PixelCanvas({
       context.fillRect(-offsetX, -offsetY, rect.width + offsetX, rect.height + offsetY);
       context.restore();
 
-      context.imageSmoothingEnabled = false;
-
       // Onion skin is display-only: neighbours sit under the frame being edited,
       // with their transparent pixels left alone so the texture stays visible.
       context.globalAlpha = 0.3;
