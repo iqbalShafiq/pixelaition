@@ -70,3 +70,13 @@ export { drawPlanSchema, validatePlan } from "./tasks/plan.js";
 export type { DrawPlan, DrawPlanFrame, PlanLimits } from "./tasks/plan.js";
 export { buildWorkerPrompt } from "./tasks/worker-prompt.js";
 export type { WorkerPromptInput } from "./tasks/worker-prompt.js";
+export {
+  fixInstructions,
+  planInstructions,
+  reviewInstructions,
+  toolsForRole,
+  workerInstructions,
+  REVIEW_TOOL_NAMES,
+  WORKER_TOOL_NAMES,
+} from "./tasks/roles.js";
+export type { AgentRole } from "./tasks/roles.js";
