@@ -932,6 +932,52 @@ export async function failTask(db: Database, id: string, reason: string): Promis
   void reason;
 }
 
+export async function taskBelongsTo(
+  db: Database,
+  taskId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: runTasks.id })
+    .from(runTasks)
+    .innerJoin(generationThreads, eq(runTasks.threadId, generationThreads.id))
+    .where(and(eq(runTasks.id, taskId), eq(generationThreads.userId, userId)));
+  return row !== undefined;
+}
+
+/** The task row plus every child run, for the editor's snapshot endpoint. */
+export async function taskSnapshot(db: Database, assetId: string) {
+  const [task] = await db
+    .select()
+    .from(runTasks)
+    .where(
+      and(
+        eq(runTasks.assetId, assetId),
+        inArray(runTasks.status, ["queued", "running", "waiting", "completed"]),
+      ),
+    )
+    .orderBy(desc(runTasks.createdAt))
+    .limit(1);
+  if (task === undefined) return undefined;
+  const children = await db
+    .select({
+      id: generationRuns.id,
+      status: generationRuns.status,
+      role: generationRuns.role,
+      workerKey: generationRuns.workerKey,
+      frameIds: generationRuns.frameIds,
+      durableRunId: generationRuns.durableRunId,
+    })
+    .from(generationRuns)
+    .where(eq(generationRuns.taskId, task.id))
+    .orderBy(generationRuns.createdAt);
+  const frameRows = await db
+    .select({ id: frames.id, name: frames.name })
+    .from(frames)
+    .where(eq(frames.assetId, assetId));
+  return { task, children, frameRows };
+}
+
 export type ProposalRow = typeof runProposals.$inferSelect;
 
 export type ProposalInput = {

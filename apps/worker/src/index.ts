@@ -834,6 +834,8 @@ let durableFailure: string | undefined;
 // --- Tasks: watch a durable task, bind its children, persist progress ------
 
 const taskWatchers = new Map<string, AbortController>();
+/** How many steer signals a task has taken, for the next fixed name. */
+const steerSignalCount = new Map<string, number>();
 const boundChildRuns = new Set<string>();
 
 /** model and effort parsed from a registered agent id (…:<model>:<effort>). */
@@ -1562,6 +1564,129 @@ app.get("/internal/runs/:id/events", (req, res) => {
   req.on("close", () => {
     set.delete(sink);
     if (set.size === 0 && !events.has(runId)) listeners.delete(runId);
+  });
+});
+
+app.get("/internal/tasks/:id/events", (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const taskId = req.params.id ?? "";
+  const after = Number(req.query.after ?? 0);
+  res.setHeader("content-type", "text/event-stream");
+  res.setHeader("cache-control", "no-cache");
+  for (const event of events.get(taskId) ?? []) {
+    if (event.sequence > after) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  const sink = (event: PublicEvent) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  const set = listeners.get(taskId) ?? new Set();
+  set.add(sink);
+  listeners.set(taskId, set);
+  req.on("close", () => {
+    set.delete(sink);
+    if (set.size === 0 && !events.has(taskId)) listeners.delete(taskId);
+  });
+});
+
+app.post("/internal/tasks/:id/signal", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const body = z
+    .object({
+      name: z.string().min(1),
+      requestId: z.string().min(1),
+      value: z.unknown(),
+    })
+    .safeParse(req.body);
+  if (!body.success)
+    return res.status(400).json({ message: "The request is missing a required field." });
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  try {
+    const handle = await runtime.getTask(req.params.id ?? "");
+    await handle.signal(body.data.name, body.data.requestId, body.data.value as never);
+  } catch (reason) {
+    return res.status(404).json({
+      message: `That task cannot take the signal: ${boundedReason(reason)}`,
+    });
+  }
+  res.status(204).end();
+});
+
+app.post("/internal/tasks/:id/steer", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const body = z
+    .object({
+      prompt: z.string().min(1).max(4000),
+      frameName: z.string().min(1).max(40).optional(),
+      requestId: z.string().min(1),
+    })
+    .safeParse(req.body);
+  if (!body.success)
+    return res.status(400).json({ message: "The request is missing a required field." });
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  const taskId = req.params.id ?? "";
+  // Until the Jev router (Task 19) lands, every steering message reaches the
+  // supervisor through the next free steer signal; the name is fixed so the
+  // task can scan steer-1, steer-2, … in order.
+  const used = steerSignalCount.get(taskId) ?? 0;
+  const name = `steer-${used + 1}`;
+  try {
+    const handle = await runtime.getTask(taskId);
+    await handle.signal(name, body.data.requestId, {
+      message: body.data.prompt,
+      ...(body.data.frameName !== undefined ? { frames: [body.data.frameName] } : {}),
+    } as never);
+  } catch (reason) {
+    return res.status(404).json({
+      message: `That task cannot take steering: ${boundedReason(reason)}`,
+    });
+  }
+  steerSignalCount.set(taskId, used + 1);
+  publish(taskId, "steering-routed", {
+    routed: "supervisor",
+    message: body.data.prompt,
+    ...(body.data.frameName !== undefined ? { frameName: body.data.frameName } : {}),
+  });
+  res.status(202).json({ routed: "queued" });
+});
+
+app.post("/internal/tasks/:id/cancel", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  const taskId = req.params.id ?? "";
+  try {
+    const handle = await runtime.getTask(taskId);
+    await handle.cancel();
+  } catch (reason) {
+    return res.status(404).json({
+      message: `That task cannot be cancelled: ${boundedReason(reason)}`,
+    });
+  }
+  publish(taskId, "task-complete", { status: "cancelled" });
+  res.status(204).end();
+});
+
+app.get("/internal/runs/:id/state", async (req, res) => {
+  if (!authorized(req)) return res.status(401).end();
+  const runId = req.params.id ?? "";
+  const [row] = await db
+    .select()
+    .from(generationRuns)
+    .where(eq(generationRuns.id, runId));
+  if (!row?.durableRunId)
+    return res.status(404).json({ message: "That run is unknown." });
+  const runtime = await runtimeOr503(res);
+  if (!runtime) return;
+  const snapshot = runtime.snapshot(row.durableRunId);
+  const outcome = snapshot.run.outcome as
+    { type?: string; interaction?: unknown } | undefined;
+  res.json({
+    status: snapshot.run.status,
+    ...(outcome?.type === "interaction" && outcome.interaction !== undefined
+      ? { interaction: outcome.interaction }
+      : {}),
   });
 });
 

@@ -67,6 +67,8 @@ import {
   insertProposal,
   insertTaskRecord,
   setTaskDurableId,
+  taskBelongsTo,
+  taskSnapshot,
   insertRun,
   listProjects,
   listVersions,
@@ -83,6 +85,7 @@ import {
   type VersionCursor,
 } from "./store.js";
 import {
+  runTasks,
   assets,
   frames,
   generationRuns,
@@ -1400,6 +1403,257 @@ export function createApp() {
         decisionUsage: decisionStored?.usage,
       }),
     });
+  });
+
+  // --- Tasks -----------------------------------------------------------------
+  // The editor reads one snapshot per asset: the task, every child run with
+  // its frames, and the questions waiting for the user.
+
+  app.get("/api/assets/:id/task", async (req, res) => {
+    const assetId = req.params.id ?? "";
+    const asset = await getAssetRecord(db, res.locals.userId as string, assetId);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const snapshot = await taskSnapshot(db, assetId);
+    if (snapshot === undefined)
+      return res.json({ task: null, workers: [], pendingQuestions: 0 });
+    const frameName = new Map(snapshot.frameRows.map((frame) => [frame.id, frame.name]));
+    const workers = [];
+    let pendingQuestions = 0;
+    for (const child of snapshot.children) {
+      const frameIds = (child.frameIds as string[] | null) ?? [];
+      let pendingInteraction: unknown;
+      let status = child.status;
+      if (child.durableRunId !== null && child.status === "waiting") {
+        const probe = await fetch(
+          `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/runs/${child.id}/state`,
+          {
+            headers: {
+              authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+            },
+          },
+        ).catch(() => null);
+        const state = probe?.ok
+          ? ((await probe.json()) as { status?: string; interaction?: unknown })
+          : null;
+        if (state?.interaction !== undefined) {
+          pendingInteraction = state.interaction;
+          pendingQuestions += 1;
+        }
+        if (state?.status !== undefined) status = state.status;
+      }
+      workers.push({
+        key: child.workerKey ?? child.role ?? "run",
+        runId: child.id,
+        status,
+        frames: frameIds.map((id) => ({
+          id,
+          name: frameName.get(id) ?? "frame",
+          status: status === "running" ? "working" : status,
+        })),
+        ...(pendingInteraction !== undefined ? { pendingInteraction } : {}),
+      });
+    }
+    res.json({
+      task: {
+        id: snapshot.task.id,
+        phase: snapshot.task.phase,
+        status: snapshot.task.status,
+        plan: snapshot.task.plan,
+        usage: snapshot.task.usage,
+      },
+      workers,
+      pendingQuestions,
+    });
+  });
+
+  app.get("/api/tasks/:id/stream", async (req, res) => {
+    const taskId = req.params.id ?? "";
+    if (!(await taskBelongsTo(db, taskId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That task is not available.");
+    }
+    const [row] = await db
+      .select({ durableTaskId: runTasks.durableTaskId })
+      .from(runTasks)
+      .where(eq(runTasks.id, taskId));
+    if (!row?.durableTaskId) {
+      return fail(
+        res,
+        409,
+        "TASK_NOT_STARTED",
+        "That task has not reached the worker yet.",
+      );
+    }
+    const after = Number(req.query.after ?? 0);
+    const upstream = await fetch(
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/tasks/${row.durableTaskId}/events?after=${after}`,
+      { headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` } },
+    );
+    if (!upstream.ok || !upstream.body)
+      return fail(res, 502, "WORKER_UNAVAILABLE", "The drawing stream is not available.");
+    res.status(200);
+    res.setHeader("content-type", "text/event-stream");
+    res.setHeader("cache-control", "no-cache");
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        res.write(decoder.decode(chunk.value));
+      }
+    } catch {
+      // The worker died mid-stream; the client rejoins through the snapshot.
+    } finally {
+      res.end();
+    }
+  });
+
+  app.post("/api/tasks/:id/steer", async (req, res) => {
+    const taskId = req.params.id ?? "";
+    if (!(await taskBelongsTo(db, taskId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That task is not available.");
+    }
+    const body = z
+      .object({
+        prompt: z.string().min(1).max(4000),
+        frameName: z.string().min(1).max(40).optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success)
+      return fail(res, 422, "BAD_REQUEST", "A steering message is required.");
+    const [row] = await db
+      .select({ durableTaskId: runTasks.durableTaskId })
+      .from(runTasks)
+      .where(eq(runTasks.id, taskId));
+    if (!row?.durableTaskId) {
+      return fail(
+        res,
+        409,
+        "TASK_NOT_STARTED",
+        "That task has not reached the worker yet.",
+      );
+    }
+    const upstream = await fetch(
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/tasks/${row.durableTaskId}/steer`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+        },
+        body: JSON.stringify({
+          prompt: body.data.prompt,
+          ...(body.data.frameName !== undefined
+            ? { frameName: body.data.frameName }
+            : {}),
+          requestId: randomUUID(),
+        }),
+      },
+    );
+    if (!upstream.ok) {
+      const detail = (await upstream.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        detail?.message ?? "The steering message could not be delivered.",
+      );
+    }
+    const routed = (await upstream.json()) as { routed?: string };
+    res.status(202).json({ routed: routed.routed ?? "queued" });
+  });
+
+  app.post("/api/tasks/:id/cancel", async (req, res) => {
+    const taskId = req.params.id ?? "";
+    if (!(await taskBelongsTo(db, taskId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That task is not available.");
+    }
+    const [row] = await db
+      .select({ durableTaskId: runTasks.durableTaskId })
+      .from(runTasks)
+      .where(eq(runTasks.id, taskId));
+    if (!row?.durableTaskId) {
+      await failTask(db, taskId, "cancelled before the worker accepted it");
+      return res.status(204).end();
+    }
+    const upstream = await fetch(
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/tasks/${row.durableTaskId}/cancel`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}` },
+      },
+    );
+    if (!upstream.ok) {
+      const detail = (await upstream.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        detail?.message ?? "The task could not be cancelled.",
+      );
+    }
+    await db
+      .update(runTasks)
+      .set({ status: "cancelled", finishedAt: new Date() })
+      .where(eq(runTasks.id, taskId));
+    res.status(204).end();
+  });
+
+  app.post("/api/tasks/:id/signal", async (req, res) => {
+    const taskId = req.params.id ?? "";
+    if (!(await taskBelongsTo(db, taskId, res.locals.userId as string))) {
+      return fail(res, 404, "NOT_FOUND", "That task is not available.");
+    }
+    const body = z
+      .object({
+        name: z.string().min(1),
+        value: z.unknown(),
+      })
+      .safeParse(req.body);
+    if (!body.success) return fail(res, 422, "BAD_REQUEST", "A signal name is required.");
+    const [row] = await db
+      .select({ durableTaskId: runTasks.durableTaskId })
+      .from(runTasks)
+      .where(eq(runTasks.id, taskId));
+    if (!row?.durableTaskId) {
+      return fail(
+        res,
+        409,
+        "TASK_NOT_STARTED",
+        "That task has not reached the worker yet.",
+      );
+    }
+    const upstream = await fetch(
+      `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/tasks/${row.durableTaskId}/signal`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
+        },
+        body: JSON.stringify({
+          name: body.data.name,
+          requestId: randomUUID(),
+          value: body.data.value,
+        }),
+      },
+    );
+    if (!upstream.ok) {
+      const detail = (await upstream.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      return fail(
+        res,
+        502,
+        "WORKER_UNAVAILABLE",
+        detail?.message ?? "The signal could not be delivered.",
+      );
+    }
+    res.status(204).end();
   });
 
   app.get("/api/runs/recent", async (_req, res) => {
