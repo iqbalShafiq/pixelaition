@@ -1520,66 +1520,70 @@ export function EditorScreen() {
                 </button>
               </div>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center gap-2 overflow-y-auto px-3">
-              <div className="w-full [view-transition-name:console-flight]">
-                <RunConsole
-                  rows={rows}
-                  running={running || optimisticStart !== null}
-                  open={consoleOpen}
-                  onOpen={setConsoleOpen}
-                  message={message || (error ?? "")}
-                  prompt={runPrompt}
-                  history={runHistory}
-                  restoredMs={restoredMs}
-                  interaction={pendingInteraction}
-                  frames={frames}
-                  palette={buffer?.palette ?? asset.data?.palette ?? []}
-                  projects={libraryProjects.data?.projects ?? []}
-                  assets={libraryAssets.data?.assets ?? []}
-                  onRespond={respondToInteraction}
-                  onEscape={focusComposer}
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center overflow-y-auto px-3">
+              {/* One 40rem column holds the console, the queue, and the
+                  composer — the same dock geometry the home page uses, so
+                  every part lines up on the same edges. */}
+              <div className="grid w-full gap-2" style={{ maxWidth: "40rem" }}>
+                <div className="w-full [view-transition-name:console-flight]">
+                  <RunConsole
+                    rows={rows}
+                    running={running || optimisticStart !== null}
+                    open={consoleOpen}
+                    onOpen={setConsoleOpen}
+                    message={message || (error ?? "")}
+                    prompt={runPrompt}
+                    history={runHistory}
+                    restoredMs={restoredMs}
+                    interaction={pendingInteraction}
+                    frames={frames}
+                    palette={buffer?.palette ?? asset.data?.palette ?? []}
+                    projects={libraryProjects.data?.projects ?? []}
+                    assets={libraryAssets.data?.assets ?? []}
+                    onRespond={respondToInteraction}
+                    onEscape={focusComposer}
+                  />
+                </div>
+                <QueueDock
+                  items={optimisticQueue}
+                  canSteer={runId !== null}
+                  busy={steering}
+                  onSendNow={sendQueuedNow}
+                  onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
+                  onReorder={(from, to) =>
+                    setQueue((current) => reorderQueuedRun(current, from, to))
+                  }
+                  onRecall={recallQueued}
                 />
-              </div>
-              <QueueDock
-                items={optimisticQueue}
-                canSteer={runId !== null}
-                busy={steering}
-                onSendNow={sendQueuedNow}
-                onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
-                onReorder={(from, to) =>
-                  setQueue((current) => reorderQueuedRun(current, from, to))
-                }
-                onRecall={recallQueued}
-              />
-              {/* The ref hands Escape a real target: focus lands on the
-                  composer's prompt field, not on a guess from the DOM. */}
-              <div
-                ref={composerRef}
-                className="w-full [view-transition-name:composer-flight]"
-                style={{ maxWidth: "40rem" }}
-              >
-                <Composer
-                  prompt={prompt}
-                  onPrompt={setPrompt}
-                  modelId={modelId}
-                  models={models}
-                  onModel={setModelId}
-                  effort={effort}
-                  efforts={efforts}
-                  onEffort={setEffort}
-                  running={running}
-                  starting={optimisticStart !== null}
-                  stopping={optimisticStopping}
-                  modelReady={catalog.data?.modelReady ?? false}
-                  onGenerate={() => generate()}
-                  onStop={stop}
-                  onQueue={queuePrompt}
-                  attachments={attachments.items}
-                  attachmentError={attachments.error}
-                  attachmentIssue={attachmentIssue}
-                  onAttach={attachments.add}
-                  onRemoveAttachment={attachments.remove}
-                />
+                {/* The ref hands Escape a real target: focus lands on the
+                    composer's prompt field, not on a guess from the DOM. */}
+                <div
+                  ref={composerRef}
+                  className="w-full [view-transition-name:composer-flight]"
+                >
+                  <Composer
+                    prompt={prompt}
+                    onPrompt={setPrompt}
+                    modelId={modelId}
+                    models={models}
+                    onModel={setModelId}
+                    effort={effort}
+                    efforts={efforts}
+                    onEffort={setEffort}
+                    running={running}
+                    starting={optimisticStart !== null}
+                    stopping={optimisticStopping}
+                    modelReady={catalog.data?.modelReady ?? false}
+                    onGenerate={() => generate()}
+                    onStop={stop}
+                    onQueue={queuePrompt}
+                    attachments={attachments.items}
+                    attachmentError={attachments.error}
+                    attachmentIssue={attachmentIssue}
+                    onAttach={attachments.add}
+                    onRemoveAttachment={attachments.remove}
+                  />
+                </div>
               </div>
             </div>
           </div>
