@@ -236,6 +236,12 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     })();
   }
   const outcome = childOutput(ctx, checkpoint.planKey);
+  if (outcome?.status === "cancelled") {
+    return {
+      status: "failed",
+      error: "The plan child was cancelled; the run stops here.",
+    };
+  }
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
     const key = "plan";
     if (retriesFor(checkpoint, key) < CHILD_RETRIES) {
@@ -390,6 +396,15 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "execute" }>;
   // workerIds are spawn ids (for the join); outcomes are found by key.
   const workerKeys = checkpoint.workerKeys ?? checkpoint.plan.workers.map((w) => w.key);
+  const cancelledWorker = workerKeys.find(
+    (key) => childOutput(ctx, key)?.status === "cancelled",
+  );
+  if (cancelledWorker !== undefined) {
+    return {
+      status: "failed",
+      error: `Worker ${cancelledWorker} was cancelled; the run stops here.`,
+    };
+  }
   const failed = workerKeys.filter(
     (key) => childOutput(ctx, key)?.status !== "completed",
   );
@@ -547,6 +562,12 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
     })();
   }
   const outcome = childOutput(ctx, checkpoint.reviewKey);
+  if (outcome?.status === "cancelled") {
+    return {
+      status: "failed",
+      error: "The review child was cancelled; the run stops here.",
+    };
+  }
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
     const key = `review:${checkpoint.round}`;
     if (retriesFor(checkpoint, key) < CHILD_RETRIES) {

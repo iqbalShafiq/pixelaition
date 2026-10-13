@@ -1090,6 +1090,8 @@ export function EditorScreen() {
           if (card === null || card === undefined) return;
           if (answeredIdsRef.current.has(card.id)) return;
           setPendingInteraction((current) => current ?? card);
+          const owner = result.run?.id;
+          if (typeof owner === "string") setPendingRunId(owner);
         })
         .catch(() => undefined);
     }, 3000);
@@ -1370,7 +1372,17 @@ export function EditorScreen() {
       // cancel reverts it and names the cause.
       setOptimisticStopping(true);
       try {
-        await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+        const taskId = task.data?.task?.id;
+        await Promise.all([
+          api(`/api/runs/${runId}/cancel`, { method: "POST" }).catch(() => undefined),
+          ...(taskId === undefined
+            ? []
+            : [
+                api(`/api/tasks/${taskId}/cancel`, { method: "POST" }).catch(
+                  () => undefined,
+                ),
+              ]),
+        ]);
         log("Stopped; waiting for the agent to acknowledge");
         // The stream stays open: the worker's cancelled status and done event
         // clear the run state and reload the frame.
@@ -1412,6 +1424,20 @@ export function EditorScreen() {
         method: "POST",
         body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
       });
+      if (response.type === "tool-approval" && response.approved === false) {
+        // A denied plan is a decision to stop, not just to close the card.
+        const stopTask = task.data?.task?.id;
+        await Promise.all([
+          api(`/api/runs/${owner}/cancel`, { method: "POST" }).catch(() => undefined),
+          ...(stopTask === undefined
+            ? []
+            : [
+                api(`/api/tasks/${stopTask}/cancel`, { method: "POST" }).catch(
+                  () => undefined,
+                ),
+              ]),
+        ]);
+      }
       answeredIdsRef.current.add(pendingInteraction.id);
       setPendingInteraction(null);
       setPendingRunId(null);

@@ -589,7 +589,10 @@ export function ProjectsScreen() {
       // The button says "Stopping…" immediately; a refused cancel reverts it.
       setOptimisticStopping(true);
       try {
-        await api(`/api/runs/${runId}/cancel`, { method: "POST" });
+        await Promise.all([
+          api(`/api/runs/${runId}/cancel`, { method: "POST" }).catch(() => undefined),
+          api(`/api/tasks/${runId}/cancel`, { method: "POST" }).catch(() => undefined),
+        ]);
         log("Stopped; waiting for the agent to acknowledge");
         // The stream stays open: the worker's cancelled status and done event
         // clear the run state.
