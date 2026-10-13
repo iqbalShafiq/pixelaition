@@ -22,6 +22,8 @@ import { auth, db } from "./auth.js";
 import {
   decideHomeTarget,
   decidePrompt,
+  routeSteering,
+  STEERING_CONFIDENCE,
   DecisionNotConfiguredError,
   HomeDecisionError,
   JevNotConfiguredError,
@@ -1535,6 +1537,59 @@ export function createApp() {
         "That task has not reached the worker yet.",
       );
     }
+    // A frame the user anchored needs no decision; free-form steering goes to
+    // Jev, which reads the plan and what each worker is doing.
+    const [taskRow] = await db
+      .select({ assetId: runTasks.assetId })
+      .from(runTasks)
+      .where(eq(runTasks.id, taskId));
+    const snapshot = taskRow?.assetId
+      ? await taskSnapshot(db, taskRow.assetId)
+      : undefined;
+    const plan = (snapshot?.task.plan ?? null) as {
+      workers?: Array<{ key: string; frames: string[] }>;
+    } | null;
+    const frameNames = (snapshot?.frameRows ?? []).map((frame) => frame.name);
+    const workers = plan?.workers ?? [];
+    let target: string | undefined;
+    let frames: string[] | undefined;
+    if (body.data.frameName !== undefined) {
+      frames = [body.data.frameName];
+      target = workers.find((worker) =>
+        worker.frames.includes(body.data.frameName as string),
+      )?.key;
+    } else {
+      try {
+        const route = await routeSteering(
+          body.data.prompt,
+          {
+            workers,
+            frameNames,
+            activity: (snapshot?.children ?? []).map((child) => ({
+              key: child.workerKey ?? child.role ?? "run",
+              status: child.status,
+            })),
+          },
+          {
+            apiKey: process.env.DECISION_MODEL_API_KEY,
+            model: process.env.DECISION_MODEL,
+            baseUrl: process.env.DECISION_MODEL_BASE_URL,
+          },
+        );
+        if (route.confidence >= STEERING_CONFIDENCE) {
+          target = route.target === "supervisor" ? undefined : route.target;
+          frames = route.frames.length > 0 ? route.frames : undefined;
+        } else {
+          return res.status(202).json({ routed: "clarify", candidates: frameNames });
+        }
+      } catch (reason) {
+        // Without the router the message still reaches the supervisor; the
+        // cause is logged rather than hidden.
+        console.error(
+          `[steer] routing unavailable: ${reason instanceof Error ? reason.message : "unknown"}`,
+        );
+      }
+    }
     const upstream = await fetch(
       `${process.env.WORKER_INTERNAL_URL ?? "http://localhost:4002"}/internal/tasks/${row.durableTaskId}/steer`,
       {
@@ -1548,6 +1603,8 @@ export function createApp() {
           ...(body.data.frameName !== undefined
             ? { frameName: body.data.frameName }
             : {}),
+          ...(frames !== undefined ? { frames } : {}),
+          ...(target !== undefined ? { target } : {}),
           requestId: randomUUID(),
         }),
       },

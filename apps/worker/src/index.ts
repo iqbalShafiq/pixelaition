@@ -1645,6 +1645,8 @@ app.post("/internal/tasks/:id/steer", async (req, res) => {
     .object({
       prompt: z.string().min(1).max(4000),
       frameName: z.string().min(1).max(40).optional(),
+      frames: z.array(z.string().min(1).max(40)).max(12).optional(),
+      target: z.string().min(1).max(8).optional(),
       requestId: z.string().min(1),
     })
     .safeParse(req.body);
@@ -1663,6 +1665,8 @@ app.post("/internal/tasks/:id/steer", async (req, res) => {
     await handle.signal(name, body.data.requestId, {
       message: body.data.prompt,
       ...(body.data.frameName !== undefined ? { frames: [body.data.frameName] } : {}),
+      ...(body.data.frames !== undefined ? { frames: body.data.frames } : {}),
+      ...(body.data.target !== undefined ? { target: body.data.target } : {}),
     } as never);
   } catch (reason) {
     return res.status(404).json({

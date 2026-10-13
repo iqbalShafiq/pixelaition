@@ -96,3 +96,5 @@ export type {
   PlanContext,
   WorkerContext,
 } from "./tasks/asset-draw.js";
+export { routeSteering, STEERING_CONFIDENCE } from "./steering.js";
+export type { SteeringContext, SteeringRoute } from "./steering.js";

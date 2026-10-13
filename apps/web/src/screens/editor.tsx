@@ -197,6 +197,11 @@ export function EditorScreen() {
   // When on, the next message is about the frame in view: it steers that
   // frame's worker instead of starting a new run.
   const [frameContextOn, setFrameContextOn] = useState(false);
+  // Free-form steering the router could not place: the user picks the frame.
+  const [clarify, setClarify] = useState<{
+    message: string;
+    candidates: string[];
+  } | null>(null);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
   // The models of runs this session started or rejoined, so the history panel
   // can badge a version `Agent · <model>` instead of a bare `Agent`. The
@@ -1106,14 +1111,22 @@ export function EditorScreen() {
       if (textOverride === undefined) setPrompt("");
       startTransition(async () => {
         try {
-          const result = await api<{ routed: string }>(`/api/tasks/${taskId}/steer`, {
-            method: "POST",
-            body: JSON.stringify({
-              prompt: text,
-              ...(frameName !== undefined ? { frameName } : {}),
-            }),
-          });
-          log(`Steering queued (${result.routed})`);
+          const result = await api<{ routed: string; candidates?: string[] }>(
+            `/api/tasks/${taskId}/steer`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                prompt: text,
+                ...(frameName !== undefined ? { frameName } : {}),
+              }),
+            },
+          );
+          if (result.routed === "clarify") {
+            setClarify({ message: text, candidates: result.candidates ?? [] });
+            log("Which frame is this about?");
+          } else {
+            log(`Steering queued (${result.routed})`);
+          }
         } catch (reason) {
           const message = reason instanceof Error ? reason.message : "Steering failed.";
           setError(message);
@@ -1677,6 +1690,48 @@ export function EditorScreen() {
                   composer — the same dock geometry the home page uses, so
                   every part lines up on the same edges. */}
               <div className="grid w-full gap-2" style={{ maxWidth: "40rem" }}>
+                {clarify !== null ? (
+                  <section
+                    aria-label="Which frame"
+                    className="pointer-events-auto pixel-corners-sm w-full border-2 border-accent bg-panel"
+                  >
+                    <header className="border-b-2 border-line px-2 py-1.5 text-pixel-mono tracking-[0.16em] text-accent uppercase">
+                      which frame is this about?
+                    </header>
+                    <div className="flex flex-wrap gap-1 p-1.5">
+                      {clarify.candidates.map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className="pixel-corners-sm border-2 border-line px-2 py-1 text-pixel-mono text-ink transition-colors duration-150 hover:border-accent hover:text-accent"
+                          onClick={() => {
+                            const message = clarify.message;
+                            setClarify(null);
+                            startTransition(async () => {
+                              if (taskId === null) return;
+                              await api(`/api/tasks/${taskId}/steer`, {
+                                method: "POST",
+                                body: JSON.stringify({
+                                  prompt: message,
+                                  frameName: name,
+                                }),
+                              }).catch(() => undefined);
+                            });
+                          }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="pixel-corners-sm border-2 border-line px-2 py-1 text-pixel-mono text-muted transition-colors duration-150 hover:text-ink"
+                        onClick={() => setClarify(null)}
+                      >
+                        whole asset
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
                 <QuestionSummary
                   workers={task.data?.workers ?? []}
                   onJump={(id) => {
