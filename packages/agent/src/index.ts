@@ -80,3 +80,19 @@ export {
   WORKER_TOOL_NAMES,
 } from "./tasks/roles.js";
 export type { AgentRole } from "./tasks/roles.js";
+export {
+  assetDrawCheckpointSchema,
+  assetDrawInputSchema,
+  assetDrawOutputSchema,
+  buildPlanPrompt,
+  createAssetDrawTask,
+  parsePlanOutput,
+} from "./tasks/asset-draw.js";
+export type {
+  AssetDrawCheckpoint,
+  AssetDrawDeps,
+  AssetDrawInput,
+  AssetDrawOutput,
+  PlanContext,
+  WorkerContext,
+} from "./tasks/asset-draw.js";
