@@ -378,41 +378,44 @@ export function FramePanel({
           body="A frame holds the pixels for one state of this asset."
         />
       ) : (
-        <Reorder.Group
-          axis="y"
-          values={list}
-          onReorder={previewOrder}
-          className="grid gap-1"
-        >
-          {list.map((frame, index) => {
-            const current = frame.id === activeId;
-            return (
-              <FrameRow
-                key={frame.id}
-                frame={frame}
-                index={index}
-                count={list.length}
-                palette={palette}
-                current={current}
-                {...(taskFrames?.get(frame.id) !== undefined
-                  ? { taskState: taskFrames.get(frame.id) }
-                  : {})}
-                locked={locked}
-                editing={editingId === frame.id}
-                draft={draft}
-                onDraft={setDraft}
-                onCommit={commitEdit}
-                onCancel={() => setEditingId(null)}
-                onSelect={() => onSelect(frame.id)}
-                onStartEdit={() => startEdit(frame)}
-                onDuplicate={() => onDuplicate(frame.id)}
-                onDelete={() => setPendingDelete(frame)}
-                onKeyboardMove={(to) => void onReorder(frame.id, to)}
-                onDragFinished={() => persistOrder(frame.id)}
-              />
-            );
-          })}
-        </Reorder.Group>
+        <div className="max-h-[13.75rem] overflow-y-auto overscroll-contain pr-0.5">
+          {/* Four rows fit; a longer list scrolls inside its own frame. */}
+          <Reorder.Group
+            axis="y"
+            values={list}
+            onReorder={previewOrder}
+            className="grid gap-1"
+          >
+            {list.map((frame, index) => {
+              const current = frame.id === activeId;
+              return (
+                <FrameRow
+                  key={frame.id}
+                  frame={frame}
+                  index={index}
+                  count={list.length}
+                  palette={palette}
+                  current={current}
+                  {...(taskFrames?.get(frame.id) !== undefined
+                    ? { taskState: taskFrames.get(frame.id) }
+                    : {})}
+                  locked={locked}
+                  editing={editingId === frame.id}
+                  draft={draft}
+                  onDraft={setDraft}
+                  onCommit={commitEdit}
+                  onCancel={() => setEditingId(null)}
+                  onSelect={() => onSelect(frame.id)}
+                  onStartEdit={() => startEdit(frame)}
+                  onDuplicate={() => onDuplicate(frame.id)}
+                  onDelete={() => setPendingDelete(frame)}
+                  onKeyboardMove={(to) => void onReorder(frame.id, to)}
+                  onDragFinished={() => persistOrder(frame.id)}
+                />
+              );
+            })}
+          </Reorder.Group>
+        </div>
       )}
 
       <ConfirmDialog
@@ -488,132 +491,136 @@ export function LayerPanel({
         </IconButton>
       }
     >
-      <ul className="grid gap-1">
-        {layers.map((layer) => {
-          const current = layer.id === activeId;
-          return (
-            <li
-              key={layer.id}
-              className={`relative flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
-                current
-                  ? "border-accent bg-raised"
-                  : "border-transparent hover:border-line hover:bg-raised"
-              } ${layer.visible ? "" : "opacity-55"}`}
-            >
-              <button
-                type="button"
-                onClick={() => onSelect(layer.id)}
-                disabled={editingId === layer.id}
-                aria-current={current}
-                aria-label={`Select layer ${layer.name}`}
-                className="absolute -inset-0.5 z-0"
-              />
-              <motion.span
-                initial={false}
-                animate={{
-                  width: editingId === layer.id ? 0 : 18,
-                  marginRight: editingId === layer.id ? -8 : 0,
-                  opacity: editingId === layer.id ? 0 : 1,
-                }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-                inert={editingId === layer.id ? true : undefined}
-                className={`relative z-10 shrink-0 overflow-hidden ${
-                  editingId === layer.id ? "pointer-events-none" : ""
-                }`}
-                style={{ height: 18 }}
+      <div className="max-h-[9.75rem] overflow-y-auto overscroll-contain pr-0.5">
+        {/* Four layers fit; the layer list scrolls on its own, apart from
+            the frame list. */}
+        <ul className="grid gap-1">
+          {layers.map((layer) => {
+            const current = layer.id === activeId;
+            return (
+              <li
+                key={layer.id}
+                className={`relative flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                  current
+                    ? "border-accent bg-raised"
+                    : "border-transparent hover:border-line hover:bg-raised"
+                } ${layer.visible ? "" : "opacity-55"}`}
               >
-                <Checkbox
-                  label={`Show ${layer.name}`}
-                  hideLabel
-                  checked={layer.visible}
-                  disabled={locked}
-                  onChange={(next) => onToggleVisible(layer.id, next)}
+                <button
+                  type="button"
+                  onClick={() => onSelect(layer.id)}
+                  disabled={editingId === layer.id}
+                  aria-current={current}
+                  aria-label={`Select layer ${layer.name}`}
+                  className="absolute -inset-0.5 z-0"
                 />
-              </motion.span>
-              {editingId === layer.id ? (
                 <motion.span
-                  key="rename"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.12 }}
-                  className="relative z-10 flex min-w-0 flex-1"
+                  initial={false}
+                  animate={{
+                    width: editingId === layer.id ? 0 : 18,
+                    marginRight: editingId === layer.id ? -8 : 0,
+                    opacity: editingId === layer.id ? 0 : 1,
+                  }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  inert={editingId === layer.id ? true : undefined}
+                  className={`relative z-10 shrink-0 overflow-hidden ${
+                    editingId === layer.id ? "pointer-events-none" : ""
+                  }`}
+                  style={{ height: 18 }}
                 >
-                  <input
-                    autoFocus
-                    value={draft}
-                    aria-label="Layer name"
-                    className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-ink outline-none"
-                    onChange={(event) => setDraft(event.target.value)}
-                    onBlur={commitEdit}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") event.currentTarget.blur();
-                      if (event.key === "Escape") setEditingId(null);
-                    }}
+                  <Checkbox
+                    label={`Show ${layer.name}`}
+                    hideLabel
+                    checked={layer.visible}
+                    disabled={locked}
+                    onChange={(next) => onToggleVisible(layer.id, next)}
                   />
                 </motion.span>
-              ) : (
-                <span
-                  className={`pointer-events-none min-w-0 flex-1 truncate text-[13px] leading-5 ${
-                    current ? "text-accent" : "text-ink"
-                  }`}
-                >
-                  {layer.name}
-                </span>
-              )}
-              <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
-                <AnimatePresence initial={false} mode="popLayout">
-                  {editingId === layer.id ? (
-                    <motion.span
-                      key="save"
-                      initial={{ opacity: 0, scale: 0.85 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      transition={{ duration: 0.12 }}
-                      onMouseDown={(event) => event.preventDefault()}
-                    >
-                      <IconButton
-                        label={`Save ${layer.name}`}
-                        size="sm"
-                        onClick={commitEdit}
+                {editingId === layer.id ? (
+                  <motion.span
+                    key="rename"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.12 }}
+                    className="relative z-10 flex min-w-0 flex-1"
+                  >
+                    <input
+                      autoFocus
+                      value={draft}
+                      aria-label="Layer name"
+                      className="h-5 w-full min-w-0 border-0 bg-transparent p-0 text-ink outline-none"
+                      onChange={(event) => setDraft(event.target.value)}
+                      onBlur={commitEdit}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                        if (event.key === "Escape") setEditingId(null);
+                      }}
+                    />
+                  </motion.span>
+                ) : (
+                  <span
+                    className={`pointer-events-none min-w-0 flex-1 truncate text-[13px] leading-5 ${
+                      current ? "text-accent" : "text-ink"
+                    }`}
+                  >
+                    {layer.name}
+                  </span>
+                )}
+                <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
+                  <AnimatePresence initial={false} mode="popLayout">
+                    {editingId === layer.id ? (
+                      <motion.span
+                        key="save"
+                        initial={{ opacity: 0, scale: 0.85 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.85 }}
+                        transition={{ duration: 0.12 }}
+                        onMouseDown={(event) => event.preventDefault()}
                       >
-                        <Check />
-                      </IconButton>
-                    </motion.span>
-                  ) : (
-                    <motion.span
-                      key="actions"
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      transition={{ duration: 0.12 }}
-                      className="flex items-center gap-0.5"
-                    >
-                      <IconButton
-                        label={`Rename ${layer.name}`}
-                        size="sm"
-                        disabled={locked}
-                        onClick={() => startEdit(layer.id, layer.name)}
-                      >
-                        <Pencil />
-                      </IconButton>
-                      <Menu label={`Actions for ${layer.name}`}>
-                        <MenuItem
-                          disabled={locked || layers.length <= 1}
-                          onClick={() =>
-                            setPendingDelete({ id: layer.id, name: layer.name })
-                          }
+                        <IconButton
+                          label={`Save ${layer.name}`}
+                          size="sm"
+                          onClick={commitEdit}
                         >
-                          <Trash /> Delete
-                        </MenuItem>
-                      </Menu>
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+                          <Check />
+                        </IconButton>
+                      </motion.span>
+                    ) : (
+                      <motion.span
+                        key="actions"
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ duration: 0.12 }}
+                        className="flex items-center gap-0.5"
+                      >
+                        <IconButton
+                          label={`Rename ${layer.name}`}
+                          size="sm"
+                          disabled={locked}
+                          onClick={() => startEdit(layer.id, layer.name)}
+                        >
+                          <Pencil />
+                        </IconButton>
+                        <Menu label={`Actions for ${layer.name}`}>
+                          <MenuItem
+                            disabled={locked || layers.length <= 1}
+                            onClick={() =>
+                              setPendingDelete({ id: layer.id, name: layer.name })
+                            }
+                          >
+                            <Trash /> Delete
+                          </MenuItem>
+                        </Menu>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
       <div className="flex items-center justify-between">
         <span className="text-pixel-mono text-muted">{layers.length} of 4 layers</span>
       </div>

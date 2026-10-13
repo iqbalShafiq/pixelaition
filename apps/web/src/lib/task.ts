@@ -17,7 +17,10 @@ export type TaskWorkerState = {
   frames: TaskFrameStatus[];
   pendingInteraction?: {
     id: string;
-    questions: Array<{
+    /** A pending call waits for approval; a question waits for an answer. */
+    type?: "tool-approval" | "tool-question";
+    toolName?: string;
+    questions?: Array<{
       id: string;
       text: string;
       choices?: Array<{ value: string; label: string }>;

@@ -25,7 +25,15 @@ export function QuestionSummary({
       <ul className="grid gap-1 p-1.5">
         {waiting.map((worker) => {
           const frame = worker.frames[0];
-          const question = worker.pendingInteraction?.questions[0];
+          // An approval carries no questions; a question does. Both wait on
+          // the user, so the row names whichever it is.
+          const interaction = worker.pendingInteraction;
+          const question = interaction?.questions?.[0];
+          const label =
+            question?.text ??
+            (interaction?.type === "tool-approval"
+              ? `needs your approval${interaction.toolName !== undefined ? ` · ${interaction.toolName}` : ""}`
+              : "needs your answer");
           return (
             <li key={worker.key}>
               <button
@@ -37,9 +45,7 @@ export function QuestionSummary({
                 className="flex w-full items-center gap-2 border-2 border-line bg-field px-2 py-1.5 text-left text-pixel-mono text-ink transition-colors duration-150 hover:border-line-strong disabled:opacity-60"
               >
                 <span className="text-accent">{worker.key}</span>
-                <span className="min-w-0 flex-1 truncate">
-                  {question?.text ?? "needs your answer"}
-                </span>
+                <span className="min-w-0 flex-1 truncate">{label}</span>
                 {frame !== undefined ? (
                   <span className="shrink-0 text-muted">{frame.name}</span>
                 ) : null}
