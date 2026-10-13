@@ -41,6 +41,7 @@ import {
 } from "../lib/target-proposal.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
+import { useTaskStream } from "../lib/task.js";
 
 type Project = {
   id: string;
@@ -161,6 +162,7 @@ export function ProjectsScreen() {
   // then assembles into the editor exactly once.
   const pendingAutoNavRef = useRef(false);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
+  const taskStream = useTaskStream();
   const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const running = runId !== null;
   // Optimistic overlays: the composer and console react the moment the user
@@ -460,28 +462,47 @@ export function ProjectsScreen() {
     startTransition(async () => {
       try {
         const payload = buildConfirmPayload(proposal.proposalId, choice);
-        const started = await api<{ runId: string }>("/api/home/runs", {
-          method: "POST",
-          body: JSON.stringify({
-            prompt: runPrompt,
-            modelId,
-            reasoningEffort: effort,
-            ...(staged.length > 0
-              ? {
-                  attachments: staged.map(({ mediaType, data }) => ({
-                    mediaType,
-                    data,
-                  })),
-                }
-              : {}),
-            ...payload,
-          }),
-        });
+        const started = await api<{ runId: string; kind?: "task" | "run" }>(
+          "/api/home/runs",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              prompt: runPrompt,
+              modelId,
+              reasoningEffort: effort,
+              ...(staged.length > 0
+                ? {
+                    attachments: staged.map(({ mediaType, data }) => ({
+                      mediaType,
+                      data,
+                    })),
+                  }
+                : {}),
+              ...payload,
+            }),
+          },
+        );
         if (staged.length > 0) attachments.clear();
         setProposal(null);
         setRunId(started.runId);
         log(`Run ${started.runId.slice(0, 8)} started`);
-        listen(started.runId);
+        if (started.kind === "task") {
+          // The task stream carries the tree; the home's console renders it.
+          taskStream.open(started.runId, {
+            onMessage: (body) => {
+              setRows((current) =>
+                applyRunEvent(current, body.sequence, body.type, body.data),
+              );
+              if (body.type === "task-complete") {
+                taskStream.close();
+                void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+              }
+            },
+            onDrop: () => taskStream.close(),
+          });
+        } else {
+          listen(started.runId);
+        }
         const pinnedAsset =
           choice.mode === "generate" &&
           choice.assetId !== undefined &&
