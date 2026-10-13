@@ -45,6 +45,15 @@ export type RunRow =
       routed: string;
       message: string;
       frameName?: string;
+      relayed?: boolean;
+    }
+  | {
+      /** The supervisor's own line: what it just told a worker, or why it waits. */
+      id: string;
+      kind: "supervisor";
+      message: string;
+      to?: string;
+      held?: boolean;
     }
   | {
       /** A worker is waiting for the user's answer. */
@@ -300,19 +309,36 @@ export function applyRunEvent(
       tag({ id: `worker-${key}`, kind: "worker", workerKey: key, status, frames }),
     ];
   }
+  if (type === "supervisor-says") {
+    const message = typeof body?.message === "string" ? body.message : "";
+    const to = typeof body?.to === "string" ? body.to : undefined;
+    const held = body?.held === true;
+    return [
+      ...rows,
+      tag({
+        id: `says-${sequence}`,
+        kind: "supervisor",
+        message,
+        ...(to !== undefined ? { to } : {}),
+        ...(held ? { held: true } : {}),
+      }),
+    ];
+  }
   if (type === "steering-routed") {
     const routed = typeof body?.routed === "string" ? body.routed : "supervisor";
     const message = typeof body?.message === "string" ? body.message : "";
     const frameName = typeof body?.frameName === "string" ? body.frameName : undefined;
+    const relayed = body?.relayed === true;
     return [
       ...rows,
-      {
+      tag({
         id: `steer-${sequence}`,
         kind: "steering",
         routed,
         message,
         ...(frameName !== undefined ? { frameName } : {}),
-      },
+        ...(relayed ? { relayed: true } : {}),
+      }),
     ];
   }
   if (type === "question-pending") {

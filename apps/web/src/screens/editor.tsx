@@ -197,6 +197,10 @@ export function EditorScreen() {
   // When on, the next message is about the frame in view: it steers that
   // frame's worker instead of starting a new run.
   const [frameContextOn, setFrameContextOn] = useState(false);
+  // "Done" is a nudge, not a permanent label: it clears once the user has
+  // opened that frame, and it never lingers after the task ends.
+  const viewedFrames = useRef(new Set<string>());
+  const [unseenDone, setUnseenDone] = useState<Map<string, string>>(new Map());
   // Free-form steering the router could not place: the user picks the frame.
   const [clarify, setClarify] = useState<{
     message: string;
@@ -771,20 +775,61 @@ export function EditorScreen() {
     ],
   );
 
+  useEffect(() => {
+    const workers = task.data?.workers ?? [];
+    if (workers.length === 0) return;
+    setUnseenDone((current) => {
+      let next = current;
+      for (const worker of workers) {
+        for (const frame of worker.frames) {
+          const finished = frame.status === "done" || frame.status === "failed";
+          if (finished && !viewedFrames.current.has(frame.id) && !next.has(frame.id)) {
+            next = new Map(next);
+            next.set(frame.id, worker.key);
+          }
+        }
+      }
+      return next;
+    });
+  }, [task.data]);
+
+  useEffect(() => {
+    if (frameId === null) return;
+    viewedFrames.current.add(frameId);
+    setUnseenDone((current) => {
+      if (!current.has(frameId)) return current;
+      const next = new Map(current);
+      next.delete(frameId);
+      return next;
+    });
+  }, [frameId]);
+
   // A worker's question surfaces when the user opens its frame; the frame
   // list badge and the counter near the composer point the way.
   useEffect(() => {
-    if (taskId === null || frameId === null) return;
-    const worker = (task.data?.workers ?? []).find((candidate) =>
-      candidate.frames.some((frame) => frame.id === frameId),
+    if (taskId === null) return;
+    const workers = task.data?.workers ?? [];
+    // A supervisor question (plan/review) matters whatever frame is open; a
+    // worker question surfaces when its frame is the one in view.
+    const supervisor = workers.find(
+      (candidate) =>
+        (candidate.key === "plan" || candidate.key.startsWith("review")) &&
+        candidate.pendingInteraction !== undefined,
     );
-    const interaction = worker?.pendingInteraction;
-    if (interaction === undefined || worker?.runId === undefined) return;
+    const onFrame = workers.find(
+      (candidate) =>
+        frameId !== null &&
+        candidate.frames.some((frame) => frame.id === frameId) &&
+        candidate.pendingInteraction !== undefined,
+    );
+    const chosen = supervisor ?? onFrame;
+    const interaction = chosen?.pendingInteraction;
+    if (interaction === undefined || chosen?.runId === undefined) return;
     if (answeredIdsRef.current.has(interaction.id)) return;
     setPendingInteraction((current) =>
       current?.id === interaction.id ? current : (interaction as PendingInteraction),
     );
-    setPendingRunId(worker.runId);
+    setPendingRunId(chosen.runId);
   }, [taskId, frameId, task.data]);
 
   // While a task runs, each worker's own stream feeds its frame's canvas; the
@@ -825,6 +870,23 @@ export function EditorScreen() {
         setPendingInteraction(result.interaction);
         log("Rejoined a run that was still going");
         listen(result.run.id, "", 0);
+        return;
+      }
+      // A drawing run is a task after a reload; rejoin it so the tree,
+      // questions, and frame-context steering keep working.
+      const snapshot = await api<{ task: { id: string; status: string } | null }>(
+        `/api/assets/${assetId}/task`,
+      ).catch(() => ({ task: null }));
+      const active =
+        snapshot.task !== null &&
+        ["queued", "running", "waiting"].includes(snapshot.task.status);
+      if (active && snapshot.task !== null) {
+        setTaskId(snapshot.task.id);
+        setRunId(snapshot.task.id);
+        setConsoleOpen(true);
+        listenTask(snapshot.task.id, "");
+        void task.refetch();
+        log("Rejoined a task that was still going");
         return;
       }
       setPendingInteraction(null);
@@ -1350,14 +1412,30 @@ export function EditorScreen() {
         playing={playing}
         locked={running}
         taskFrames={
-          new Map(
-            (task.data?.workers ?? []).flatMap((worker) =>
-              worker.frames.map(
-                (frame) =>
-                  [frame.id, { status: frame.status, workerKey: worker.key }] as const,
+          new Map([
+            ...(taskActive
+              ? (task.data?.workers ?? []).flatMap((worker) =>
+                  worker.frames
+                    .filter(
+                      (frame) =>
+                        !(frame.status === "done" && viewedFrames.current.has(frame.id)),
+                    )
+                    .map(
+                      (frame) =>
+                        [
+                          frame.id,
+                          { status: frame.status, workerKey: worker.key },
+                        ] as const,
+                    ),
+                )
+              : []),
+            ...[...unseenDone.entries()]
+              .filter(([id]) => !taskActive || !viewedFrames.current.has(id))
+              .map(
+                ([id, workerKey]) =>
+                  [id, { status: "done" as const, workerKey }] as const,
               ),
-            ),
-          )
+          ])
         }
         onSelect={(id) => {
           setFrameId(id);

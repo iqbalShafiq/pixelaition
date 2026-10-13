@@ -835,11 +835,20 @@ let durableFailure: string | undefined;
 // --- Tasks: watch a durable task, bind its children, persist progress ------
 
 const taskWatchers = new Map<string, AbortController>();
-/** How many steer signals a task has taken, for the next fixed name. */
-const steerSignalCount = new Map<string, number>();
 const boundChildRuns = new Set<string>();
 
 /** model and effort parsed from a registered agent id (…:<model>:<effort>). */
+/** plan | worker | review | fix, from a task child's key. */
+function roleOfKey(key: string): "plan" | "worker" | "review" | "fix" {
+  return key.startsWith("plan")
+    ? "plan"
+    : key.startsWith("w")
+      ? "worker"
+      : key.startsWith("review")
+        ? "review"
+        : "fix";
+}
+
 function modelEffortFromAgentId(agentId: string): { modelId: string; effort: string } {
   const parts = agentId.split(":");
   return {
@@ -1107,9 +1116,27 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
             status: node.status,
             input: node.input,
           });
+          const nodePrompt =
+            typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
+              ? (node.input as { prompt: string }).prompt
+              : "";
+          const nodeFrames =
+            plan === null
+              ? []
+              : roleOfKey(node.key) === "worker"
+                ? (plan.workers.find((worker) => worker.key === node.key.split("-")[0])
+                    ?.frames ?? [])
+                : plan.frames
+                    .filter((frame) =>
+                      roleOfKey(node.key) === "fix"
+                        ? nodePrompt.includes(frame.name)
+                        : true,
+                    )
+                    .map((frame) => frame.name);
           publish(durableTaskId, node.agentRunId ? "worker-status" : "worker-spawned", {
             workerKey: node.key,
             status: node.status,
+            frames: nodeFrames,
           });
         }
         if (terminal) {
@@ -1709,31 +1736,82 @@ app.post("/internal/tasks/:id/steer", async (req, res) => {
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
   const taskId = req.params.id ?? "";
-  // Until the Jev router (Task 19) lands, every steering message reaches the
-  // supervisor through the next free steer signal; the name is fixed so the
-  // task can scan steer-1, steer-2, … in order.
-  const used = steerSignalCount.get(taskId) ?? 0;
-  const name = `steer-${used + 1}`;
+  const frames =
+    body.data.frames ?? (body.data.frameName !== undefined ? [body.data.frameName] : []);
+  // The supervisor always receives the message (it owns the plan); when its
+  // target worker is painting right now, the supervisor relays it straight
+  // into that worker's run and the console says so.
+  let relayed: string | undefined;
+  if (body.data.target !== undefined) {
+    const [taskRow] = await db
+      .select({ id: runTasks.id })
+      .from(runTasks)
+      .where(eq(runTasks.durableTaskId, taskId));
+    if (taskRow !== undefined) {
+      const [child] = await db
+        .select({
+          durableRunId: generationRuns.durableRunId,
+          status: generationRuns.status,
+        })
+        .from(generationRuns)
+        .where(
+          and(
+            eq(generationRuns.taskId, taskRow.id),
+            eq(generationRuns.workerKey, body.data.target),
+            inArray(generationRuns.status, ["running", "waiting"]),
+          ),
+        );
+      if (child?.durableRunId) {
+        try {
+          runtime.steer(
+            child.durableRunId,
+            { messages: [{ role: "user" as const, content: body.data.prompt }] },
+            { requestId: body.data.requestId },
+          );
+          relayed = body.data.target;
+        } catch (reason) {
+          console.error(
+            `[steer] relay to ${body.data.target} failed: ${boundedReason(reason)}`,
+          );
+        }
+      }
+    }
+  }
+  // The signal name must be free across restarts: derive the next index from
+  // the task's delivered signals instead of an in-memory counter.
+  let name = "steer-1";
   try {
     const handle = await runtime.getTask(taskId);
+    const snapshot = await handle.snapshot();
+    const delivered = Object.keys(
+      (snapshot.task.signals ?? {}) as Record<string, unknown>,
+    )
+      .map((key) => Number(key.startsWith("steer-") ? key.slice(6) : Number.NaN))
+      .filter((index) => Number.isInteger(index) && index > 0);
+    name = `steer-${delivered.length === 0 ? 1 : Math.max(...delivered) + 1}`;
     await handle.signal(name, body.data.requestId, {
       message: body.data.prompt,
-      ...(body.data.frameName !== undefined ? { frames: [body.data.frameName] } : {}),
-      ...(body.data.frames !== undefined ? { frames: body.data.frames } : {}),
+      ...(frames.length > 0 ? { frames } : {}),
       ...(body.data.target !== undefined ? { target: body.data.target } : {}),
+      ...(relayed !== undefined ? { delivered: true } : {}),
     } as never);
   } catch (reason) {
     return res.status(404).json({
       message: `That task cannot take steering: ${boundedReason(reason)}`,
     });
   }
-  steerSignalCount.set(taskId, used + 1);
-  publish(taskId, "steering-routed", {
-    routed: "supervisor",
+  publish(taskId, "supervisor-says", {
     message: body.data.prompt,
-    ...(body.data.frameName !== undefined ? { frameName: body.data.frameName } : {}),
+    ...(frames.length > 0 ? { frames } : {}),
+    ...(relayed !== undefined ? { to: relayed } : { held: true }),
   });
-  res.status(202).json({ routed: "queued" });
+  publish(taskId, "steering-routed", {
+    routed: relayed ?? "supervisor",
+    message: body.data.prompt,
+    ...(frames.length > 0 ? { frameName: frames[0] } : {}),
+    ...(relayed !== undefined ? { relayed: true } : {}),
+  });
+  res.status(202).json({ routed: relayed ?? "queued" });
 });
 
 app.post("/internal/tasks/:id/cancel", async (req, res) => {

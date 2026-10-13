@@ -197,6 +197,9 @@ export function RunConsole({
     if (row.kind === "steering") {
       return <Send width={12} height={12} className="text-accent" />;
     }
+    if (row.kind === "supervisor") {
+      return <Brain width={12} height={12} className="text-muted" />;
+    }
     if (row.kind === "question") {
       return <Info width={12} height={12} className="text-accent" />;
     }
@@ -263,7 +266,7 @@ export function RunConsole({
                 : [
                     <li
                       key={`group-${group.workerKey}`}
-                      className="mt-1 flex items-center gap-1.5 border-t-2 border-line pt-1 text-pixel-mono tracking-[0.16em] text-muted uppercase"
+                      className="assemble-rise mt-1 flex items-center gap-1.5 border-t-2 border-line pt-1 text-pixel-mono tracking-[0.16em] text-muted uppercase"
                     >
                       <span className="text-accent">{group.workerKey}</span>
                       <span>worker</span>
@@ -308,9 +311,20 @@ export function RunConsole({
                     <span className="text-muted">
                       {row.phase} · {row.status}
                     </span>
+                  ) : row.kind === "supervisor" ? (
+                    <span className="text-muted">
+                      {row.to !== undefined
+                        ? `supervisor → ${row.to}: `
+                        : row.held === true
+                          ? "supervisor: noted — I will apply this in the review: "
+                          : "supervisor: "}
+                      {row.message.slice(0, 70)}
+                    </span>
                   ) : row.kind === "steering" ? (
                     <span className="text-accent">
-                      steering → {row.routed}
+                      {row.relayed === true
+                        ? `relayed → ${row.routed}`
+                        : "supervisor keeps it"}
                       {row.frameName ? ` (${row.frameName})` : ""}
                       {row.message ? ` · ${row.message.slice(0, 60)}` : ""}
                     </span>

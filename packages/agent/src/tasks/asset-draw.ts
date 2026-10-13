@@ -167,10 +167,10 @@ function deliveredSteers(ctx: Ctx): string {
   for (let index = 1; index <= 16; index += 1) {
     const value = ctx.signalValue(`steer-${index}`);
     if (value === undefined) break;
-    const record = value as { message?: string; frames?: string[] };
+    const record = value as { message?: string; frames?: string[]; delivered?: boolean };
     if (typeof record.message === "string") {
       messages.push(
-        `The user steered${record.frames && record.frames.length > 0 ? ` (${record.frames.join(", ")})` : ""}: ${record.message}`,
+        `The user steered${record.frames && record.frames.length > 0 ? ` (${record.frames.join(", ")})` : ""}: ${record.message}${record.delivered === true ? " (already relayed to the worker mid-run; verify it landed)" : ""}`,
       );
     }
   }
