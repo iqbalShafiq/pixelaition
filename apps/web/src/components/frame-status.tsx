@@ -6,6 +6,8 @@ import { Check, Close } from "./pixel-icons.js";
 export type FrameTaskState = {
   status: "queued" | "working" | "done" | "failed" | "asking";
   workerKey: string;
+  /** The user already looked at this frame; its tick stays quiet. */
+  seen?: boolean;
 };
 
 /**
@@ -32,6 +34,14 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
     );
   }
   if (state.status === "done") {
+    if (state.seen === true) {
+      return (
+        <span className="flex items-center gap-1 text-pixel-mono text-muted">
+          <Check width={12} height={12} />
+          {agentLabel(state.workerKey)}
+        </span>
+      );
+    }
     return (
       <span className="done-pop flex items-center gap-1 text-pixel-mono text-accent">
         <Check width={12} height={12} />

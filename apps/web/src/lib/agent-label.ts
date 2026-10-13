@@ -6,10 +6,12 @@
 export function agentLabel(key: string): string {
   const worker = /^w(\d+)$/.exec(key);
   if (worker) return `Agent ${worker[1]}`;
-  if (key === "plan") return "Supervisor";
-  const review = /^review-(\d+)$/.exec(key);
+  if (key === "plan" || key.startsWith("plan-")) return "Supervisor";
+  const review = /^review-(\d+)/.exec(key);
   if (review) return `Reviewer ${review[1]}`;
+  // A fix is its own child, spawned by the review for one frame: it is Fix N
+  // (not the agent number again, which read as three agents called Agent 2).
   const fix = /^fix-(\d+)-(\d+)$/.exec(key);
-  if (fix) return `Agent ${fix[2]} · fix ${fix[1]}`;
+  if (fix) return fix[2] === "1" ? `Fix ${fix[1]}` : `Fix ${fix[1]}.${fix[2]}`;
   return key;
 }
