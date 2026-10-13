@@ -32,6 +32,7 @@ const deps: AssetDrawDeps = {
     assetId: "a1",
     paletteSize: 8,
     styleLines: ["outline"],
+    frames: ["idle", "walk"],
   }),
   loadWorkerContext: async () => ({
     promptData: {
@@ -393,6 +394,47 @@ describe("plan limits", () => {
     expect(transition).toMatchObject({ status: "waiting" });
     expect(spawns.map((spawn) => spawn.key)).toEqual(["plan-1"]);
     expect(spawns[0]?.prompt).toContain("at least 3 key frames");
+  });
+});
+
+describe("approved frames that were never created", () => {
+  it("sends the plan child back to create them, then fails with the cause", async () => {
+    const task = createAssetDrawTask({
+      ...deps,
+      loadPlanContext: async () => ({
+        projectName: "P",
+        assetName: "A",
+        assetId: "a1",
+        paletteSize: 8,
+        styleLines: ["outline"],
+        frames: [],
+      }),
+    });
+    const plan = JSON.parse(planJson);
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        {
+          id: "child-plan",
+          key: "plan",
+          outcome: { status: "completed", output: JSON.stringify(plan) },
+        },
+      ],
+    });
+    const first = await run(task, ctx);
+    expect(first).toMatchObject({ status: "waiting" });
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["plan-create"]);
+    expect(spawns[0]?.prompt).toContain("add_frame");
+
+    const second = await run(task, {
+      ...ctx,
+      checkpoint: {
+        ...(ctx.checkpoint as Record<string, unknown>),
+        framesCreateTried: true,
+      },
+    } as typeof ctx);
+    expect(second).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(second)).toContain("never created");
   });
 });
 

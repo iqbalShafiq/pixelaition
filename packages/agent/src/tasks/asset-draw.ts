@@ -65,7 +65,11 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     fixIds: z.array(z.string()),
   }),
 ]);
-export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema>;
+export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema> & {
+  /** The approved frames were missing once; a create child was spawned. */
+  framesCreateTried?: boolean;
+  framesCreateKey?: string;
+};
 
 export const assetDrawOutputSchema = z.object({
   assetId: z.string(),
@@ -188,7 +192,7 @@ function deliveredSteers(ctx: Ctx): string {
   return messages.length > 0 ? `User steering to honour: ${messages.join(" ")}` : "";
 }
 
-function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transition {
+async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "plan" }>;
   if (checkpoint.planKey === undefined) {
     return (async () => {
@@ -256,6 +260,39 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
   const plan = parsed.ok ? parsed.plan : undefined;
   if (plan === undefined) {
     return { status: "failed", error: "The plan was invalid twice: unknown." };
+  }
+  // The approval is only half the job: a supervisor that ends its turn without
+  // creating the frames it promised would leave the asset empty, so the task
+  // checks the asset and names what is missing.
+  const context = await deps.loadPlanContext(ctx.input);
+  const missingFrames = plan.frames
+    .map((frame) => frame.name)
+    .filter((name) => !context.frames.includes(name));
+  if (missingFrames.length > 0) {
+    if (checkpoint.framesCreateTried !== true) {
+      const id = ctx.spawnAgent("plan-create", {
+        agentId: ctx.input.agentId,
+        prompt: [
+          `The user approved the plan, but these frames do not exist on the asset yet: ${missingFrames.join(", ")}.`,
+          "Create each one now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
+          "Answer with one short sentence.",
+        ].join("\n"),
+        continueFrom: checkpoint.planKey,
+      });
+      return {
+        status: "waiting",
+        checkpoint: {
+          ...checkpoint,
+          framesCreateTried: true,
+          framesCreateKey: "plan-create",
+        },
+        wait: { type: "children", ids: [id], policy: "allSettled" },
+      };
+    }
+    return {
+      status: "failed",
+      error: `The approved frames were never created: ${missingFrames.join(", ")}.`,
+    };
   }
   return (async () => {
     const workerIds: string[] = [];
@@ -457,6 +494,8 @@ export type PlanContext = {
   assetId: string;
   paletteSize: number;
   styleLines: string[];
+  /** The names the asset's frames carry right now. */
+  frames: string[];
 };
 export type WorkerContext = {
   promptData: Omit<WorkerPromptInput, "ownedFrames" | "readOnlyFrames" | "references">;

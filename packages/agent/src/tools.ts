@@ -947,6 +947,7 @@ export function createPixelTools(
         approved: true,
         plan: { summary: input.summary, frames },
         scope: [...scope],
+        next: "Create the approved frames now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
       };
     },
   });

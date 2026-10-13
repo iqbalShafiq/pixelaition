@@ -31,12 +31,17 @@ export function buildTaskDeps(db: Database): AssetDrawDeps {
     loadPlanContext: async (input: AssetDrawInput) => {
       const row = await loadAsset(input.assetId);
       const palette = (row?.asset.palette as string[] | undefined) ?? [];
+      const frameRows = await db
+        .select({ name: frames.name })
+        .from(frames)
+        .where(eq(frames.assetId, input.assetId ?? ""));
       return {
         projectName: row?.project.name ?? "project",
         assetName: row?.asset.name ?? "asset",
         assetId: input.assetId ?? "",
         paletteSize: palette.length,
         styleLines: styleLines(row?.project.style),
+        frames: frameRows.map((frame) => frame.name),
       };
     },
     loadWorkerContext: async (
