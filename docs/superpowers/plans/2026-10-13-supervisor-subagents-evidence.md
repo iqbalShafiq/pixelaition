@@ -136,3 +136,17 @@ Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
 - Recording the demo surfaced a real editor crash: a pending **tool-approval** carries no `questions`, so `question-summary.tsx` indexed `questions[0]` of undefined and the editor error-boundaried as soon as the plan card appeared. Fixed (the summary now names approvals and questions), committed with the scroll change.
 - `~/Desktop/pixelaition-demo-final.mp4` (6:54, 1920×1080, 88 MB): home → target confirmed on camera → plan card approved → two workers paint in parallel (with a worker's `clear_region` approval answered on its own frame) → review orders two fixes → second review passes → finished asset → frames browsed, closing on a 12-frame family whose list scrolls after four rows.
 - Master capture: viewport 1920×1080 at `deviceScaleFactor: 2` rendered into a 1920×1080 video (an exact 2:1 downsample; a video size larger than the viewport lands the page in one corner). Waiting stretches run at 2× (3× for stretches over 150 s) with a pixel speed chip, the cursor and its click ripple are drawn by the page, and phase captions ride the actions.
+
+## Follow-up 5 (the editor shows the work; the plan's frames really appear)
+
+Fixes shipped (`69440b8`, `b7e74b9`, `882482d`):
+
+- The task stream refreshes the asset, so planned and freshly painted frames appear in the frame list while a run is live (the panel used to sit on a stale single "idle" frame).
+- Only a worker or a fix child badges a frame; the supervisor's inherited scope and the reviewer never mark a frame as working. The supervisor's progress stays in the composer/console.
+- A working frame carries the agent's own cursor jittering inside its square plus a paint ring (whole-pixel steps, `prefers-reduced-motion` off).
+- Roles read as Agent 1 / Agent 2 / Supervisor / Reviewer on every surface.
+- The clarification card caps its height and scrolls the plan body; the drag handle is a standard button; the layer list fills the panel and scrolls only past the viewport; selecting or playing a frame scrolls its row into view.
+- A motion request needs key frames: the supervisor is told, the plan is validated against it, and a supervisor that insists on one frame is taken at its word on the retry.
+- Root cause of the empty cendrawasih: the plan child ended its turn right after `present_plan` came back approved and never called `add_frame`, so the asset kept only its default frame. The approval now carries the next step, the task reads the asset's frame names, sends the plan child back once to create what is missing, and fails with the names if they still are not there (tested).
+
+Recording: `~/Desktop/pixelaition-demo-v2.mp4` (1:46, 1920×1080) — home, target confirmed, plan approved, two agents painting their own frames (the recorder hops to whichever frame is being painted), review, done. No dead air, no foreign asset in the tail. The take predates `882482d`, so its asset still ends on the plan's default frame; the provider was returning stream failures during every later attempt ("Completion provider stream ended before its tool call was complete"), so the fresh take with the frames that are now enforced has to wait for the provider.
