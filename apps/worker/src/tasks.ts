@@ -98,3 +98,21 @@ export function buildTaskDeps(db: Database): AssetDrawDeps {
     },
   };
 }
+
+/**
+ * The reference URLs a worker may look at: everything aimed at "all" plus
+ * everything aimed at one of its frames. Seeding these into the worker's
+ * view_image allow-list lets it see the supervisor's search results without
+ * ever trusting an arbitrary URL.
+ */
+export function referencesForWorker(plan: DrawPlan, workerKey: string): string[] {
+  const worker = plan.workers.find((candidate) => candidate.key === workerKey);
+  if (!worker) return [];
+  return plan.references
+    .filter(
+      (reference) =>
+        reference.appliesTo === "all" ||
+        reference.appliesTo.some((name) => worker.frames.includes(name)),
+    )
+    .map((reference) => reference.url);
+}

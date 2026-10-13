@@ -22,6 +22,7 @@ import {
 } from "@anvia/core/completion";
 import { frameToPng } from "@pixelaition/export";
 import {
+  searchImagesFor,
   createAssetDrawTask,
   type AssetDrawInput,
   type DrawPlan,
@@ -95,7 +96,7 @@ import {
   type SummaryKind,
 } from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
-import { buildTaskDeps } from "./tasks.js";
+import { buildTaskDeps, referencesForWorker } from "./tasks.js";
 
 type PublicEvent = {
   sequence: number;
@@ -990,6 +991,15 @@ async function bindTaskChild(
     });
   }
 
+  // The supervisor's search results ride into the worker's view_image
+  // allow-list, so it can actually look at the references the plan named.
+  if (plan !== null && (role === "worker" || role === "fix") && workerKey !== undefined) {
+    const bound = getRun(childRunId);
+    if (bound !== undefined) {
+      const allowed = searchImagesFor(bound);
+      for (const url of referencesForWorker(plan, workerKey)) allowed.add(url);
+    }
+  }
   mirrorChildEvents(durableTaskId, publicRunId, workerKey);
   void follow(runtime, childRunId, publicRunId, effort);
 }

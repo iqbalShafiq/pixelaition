@@ -34,6 +34,7 @@ export { askInstructions, pixelInstructions } from "./instructions.js";
 export { openCodeGoHeaders, parseModelSpecRow, selectRunTarget } from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";
 export {
+  searchImagesFor,
   bindRun,
   bindRunAsset,
   frameBuffer,
