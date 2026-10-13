@@ -243,7 +243,9 @@ export function Checkbox({
 }) {
   return (
     <label
-      className={`group flex w-full min-w-0 items-center gap-2 text-[12px] ${
+      className={`group ${
+        hideLabel ? "inline-flex" : "flex w-full min-w-0"
+      } items-center gap-2 text-[12px] ${
         disabled ? "cursor-not-allowed opacity-45" : ""
       }`}
     >

@@ -1084,6 +1084,14 @@ export function EditorScreen() {
     setConsoleOpen(true);
     const timer = window.setInterval(() => {
       void client.invalidateQueries({ queryKey: ["asset", assetId] });
+      void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
+        .then((result) => {
+          const card = result.interaction;
+          if (card === null || card === undefined) return;
+          if (answeredIdsRef.current.has(card.id)) return;
+          setPendingInteraction((current) => current ?? card);
+        })
+        .catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
   }, [assetId, client, taskActive]);
