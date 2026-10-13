@@ -57,3 +57,28 @@ the review ran, the task completed, the console and frame badges updated live, a
 the plan/review traces carried their context. The full acceptance (home-created
 project, several assets, steering, a worker question) is **deferred** and listed
 above case by case.
+
+## Whole-branch review (fresh subagent, `opencode-go/deepseek-v4.1-flash#max`)
+
+Reviewed `e3d70ab..b41ea4e` against the spec, plan, evidence, and ledger. Fixed in one pass (`1f77246`, each with a test where cheap):
+
+- **Critical** fix children never bound (their key is not a plan worker key) → frames come from the prompt.
+- **Critical** workspace/home tasks never bound their workers → children bind to `plan.assetId`.
+- **Important** execute-phase matched spawn ids against child keys → workers always read as failed, `review:false` ignored, the review told every worker failed → now matches worker keys (`workerKeys` in the checkpoint).
+- **Important** duplicate worker keys passed validation → rejected.
+- **Important** workers could not read sibling frames → the ownership check moved to write paths (`editFrame`, `paintStroke`, `use_frame`).
+- **Important** the plan committed structure before approval → instructions now commit after.
+- **Important** usage rollup read volatile memory → sums the persisted rows.
+- **Important** one child error killed the watcher → per-cycle catch.
+- **Important** frame badges rendered done as "needs you" → status mapping fixed.
+- **Important** the editor route had no active-task guard → added.
+
+**Deferred (Important, open — not fixed in this pass):**
+
+1. Steering never reaches a live worker: the worker always signals the supervisor and `deliveredSteers` is read only when a review spawns, so a steer sent during execute arrives late and one sent during review is lost. Fix direction: steer the target worker's run directly when its `target` names a live child.
+2. `steerSignalCount` is in-memory; after a restart the next message re-signals `steer-1` and the durable store rejects it (502). Fix direction: derive the next free name from the task record's delivered signals.
+3. After a reload the editor does not seed `taskId`, so worker questions and frame-context steering are unreachable while the badge/counter still show.
+4. Frames added during the plan are invisible in the editor until an incidental refetch (no invalidation on frame-add/task-phase).
+5. The clarify picker's "whole asset" button closes without re-sending and swallows send errors.
+
+**Deferred (Minor):** `useTaskStream` has no unmount close; `trace-check.mjs` can exit 0 on unreadable traces; the re-plan prompt drops attachments; `ask_user` is outside the role gate; `source:"default"` is stored but never logged; a task does not seed the decision/guardrail spend; `taskSnapshot` excludes failed/cancelled tasks; RunConsole has no task header (phase, n/N done, aggregate usage).
