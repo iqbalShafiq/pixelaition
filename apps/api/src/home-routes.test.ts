@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  runTasks,
   createDatabase,
   generationRuns,
   models,
@@ -189,10 +190,13 @@ describe.skipIf(!db)("home runs route", () => {
       }
       if (href.includes("/internal/runs")) {
         lastWorkerBody = JSON.parse(String(init?.body)) as typeof lastWorkerBody;
-        return new Response(JSON.stringify({ durableRunId: randomUUID() }), {
-          status: options.workerStatus ?? 202,
-          headers: { "content-type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ durableRunId: randomUUID(), durableTaskId: randomUUID() }),
+          {
+            status: options.workerStatus ?? 202,
+            headers: { "content-type": "application/json" },
+          },
+        );
       }
       throw new Error(`unexpected fetch: ${href}`);
     });
@@ -382,11 +386,11 @@ describe.skipIf(!db)("home runs route", () => {
         confirm: { projectId, assetId: null, mode: "generate" },
       });
     expect(res.status).toBe(202);
-    const [run] = await live
+    const [task] = await live
       .select()
-      .from(generationRuns)
-      .where(eq(generationRuns.id, res.body.runId));
-    expect(run?.status).toBe("running");
+      .from(runTasks)
+      .where(eq(runTasks.id, res.body.runId));
+    expect(task?.status).toBe("running");
     // The worker request carries the proposal's Jev spend as the run's seed;
     // the worker persists it into the run row as the run progresses.
     expect(lastWorkerBody?.usage).toMatchObject({ jevCalls: 2, jevCost: 0.00005 });
