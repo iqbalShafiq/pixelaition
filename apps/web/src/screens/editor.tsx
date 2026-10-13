@@ -863,19 +863,8 @@ export function EditorScreen() {
         `/api/assets/${assetId}/active-run`,
       ).catch(() => ({ run: null, interaction: null, lastRun: null, history: [] }));
       if (cancelled || sourceRef.current) return;
-      if (result.run) {
-        setRunId(result.run.id);
-        rememberRunModel(result.run.id, result.run.modelId);
-        setConsoleOpen(true);
-        // A waiting run restores its card straight from the row's stored
-        // events; the stream alone cannot be trusted to retain it.
-        setPendingInteraction(result.interaction);
-        log("Rejoined a run that was still going");
-        listen(result.run.id, "", 0);
-        return;
-      }
-      // A drawing run is a task after a reload; rejoin it so the tree,
-      // questions, and frame-context steering keep working.
+      // A drawing run is a task: rejoin it first so the console is the whole
+      // supervisor tree (the per-child streams keep each canvas live).
       const snapshot = await api<{ task: { id: string; status: string } | null }>(
         `/api/assets/${assetId}/task`,
       ).catch(() => ({ task: null }));
@@ -886,9 +875,21 @@ export function EditorScreen() {
         setTaskId(snapshot.task.id);
         setRunId(snapshot.task.id);
         setConsoleOpen(true);
+        setPendingInteraction(result.interaction);
         listenTask(snapshot.task.id, "");
         void task.refetch();
-        log("Rejoined a task that was still going");
+        log("Rejoined the supervisor task that was still going");
+        return;
+      }
+      if (result.run) {
+        setRunId(result.run.id);
+        rememberRunModel(result.run.id, result.run.modelId);
+        setConsoleOpen(true);
+        // A waiting run restores its card straight from the row's stored
+        // events; the stream alone cannot be trusted to retain it.
+        setPendingInteraction(result.interaction);
+        log("Rejoined a run that was still going");
+        listen(result.run.id, "", 0);
         return;
       }
       setPendingInteraction(null);
@@ -1795,7 +1796,17 @@ export function EditorScreen() {
                                   prompt: message,
                                   frameName: name,
                                 }),
-                              }).catch(() => undefined);
+                              }).catch((reason: unknown) => {
+                                const text =
+                                  reason instanceof Error
+                                    ? reason.message
+                                    : "Steering failed.";
+                                setError(text);
+                                notify({
+                                  title: "Could not steer the task",
+                                  description: text,
+                                });
+                              });
                             });
                           }}
                         >

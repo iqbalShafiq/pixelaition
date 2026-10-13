@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { api } from "./api.js";
 import type { RunStreamMessage } from "./run-stream.js";
 
@@ -84,5 +84,6 @@ export function useTaskStream() {
     },
     [],
   );
+  useEffect(() => close, [close]);
   return { open, close };
 }

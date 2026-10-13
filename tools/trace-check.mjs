@@ -73,6 +73,7 @@ for (const { id, role } of traces) {
   }
   if (!response.ok) {
     console.log(`${id.slice(0, 8)} → trace ${traceId}: HTTP ${response.status} (not indexed yet?)`);
+    missing += 1;
     continue;
   }
   const body = await response.json();
@@ -86,6 +87,7 @@ for (const { id, role } of traces) {
   const metadata = JSON.stringify(traceBody?.metadata ?? {});
   if (observations.length === 0) {
     console.log(`${id.slice(0, 8)} → trace ${traceId}: no observations yet`);
+    missing += 1;
     continue;
   }
   const name = role;
