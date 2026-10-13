@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { models, projects, user } from "./schema.js";
+import { generationRuns, models, projects, runTasks, user } from "./schema.js";
 
 describe("schema", () => {
   it("keeps projects owned by a user", () => {
@@ -13,5 +13,24 @@ describe("schema", () => {
     expect(models.efforts.name).toBe("efforts");
     expect(models.position.name).toBe("position");
     expect(models.enabled.name).toBe("enabled");
+  });
+
+  it("keeps the task columns the worker selects", () => {
+    expect(Object.keys(runTasks)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "threadId",
+        "assetId",
+        "status",
+        "phase",
+        "shape",
+        "plan",
+        "usage",
+        "durableTaskId",
+      ]),
+    );
+    expect(Object.keys(generationRuns)).toEqual(
+      expect.arrayContaining(["taskId", "role", "workerKey", "frameIds"]),
+    );
   });
 });

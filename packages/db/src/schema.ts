@@ -241,6 +241,34 @@ export const generationRuns = pgTable("generation_runs", {
   approvedScope: jsonb("approved_scope"),
   /** Token counts and USD cost the run spent, model and Jev split out. */
   usage: jsonb("usage"),
+  /** The task this run belongs to; a supervisor or worker child of it. */
+  taskId: text("task_id").references(() => runTasks.id, { onDelete: "set null" }),
+  /** plan | worker | review | fix, for a run inside a task. */
+  role: text("role"),
+  /** w1..w4 for a worker child. */
+  workerKey: text("worker_key"),
+  /** Frame ids this child owns; every write is checked against it. */
+  frameIds: jsonb("frame_ids"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+/**
+ * One durable asset-draw task per drawing request: Jev's shape, the
+ * validated plan, the phase it is in, and the usage every child rolled up.
+ */
+export const runTasks = pgTable("run_tasks", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id")
+    .notNull()
+    .references(() => generationThreads.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  phase: text("phase").notNull(),
+  shape: jsonb("shape"),
+  plan: jsonb("plan"),
+  usage: jsonb("usage"),
+  durableTaskId: text("durable_task_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
