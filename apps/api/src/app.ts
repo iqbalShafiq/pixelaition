@@ -368,7 +368,9 @@ async function startRunViaWorker(
       .set({ durableRunId: started.durableRunId, status: "running" })
       .where(eq(generationRuns.id, runId));
   }
-  res.status(202).json({ runId, streamId: runId });
+  res
+    .status(202)
+    .json({ runId, streamId: runId, kind: input.mode === "draw" ? "task" : "run" });
 }
 
 export function createApp() {

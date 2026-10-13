@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyRunEvent, formatDuration, type RunRow } from "./run-activity.js";
+import {
+  applyRunEvent,
+  formatDuration,
+  groupRowsByWorker,
+  type RunRow,
+} from "./run-activity.js";
 
 // Payloads shaped like the real worker stream (captured from pxl-trial logs):
 // tool_started data = { operationId, input: { turn, toolCall: { toolName, input }, args } }
@@ -287,5 +292,59 @@ describe("formatting", () => {
     expect(formatDuration(900)).toBe("0.9s");
     expect(formatDuration(12_000)).toBe("12s");
     expect(formatDuration(121_000)).toBe("2m 01s");
+  });
+});
+
+describe("task events", () => {
+  it("maps worker status, phases, steering, and questions into rows", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(rows, 1, "task-phase", { phase: "execute", status: "running" });
+    expect(rows.at(-1)).toMatchObject({ kind: "task-phase", phase: "execute" });
+    rows = applyRunEvent(rows, 2, "worker-status", {
+      workerKey: "w2",
+      frames: ["jalan-a"],
+      status: "working",
+    });
+    expect(rows.at(-1)).toMatchObject({
+      kind: "worker",
+      workerKey: "w2",
+      frames: ["jalan-a"],
+    });
+    rows = applyRunEvent(rows, 3, "steering-routed", {
+      routed: "w2",
+      message: "the shadow is too light",
+      frameName: "jalan-a",
+    });
+    expect(rows.at(-1)).toMatchObject({
+      kind: "steering",
+      routed: "w2",
+      frameName: "jalan-a",
+    });
+    rows = applyRunEvent(rows, 4, "question-pending", { workerKey: "w1" });
+    expect(rows.at(-1)).toMatchObject({ kind: "question", workerKey: "w1" });
+  });
+
+  it("tags rows a mirrored child event created with its worker key", () => {
+    const rows = applyRunEvent([], 1, "tool_started", {
+      operationId: "run-9",
+      toolCall: { toolName: "paint_stroke", input: {} },
+      workerKey: "w2",
+    });
+    expect(rows.at(-1)).toMatchObject({ kind: "tool", workerKey: "w2" });
+  });
+});
+
+describe("groupRowsByWorker", () => {
+  it("puts supervisor rows first, then workers in key order", () => {
+    const rows = [
+      { id: "1", kind: "tool", name: "paint_stroke", state: "ok", workerKey: "w2" },
+      { id: "2", kind: "phase", label: "plan", state: "done" },
+      { id: "3", kind: "tool", name: "fill_rect", state: "ok", workerKey: "w1" },
+    ] as never[];
+    expect(groupRowsByWorker(rows).map((group) => group.workerKey)).toEqual([
+      null,
+      "w1",
+      "w2",
+    ]);
   });
 });

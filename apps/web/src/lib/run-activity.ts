@@ -24,6 +24,35 @@ export type RunRow =
       name: string;
     }
   | {
+      /** One worker of a task: its frames and its live state. */
+      id: string;
+      kind: "worker";
+      workerKey: string;
+      status: string;
+      frames: string[];
+    }
+  | {
+      /** A task phase transition (plan, execute, review). */
+      id: string;
+      kind: "task-phase";
+      phase: string;
+      status: string;
+    }
+  | {
+      /** A steering message and where it went. */
+      id: string;
+      kind: "steering";
+      routed: string;
+      message: string;
+      frameName?: string;
+    }
+  | {
+      /** A worker is waiting for the user's answer. */
+      id: string;
+      kind: "question";
+      workerKey: string;
+    }
+  | {
       /** The run's live cost and token totals; replaced on every update. */
       id: string;
       kind: "usage";
@@ -147,10 +176,15 @@ export function applyRunEvent(
   const operationId =
     typeof body?.operationId === "string" ? body.operationId : undefined;
   const id = operationId ?? `seq-${sequence}`;
+  // Child events mirrored into the task stream carry their worker key; every
+  // row they create belongs to that worker's group in the console tree.
+  const workerKey = typeof body?.workerKey === "string" ? body.workerKey : undefined;
+  const tag = <T extends RunRow>(row: T): T =>
+    workerKey === undefined ? row : ({ ...row, workerKey } as T);
 
   if (type === "model_started") {
     if (rows.some((row) => row.id === id)) return rows;
-    return [...rows, { id, kind: "phase", label: "thinking", state: "running" }];
+    return [...rows, tag({ id, kind: "phase", label: "thinking", state: "running" })];
   }
   // Interactions render as the card above the composer, never as step rows;
   // the resolved marker only retires the card.
@@ -176,13 +210,13 @@ export function applyRunEvent(
     const finalName = name ?? "tool";
     return [
       ...rows,
-      {
+      tag({
         id,
         kind: "tool",
         name: finalName,
         summary: toolSummary(finalName, input),
         state: "running",
-      },
+      }),
     ];
   }
   if (type === "tool_completed") {
@@ -242,6 +276,52 @@ export function applyRunEvent(
       },
     ];
   }
+  if (type === "task-phase") {
+    const phase = typeof body?.phase === "string" ? body.phase : "task";
+    const status = typeof body?.status === "string" ? body.status : "running";
+    return [...rows, { id: `phase-${sequence}`, kind: "task-phase", phase, status }];
+  }
+  if (type === "worker-spawned" || type === "worker-status") {
+    const key = typeof body?.workerKey === "string" ? body.workerKey : "worker";
+    const status = typeof body?.status === "string" ? body.status : "running";
+    const frames = Array.isArray(body?.frames)
+      ? (body.frames as unknown[]).filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [];
+    const existing = rows.find((row) => row.kind === "worker" && row.workerKey === key);
+    if (existing !== undefined && existing.kind === "worker") {
+      return rows.map((row) =>
+        row.id === existing.id ? { ...row, status, frames } : row,
+      );
+    }
+    return [
+      ...rows,
+      tag({ id: `worker-${key}`, kind: "worker", workerKey: key, status, frames }),
+    ];
+  }
+  if (type === "steering-routed") {
+    const routed = typeof body?.routed === "string" ? body.routed : "supervisor";
+    const message = typeof body?.message === "string" ? body.message : "";
+    const frameName = typeof body?.frameName === "string" ? body.frameName : undefined;
+    return [
+      ...rows,
+      {
+        id: `steer-${sequence}`,
+        kind: "steering",
+        routed,
+        message,
+        ...(frameName !== undefined ? { frameName } : {}),
+      },
+    ];
+  }
+  if (type === "question-pending") {
+    const key = typeof body?.workerKey === "string" ? body.workerKey : "worker";
+    return [
+      ...rows,
+      tag({ id: `question-${sequence}`, kind: "question", workerKey: key }),
+    ];
+  }
   if (type === "usage") {
     // Live events carry the flat totals; the persisted pass wraps them as
     // `{ usage }`, and the console must read both shapes.
@@ -270,13 +350,13 @@ export function applyRunEvent(
   if (type === "steering_queued" || type === "steering_applied") {
     return [
       ...rows,
-      {
+      tag({
         id: `steer-${sequence}`,
         kind: "tool",
         name: "follow_up",
         summary: type === "steering_applied" ? "applied" : "queued for the next turn",
         state: "ok",
-      },
+      }),
     ];
   }
   if (type === "done") {
@@ -309,4 +389,28 @@ export function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.round((ms % 60_000) / 1000);
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+/**
+ * The console tree: supervisor rows (no worker key) first, then each worker's
+ * rows in key order, so the plan, the workers, and the review read top to
+ * bottom.
+ */
+export function groupRowsByWorker(
+  rows: Array<RunRow & { workerKey?: string | null }>,
+): Array<{
+  workerKey: string | null;
+  rows: Array<RunRow & { workerKey?: string | null }>;
+}> {
+  const groups = new Map<string | null, Array<RunRow & { workerKey?: string | null }>>();
+  for (const row of rows) {
+    const key = row.workerKey ?? null;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  const keys = [...groups.keys()].sort((left, right) => {
+    if (left === null) return -1;
+    if (right === null) return 1;
+    return left.localeCompare(right);
+  });
+  return keys.map((workerKey) => ({ workerKey, rows: groups.get(workerKey) ?? [] }));
 }

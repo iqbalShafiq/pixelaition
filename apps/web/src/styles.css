@@ -522,3 +522,107 @@
     border-radius: 0;
   }
 }
+
+/* Task worker states: whole-pixel, steps() loops that the reduced-motion
+   block below turns off. Sparkles are 2x2 cells drawn in palette tokens. */
+@keyframes worker-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes dither-sweep {
+  from {
+    background-position: -8px 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+@keyframes sparkle {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  40% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(3px, -3px);
+  }
+}
+@keyframes done-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes glitch {
+  0% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: translateX(2px);
+  }
+}
+@keyframes ask-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes frame-crossfade {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.worker-blink {
+  animation: worker-blink 900ms steps(2, end) infinite;
+}
+.dither-sweep {
+  animation: dither-sweep 1.4s steps(8, end) infinite;
+}
+.sparkle {
+  animation: sparkle 1.2s steps(4, end) infinite;
+}
+.done-pop {
+  animation: done-pop 220ms steps(3, end) both;
+}
+.glitch {
+  animation: glitch 180ms steps(2, end) both;
+}
+.ask-pulse {
+  animation: ask-pulse 1s steps(2, end) infinite;
+}
+.frame-crossfade {
+  animation: frame-crossfade 120ms steps(2, end) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .worker-blink,
+  .dither-sweep,
+  .sparkle,
+  .done-pop,
+  .glitch,
+  .ask-pulse,
+  .frame-crossfade {
+    animation: none;
+  }
+}

@@ -1,4 +1,5 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
+import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
@@ -102,8 +103,10 @@ function FrameRow({
   onDelete,
   onKeyboardMove,
   onDragFinished,
+  taskState,
 }: {
   frame: FrameDto;
+  taskState?: FrameTaskState;
   index: number;
   count: number;
   palette: string[];
@@ -181,7 +184,11 @@ function FrameRow({
             {frame.name}
           </span>
         )}
-        {current && locked ? (
+        {taskState !== undefined ? (
+          <span className="pointer-events-none ml-1 shrink-0">
+            <FrameStatus state={taskState} />
+          </span>
+        ) : current && locked ? (
           <span className="pointer-events-none text-pixel-mono">drawing</span>
         ) : null}
         <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
@@ -264,6 +271,7 @@ export function FramePanel({
   activeId,
   playing,
   locked,
+  taskFrames,
   onSelect,
   onTogglePlay,
   onAdd,
@@ -277,6 +285,8 @@ export function FramePanel({
   activeId: string | null;
   playing: boolean;
   locked: boolean;
+  /** Per-frame task state, keyed by frame id, while a task runs. */
+  taskFrames?: Map<string, FrameTaskState>;
   onSelect: (frameId: string) => void;
   onTogglePlay: () => void;
   onAdd: () => void;
@@ -384,6 +394,9 @@ export function FramePanel({
                 count={list.length}
                 palette={palette}
                 current={current}
+                {...(taskFrames?.get(frame.id) !== undefined
+                  ? { taskState: taskFrames.get(frame.id) }
+                  : {})}
                 locked={locked}
                 editing={editingId === frame.id}
                 draft={draft}

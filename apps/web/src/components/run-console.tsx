@@ -23,9 +23,11 @@ import {
   Select,
   Square,
   Wrench,
+  Info,
+  Send,
   type IconProps,
 } from "./pixel-icons.js";
-import { formatDuration, type RunRow } from "../lib/run-activity.js";
+import { groupRowsByWorker, formatDuration, type RunRow } from "../lib/run-activity.js";
 import {
   InteractionCard,
   type InteractionResponse,
@@ -180,6 +182,24 @@ export function RunConsole({
     if (row.kind === "usage") {
       return <Clipboard width={12} height={12} className="text-muted" />;
     }
+    if (row.kind === "worker") {
+      return row.status === "failed" ? (
+        <Close width={12} height={12} className="text-erase" />
+      ) : row.status === "waiting" ? (
+        <Info width={12} height={12} className="text-accent" />
+      ) : (
+        <PixelLoader size={12} />
+      );
+    }
+    if (row.kind === "task-phase") {
+      return <Grid width={12} height={12} className="text-muted" />;
+    }
+    if (row.kind === "steering") {
+      return <Send width={12} height={12} className="text-accent" />;
+    }
+    if (row.kind === "question") {
+      return <Info width={12} height={12} className="text-accent" />;
+    }
     if (row.kind === "tool") {
       const Icon = toolIcons[row.name] ?? Wrench;
       return (
@@ -237,44 +257,74 @@ export function RunConsole({
             </div>
           ) : null}
           <ul className="grid gap-1">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex items-start gap-1.5 text-pixel-mono text-muted"
-              >
-                <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
-                  {rowIcon(row)}
-                </span>
-                {row.kind === "phase" ? (
-                  <span className={row.state === "running" ? "text-ink" : ""}>
-                    {row.label}
-                    {row.state === "running" ? "…" : ""}
+            {groupRowsByWorker(rows).flatMap((group) => [
+              ...(group.workerKey === null
+                ? []
+                : [
+                    <li
+                      key={`group-${group.workerKey}`}
+                      className="mt-1 flex items-center gap-1.5 border-t-2 border-line pt-1 text-pixel-mono tracking-[0.16em] text-muted uppercase"
+                    >
+                      <span className="text-accent">{group.workerKey}</span>
+                      <span>worker</span>
+                    </li>,
+                  ]),
+              ...group.rows.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex items-start gap-1.5 text-pixel-mono text-muted"
+                >
+                  <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
+                    {rowIcon(row)}
                   </span>
-                ) : row.kind === "asset" ? (
-                  <span className="text-ink">asset · {row.name}</span>
-                ) : row.kind === "usage" ? (
-                  <span
-                    className="text-ink"
-                    title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
-                  >
-                    usage · {formatCost(row.cost)}
-                    {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
-                    {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
-                  </span>
-                ) : row.kind === "tool" ? (
-                  <span className={row.state === "error" ? "text-erase" : "text-ink"}>
-                    {row.name}
-                    {row.summary ? ` · ${row.summary}` : ""}
-                    {row.detail ? ` — ${row.detail}` : ""}
-                  </span>
-                ) : (
-                  <span className={row.state === "failed" ? "text-erase" : "text-ink"}>
-                    {row.label}
-                    {row.detail ? ` — ${row.detail}` : ""}
-                  </span>
-                )}
-              </li>
-            ))}
+                  {row.kind === "phase" ? (
+                    <span className={row.state === "running" ? "text-ink" : ""}>
+                      {row.label}
+                      {row.state === "running" ? "…" : ""}
+                    </span>
+                  ) : row.kind === "asset" ? (
+                    <span className="text-ink">asset · {row.name}</span>
+                  ) : row.kind === "usage" ? (
+                    <span
+                      className="text-ink"
+                      title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
+                    >
+                      usage · {formatCost(row.cost)}
+                      {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
+                      {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
+                    </span>
+                  ) : row.kind === "tool" ? (
+                    <span className={row.state === "error" ? "text-erase" : "text-ink"}>
+                      {row.name}
+                      {row.summary ? ` · ${row.summary}` : ""}
+                      {row.detail ? ` — ${row.detail}` : ""}
+                    </span>
+                  ) : row.kind === "worker" ? (
+                    <span className={row.status === "failed" ? "text-erase" : "text-ink"}>
+                      {row.workerKey} · {row.status}
+                      {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
+                    </span>
+                  ) : row.kind === "task-phase" ? (
+                    <span className="text-muted">
+                      {row.phase} · {row.status}
+                    </span>
+                  ) : row.kind === "steering" ? (
+                    <span className="text-accent">
+                      steering → {row.routed}
+                      {row.frameName ? ` (${row.frameName})` : ""}
+                      {row.message ? ` · ${row.message.slice(0, 60)}` : ""}
+                    </span>
+                  ) : row.kind === "question" ? (
+                    <span className="text-accent">{row.workerKey} needs you</span>
+                  ) : (
+                    <span className={row.state === "failed" ? "text-erase" : "text-ink"}>
+                      {row.label}
+                      {row.detail ? ` — ${row.detail}` : ""}
+                    </span>
+                  )}
+                </li>
+              )),
+            ])}
           </ul>
           {asset && !running ? (
             <div className="mt-2 border-t-2 border-line pt-2">

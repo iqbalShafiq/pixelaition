@@ -37,6 +37,7 @@ import {
 } from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
+import { useTaskSnapshot, useTaskStream } from "../lib/task.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import { QueueDock } from "../components/queue-dock.js";
@@ -189,6 +190,9 @@ export function EditorScreen() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  // A drawing run is one durable task; its id drives the task stream while
+  // each worker's own stream feeds that frame's canvas.
+  const [taskId, setTaskId] = useState<string | null>(null);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
   // The models of runs this session started or rejoined, so the history panel
   // can badge a version `Agent · <model>` instead of a bare `Agent`. The
@@ -222,6 +226,8 @@ export function EditorScreen() {
   const viewRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
+  const taskStream = useTaskStream();
+  const task = useTaskSnapshot(assetId, true);
   const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
   const fitted = useRef<string | null>(null);
   // Follow-ups typed while a run works; persisted per asset, drained one by
@@ -261,7 +267,12 @@ export function EditorScreen() {
     buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
       ? activeLayerId
       : (buffer?.layers[0]?.id ?? "");
-  const running = runId !== null;
+  const taskActive =
+    taskId !== null &&
+    task.data?.task !== null &&
+    task.data?.task !== undefined &&
+    ["queued", "running", "waiting"].includes(task.data.task.status);
+  const running = runId !== null || taskActive;
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // A live run can touch every frame of the asset, so the editor locks all of
   // them; runFrameId still marks the frame the agent is painting on.
@@ -522,6 +533,94 @@ export function EditorScreen() {
     );
   }, []);
 
+  /** A worker's stroke lands in its frame's draft; the viewed frame follows. */
+  const applyStroke = useCallback(
+    (raw: Record<string, unknown>, fallbackFrameId: string) => {
+      const data = raw as {
+        frameId?: string;
+        layers?: FrameDto["layers"];
+        palette?: string[];
+      };
+      const target = data.frameId ?? fallbackFrameId;
+      // A set_palette repaint carries the asset's new palette: every frame
+      // adopts it, exactly like the editor's palette panel.
+      if (data.palette) {
+        const palette = [...data.palette];
+        setDrafts((current) => {
+          let changed = false;
+          const next = { ...current };
+          for (const [id, entry] of Object.entries(next)) {
+            if (entry.present.palette.join(",") === palette.join(",")) continue;
+            next[id] = { ...entry, present: { ...entry.present, palette } };
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      }
+      if (data.layers && target) {
+        setRunFrameId(target);
+        const layers = data.layers.map((layer) => ({
+          ...layer,
+          pixels: base64ToBytes(layer.pixels),
+        }));
+        setDrafts((current) => {
+          const entry = current[target];
+          if (!entry) return current;
+          return {
+            ...current,
+            [target]: { ...entry, present: { ...entry.present, layers } },
+          };
+        });
+      }
+    },
+    [],
+  );
+
+  /** The task stream drives the console tree; only task-complete ends it. */
+  const listenTask = useCallback(
+    (id: string, fallbackFrameId: string) => {
+      taskStream.open(id, {
+        onMessage: (body) => {
+          resetRejoin();
+          setRows((current) =>
+            applyRunEvent(current, body.sequence, body.type, body.data),
+          );
+          if (body.type === "canvas-stroke") {
+            applyStroke(body.data as Record<string, unknown>, fallbackFrameId);
+            return;
+          }
+          if (body.type === "task-complete") {
+            setTaskId(null);
+            taskStream.close();
+            void task.refetch();
+            log("The task finished");
+          }
+        },
+        onDrop: () => {
+          // A dropped task stream is not a stopped task: the snapshot decides.
+          void api<{ task: { status?: string } | null }>(`/api/assets/${assetId}/task`)
+            .catch(() => ({ task: null }))
+            .then((result) => {
+              const status = result.task?.status;
+              if (
+                status !== undefined &&
+                ["queued", "running", "waiting"].includes(status)
+              ) {
+                const firstDrop = paceRejoin(() => listenTask(id, ""));
+                if (firstDrop) log("The task stream dropped; rejoining the agent");
+                return;
+              }
+              setTaskId(null);
+              setRunId(null);
+              setRunFrameId(null);
+              log("The task stream closed");
+            });
+        },
+      });
+    },
+    [applyStroke, assetId, log, paceRejoin, resetRejoin, task, taskStream],
+  );
+
   const listen = useCallback(
     (id: string, fallbackFrameId: string, after = 0) => {
       openStream(id, {
@@ -532,42 +631,7 @@ export function EditorScreen() {
             applyRunEvent(current, body.sequence, body.type, body.data),
           );
           if (body.type === "canvas-stroke") {
-            const data = body.data as {
-              frameId?: string;
-              layers?: FrameDto["layers"];
-              palette?: string[];
-            };
-            const target = data.frameId ?? fallbackFrameId;
-            // A set_palette repaint carries the asset's new palette: every
-            // frame adopts it, exactly like the editor's palette panel.
-            if (data.palette) {
-              const palette = [...data.palette];
-              setDrafts((current) => {
-                let changed = false;
-                const next = { ...current };
-                for (const [id, entry] of Object.entries(next)) {
-                  if (entry.present.palette.join(",") === palette.join(",")) continue;
-                  next[id] = { ...entry, present: { ...entry.present, palette } };
-                  changed = true;
-                }
-                return changed ? next : current;
-              });
-            }
-            if (data.layers && target) {
-              setRunFrameId(target);
-              const layers = data.layers.map((layer) => ({
-                ...layer,
-                pixels: base64ToBytes(layer.pixels),
-              }));
-              setDrafts((current) => {
-                const entry = current[target];
-                if (!entry) return current;
-                return {
-                  ...current,
-                  [target]: { ...entry, present: { ...entry.present, layers } },
-                };
-              });
-            }
+            applyStroke(body.data as Record<string, unknown>, fallbackFrameId);
             return;
           }
           if (body.type === "status") {
@@ -694,6 +758,28 @@ export function EditorScreen() {
       sourceRef,
     ],
   );
+
+  // While a task runs, each worker's own stream feeds its frame's canvas; the
+  // task stream stays lean (no strokes) and drives the tree.
+  const workerRunIds = (task.data?.workers ?? [])
+    .map((worker) => worker.runId)
+    .filter((id): id is string => typeof id === "string");
+  const workerRunKey = workerRunIds.join(",");
+  useEffect(() => {
+    if (taskId === null || workerRunIds.length === 0) return;
+    const sources = workerRunIds.map((id) => {
+      const source = new EventSource(`/api/runs/${id}/stream?after=0`);
+      source.onmessage = (event) => {
+        const body = JSON.parse(event.data) as { type: string; data: unknown };
+        if (body.type !== "canvas-stroke") return;
+        applyStroke(body.data as Record<string, unknown>, "");
+      };
+      return source;
+    });
+    return () => {
+      for (const source of sources) source.close();
+    };
+  }, [taskId, workerRunKey, applyStroke]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1016,7 +1102,7 @@ export function EditorScreen() {
           method: "PATCH",
           body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
         });
-        const started = await api<{ runId: string }>("/api/runs", {
+        const started = await api<{ runId: string; kind?: "task" | "run" }>("/api/runs", {
           method: "POST",
           body: JSON.stringify({
             assetId,
@@ -1040,7 +1126,12 @@ export function EditorScreen() {
         displayedRunIdRef.current = started.runId;
         setRunFrameId(frameId);
         log(`Run ${started.runId.slice(0, 8)} started`);
-        listen(started.runId, frameId);
+        if (started.kind === "task") {
+          setTaskId(started.runId);
+          listenTask(started.runId, frameId);
+        } else {
+          listen(started.runId, frameId);
+        }
       } catch (reason) {
         // Nothing was lost: the prompt comes back for a retry.
         if (textOverride === undefined) setPrompt(text);
@@ -1196,6 +1287,16 @@ export function EditorScreen() {
         activeId={frameId}
         playing={playing}
         locked={running}
+        taskFrames={
+          new Map(
+            (task.data?.workers ?? []).flatMap((worker) =>
+              worker.frames.map(
+                (frame) =>
+                  [frame.id, { status: frame.status, workerKey: worker.key }] as const,
+              ),
+            ),
+          )
+        }
         onSelect={(id) => {
           setFrameId(id);
           setSelection(null);
