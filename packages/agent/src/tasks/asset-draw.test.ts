@@ -228,6 +228,32 @@ describe("asset-draw plan phase", () => {
   });
 });
 
+describe("asset-draw execute phase", () => {
+  it("completes without a review when every worker succeeded and Jev said no review", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const { ctx } = fakeCtx({
+      checkpoint: {
+        phase: "execute",
+        plan,
+        planKey: "plan",
+        workerIds: ["child-w1", "child-w2"],
+        workerKeys: ["w1", "w2"],
+      },
+      children: [
+        { id: "child-w1", key: "w1", outcome: { status: "completed", output: "done" } },
+        { id: "child-w2", key: "w2", outcome: { status: "completed", output: "done" } },
+      ],
+    });
+    const noReview = { ...input, review: false };
+    const withNoReview = { ...ctx, input: noReview } as typeof ctx;
+    expect(await run(task, withNoReview)).toMatchObject({
+      status: "completed",
+      output: { rounds: 0, workers: 2 },
+    });
+  });
+});
+
 describe("asset-draw review phase", () => {
   it("spawns the review continuing the plan and finishes when it approves", async () => {
     const task = createAssetDrawTask(deps);

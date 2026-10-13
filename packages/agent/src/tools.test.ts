@@ -155,6 +155,28 @@ describe("worker frame ownership", () => {
     ).rejects.toThrow("The review role cannot call paint_stroke.");
     releaseRun("run-1");
   });
+  it("lets a worker read a sibling frame but not write it", async () => {
+    boundRun(undefined, undefined, {
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+    });
+    // Reading a sibling is how a worker keeps its style consistent.
+    await expect(
+      tool("read_frame").call({ frameId: "frame-2" }, { operationId: "run-1" }),
+    ).resolves.toBeDefined();
+    await expect(
+      tool("paint_stroke").call(
+        {
+          frameId: "frame-2",
+          layerId: "a",
+          label: "x",
+          points: [{ x: 0, y: 0, color: 1 }],
+        },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("That frame belongs to another worker.");
+    releaseRun("run-1");
+  });
   it("refuses use_frame to a sibling frame", async () => {
     boundRun(undefined, undefined, { ownedFrameIds: new Set(["frame-1"]) });
     await expect(

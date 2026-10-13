@@ -60,6 +60,19 @@ describe("validatePlan", () => {
       error: 'Frame "walk" is assigned to two workers.',
     });
   });
+  it("refuses a duplicated worker key", () => {
+    const plan = {
+      ...base,
+      workers: [
+        { key: "w1", frames: ["idle"] },
+        { key: "w1", frames: ["walk"] },
+      ],
+    };
+    expect(validatePlan(plan, limits)).toEqual({
+      ok: false,
+      error: 'The plan uses worker key "w1" twice.',
+    });
+  });
   it("caps workers and palette", () => {
     const many = {
       ...base,

@@ -55,6 +55,13 @@ export function validatePlan(
       error: `The plan draws ${plan.frames.length} frames; the cap is ${limits.maxFrames}.`,
     };
   }
+  const keys = new Set<string>();
+  for (const worker of plan.workers) {
+    if (keys.has(worker.key)) {
+      return { ok: false, error: `The plan uses worker key "${worker.key}" twice.` };
+    }
+    keys.add(worker.key);
+  }
   if (plan.workers.length > limits.maxWorkers) {
     return {
       ok: false,

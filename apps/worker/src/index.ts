@@ -854,12 +854,19 @@ function framesForRole(
   role: string,
   workerKey: string | undefined,
   assetFrames: Array<{ id: string; name: string }>,
+  prompt: string,
 ): string[] {
   if (plan === null) return assetFrames.slice(0, 1).map((frame) => frame.id);
   const names =
-    role === "worker" || role === "fix"
+    role === "worker"
       ? (plan.workers.find((worker) => worker.key === workerKey)?.frames ?? [])
-      : plan.frames.map((frame) => frame.name);
+      : role === "fix"
+        ? // A fix child names its frame in the prompt; its key is fix-N, not a
+          // plan worker key, so the prompt is the reliable source.
+          plan.frames
+            .filter((frame) => prompt.includes(frame.name))
+            .map((frame) => frame.name)
+        : plan.frames.map((frame) => frame.name);
   return names
     .map((name) => assetFrames.find((frame) => frame.name === name)?.id)
     .filter((id): id is string => id !== undefined);
@@ -961,10 +968,13 @@ async function bindTaskChild(
     },
   });
 
-  const asset = input.assetId === null ? undefined : await loadAsset(input.assetId);
+  // A workspace task starts unbound; the plan's assetId is the one its plan
+  // child created, so children bind to the same asset.
+  const boundAssetId = input.assetId ?? plan?.assetId ?? null;
+  const asset = boundAssetId === null ? undefined : await loadAsset(boundAssetId);
   const assetFrames =
     asset?.frames.map((frame) => ({ id: frame.id, name: frame.name })) ?? [];
-  const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames);
+  const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames, spawnPrompt);
 
   if (existingRow === undefined) {
     await db.insert(generationRuns).values({
@@ -1031,16 +1041,23 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
   const totals = emptyUsage();
   for (const child of children) {
     if (child.durableRunId === null) continue;
-    const usage = usageFor(child.durableRunId);
-    totals.input += usage.input;
-    totals.output += usage.output;
-    totals.total += usage.total;
-    totals.cached += usage.cached;
-    totals.cost += usage.cost;
-    totals.modelCalls += usage.modelCalls;
-    totals.modelCost += usage.modelCost;
-    totals.jevCalls += usage.jevCalls;
-    totals.jevCost += usage.jevCost;
+    // The in-memory map is dropped when a run ends; the row's persisted usage
+    // is the durable record and survives restarts.
+    const [row] = await db
+      .select({ usage: generationRuns.usage })
+      .from(generationRuns)
+      .where(eq(generationRuns.durableRunId, child.durableRunId));
+    const usage =
+      (row?.usage as Partial<typeof totals> | null) ?? usageFor(child.durableRunId);
+    totals.input += usage.input ?? 0;
+    totals.output += usage.output ?? 0;
+    totals.total += usage.total ?? 0;
+    totals.cached += usage.cached ?? 0;
+    totals.cost += usage.cost ?? 0;
+    totals.modelCalls += usage.modelCalls ?? 0;
+    totals.modelCost += usage.modelCost ?? 0;
+    totals.jevCalls += usage.jevCalls ?? 0;
+    totals.jevCost += usage.jevCost ?? 0;
   }
   await db.update(runTasks).set({ usage: totals }).where(eq(runTasks.id, taskRowId));
   publish(durableTaskId, "usage", { ...totals });
@@ -1058,44 +1075,52 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
   try {
     const handle = await runtime.getTask(durableTaskId);
     for await (const _event of handle.stream({ abortSignal: controller.signal })) {
-      const snapshot = await handle.snapshot();
-      const record = snapshot.task;
-      const graph = await handle.graph();
-      const input = record.input as AssetDrawInput;
-      const checkpoint = record.checkpoint as { phase?: string; plan?: DrawPlan };
-      const plan = checkpoint.plan ?? (row.plan as DrawPlan | null) ?? null;
-      const terminal = ["completed", "failed", "cancelled"].includes(record.status);
-      await db
-        .update(runTasks)
-        .set({
+      try {
+        const snapshot = await handle.snapshot();
+        const record = snapshot.task;
+        const graph = await handle.graph();
+        const input = record.input as AssetDrawInput;
+        const checkpoint = record.checkpoint as { phase?: string; plan?: DrawPlan };
+        const plan = checkpoint.plan ?? (row.plan as DrawPlan | null) ?? null;
+        const terminal = ["completed", "failed", "cancelled"].includes(record.status);
+        await db
+          .update(runTasks)
+          .set({
+            phase: checkpoint.phase ?? row.phase,
+            status: record.status,
+            ...(checkpoint.plan !== undefined ? { plan: checkpoint.plan } : {}),
+            ...(plan !== null && plan.assetId.length > 0
+              ? { assetId: plan.assetId }
+              : {}),
+            ...(terminal ? { finishedAt: new Date() } : {}),
+          })
+          .where(eq(runTasks.id, row.id));
+        publish(durableTaskId, "task-phase", {
           phase: checkpoint.phase ?? row.phase,
           status: record.status,
-          ...(checkpoint.plan !== undefined ? { plan: checkpoint.plan } : {}),
-          ...(plan !== null && plan.assetId.length > 0 ? { assetId: plan.assetId } : {}),
-          ...(terminal ? { finishedAt: new Date() } : {}),
-        })
-        .where(eq(runTasks.id, row.id));
-      publish(durableTaskId, "task-phase", {
-        phase: checkpoint.phase ?? row.phase,
-        status: record.status,
-      });
-      for (const node of graph.nodes) {
-        if (node.id === record.id) continue;
-        await bindTaskChild(runtime, durableTaskId, row.id, input, plan, {
-          key: node.key,
-          ...(node.agentRunId !== undefined ? { agentRunId: node.agentRunId } : {}),
-          status: node.status,
-          input: node.input,
         });
-        publish(durableTaskId, node.agentRunId ? "worker-status" : "worker-spawned", {
-          workerKey: node.key,
-          status: node.status,
-        });
-      }
-      if (terminal) {
-        await rollupTaskUsage(row.id, durableTaskId);
-        publish(durableTaskId, "task-complete", { status: record.status });
-        break;
+        for (const node of graph.nodes) {
+          if (node.id === record.id) continue;
+          await bindTaskChild(runtime, durableTaskId, row.id, input, plan, {
+            key: node.key,
+            ...(node.agentRunId !== undefined ? { agentRunId: node.agentRunId } : {}),
+            status: node.status,
+            input: node.input,
+          });
+          publish(durableTaskId, node.agentRunId ? "worker-status" : "worker-spawned", {
+            workerKey: node.key,
+            status: node.status,
+          });
+        }
+        if (terminal) {
+          await rollupTaskUsage(row.id, durableTaskId);
+          publish(durableTaskId, "task-complete", { status: record.status });
+          break;
+        }
+      } catch (reason) {
+        // A transient failure on one cycle must not end the whole watcher and
+        // leave the task row non-terminal (and the asset locked).
+        console.error(`[task] watch ${durableTaskId} cycle: ${boundedReason(reason)}`);
       }
     }
   } catch (reason) {

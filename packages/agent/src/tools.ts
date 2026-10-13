@@ -75,7 +75,6 @@ function resolveFrame(
   frameId?: string,
 ): { id: string; name: string; buffer: FrameBuffer; frame: RunFrame } {
   const id = frameId ?? run.currentFrameId;
-  assertOwnedFrame(run, id);
   const buffer = frameBuffer(run, frameId);
   const frame = run.frames.get(id);
   if (!frame) throw new Error("Choose or create a frame first.");
@@ -108,6 +107,9 @@ function editFrame(
   command: Command,
 ): { id: string; buffer: FrameBuffer } {
   const frame = resolveFrame(run, frameId);
+  // A worker may write only its own frames; reads stay open so it can look at
+  // the neighbours for reference.
+  assertOwnedFrame(run, frame.id);
   // Every command that names a layer takes an id or a name; normalize here so
   // no layer tool has to know the difference.
   const ref = (command as { layerId?: unknown }).layerId;
@@ -1092,6 +1094,7 @@ export function createPixelTools(
       const run = requireRun(context.operationId);
       requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
       run.currentFrameId = frame.id;
       return { currentFrameId: frame.id, name: frame.name };
     },

@@ -278,6 +278,20 @@ async function startRunViaWorker(
     };
   },
 ): Promise<void> {
+  // One task per asset: the guard runs here as well as in the worker, because
+  // a task's child rows may not exist yet when the second request arrives.
+  if (
+    input.mode === "draw" &&
+    input.target.scope === "asset" &&
+    (await assetHasActiveRun(db, input.target.assetId))
+  ) {
+    return fail(
+      res,
+      409,
+      "RUN_IN_PROGRESS",
+      "This frame already has an unfinished run; wait for it to finish or cancel it first.",
+    );
+  }
   // A drawing request is one durable task; the API owns its public id and the
   // worker records the durable task id on the row. An ask stays a single run.
   const runId =
@@ -1445,6 +1459,14 @@ export function createApp() {
         }
         if (state?.status !== undefined) status = state.status;
       }
+      const frameStatus =
+        status === "succeeded" || status === "completed"
+          ? "done"
+          : status === "failed" || status === "cancelled"
+            ? "failed"
+            : status === "waiting"
+              ? "asking"
+              : "working";
       workers.push({
         key: child.workerKey ?? child.role ?? "run",
         runId: child.id,
@@ -1452,7 +1474,7 @@ export function createApp() {
         frames: frameIds.map((id) => ({
           id,
           name: frameName.get(id) ?? "frame",
-          status: status === "running" ? "working" : status,
+          status: frameStatus,
         })),
         ...(pendingInteraction !== undefined ? { pendingInteraction } : {}),
       });

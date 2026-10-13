@@ -53,6 +53,8 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     plan: drawPlanSchema,
     planKey: z.string(),
     workerIds: z.array(z.string()),
+    // The join needs spawn ids; outcome checks need the stable keys.
+    workerKeys: z.array(z.string()).optional(),
   }),
   z.object({
     phase: z.literal("review"),
@@ -277,6 +279,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
         plan,
         planKey: checkpoint.planKey as string,
         workerIds,
+        workerKeys: plan.workers.map((worker) => worker.key),
       },
       wait: { type: "children", ids: workerIds, policy: "allSettled" },
     };
@@ -285,8 +288,10 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
 
 function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transition {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "execute" }>;
-  const failed = checkpoint.workerIds.filter(
-    (id) => childOutput(ctx, id)?.status !== "completed",
+  // workerIds are spawn ids (for the join); outcomes are found by key.
+  const workerKeys = checkpoint.workerKeys ?? checkpoint.plan.workers.map((w) => w.key);
+  const failed = workerKeys.filter(
+    (key) => childOutput(ctx, key)?.status !== "completed",
   );
   if (!ctx.input.review && failed.length === 0) {
     return {
