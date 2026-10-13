@@ -31,12 +31,9 @@ export const assetDrawInputSchema = z.object({
       }),
     )
     .max(4),
-  agentIds: z.object({
-    plan: z.string().min(1),
-    worker: z.string().min(1),
-    review: z.string().min(1),
-    fix: z.string().min(1),
-  }),
+  // One agent serves every role: `continueFrom` only continues a child of the
+  // same agent, and the role gate enforces what each child may call.
+  agentId: z.string().min(1),
   maxWorkers: z.number().int().min(1).max(4),
   review: z.boolean(),
   maxFrames: z.number().int().min(1).max(12),
@@ -117,6 +114,7 @@ export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): str
   return [
     input.request,
     planInstructions,
+    `Limits: at most ${input.maxWorkers} workers, at most ${input.maxFrames} frames, at most ${input.maxPalette} new palette colours.`,
     PLAN_SCHEMA_EXAMPLE,
     retryError === undefined
       ? ""
@@ -184,7 +182,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       const context = await deps.loadPlanContext(ctx.input);
       const key = checkpoint.attempt === 0 ? "plan" : `plan-${checkpoint.attempt}`;
       const id = ctx.spawnAgent(key, {
-        agentId: ctx.input.agentIds.plan,
+        agentId: ctx.input.agentId,
         prompt: withAttachments(
           `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
           ctx.input.attachments,
@@ -218,7 +216,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       return { status: "failed", error: `The plan was invalid twice: ${checked.error}` };
     }
     const id = ctx.spawnAgent(`plan-${checkpoint.attempt + 1}`, {
-      agentId: ctx.input.agentIds.plan,
+      agentId: ctx.input.agentId,
       prompt: buildPlanPrompt(ctx.input, checked.error),
     });
     return {
@@ -254,7 +252,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
         .map((reference) => ({ url: reference.url, note: reference.note }));
       workerIds.push(
         ctx.spawnAgent(worker.key, {
-          agentId: ctx.input.agentIds.worker,
+          agentId: ctx.input.agentId,
           prompt: withAttachments(
             [
               workerInstructions,
@@ -304,7 +302,7 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   return (async () => {
     const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
     const id = ctx.spawnAgent("review-1", {
-      agentId: ctx.input.agentIds.review,
+      agentId: ctx.input.agentId,
       prompt: [
         reviewInstructions,
         context,
@@ -345,7 +343,7 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
       const id = ctx.spawnAgent(`review-${checkpoint.round}`, {
-        agentId: ctx.input.agentIds.review,
+        agentId: ctx.input.agentId,
         prompt: [reviewInstructions, context, deliveredSteers(ctx)]
           .filter((line) => line.length > 0)
           .join("\n\n"),
@@ -364,7 +362,7 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
       const id = ctx.spawnAgent(`review-${checkpoint.round + 1}`, {
-        agentId: ctx.input.agentIds.review,
+        agentId: ctx.input.agentId,
         prompt: [reviewInstructions, context, deliveredSteers(ctx)]
           .filter((line) => line.length > 0)
           .join("\n\n"),
@@ -407,7 +405,7 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
       (candidate) => candidate.name === fix.frame,
     );
     return ctx.spawnAgent(`fix-${checkpoint.round}-${index + 1}`, {
-      agentId: ctx.input.agentIds.fix,
+      agentId: ctx.input.agentId,
       prompt: [
         fixInstructions,
         `Fix "${fix.frame}": ${fix.note}`,

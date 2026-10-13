@@ -17,12 +17,7 @@ const input: AssetDrawInput = {
   userId: "u1",
   threadId: "t1",
   attachments: [],
-  agentIds: {
-    plan: "pixel-draw:muse:medium",
-    worker: "pixel-draw:worker:muse:medium",
-    review: "pixel-draw:review:muse:medium",
-    fix: "pixel-draw:fix:muse:medium",
-  },
+  agentId: "pixel-draw:muse:medium",
   maxWorkers: 4,
   review: true,
   maxFrames: 12,
@@ -150,7 +145,7 @@ describe("asset-draw plan phase", () => {
     });
     const transition = await run(task, ctx);
     expect(spawns[0]?.key).toBe("plan");
-    expect(spawns[0]?.agentId).toBe(input.agentIds.plan);
+    expect(spawns[0]?.agentId).toBe(input.agentId);
     expect(transition).toMatchObject({
       status: "waiting",
       wait: { type: "children", ids: ["child-plan"] },
@@ -340,5 +335,11 @@ describe("buildPlanPrompt", () => {
       expect(prompt).toContain(field);
     }
     expect(prompt).toContain('"key":"w1"');
+  });
+  it("states the limits so the first plan already fits them", () => {
+    const prompt = buildPlanPrompt(input);
+    expect(prompt).toContain("at most 4 workers");
+    expect(prompt).toContain("at most 12 frames");
+    expect(prompt).toContain("at most 8 new palette colours");
   });
 });

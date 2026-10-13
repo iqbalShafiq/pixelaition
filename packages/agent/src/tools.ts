@@ -36,6 +36,7 @@ import {
   refreshCritique,
   replaceFrameBuffer,
   assertOwnedFrame,
+  assertRoleAllowsTool,
   requireAsset,
   requireRun,
   resolveLayerRef,
@@ -1346,7 +1347,7 @@ export function createPixelTools(
     },
   });
 
-  return [
+  const tools = [
     readProject,
     readFrame,
     readRegion,
@@ -1385,6 +1386,20 @@ export function createPixelTools(
     ...(options.vision === true && options.webSearch === true ? [viewImage] : []),
     ...(options.vision === true ? [preview] : []),
   ];
+  // One agent carries the full tool list (so `continueFrom` keeps working
+  // across plan and worker); the role a child plays decides what it may call,
+  // and the refusal is named at this single gate.
+  // A Tool's execution entry point is `call` (there is no public `execute`),
+  // so the gate wraps that: same name, schema, and definition, one check.
+  return tools.map((entry) => ({
+    ...entry,
+    call: async (args: never, context?: { operationId?: string }) => {
+      const operationId = context?.operationId;
+      const run = operationId === undefined ? undefined : getRun(operationId);
+      if (run !== undefined) assertRoleAllowsTool(run, entry.name);
+      return entry.call(args, context as never);
+    },
+  })) as typeof tools;
 }
 
 export function activeLayerId(buffer: FrameBuffer): string {

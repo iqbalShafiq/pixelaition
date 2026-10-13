@@ -124,6 +124,37 @@ describe("worker frame ownership", () => {
     );
     releaseRun("run-1");
   });
+  it("refuses a structural tool to a worker, with the cause named", async () => {
+    boundRun(undefined, undefined, {
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+    });
+    await expect(
+      tool("add_frame").call({ name: "extra" }, { operationId: "run-1" }),
+    ).rejects.toThrow("The worker role cannot call add_frame.");
+    await expect(
+      tool("set_palette").call(
+        { palette: ["#00000000", "#f4f4f4"] },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("The worker role cannot call set_palette.");
+    releaseRun("run-1");
+  });
+  it("refuses painting to the review pass", async () => {
+    boundRun(undefined, undefined, { role: "review" });
+    await expect(
+      tool("paint_stroke").call(
+        {
+          frameId: "frame-1",
+          layerId: "base",
+          label: "x",
+          points: [{ x: 0, y: 0, color: 1 }],
+        },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("The review role cannot call paint_stroke.");
+    releaseRun("run-1");
+  });
   it("refuses use_frame to a sibling frame", async () => {
     boundRun(undefined, undefined, { ownedFrameIds: new Set(["frame-1"]) });
     await expect(

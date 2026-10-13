@@ -25,11 +25,7 @@ import {
   createAssetDrawTask,
   type AssetDrawInput,
   type DrawPlan,
-  fixInstructions,
-  planInstructions,
-  reviewInstructions,
-  toolsForRole,
-  workerInstructions,
+  pixelInstructions,
   askInstructions,
   bindRun,
   clearGateOutcomes,
@@ -557,39 +553,25 @@ const agents = completions.flatMap(({ spec, model }) => {
     createQuestionTool(),
   ];
   const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
-  const roleAgents = [
-    { suffix: "", instructions: planInstructions, tools: drawingTools },
-    {
-      suffix: ":worker",
-      instructions: workerInstructions,
-      tools: toolsForRole("worker", drawingTools),
-    },
-    {
-      suffix: ":review",
-      instructions: reviewInstructions,
-      tools: toolsForRole("review", drawingTools),
-    },
-    {
-      suffix: ":fix",
-      instructions: fixInstructions,
-      tools: toolsForRole("fix", drawingTools),
-    },
-  ];
+  // One draw agent per model and effort serves every task role: `continueFrom`
+  // only continues a child of the same agent, and the role gate in the tool
+  // layer enforces what each child may call. Role instructions ride in each
+  // spawn prompt.
   return spec.efforts.flatMap((effort) => [
-    ...roleAgents.map((role) => ({
-      id: `${agentPrefix}${role.suffix}:${spec.id}:${effort}`,
+    {
+      id: `${agentPrefix}:${spec.id}:${effort}`,
       vision: spec.vision,
-      tools: role.tools,
+      tools: drawingTools,
       agent: new Agent({
-        id: `${agentPrefix}${role.suffix}:${spec.id}:${effort}`,
+        id: `${agentPrefix}:${spec.id}:${effort}`,
         model,
-        instructions: role.instructions,
-        tools: role.tools,
-        maxTurns: role.suffix === "" ? 120 : role.suffix === ":review" ? 16 : 60,
+        instructions: pixelInstructions,
+        tools: drawingTools,
+        maxTurns: 120,
         controls: { reasoningEffort: effort },
         observability,
       }),
-    })),
+    },
     {
       id: `${agentPrefix}:ask:${spec.id}:${effort}`,
       vision: spec.vision,
@@ -923,7 +905,7 @@ async function bindTaskChild(
   const agentId =
     typeof (node.input as { agentId?: unknown } | undefined)?.agentId === "string"
       ? (node.input as { agentId: string }).agentId
-      : input.agentIds.plan;
+      : input.agentId;
   const { modelId, effort } = modelEffortFromAgentId(agentId);
   const publicRunId = crypto.randomUUID();
   publicIdByDurable.set(childRunId, publicRunId);
@@ -1423,12 +1405,7 @@ app.post("/internal/runs", async (req, res) => {
           userId: body.userId,
           threadId: body.threadId,
           attachments: body.attachments ?? [],
-          agentIds: {
-            plan: `${agentPrefix}:${target.modelId}:${target.effort}`,
-            worker: `${agentPrefix}:worker:${target.modelId}:${target.effort}`,
-            review: `${agentPrefix}:review:${target.modelId}:${target.effort}`,
-            fix: `${agentPrefix}:fix:${target.modelId}:${target.effort}`,
-          },
+          agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
           maxWorkers: shape.workers,
           review: shape.review,
           maxFrames: 12,

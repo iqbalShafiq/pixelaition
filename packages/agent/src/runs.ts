@@ -7,6 +7,7 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
+import { REVIEW_TOOL_NAMES, WORKER_TOOL_NAMES } from "./tasks/roles.js";
 import { z } from "zod";
 import type { JevUsage } from "./jev.js";
 
@@ -181,6 +182,25 @@ export type RunBinding = {
   /** Workers carry the frames they own; every write is checked against it. */
   ownedFrameIds?: ReadonlySet<string>;
 };
+
+/**
+ * The role a child plays decides which tools it may call at all: workers
+ * cannot touch structure or the palette, and the review never paints. The
+ * agent carries the full tool list (one agent keeps `continueFrom` working
+ * across plan and worker), so the refusal lives here, named.
+ */
+export function assertRoleAllowsTool(run: RunBinding, toolName: string): void {
+  if (run.role === undefined) return;
+  const allowed =
+    run.role === "plan"
+      ? undefined
+      : run.role === "review"
+        ? REVIEW_TOOL_NAMES
+        : WORKER_TOOL_NAMES;
+  if (allowed !== undefined && !allowed.has(toolName)) {
+    throw new Error(`The ${run.role} role cannot call ${toolName}.`);
+  }
+}
 
 /**
  * A worker may only write its own frames. Plan and review runs carry no set,
