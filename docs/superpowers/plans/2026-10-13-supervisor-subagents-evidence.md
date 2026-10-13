@@ -82,3 +82,19 @@ Reviewed `e3d70ab..b41ea4e` against the spec, plan, evidence, and ledger. Fixed 
 5. The clarify picker's "whole asset" button closes without re-sending and swallows send errors.
 
 **Deferred (Minor):** `useTaskStream` has no unmount close; `trace-check.mjs` can exit 0 on unreadable traces; the re-plan prompt drops attachments; `ask_user` is outside the role gate; `source:"default"` is stored but never logged; a task does not seed the decision/guardrail spend; `taskSnapshot` excludes failed/cancelled tasks; RunConsole has no task header (phase, n/N done, aggregate usage).
+
+## Follow-up: supervisor-first steering, honest badges, durable questions
+
+Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
+
+- **You always talk to the supervisor.** An anchored message ("About this frame") is a hint; the supervisor keeps it and relays. Live run `f63c98ef`: anchored to `lari-a` → routed to w1 → **relayed straight into w1's live run** (`steer-1.delivered = true`), HTTP `202 {routed:"w1"}`, and the console narrates ("supervisor → w1: …" / "relayed → w1 (lari-a)") or says it will apply the note in the review when no worker is live.
+- **Two workers in parallel — case 2b verified**: w1 and w2 both `running` on the same asset, each with its own frames; the frame list showed w1 and w2 badges on different frames.
+- **Steering survives restarts**: the next steer name is derived from the task's delivered signals (the in-memory counter is gone).
+- **Reload rejoins**: after a browser reload mid-task the editor re-renders the live tree ("Rejoined a run that was still going") and `activeTaskId` (from the snapshot) keeps questions, badges, and frame-context steering wired whether the session started the task or rejoined it.
+- **Honest badges**: live states render only while the task runs; `done` is an unseen nudge that clears when the frame is opened and never lingers after the task ends (the earlier "some frames done, some not" came from stale snapshot statuses).
+- **Supervisor questions surface whatever frame is open**; worker questions surface on their frame.
+- Choreography: a spawn publishes the supervisor's order ("paint jalan-a, jalan-b"), worker groups land with the assemble-rise animation, and the task header carries the aggregate usage.
+
+(Commits for this follow-up: `87fc50f` + the `activeTaskId` commit.)
+
+**Still open** (unchanged): the five deferred Important items from the review, minus the two closed here (steering relay, signal naming); the editor's post-reload console still shows the rejoined child's stream rather than the full task tree (open the task stream on rejoin), and the clarify picker's "whole asset" button still needs a re-send.
