@@ -1511,23 +1511,25 @@ export function EditorScreen() {
                   </div>
                 </Centered>
               ) : (
-                <PixelCanvas
-                  buffer={buffer ?? fallbackBuffer}
-                  camera={camera}
-                  tool={tool}
-                  brushSize={brushSize}
-                  grid={grid}
-                  checker={checker}
-                  onionSkin={onionSkin}
-                  ghost={ghost}
-                  selection={selection}
-                  locked={locked || preview !== null}
-                  onAction={onAction}
-                  onCamera={(next) => {
-                    setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
-                    setCamera(next);
-                  }}
-                />
+                <div key={frameId ?? "none"} className="frame-crossfade contents">
+                  <PixelCanvas
+                    buffer={buffer ?? fallbackBuffer}
+                    camera={camera}
+                    tool={tool}
+                    brushSize={brushSize}
+                    grid={grid}
+                    checker={checker}
+                    onionSkin={onionSkin}
+                    ghost={ghost}
+                    selection={selection}
+                    locked={locked || preview !== null}
+                    onAction={onAction}
+                    onCamera={(next) => {
+                      setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
+                      setCamera(next);
+                    }}
+                  />
+                </div>
               )}
               {drawingHere ? (
                 <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 border-2 border-accent bg-paper px-2 py-1 text-pixel-mono text-accent">
