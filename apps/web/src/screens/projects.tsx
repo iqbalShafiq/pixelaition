@@ -515,18 +515,36 @@ export function ProjectsScreen() {
         log(`Run ${started.runId.slice(0, 8)} started`);
         if (started.kind === "task") {
           // The task stream carries the tree; the home's console renders it.
-          taskStream.open(started.runId, {
-            onMessage: (body) => {
-              setRows((current) =>
-                applyRunEvent(current, body.sequence, body.type, body.data),
-              );
-              if (body.type === "task-complete") {
-                taskStream.close();
-                void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
-              }
-            },
-            onDrop: () => taskStream.close(),
-          });
+          // A dropped stream is not a stopped task: rejoin with a small cap so
+          // a flaky connection cannot strand the plan card behind a refresh.
+          let finished = false;
+          let rejoins = 0;
+          const openTaskStream = () => {
+            taskStream.open(started.runId, {
+              onMessage: (body) => {
+                setRows((current) =>
+                  applyRunEvent(current, body.sequence, body.type, body.data),
+                );
+                if (body.type === "task-complete" || body.type === "done")
+                  finished = true;
+                if (body.type === "task-complete") {
+                  taskStream.close();
+                  void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+                }
+              },
+              onDrop: () => {
+                if (finished || rejoins >= 20) {
+                  taskStream.close();
+                  return;
+                }
+                rejoins += 1;
+                window.setTimeout(() => {
+                  if (!finished) openTaskStream();
+                }, 1500);
+              },
+            });
+          };
+          openTaskStream();
         } else {
           listen(started.runId);
         }

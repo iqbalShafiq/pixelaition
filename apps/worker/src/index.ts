@@ -2017,6 +2017,7 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
 function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
   const kept = [
     "model_started",
+    "model_delta",
     "model_completed",
     "tool_started",
     "tool_completed",

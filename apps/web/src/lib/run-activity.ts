@@ -191,6 +191,60 @@ export function applyRunEvent(
   const tag = <T extends RunRow>(row: T): T =>
     workerKey === undefined ? row : ({ ...row, workerKey } as T);
 
+  if (type === "model_delta") {
+    const inner = body as
+      | {
+          operationId?: unknown;
+          event?: {
+            type?: unknown;
+            text?: unknown;
+            delta?: unknown;
+            toolCall?: { toolCallId?: unknown; toolName?: unknown; input?: unknown };
+          };
+        }
+      | undefined;
+    const operation =
+      typeof inner?.operationId === "string" ? inner.operationId : undefined;
+    const streamed = inner?.event;
+    const kind = typeof streamed?.type === "string" ? streamed.type : undefined;
+    if (kind === "text" || kind === "text_delta" || kind === "reasoning") {
+      const raw = streamed?.text ?? streamed?.delta;
+      const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trimStart() : "";
+      if (text.length === 0) return rows;
+      // One growing line per model call, not one row per token.
+      const id = `text-${operation ?? sequence}`;
+      const index = rows.findIndex((row) => row.id === id);
+      const previous =
+        index >= 0 && rows[index]?.kind === "supervisor"
+          ? (rows[index] as { message: string }).message
+          : "";
+      const merged = tag({
+        id,
+        kind: "supervisor" as const,
+        message: `${previous}${text}`.slice(-180),
+      });
+      if (index < 0) return [...rows, merged];
+      return rows.map((row, at) => (at === index ? merged : row));
+    }
+    if (kind === "tool_call" && typeof streamed?.toolCall?.toolName === "string") {
+      const name = streamed.toolCall.toolName;
+      const id = `call-${String(streamed.toolCall.toolCallId ?? `${operation ?? sequence}`)}`;
+      if (rows.some((row) => row.id === id)) return rows;
+      // The arguments arrive before the call completes: the console shows what
+      // the agent is about to do, not just that it is running.
+      return [
+        ...rows,
+        tag({
+          id,
+          kind: "tool",
+          name,
+          summary: toolSummary(name, streamed.toolCall.input),
+          state: "running",
+        }),
+      ];
+    }
+    return rows;
+  }
   if (type === "model_started") {
     if (rows.some((row) => row.id === id)) return rows;
     return [...rows, tag({ id, kind: "phase", label: "thinking", state: "running" })];
