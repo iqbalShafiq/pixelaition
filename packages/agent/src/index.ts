@@ -66,3 +66,5 @@ export type {
   TraceContext,
 } from "./telemetry.js";
 export { activeLayerId, createPixelTools } from "./tools.js";
+export { drawPlanSchema, validatePlan } from "./tasks/plan.js";
+export type { DrawPlan, DrawPlanFrame, PlanLimits } from "./tasks/plan.js";
