@@ -193,6 +193,9 @@ export function EditorScreen() {
   // A drawing run is one durable task; its id drives the task stream while
   // each worker's own stream feeds that frame's canvas.
   const [taskId, setTaskId] = useState<string | null>(null);
+  // When on, the next message is about the frame in view: it steers that
+  // frame's worker instead of starting a new run.
+  const [frameContextOn, setFrameContextOn] = useState(false);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
   // The models of runs this session started or rejoined, so the history panel
   // can badge a version `Agent · <model>` instead of a bare `Agent`. The
@@ -1076,6 +1079,29 @@ export function EditorScreen() {
 
   function generate(textOverride?: string, withAttachments = true) {
     const text = (textOverride ?? prompt).trim();
+    // Frame context with a live task: the message steers that frame's worker
+    // through the task endpoint instead of starting another run.
+    if (frameContextOn && taskId !== null && text.length > 0) {
+      const frameName = frames.find((frame) => frame.id === frameId)?.name;
+      if (textOverride === undefined) setPrompt("");
+      startTransition(async () => {
+        try {
+          const result = await api<{ routed: string }>(`/api/tasks/${taskId}/steer`, {
+            method: "POST",
+            body: JSON.stringify({
+              prompt: text,
+              ...(frameName !== undefined ? { frameName } : {}),
+            }),
+          });
+          log(`Steering queued (${result.routed})`);
+        } catch (reason) {
+          const message = reason instanceof Error ? reason.message : "Steering failed.";
+          setError(message);
+          notify({ title: "Could not steer the task", description: message });
+        }
+      });
+      return;
+    }
     if (!frameId || running || optimisticStart !== null || text.length === 0) return;
     // Reference images belong to a fresh manual message, never to a queued
     // follow-up that arrives while a run is live.
@@ -1665,6 +1691,17 @@ export function EditorScreen() {
                   className="w-full [view-transition-name:composer-flight]"
                 >
                   <Composer
+                    frameContext={
+                      frameId !== null
+                        ? {
+                            name:
+                              frames.find((frame) => frame.id === frameId)?.name ??
+                              "frame",
+                            enabled: frameContextOn,
+                            onToggle: () => setFrameContextOn((value) => !value),
+                          }
+                        : undefined
+                    }
                     prompt={prompt}
                     onPrompt={setPrompt}
                     modelId={modelId}

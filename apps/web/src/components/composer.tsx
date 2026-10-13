@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MAX_ATTACHMENTS, type PreparedAttachment } from "../lib/attachments.js";
-import { Attach, Info } from "./pixel-icons.js";
+import { Attach, Info, Select } from "./pixel-icons.js";
 import { Button, IconButton, SelectControl, Textarea } from "./ui.js";
 
 /**
@@ -31,6 +31,7 @@ export function Composer({
   attachmentIssue,
   onAttach,
   onRemoveAttachment,
+  frameContext,
 }: {
   prompt: string;
   onPrompt: (value: string) => void;
@@ -62,6 +63,8 @@ export function Composer({
   attachmentIssue?: string | undefined;
   onAttach?: ((files: Iterable<File>) => void) | undefined;
   onRemoveAttachment?: ((id: string) => void) | undefined;
+  /** When present, the composer can anchor a message to the frame in view. */
+  frameContext?: { name: string; enabled: boolean; onToggle: () => void } | undefined;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -198,6 +201,24 @@ export function Composer({
       />
       <div className="flex flex-wrap items-center gap-1.5 px-2 py-1.5">
         {scope}
+        {frameContext?.enabled ? (
+          <span className="pixel-corners-sm flex min-h-10 items-center border-2 border-accent bg-accent/15 px-2 text-pixel-mono text-accent">
+            {frameContext.name}
+          </span>
+        ) : null}
+        {frameContext !== undefined ? (
+          <IconButton
+            label="About this frame"
+            hint="Send the message to this frame's worker"
+            size="lg"
+            active={frameContext.enabled}
+            subtle
+            disabled={blocked}
+            onClick={frameContext.onToggle}
+          >
+            <Select />
+          </IconButton>
+        ) : null}
         <IconButton
           label="Attach reference images"
           hint={`PNG, JPEG, WebP, or GIF, up to ${MAX_ATTACHMENTS}`}
