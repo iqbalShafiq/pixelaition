@@ -62,12 +62,12 @@ for (const { id, role } of traces) {
   if (!first) await new Promise((resolve) => setTimeout(resolve, 4000));
   first = false;
   const traceId = traceIdFor(id);
-  let response = await fetch(`${base}/api/public/observations?traceId=${traceId}&limit=50`, {
+  let response = await fetch(`${base}/api/public/observations?traceId=${traceId}&limit=100`, {
     headers: { authorization: `Basic ${auth}` },
   });
   if (response.status === 429) {
     await new Promise((resolve) => setTimeout(resolve, 8000));
-    response = await fetch(`${base}/api/public/observations?traceId=${traceId}&limit=50`, {
+    response = await fetch(`${base}/api/public/observations?traceId=${traceId}&limit=100`, {
       headers: { authorization: `Basic ${auth}` },
     });
   }
@@ -77,14 +77,22 @@ for (const { id, role } of traces) {
   }
   const body = await response.json();
   const observations = body.data ?? [];
+  // The trace's metadata carries the run prompt; observation inputs are
+  // per-event, so the metadata is the stable place to judge context.
+  const traceResponse = await fetch(`${base}/api/public/traces/${traceId}`, {
+    headers: { authorization: `Basic ${auth}` },
+  });
+  const traceBody = traceResponse.ok ? await traceResponse.json() : null;
+  const metadata = JSON.stringify(traceBody?.metadata ?? {});
   if (observations.length === 0) {
     console.log(`${id.slice(0, 8)} → trace ${traceId}: no observations yet`);
     continue;
   }
   const name = role;
-  const texts = observations
-    .map((item) => JSON.stringify(item.input ?? ""))
-    .join(" ");
+  const texts = [
+    ...observations.map((item) => JSON.stringify(item.input ?? "")),
+    metadata,
+  ].join(" ");
   const expected = MARKERS[name] ?? [];
   const found = expected.filter((marker) => texts.includes(marker));
   const verdict = found.length === expected.length ? "OK" : `MISSING ${expected.filter((m) => !found.includes(m)).join(", ")}`;

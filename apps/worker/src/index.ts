@@ -935,6 +935,10 @@ async function bindTaskChild(
       ? (node.input as { agentId: string }).agentId
       : input.agentId;
   const { modelId, effort } = modelEffortFromAgentId(agentId);
+  const spawnPrompt =
+    typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
+      ? (node.input as { prompt: string }).prompt
+      : "(prompt with reference images)";
   const publicRunId = existingRow?.id ?? crypto.randomUUID();
   publicIdByDurable.set(childRunId, publicRunId);
   // A child without a trace context drops every span; name its trace by role
@@ -951,6 +955,9 @@ async function bindTaskChild(
       ...(workerKey !== undefined ? { workerKey } : {}),
       modelId,
       reasoningEffort: effort,
+      // The exact prompt the child ran with, on stable metadata: observation
+      // inputs are per-event and cannot be used to judge context sufficiency.
+      prompt: spawnPrompt.slice(0, 4000),
     },
   });
 
@@ -958,10 +965,6 @@ async function bindTaskChild(
   const assetFrames =
     asset?.frames.map((frame) => ({ id: frame.id, name: frame.name })) ?? [];
   const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames);
-  const spawnPrompt =
-    typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
-      ? (node.input as { prompt: string }).prompt
-      : "(prompt with reference images)";
 
   if (existingRow === undefined) {
     await db.insert(generationRuns).values({
