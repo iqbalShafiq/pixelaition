@@ -1449,20 +1449,21 @@ export function EditorScreen() {
               ? (task.data?.workers ?? [])
                   .filter((worker) => /^(w\d+|fix-)/.test(worker.key))
                   .flatMap((worker) =>
-                    worker.frames
-                      .filter(
-                        (frame) =>
-                          !(
-                            frame.status === "done" && viewedFrames.current.has(frame.id)
-                          ),
-                      )
-                      .map(
-                        (frame) =>
-                          [
-                            frame.id,
-                            { status: frame.status, workerKey: worker.key },
-                          ] as const,
-                      ),
+                    worker.frames.map(
+                      (frame) =>
+                        [
+                          frame.id,
+                          {
+                            status: frame.status,
+                            workerKey: worker.key,
+                            // A frame already looked at keeps a quiet tick, so
+                            // the panel still names who painted it.
+                            seen:
+                              frame.status === "done" &&
+                              viewedFrames.current.has(frame.id),
+                          },
+                        ] as const,
+                    ),
                   )
               : []),
             ...[...unseenDone.entries()]
