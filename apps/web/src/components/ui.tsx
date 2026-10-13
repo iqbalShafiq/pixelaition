@@ -243,7 +243,7 @@ export function Checkbox({
 }) {
   return (
     <label
-      className={`group inline-flex items-center gap-2 text-[12px] ${
+      className={`group flex w-full min-w-0 items-center gap-2 text-[12px] ${
         disabled ? "cursor-not-allowed opacity-45" : ""
       }`}
     >
@@ -282,7 +282,7 @@ export function Checkbox({
       {hideLabel ? (
         <span className="sr-only">{label}</span>
       ) : (
-        <span className="group/label relative min-w-0">
+        <span className="group/label relative min-w-0 flex-1">
           <span className={`block truncate ${checked ? "text-ink" : "text-muted"}`}>
             {label}
           </span>

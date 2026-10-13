@@ -485,6 +485,33 @@ export function ProjectsScreen() {
         if (staged.length > 0) attachments.clear();
         setProposal(null);
         setRunId(started.runId);
+        // A new run needs the plan card in view and its asset known: keep the
+        // console open and poll alongside the stream events.
+        setConsoleOpen(true);
+        // A run that binds its asset mid-flight must not strand the user here:
+        // keep an eye on the recent list as a fallback for a missed event.
+        const bound = window.setInterval(() => {
+          void recent.refetch().then((result) => {
+            const rows: unknown = result.data;
+            const list = Array.isArray(rows)
+              ? rows
+              : typeof rows === "object" && rows !== null && "runs" in rows
+                ? (rows as { runs?: unknown }).runs
+                : undefined;
+            if (!Array.isArray(list)) return;
+            const row = list.find(
+              (item): item is { id?: string; assetId?: string; projectId?: string } =>
+                typeof item === "object" &&
+                item !== null &&
+                (item as { id?: unknown }).id === started.runId,
+            );
+            if (typeof row?.assetId === "string" && row.assetId.length > 0) {
+              window.clearInterval(bound);
+              navigateToEditor(row.projectId ?? choice.projectId ?? "", row.assetId);
+            }
+          });
+        }, 2500);
+        window.setTimeout(() => window.clearInterval(bound), 10 * 60 * 1000);
         log(`Run ${started.runId.slice(0, 8)} started`);
         if (started.kind === "task") {
           // The task stream carries the tree; the home's console renders it.

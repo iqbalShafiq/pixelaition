@@ -253,7 +253,7 @@ function ApprovalBody({
       {!plan && interaction.reason ? (
         <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
       ) : null}
-      <div className="max-h-[54vh] overflow-y-auto overscroll-contain pr-1">
+      <div className="max-h-[54vh] overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
         {plan !== null ? (
           <>
             {plan.summary ? (
