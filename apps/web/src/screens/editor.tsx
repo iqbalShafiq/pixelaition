@@ -41,6 +41,7 @@ import { useTaskSnapshot, useTaskStream } from "../lib/task.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import { QueueDock } from "../components/queue-dock.js";
+import { QuestionSummary } from "../components/question-summary.js";
 import {
   addQueuedRun,
   nextQueuedRun,
@@ -207,6 +208,9 @@ export function EditorScreen() {
   const displayedRunIdRef = useRef<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  // The run that owns the pending interaction: a task child asks through its
+  // own run id, so answering goes to that run, not the task.
+  const [pendingRunId, setPendingRunId] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
     null,
   );
@@ -762,6 +766,22 @@ export function EditorScreen() {
     ],
   );
 
+  // A worker's question surfaces when the user opens its frame; the frame
+  // list badge and the counter near the composer point the way.
+  useEffect(() => {
+    if (taskId === null || frameId === null) return;
+    const worker = (task.data?.workers ?? []).find((candidate) =>
+      candidate.frames.some((frame) => frame.id === frameId),
+    );
+    const interaction = worker?.pendingInteraction;
+    if (interaction === undefined || worker?.runId === undefined) return;
+    if (answeredIdsRef.current.has(interaction.id)) return;
+    setPendingInteraction((current) =>
+      current?.id === interaction.id ? current : (interaction as PendingInteraction),
+    );
+    setPendingRunId(worker.runId);
+  }, [taskId, frameId, task.data]);
+
   // While a task runs, each worker's own stream feeds its frame's canvas; the
   // task stream stays lean (no strokes) and drives the tree.
   const workerRunIds = (task.data?.workers ?? [])
@@ -1262,10 +1282,11 @@ export function EditorScreen() {
     response: InteractionResponse,
     stagedFrames?: StagedPlanFrame[],
   ) {
-    if (!runId || !pendingInteraction) return;
+    const owner = pendingRunId ?? runId;
+    if (!owner || !pendingInteraction) return;
     try {
       if (stagedFrames) {
-        await api(`/api/runs/${runId}/stage-override`, {
+        await api(`/api/runs/${owner}/stage-override`, {
           method: "POST",
           body: JSON.stringify({
             interactionId: pendingInteraction.id,
@@ -1273,12 +1294,14 @@ export function EditorScreen() {
           }),
         });
       }
-      await api(`/api/runs/${runId}/respond`, {
+      await api(`/api/runs/${owner}/respond`, {
         method: "POST",
         body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
       });
       answeredIdsRef.current.add(pendingInteraction.id);
       setPendingInteraction(null);
+      setPendingRunId(null);
+      void task.refetch();
       setConsoleOpen(true);
     } catch (reason) {
       notify({
@@ -1654,6 +1677,14 @@ export function EditorScreen() {
                   composer — the same dock geometry the home page uses, so
                   every part lines up on the same edges. */}
               <div className="grid w-full gap-2" style={{ maxWidth: "40rem" }}>
+                <QuestionSummary
+                  workers={task.data?.workers ?? []}
+                  onJump={(id) => {
+                    setFrameId(id);
+                    setSelection(null);
+                    setPreview(null);
+                  }}
+                />
                 <div className="w-full [view-transition-name:console-flight]">
                   <RunConsole
                     rows={rows}
