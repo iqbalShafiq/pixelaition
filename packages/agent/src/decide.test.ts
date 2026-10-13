@@ -25,6 +25,25 @@ describe("jev decisions", () => {
     ).rejects.toThrow();
   });
 
+  it("picks the task shape from Jev's answers, and names a defaulted one", () => {
+    const base = {
+      intent: { choice: "draw", confidence: 0.9 },
+      drawable: { noul: 0.9 },
+      actionable: { noul: 0.9 },
+    };
+    expect(
+      toDecision({ ...base, workers: { choice: "3" }, review: { noul: 0.85 } }).shape,
+    ).toEqual({ workers: 3, review: true, source: "jev" });
+    expect(
+      toDecision({ ...base, workers: { choice: "9" }, review: { noul: 0.2 } }).shape,
+    ).toEqual({ workers: 4, review: false, source: "jev" });
+    expect(toDecision(base).shape).toEqual({
+      workers: 2,
+      review: true,
+      source: "default",
+    });
+  });
+
   it("maps Jev answers onto the draw intent", () => {
     expect(
       toDecision({
@@ -32,7 +51,12 @@ describe("jev decisions", () => {
         drawable: { noul: 0.9 },
         actionable: { noul: 0.95 },
       }),
-    ).toEqual({ intent: "variant", confidence: 0.82, source: "jev" });
+    ).toEqual({
+      intent: "variant",
+      confidence: 0.82,
+      source: "jev",
+      shape: { workers: 2, review: true, source: "default" },
+    });
 
     // A vague draw request becomes an asking-only turn, never an error.
     expect(
@@ -59,7 +83,12 @@ describe("jev decisions", () => {
         drawable: { noul: 0.42 },
         actionable: { noul: 0.97 },
       }),
-    ).toEqual({ intent: "edit", confidence: 0.93, source: "jev" });
+    ).toEqual({
+      intent: "edit",
+      confidence: 0.93,
+      source: "jev",
+      shape: { workers: 2, review: true, source: "default" },
+    });
 
     // An edit that says nothing to change turns conversational too.
     expect(
@@ -90,6 +119,8 @@ describe("jev decisions", () => {
             intent: { type: "choice", choice: "edit", confidence: 0.9 },
             drawable: { type: "noul", noul: 0.9 },
             actionable: { type: "noul", noul: 0.95 },
+            workers: { type: "choice", choice: "1" },
+            review: { type: "noul", noul: 0.3 },
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -115,6 +146,7 @@ describe("jev decisions", () => {
       },
     );
     expect(decision.intent).toBe("edit");
+    expect(decision.shape).toEqual({ workers: 1, review: false, source: "jev" });
     expect(sent).toMatchObject({
       state: {
         prompt: "it's not blue though",

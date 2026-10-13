@@ -73,6 +73,7 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import {
+  ne,
   asc,
   and,
   count,
@@ -1052,20 +1053,30 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
  * API and the recovery pass can find it even before a child run starts.
  */
 async function recordTaskRow(input: {
+  id: string;
   durableTaskId: string;
   threadId: string;
   assetId: string | null;
   shape: { workers: number; review: boolean };
 }): Promise<void> {
-  await db.insert(runTasks).values({
-    id: crypto.randomUUID(),
-    threadId: input.threadId,
-    assetId: input.assetId,
-    status: "queued",
-    phase: "plan",
-    shape: input.shape,
-    durableTaskId: input.durableTaskId,
-  });
+  // The API already owns the row (id = the request's public run id) and its
+  // shape; the worker records the durable id on it. A direct worker call with
+  // no row falls back to an insert.
+  await db
+    .insert(runTasks)
+    .values({
+      id: input.id,
+      threadId: input.threadId,
+      assetId: input.assetId,
+      status: "running",
+      phase: "plan",
+      shape: input.shape,
+      durableTaskId: input.durableTaskId,
+    })
+    .onConflictDoUpdate({
+      target: runTasks.id,
+      set: { durableTaskId: input.durableTaskId, status: "running" },
+    });
 }
 
 const assetDraw = createAssetDrawTask(buildTaskDeps(db));
@@ -1393,6 +1404,27 @@ app.post("/internal/runs", async (req, res) => {
   // stays a single read-only run.
   if (body.mode === "draw") {
     const shape = body.shape ?? { workers: 2, review: true };
+    // One task per thread, checked at the last moment: the API guard runs
+    // before the child rows exist, so the worker enforces it too.
+    const [activeTask] = await db
+      .select({ id: runTasks.id })
+      .from(runTasks)
+      .where(
+        and(
+          eq(runTasks.threadId, body.threadId),
+          // The API inserts this request's row before calling the worker;
+          // excluding it keeps the guard about *other* unfinished tasks.
+          ne(runTasks.id, body.runId),
+          inArray(runTasks.status, ["queued", "running", "waiting"]),
+        ),
+      )
+      .limit(1);
+    if (activeTask !== undefined) {
+      return res.status(409).json({
+        message:
+          "This frame already has an unfinished run; wait for it to finish or cancel it first.",
+      });
+    }
     let task: Awaited<ReturnType<typeof runtime.submitTask>>;
     try {
       task = await runtime.submitTask(assetDraw, {
@@ -1427,6 +1459,7 @@ app.post("/internal/runs", async (req, res) => {
       });
     }
     await recordTaskRow({
+      id: body.runId,
       durableTaskId: task.id,
       threadId: body.threadId,
       assetId: body.assetId ?? null,

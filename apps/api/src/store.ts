@@ -8,6 +8,7 @@ import {
   generationThreads,
   projects,
   runProposals,
+  runTasks,
   userPreferences,
   versions,
   RETENTION_LIMIT,
@@ -518,7 +519,30 @@ export async function assetHasActiveRun(db: Database, assetId: string): Promise<
       ),
     )
     .limit(1);
-  return run !== undefined;
+  if (run !== undefined) return true;
+  // A task is active from the moment it is submitted; its child runs may not
+  // exist yet, so the task row is checked too (live finding: two tasks for one
+  // asset slipped through in the 100 ms before the plan child bound).
+  const [task] = await db
+    .select({ id: runTasks.id })
+    .from(runTasks)
+    .where(
+      and(
+        inArray(runTasks.status, ["queued", "running", "waiting"]),
+        or(
+          eq(runTasks.assetId, assetId),
+          inArray(
+            runTasks.threadId,
+            db
+              .select({ id: generationThreads.id })
+              .from(generationThreads)
+              .where(eq(generationThreads.assetId, assetId)),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return task !== undefined;
 }
 
 function frameSnapshotFrom(
@@ -863,6 +887,49 @@ export async function insertRun(
   const id = randomUUID();
   await db.insert(generationRuns).values({ id, ...input });
   return id;
+}
+
+/**
+ * The task row for one drawing request. The API owns the public id (the same
+ * id the web streams), and the worker records the durable task id on it.
+ */
+export async function insertTaskRecord(
+  db: Database,
+  input: {
+    id: string;
+    threadId: string;
+    assetId?: string;
+    shape: { workers: number; review: boolean; source?: string };
+  },
+) {
+  await db.insert(runTasks).values({
+    id: input.id,
+    threadId: input.threadId,
+    ...(input.assetId !== undefined ? { assetId: input.assetId } : {}),
+    status: "queued",
+    phase: "plan",
+    shape: input.shape,
+  });
+  return input.id;
+}
+
+export async function setTaskDurableId(
+  db: Database,
+  id: string,
+  durableTaskId: string,
+): Promise<void> {
+  await db
+    .update(runTasks)
+    .set({ durableTaskId, status: "running" })
+    .where(eq(runTasks.id, id));
+}
+
+export async function failTask(db: Database, id: string, reason: string): Promise<void> {
+  await db
+    .update(runTasks)
+    .set({ status: "failed", finishedAt: new Date() })
+    .where(eq(runTasks.id, id));
+  void reason;
 }
 
 export type ProposalRow = typeof runProposals.$inferSelect;

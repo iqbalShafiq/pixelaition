@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   assetFrameBuffer,
   bufferToFrame,
@@ -62,7 +63,10 @@ import {
   getAssetRecord,
   getPreferences,
   getProjectRecord,
+  failTask,
   insertProposal,
+  insertTaskRecord,
+  setTaskDurableId,
   insertRun,
   listProjects,
   listVersions,
@@ -256,6 +260,8 @@ async function startRunViaWorker(
     threadId: string;
     requestId: string;
     mode: "draw" | "ask";
+    /** Jev's task shape; present for draw runs. */
+    shape?: { workers: number; review: boolean; source?: string } | undefined;
     usage: {
       input: number;
       output: number;
@@ -267,15 +273,25 @@ async function startRunViaWorker(
     };
   },
 ): Promise<void> {
-  const runId = await insertRun(db, {
-    threadId: input.threadId,
-    requestId: input.requestId,
-    modelId: input.modelId,
-    reasoningEffort: input.reasoningEffort,
-    ...(input.target.scope === "asset" ? { frameId: input.target.frameId } : {}),
-    prompt: input.prompt,
-    status: "queued",
-  });
+  // A drawing request is one durable task; the API owns its public id and the
+  // worker records the durable task id on the row. An ask stays a single run.
+  const runId =
+    input.mode === "draw"
+      ? await insertTaskRecord(db, {
+          id: randomUUID(),
+          threadId: input.threadId,
+          ...(input.target.scope === "asset" ? { assetId: input.target.assetId } : {}),
+          shape: input.shape ?? { workers: 2, review: true, source: "default" },
+        })
+      : await insertRun(db, {
+          threadId: input.threadId,
+          requestId: input.requestId,
+          modelId: input.modelId,
+          reasoningEffort: input.reasoningEffort,
+          ...(input.target.scope === "asset" ? { frameId: input.target.frameId } : {}),
+          prompt: input.prompt,
+          status: "queued",
+        });
   let worker: Awaited<ReturnType<typeof fetch>>;
   try {
     worker = await fetch(
@@ -299,13 +315,15 @@ async function startRunViaWorker(
           userId: input.userId,
           threadId: input.threadId,
           mode: input.mode,
+          ...(input.shape !== undefined ? { shape: input.shape } : {}),
           ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           usage: input.usage,
         }),
       },
     );
   } catch (reason) {
-    await failUnacceptedRun(runId);
+    if (input.mode === "draw") await failTask(db, runId, "worker unavailable");
+    else await failUnacceptedRun(runId);
     return fail(
       res,
       502,
@@ -317,7 +335,8 @@ async function startRunViaWorker(
     const detail = (await worker.json().catch(() => null)) as {
       message?: string;
     } | null;
-    await failUnacceptedRun(runId, detail?.message);
+    if (input.mode === "draw") await failTask(db, runId, detail?.message ?? "refused");
+    else await failUnacceptedRun(runId, detail?.message);
     if (worker.status === 409) {
       return fail(
         res,
@@ -333,7 +352,13 @@ async function startRunViaWorker(
       detail?.message ?? "The drawing worker is not available.",
     );
   }
-  const started = (await worker.json()) as { durableRunId?: string };
+  const started = (await worker.json()) as {
+    durableRunId?: string;
+    durableTaskId?: string;
+  };
+  if (started.durableTaskId) {
+    await setTaskDurableId(db, runId, started.durableTaskId);
+  }
   if (started.durableRunId) {
     await db
       .update(generationRuns)
@@ -967,6 +992,7 @@ export function createApp() {
       threadId: thread.id,
       requestId,
       mode,
+      ...(decided.shape !== undefined ? { shape: decided.shape } : {}),
       usage: usageSeedFromSpend({
         guardrailUsage: guardrail.usage,
         decisionUsage,
@@ -1353,7 +1379,11 @@ export function createApp() {
     );
     const requestId = crypto.randomUUID();
     const guardrailReport = stored.guardrail as GuardrailReport | null;
-    const decisionStored = stored.decision as { usage?: Record<string, number> } | null;
+    const decisionStored = stored.decision as {
+      usage?: Record<string, number>;
+      shape?: { workers: number; review: boolean; source?: string };
+    } | null;
+    const storedDecisionShape = decisionStored?.shape;
     return startRunViaWorker(res, {
       userId,
       prompt,
@@ -1364,6 +1394,7 @@ export function createApp() {
       threadId: thread.id,
       requestId,
       mode: stored.intent === "ask" ? "ask" : "draw",
+      ...(storedDecisionShape !== undefined ? { shape: storedDecisionShape } : {}),
       usage: usageSeedFromSpend({
         guardrailUsage: guardrailReport?.usage,
         decisionUsage: decisionStored?.usage,

@@ -11,6 +11,12 @@ export type DrawDecision = {
   intent: DrawIntent;
   confidence: number;
   source: "jev";
+  /**
+   * The task shape Jev chose: how many workers may paint in parallel and
+   * whether a review round is worth it. `source: "default"` means the answers
+   * were missing, and the caller logs that instead of hiding it.
+   */
+  shape?: { workers: number; review: boolean; source: "jev" | "default" };
 };
 
 /** The decision path keeps its own name for the shared configuration error. */
@@ -69,6 +75,26 @@ const jevQuestions: Record<string, JevQuestion> = {
         "It asks for a new drawing but names no subject at all, or only a placeholder like 'something'.",
     },
   },
+  workers: {
+    type: "choice",
+    instructions:
+      "How many workers should paint this request in parallel? One worker for a single subject or a small tweak to existing art. Two to four when the request needs several frames or distinct parts that can be painted independently. Never more than four; when unsure, choose two.",
+    criteria: {
+      "1": "A single subject, a small tweak, or work that is inherently sequential.",
+      "2": "A few frames or two clearly separate parts; the common case for animation.",
+      "3": "Several frames or three parts that can be split cleanly.",
+      "4": "Many frames or four independent parts; the request is clearly large.",
+    },
+  },
+  review: {
+    type: "noul",
+    instructions:
+      "After the workers finish, should the supervisor review every frame for continuity, palette, and outlines? Yes when the request involves motion, several frames, or consistency across frames. No for a single simple still subject.",
+    criteria: {
+      true: "Motion, several frames, or consistency across frames matters.",
+      false: "One simple still subject where a review would add nothing.",
+    },
+  },
   actionable: {
     type: "noul",
     instructions:
@@ -90,7 +116,20 @@ export function toDecision(answers: {
   intent: JevAnswer;
   drawable: JevAnswer;
   actionable: JevAnswer;
+  workers?: JevAnswer;
+  review?: JevAnswer;
 }): DrawDecision {
+  const shapeFrom = (): {
+    workers: number;
+    review: boolean;
+    source: "jev" | "default";
+  } => {
+    const raw = Number(answers.workers?.choice);
+    const answered = Number.isFinite(raw) && answers.review?.noul !== undefined;
+    const workers = Number.isFinite(raw) ? Math.min(4, Math.max(1, Math.round(raw))) : 2;
+    const review = (answers.review?.noul ?? 0.6) >= 0.5;
+    return { workers, review, source: answered ? "jev" : "default" };
+  };
   const chosen = answers.intent.choice;
   const intent =
     chosen === undefined || !(chosen in intentOptions) ? "ask" : (chosen as DrawIntent);
@@ -105,7 +144,7 @@ export function toDecision(answers: {
     // A vague draw request is a conversational turn: the agent asks back.
     return { intent: "ask", confidence, source: "jev" };
   }
-  return { intent, confidence, source: "jev" };
+  return { intent, confidence, source: "jev", shape: shapeFrom() };
 }
 
 export async function decidePrompt(
@@ -145,5 +184,7 @@ export async function decidePrompt(
     intent: answers.intent ?? {},
     drawable: answers.drawable ?? {},
     actionable: answers.actionable ?? {},
+    workers: answers.workers ?? {},
+    review: answers.review ?? {},
   });
 }
