@@ -98,3 +98,12 @@ Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
 (Commits for this follow-up: `87fc50f` + the `activeTaskId` commit.)
 
 **Still open** (unchanged): the five deferred Important items from the review, minus the two closed here (steering relay, signal naming); the editor's post-reload console still shows the rejoined child's stream rather than the full task tree (open the task stream on rejoin), and the clarify picker's "whole asset" button still needs a re-send.
+
+## Follow-up 2 (commits `7f24a1b`, + this commit)
+
+- Rejoin is task-first: after a reload the console shows the supervisor tree again (child streams still feed each frame's canvas), and `activeTaskId` keeps questions and frame-context steering wired.
+- The clarify picker resends: "whole asset" posts the message unanchored; both picker paths surface send failures instead of swallowing them.
+- New frames appear when the task moves phase (or binds an asset): the asset query is invalidated on `task-phase`/`asset-bound`/`task-complete`.
+- Minors closed: the task stream closes on unmount; the trace harness fails on an unreadable trace.
+
+**Still open:** the review's remaining minors (re-plan drops attachments, `source:"default"` never logged, a task does not seed the decision spend, `taskSnapshot` excludes failed/cancelled tasks, RunConsole lacks an explicit phase/n-of-N header).
