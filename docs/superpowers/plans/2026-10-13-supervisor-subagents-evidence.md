@@ -129,3 +129,10 @@ Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
 - **Case 10 — steering relay** ✓ (recorded above): anchored `lari-a` → routed to w1 → relayed into the live run (`delivered: true`), `202 {routed:"w1"}`.
 
 **Still live-deferred** (code + unit coverage in place): a review-ordered fix round, `view_image` of a supervisor reference, two workers asking at once, emulated `prefers-reduced-motion` screenshots, and the home→editor transition with a live task.
+
+## Frames UI + demo video (follow-up 4)
+
+- The frame list shows four rows and then scrolls on its own; the layer list scrolls in its own box (commit `69440b8`).
+- Recording the demo surfaced a real editor crash: a pending **tool-approval** carries no `questions`, so `question-summary.tsx` indexed `questions[0]` of undefined and the editor error-boundaried as soon as the plan card appeared. Fixed (the summary now names approvals and questions), committed with the scroll change.
+- `~/Desktop/pixelaition-demo-final.mp4` (6:54, 1920×1080, 88 MB): home → target confirmed on camera → plan card approved → two workers paint in parallel (with a worker's `clear_region` approval answered on its own frame) → review orders two fixes → second review passes → finished asset → frames browsed, closing on a 12-frame family whose list scrolls after four rows.
+- Master capture: viewport 1920×1080 at `deviceScaleFactor: 2` rendered into a 1920×1080 video (an exact 2:1 downsample; a video size larger than the viewport lands the page in one corner). Waiting stretches run at 2× (3× for stretches over 150 s) with a pixel speed chip, the cursor and its click ripple are drawn by the page, and phase captions ride the actions.
