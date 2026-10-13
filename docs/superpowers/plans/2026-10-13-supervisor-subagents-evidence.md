@@ -107,3 +107,16 @@ Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
 - Minors closed: the task stream closes on unmount; the trace harness fails on an unreadable trace.
 
 **Still open:** the review's remaining minors (re-plan drops attachments, `source:"default"` never logged, a task does not seed the decision spend, `taskSnapshot` excludes failed/cancelled tasks, RunConsole lacks an explicit phase/n-of-N header).
+
+## Follow-up 3 (all remaining minors closed)
+
+- Re-plan continues the first plan's conversation: the user's attachment images survive a rejected plan (unit test).
+- The plan's own `review: true` forces a review even when Jev said no (unit test); a failed worker always gets one.
+- A task seeds the guardrail/decision spend onto its own usage; the rollup starts from that seed and adds the child rows.
+- The task snapshot surfaces the latest task of any status (failed/cancelled included), so the editor never shows a stale earlier task.
+- `ask_user` passes the role gate: the review cannot ask; workers and the plan can.
+- A defaulted shape (`source: "default"`) is logged instead of hidden.
+- The console header names the phase and finished/total workers; usage stays in the summary.
+- (Earlier) the task stream closes on unmount; the trace harness fails on an unreadable trace.
+
+**Open:** none from the review. Live-deferred matrix cases still listed above (fix round, workspace/home binding, cancel, reference view_image, parallel-question pair, reduced-motion emulation, home transition) — each has code + unit coverage and a named live check.
