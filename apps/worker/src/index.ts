@@ -22,6 +22,7 @@ import {
 } from "@anvia/core/completion";
 import { frameToPng } from "@pixelaition/export";
 import {
+  assertRoleAllowsTool,
   searchImagesFor,
   createAssetDrawTask,
   type AssetDrawInput,
@@ -550,9 +551,20 @@ const observability = {
 // chose. The ask agent shares the model and context but cannot paint; each
 // entry keeps its tool list so the recovery map matches exactly.
 const agents = completions.flatMap(({ spec, model }) => {
+  const questionTool = createQuestionTool();
   const drawingTools = [
     ...createPixelTools({ vision: spec.vision, webSearch }),
-    createQuestionTool(),
+    // ask_user belongs to the worker and supervisor sets; the review cannot
+    // ask (its role gate refuses it), exactly like the tool contract says.
+    {
+      ...questionTool,
+      call: async (args: never, context?: { operationId?: string }) => {
+        const operationId = context?.operationId;
+        const run = operationId === undefined ? undefined : getRun(operationId);
+        if (run !== undefined) assertRoleAllowsTool(run, questionTool.name);
+        return questionTool.call(args, context as never);
+      },
+    },
   ];
   const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
   // One draw agent per model and effort serves every task role: `continueFrom`
@@ -1047,7 +1059,8 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
     .select({ durableRunId: generationRuns.durableRunId })
     .from(generationRuns)
     .where(eq(generationRuns.taskId, taskRowId));
-  const totals = emptyUsage();
+  const seeded = usageFor(durableTaskId);
+  const totals = { ...seeded };
   for (const child of children) {
     if (child.durableRunId === null) continue;
     // The in-memory map is dropped when a run ends; the row's persisted usage
@@ -1589,6 +1602,9 @@ app.post("/internal/runs", async (req, res) => {
         review: String(shape.review),
       },
     });
+    // The API's guardrail and decision calls already spent before the task
+    // began; the rollup starts from that seed.
+    seedUsage(task.id, body.usage);
     void watchTask(runtime, task.id);
     return res.status(202).json({ durableTaskId: task.id });
   }

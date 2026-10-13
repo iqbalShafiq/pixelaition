@@ -103,6 +103,7 @@ export function RunConsole({
   assets,
   onRespond,
   onEscape,
+  taskProgress,
 }: {
   rows: RunRow[];
   running: boolean;
@@ -123,6 +124,8 @@ export function RunConsole({
     stagedFrames?: StagedPlanFrame[],
   ) => Promise<void>;
   onEscape: () => void;
+  /** Task progress for the header: phase and how many workers finished. */
+  taskProgress?: { phase: string; done: number; total: number } | undefined;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
@@ -236,6 +239,11 @@ export function RunConsole({
         }`}
       >
         <span className={running ? "text-accent" : ""}>agent</span>
+        {taskProgress !== undefined ? (
+          <span className="text-accent normal-case">
+            {taskProgress.phase} · {taskProgress.done}/{taskProgress.total}
+          </span>
+        ) : null}
         <span>{summary}</span>
         {empty ? null : <span className="ml-auto">{open ? "▾" : "▴"}</span>}
       </button>

@@ -69,6 +69,7 @@ export type {
 export { activeLayerId, createPixelTools } from "./tools.js";
 export { drawPlanSchema, validatePlan } from "./tasks/plan.js";
 export type { DrawPlan, DrawPlanFrame, PlanLimits } from "./tasks/plan.js";
+export { assertRoleAllowsTool } from "./runs.js";
 export { buildWorkerPrompt } from "./tasks/worker-prompt.js";
 export type { WorkerPromptInput } from "./tasks/worker-prompt.js";
 export {

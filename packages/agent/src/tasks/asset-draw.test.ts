@@ -229,9 +229,9 @@ describe("asset-draw plan phase", () => {
 });
 
 describe("asset-draw execute phase", () => {
-  it("completes without a review when every worker succeeded and Jev said no review", async () => {
+  it("completes without a review when every worker succeeded and neither Jev nor the plan wants one", async () => {
     const task = createAssetDrawTask(deps);
-    const plan = JSON.parse(planJson);
+    const plan = { ...JSON.parse(planJson), review: false };
     const { ctx } = fakeCtx({
       checkpoint: {
         phase: "execute",
@@ -251,6 +251,28 @@ describe("asset-draw execute phase", () => {
       status: "completed",
       output: { rounds: 0, workers: 2 },
     });
+  });
+
+  it("honours the supervisor's own review request when Jev said no review", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: {
+        phase: "execute",
+        plan,
+        planKey: "plan",
+        workerIds: ["child-w1", "child-w2"],
+        workerKeys: ["w1", "w2"],
+      },
+      children: [
+        { id: "child-w1", key: "w1", outcome: { status: "completed", output: "done" } },
+        { id: "child-w2", key: "w2", outcome: { status: "completed", output: "done" } },
+      ],
+    });
+    const withNoReview = { ...ctx, input: { ...input, review: false } } as typeof ctx;
+    const transition = await run(task, withNoReview);
+    expect(spawns.map((spawn) => spawn.key)).toContain("review-1");
+    expect(transition).toMatchObject({ status: "waiting" });
   });
 });
 

@@ -1833,6 +1833,19 @@ export function EditorScreen() {
                 />
                 <div className="w-full [view-transition-name:console-flight]">
                   <RunConsole
+                    taskProgress={
+                      task.data?.task !== null && task.data?.task !== undefined
+                        ? {
+                            phase: task.data.task.phase,
+                            done: (task.data.workers ?? []).filter(
+                              (worker) =>
+                                worker.status === "succeeded" ||
+                                worker.status === "failed",
+                            ).length,
+                            total: (task.data.workers ?? []).length,
+                          }
+                        : undefined
+                    }
                     rows={rows}
                     running={running || optimisticStart !== null}
                     open={consoleOpen}

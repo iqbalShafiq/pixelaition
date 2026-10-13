@@ -278,6 +278,11 @@ async function startRunViaWorker(
     };
   },
 ): Promise<void> {
+  if (input.mode === "draw" && input.shape?.source === "default") {
+    // Jev did not answer the shape questions; the conservative default is used
+    // and the fact is named instead of hidden.
+    console.warn("[shape] Jev did not answer; using workers=2, review=true");
+  }
   // One task per asset: the guard runs here as well as in the worker, because
   // a task's child rows may not exist yet when the second request arrives.
   if (

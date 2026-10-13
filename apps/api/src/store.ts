@@ -951,9 +951,18 @@ export async function taskSnapshot(db: Database, assetId: string) {
     .select()
     .from(runTasks)
     .where(
+      // Every terminal state counts too: the editor shows the asset's latest
+      // task whatever happened to it, never a stale earlier one.
       and(
         eq(runTasks.assetId, assetId),
-        inArray(runTasks.status, ["queued", "running", "waiting", "completed"]),
+        inArray(runTasks.status, [
+          "queued",
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled",
+        ]),
       ),
     )
     .orderBy(desc(runTasks.createdAt))

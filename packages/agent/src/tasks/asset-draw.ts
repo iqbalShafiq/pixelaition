@@ -293,7 +293,10 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   const failed = workerKeys.filter(
     (key) => childOutput(ctx, key)?.status !== "completed",
   );
-  if (!ctx.input.review && failed.length === 0) {
+  // Jev may say a review is unnecessary; the supervisor's own plan may insist
+  // on one. Either way, a failed worker always gets reviewed.
+  const reviewWanted = ctx.input.review || checkpoint.plan.review;
+  if (!reviewWanted && failed.length === 0) {
     return {
       status: "completed",
       output: {
