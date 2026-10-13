@@ -34,6 +34,11 @@ export type InteractionResponse =
 
 /** One frame of a staged plan edit, shaped exactly like the stage-override schema. */
 export type StagedPlanFrame = { frameId?: string; name: string; description: string };
+export type StagedPlanExtras = {
+  workers?: Array<{ key: string; frames: string[] }>;
+  palette?: Array<{ color: string; name: string }>;
+  references?: Array<{ url: string; note: string }>;
+};
 
 /** steps(4, end): the card lands on whole pixels, never a smooth glide. */
 const steppedEase = (t: number) => Math.min(1, Math.floor(t * 4) / 4);
@@ -44,7 +49,7 @@ const steppedEase = (t: number) => Math.min(1, Math.floor(t * 4) / 4);
  */
 function planInput(
   input: unknown,
-): { summary: string; frames: StagedPlanFrame[] } | null {
+): { summary: string; frames: StagedPlanFrame[]; extras: StagedPlanExtras } | null {
   if (!input || typeof input !== "object") return null;
   const value = input as Record<string, unknown>;
   if (!Array.isArray(value.frames)) return null;
@@ -59,7 +64,58 @@ function planInput(
       description: frame.description,
     });
   }
-  return { summary: typeof value.summary === "string" ? value.summary : "", frames };
+  const extras: StagedPlanExtras = {};
+  if (Array.isArray(value.workers)) {
+    const workers = value.workers
+      .filter(
+        (item): item is { key: string; frames: string[] } =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as { key?: unknown }).key === "string" &&
+          Array.isArray((item as { frames?: unknown }).frames),
+      )
+      .map((item) => ({
+        key: item.key,
+        frames: (item.frames as unknown[]).filter(
+          (name): name is string => typeof name === "string",
+        ),
+      }));
+    if (workers.length > 0) extras.workers = workers;
+  }
+  if (Array.isArray(value.palette)) {
+    const palette = value.palette
+      .filter(
+        (item): item is { color: string; name: string } =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as { color?: unknown }).color === "string" &&
+          typeof (item as { name?: unknown }).name === "string",
+      )
+      .map((item) => ({ color: item.color, name: item.name }));
+    if (palette.length > 0) extras.palette = palette;
+  }
+  if (Array.isArray(value.references)) {
+    const references = value.references
+      .filter(
+        (item): item is { url: string; note: string } =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as { url?: unknown }).url === "string",
+      )
+      .map((item) => ({
+        url: item.url,
+        note:
+          typeof (item as { note?: unknown }).note === "string"
+            ? (item as { note: string }).note
+            : "",
+      }));
+    if (references.length > 0) extras.references = references;
+  }
+  return {
+    summary: typeof value.summary === "string" ? value.summary : "",
+    frames,
+    extras,
+  };
 }
 
 /**
@@ -196,8 +252,46 @@ function ApprovalBody({
       {!plan && interaction.reason ? (
         <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
       ) : null}
-      {plan?.summary ? (
-        <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
+      {plan !== null ? (
+        <>
+          {plan.summary ? (
+            <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
+          ) : null}
+          {plan.extras.workers !== undefined ? (
+            <ul className="mt-2 grid gap-1 text-pixel-mono text-muted">
+              {plan.extras.workers.map((worker) => (
+                <li key={worker.key}>
+                  <span className="text-accent">{worker.key}</span> →{" "}
+                  {worker.frames.join(", ")}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {plan.extras.palette !== undefined ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-pixel-mono text-muted">
+              <span>palette +{plan.extras.palette.length}</span>
+              {plan.extras.palette.map((entry) => (
+                <span
+                  key={`${entry.color}-${entry.name}`}
+                  className="flex items-center gap-1"
+                >
+                  <span
+                    aria-hidden
+                    className="inline-block h-3 w-3 border-2 border-line"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  {entry.name}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {plan.extras.references !== undefined ? (
+            <p className="mt-2 text-pixel-mono text-muted">
+              {plan.extras.references.length} reference
+              {plan.extras.references.length === 1 ? "" : "s"} to look at
+            </p>
+          ) : null}
+        </>
       ) : null}
       {inputLines.length > 0 ? (
         <ul className="mt-2 grid gap-0.5">

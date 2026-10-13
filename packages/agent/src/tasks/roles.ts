@@ -58,6 +58,7 @@ export const planInstructions = [
   "Read the project, the asset, its frames, and its summaries; search for references when the subject is a real species, character, or place.",
   "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the style guide's colour maximum), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
   "Create the planned frames with add_frame and set the palette additions with set_palette before you finish.",
+  "Pass the worker split, the palette additions, and the references in present_plan so the approval card shows them.",
   "Finish by answering with one JSON object matching the plan schema and nothing else.",
 ].join("\n");
 

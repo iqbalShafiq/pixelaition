@@ -895,6 +895,26 @@ export function createPixelTools(
     inputSchema: z.object({
       summary: z.string().min(1).max(300),
       frames: z.array(planFrameSchema).min(1).max(24),
+      // The structured plan the card renders: which worker paints which
+      // frames, the palette additions, and the references the workers may
+      // look at. Optional so an older caller still validates.
+      workers: z
+        .array(
+          z.object({
+            key: z.string().min(1).max(8),
+            frames: z.array(z.string().min(1)).min(1),
+          }),
+        )
+        .max(4)
+        .optional(),
+      palette: z
+        .array(z.object({ color: z.string(), name: z.string().min(1).max(40) }))
+        .max(8)
+        .optional(),
+      references: z
+        .array(z.object({ url: z.string().url(), note: z.string().max(200) }))
+        .max(8)
+        .optional(),
     }),
     requiresApproval: true,
     execute: (input, context) => {
