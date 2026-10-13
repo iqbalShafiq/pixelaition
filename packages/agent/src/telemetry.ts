@@ -22,8 +22,8 @@ export type TelemetrySpan = {
   name: string;
   startMs: number;
   endMs?: number;
-  input?: string;
-  output?: string;
+  input?: unknown;
+  output?: unknown;
   model?: string;
   usage?: Record<string, unknown>;
   level?: "DEFAULT" | "WARNING" | "ERROR";
@@ -130,10 +130,14 @@ export function buildOtlpPayload(
                   );
                 }
               }
+              // Langfuse reads these attributes as strings; an object pushed
+              // raw shows "[object Object]" and the trace cannot be judged.
+              const asText = (value: unknown): string =>
+                typeof value === "string" ? value : JSON.stringify(value);
               if (span.input !== undefined)
-                push("langfuse.observation.input", span.input);
+                push("langfuse.observation.input", asText(span.input));
               if (span.output !== undefined)
-                push("langfuse.observation.output", span.output);
+                push("langfuse.observation.output", asText(span.output));
               if (span.level) push("langfuse.observation.level", span.level);
               if (span.statusMessage) {
                 push("langfuse.observation.status_message", span.statusMessage);

@@ -937,6 +937,22 @@ async function bindTaskChild(
   const { modelId, effort } = modelEffortFromAgentId(agentId);
   const publicRunId = existingRow?.id ?? crypto.randomUUID();
   publicIdByDurable.set(childRunId, publicRunId);
+  // A child without a trace context drops every span; name its trace by role
+  // and carry the task id, worker key, and model so a whole tree is readable.
+  telemetry?.setTraceContext(childRunId, {
+    name:
+      role === "plan" ? "draw-plan" : role === "review" ? "draw-review" : `draw-${role}`,
+    userId: input.userId,
+    sessionId: input.threadId,
+    tags: ["pixelaition", "draw", role],
+    metadata: {
+      taskId: durableTaskId,
+      role,
+      ...(workerKey !== undefined ? { workerKey } : {}),
+      modelId,
+      reasoningEffort: effort,
+    },
+  });
 
   const asset = input.assetId === null ? undefined : await loadAsset(input.assetId);
   const assetFrames =

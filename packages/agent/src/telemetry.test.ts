@@ -61,6 +61,16 @@ describe("telemetry", () => {
       '{"input":10,"output":3}',
     );
     expect(attributes["langfuse.observation.input"]).toBe("hello");
+    // Langfuse reads the attribute as a string; an object pushed raw shows
+    // "[object Object]" and the trace becomes unreadable.
+    const withObject = buildOtlpPayload(
+      [{ ...span, input: { prompt: "hello", frames: ["idle"] } }],
+      undefined,
+      "pixelaition-worker",
+    );
+    expect(attributesOf(withObject)["langfuse.observation.input"]).toBe(
+      '{"prompt":"hello","frames":["idle"]}',
+    );
     expect(attributes["langfuse.observation.output"]).toBe("world");
   });
 
