@@ -41,14 +41,23 @@ export const assetDrawInputSchema = z.object({
 });
 export type AssetDrawInput = z.infer<typeof assetDrawInputSchema>;
 
+/** Bookkeeping that must survive a restart: bounded retries per child role. */
+const PHASE_EXTRAS = {
+  retries: z.record(z.string(), z.number().int().min(0).max(3)).optional(),
+  framesCreateTried: z.boolean().optional(),
+  framesCreateKey: z.string().optional(),
+};
+
 export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
   z.object({
+    ...PHASE_EXTRAS,
     phase: z.literal("plan"),
     attempt: z.number().int().min(0).max(2),
     // The child's KEY, not its task id: `continueFrom` names a sibling key.
     planKey: z.string().optional(),
   }),
   z.object({
+    ...PHASE_EXTRAS,
     phase: z.literal("execute"),
     plan: drawPlanSchema,
     planKey: z.string(),
@@ -57,6 +66,7 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     workerKeys: z.array(z.string()).optional(),
   }),
   z.object({
+    ...PHASE_EXTRAS,
     phase: z.literal("review"),
     plan: drawPlanSchema,
     planKey: z.string(),
@@ -65,11 +75,24 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     fixIds: z.array(z.string()),
   }),
 ]);
-export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema> & {
-  /** The approved frames were missing once; a create child was spawned. */
-  framesCreateTried?: boolean;
-  framesCreateKey?: string;
-};
+export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema>;
+
+/** A child that died on a provider hiccup gets a fresh attempt, bounded. */
+const CHILD_RETRIES = 2;
+
+function retriesFor(
+  checkpoint: { retries?: Record<string, number> },
+  key: string,
+): number {
+  return checkpoint.retries?.[key] ?? 0;
+}
+
+function withRetry(
+  checkpoint: { retries?: Record<string, number> },
+  key: string,
+): Record<string, number> {
+  return { ...checkpoint.retries, [key]: retriesFor(checkpoint, key) + 1 };
+}
 
 export const assetDrawOutputSchema = z.object({
   assetId: z.string(),
@@ -214,9 +237,27 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   }
   const outcome = childOutput(ctx, checkpoint.planKey);
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
+    const key = "plan";
+    if (retriesFor(checkpoint, key) < CHILD_RETRIES) {
+      const childKey = `plan-retry-${retriesFor(checkpoint, key) + 1}`;
+      const id = ctx.spawnAgent(childKey, {
+        agentId: ctx.input.agentId,
+        prompt: buildPlanPrompt(ctx.input),
+      });
+      return {
+        status: "waiting",
+        checkpoint: {
+          phase: "plan",
+          attempt: checkpoint.attempt,
+          planKey: childKey,
+          retries: withRetry(checkpoint, key),
+        },
+        wait: { type: "children", ids: [id], policy: "allSettled" },
+      };
+    }
     return {
       status: "failed",
-      error: `The plan phase did not complete: ${outcome?.status ?? "unknown"}.`,
+      error: `The plan phase did not complete after ${CHILD_RETRIES} retries: ${outcome?.status ?? "unknown"}.`,
     };
   }
   const parsed = parsePlanOutput(outcome.output);
@@ -352,6 +393,62 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   const failed = workerKeys.filter(
     (key) => childOutput(ctx, key)?.status !== "completed",
   );
+  // A paint that never happened cannot be reviewed: the worker's assignment is
+  // handed to a fresh child first.
+  const retryable = failed.filter(
+    (key) => retriesFor(checkpoint, `worker:${key}`) < CHILD_RETRIES,
+  );
+  if (retryable.length > 0) {
+    return (async () => {
+      const ids: string[] = [];
+      const keys: string[] = [];
+      let retries = checkpoint.retries ?? {};
+      for (const key of retryable) {
+        const worker = checkpoint.plan.workers.find((candidate) => candidate.key === key);
+        if (worker === undefined) continue;
+        retries = withRetry({ retries }, `worker:${key}`);
+        const childKey = `${key}-retry-${retriesFor(checkpoint, `worker:${key}`) + 1}`;
+        const context = await deps.loadWorkerContext(ctx.input, checkpoint.plan, key);
+        const ownedFrames = checkpoint.plan.frames.filter((frame) =>
+          worker.frames.includes(frame.name),
+        );
+        const readOnly = checkpoint.plan.frames
+          .filter((frame) => !worker.frames.includes(frame.name))
+          .map((frame) => frame.name);
+        const references = checkpoint.plan.references
+          .filter(
+            (reference) =>
+              reference.appliesTo === "all" ||
+              reference.appliesTo.some((name) => worker.frames.includes(name)),
+          )
+          .map((reference) => ({ url: reference.url, note: reference.note }));
+        ids.push(
+          ctx.spawnAgent(childKey, {
+            agentId: ctx.input.agentId,
+            prompt: withAttachments(
+              [
+                workerInstructions,
+                buildWorkerPrompt({
+                  ...context.promptData,
+                  attachments: ctx.input.attachments.length,
+                  ownedFrames,
+                  readOnlyFrames: readOnly,
+                  references,
+                }),
+              ].join("\n\n"),
+              ctx.input.attachments,
+            ),
+          }),
+        );
+        keys.push(childKey);
+      }
+      return {
+        status: "waiting",
+        checkpoint: { ...checkpoint, workerIds: ids, workerKeys: keys, retries },
+        wait: { type: "children", ids, policy: "allSettled" },
+      };
+    })();
+  }
   // Jev may say a review is unnecessary; the supervisor's own plan may insist
   // on one. Either way, a failed worker always gets reviewed.
   const reviewWanted = ctx.input.review || checkpoint.plan.review;
@@ -451,9 +548,32 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
   }
   const outcome = childOutput(ctx, checkpoint.reviewKey);
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
+    const key = `review:${checkpoint.round}`;
+    if (retriesFor(checkpoint, key) < CHILD_RETRIES) {
+      return (async () => {
+        const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
+        const childKey = `review-${checkpoint.round}-retry-${retriesFor(checkpoint, key) + 1}`;
+        const id = ctx.spawnAgent(childKey, {
+          agentId: ctx.input.agentId,
+          prompt: [reviewInstructions, context, deliveredSteers(ctx)]
+            .filter((line) => line.length > 0)
+            .join("\n\n"),
+          continueFrom: checkpoint.planKey,
+        });
+        return {
+          status: "waiting",
+          checkpoint: {
+            ...checkpoint,
+            reviewKey: childKey,
+            retries: withRetry(checkpoint, key),
+          },
+          wait: { type: "children", ids: [id], policy: "allSettled" },
+        };
+      })();
+    }
     return {
       status: "failed",
-      error: `The review phase did not complete: ${outcome?.status ?? "unknown"}.`,
+      error: `The review phase did not complete after ${CHILD_RETRIES} retries: ${outcome?.status ?? "unknown"}.`,
     };
   }
   let verdict: { ok?: boolean; fixes?: Array<{ frame: string; note: string }> };

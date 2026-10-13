@@ -552,6 +552,15 @@ export function EditorScreen() {
   }, []);
 
   /** A worker's stroke lands in its frame's draft; the viewed frame follows. */
+  // A stroke that lands on the frame in view says so on the canvas itself:
+  // the agent is painting here, right now.
+  const [agentPulse, setAgentPulse] = useState(0);
+  useEffect(() => {
+    if (agentPulse === 0) return;
+    const timer = window.setTimeout(() => setAgentPulse(0), 1100);
+    return () => window.clearTimeout(timer);
+  }, [agentPulse]);
+
   const applyStroke = useCallback(
     (raw: Record<string, unknown>, fallbackFrameId: string) => {
       const data = raw as {
@@ -560,6 +569,7 @@ export function EditorScreen() {
         palette?: string[];
       };
       const target = data.frameId ?? fallbackFrameId;
+      if (target === frameId) setAgentPulse(Date.now());
       // A set_palette repaint carries the asset's new palette: every frame
       // adopts it, exactly like the editor's palette panel.
       if (data.palette) {
@@ -1067,6 +1077,17 @@ export function EditorScreen() {
     });
   }
 
+  // The run console is the supervisor's stage: open it while a task is live,
+  // and keep the frame list following frames that appear mid-run.
+  useEffect(() => {
+    if (!taskActive) return;
+    setConsoleOpen(true);
+    const timer = window.setInterval(() => {
+      void client.invalidateQueries({ queryKey: ["asset", assetId] });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [assetId, client, taskActive]);
+
   const refresh = () => client.invalidateQueries({ queryKey: ["asset", assetId] });
 
   /**
@@ -1421,6 +1442,7 @@ export function EditorScreen() {
         activeId={frameId}
         playing={playing}
         locked={running}
+        generating={taskActive}
         taskFrames={
           new Map([
             ...(taskActive
@@ -1665,7 +1687,12 @@ export function EditorScreen() {
                   </div>
                 </Centered>
               ) : (
-                <div key={frameId ?? "none"} className="frame-crossfade contents">
+                <div
+                  key={frameId ?? "none"}
+                  className={`frame-crossfade contents ${
+                    agentPulse > 0 ? "agent-canvas-pulse" : ""
+                  }`}
+                >
                   <PixelCanvas
                     buffer={buffer ?? fallbackBuffer}
                     camera={camera}

@@ -211,9 +211,9 @@ describe("asset-draw plan phase", () => {
     );
   });
 
-  it("fails when the plan child itself fails", async () => {
+  it("retries the plan child, then fails with the cause", async () => {
     const task = createAssetDrawTask(deps);
-    const { ctx } = fakeCtx({
+    const { ctx, spawns } = fakeCtx({
       checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
       children: [
         {
@@ -223,9 +223,17 @@ describe("asset-draw plan phase", () => {
         },
       ],
     });
-    expect(await run(task, ctx)).toMatchObject({
+    const first = await run(task, ctx);
+    expect(first).toMatchObject({ status: "waiting" });
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["plan-retry-1"]);
+
+    const spent = await run(task, {
+      ...ctx,
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan", retries: { plan: 2 } },
+    } as typeof ctx);
+    expect(spent).toMatchObject({
       status: "failed",
-      error: "The plan phase did not complete: failed.",
+      error: "The plan phase did not complete after 2 retries: failed.",
     });
   });
 });

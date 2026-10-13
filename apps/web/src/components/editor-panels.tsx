@@ -1,5 +1,6 @@
 import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
 import { FrameStatus, type FrameTaskState } from "./frame-status.js";
+import { PixelLoader } from "./pixel-loader.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
@@ -282,6 +283,7 @@ export function FramePanel({
   activeId,
   playing,
   locked,
+  generating = false,
   taskFrames,
   onSelect,
   onTogglePlay,
@@ -296,6 +298,8 @@ export function FramePanel({
   activeId: string | null;
   playing: boolean;
   locked: boolean;
+  /** A task is live: the panel names the work in progress. */
+  generating?: boolean;
   /** Per-frame task state, keyed by frame id, while a task runs. */
   taskFrames?: Map<string, FrameTaskState>;
   onSelect: (frameId: string) => void;
@@ -377,6 +381,12 @@ export function FramePanel({
       title={`${frames.length} frame${frames.length === 1 ? "" : "s"}`}
       action={
         <div className="flex items-center gap-1">
+          {generating ? (
+            <span className="worker-blink mr-1 flex items-center gap-1 text-pixel-mono text-accent uppercase">
+              <PixelLoader size={12} />
+              generating
+            </span>
+          ) : null}
           <IconButton
             label={playing ? "Stop playback" : "Play frames"}
             size="sm"

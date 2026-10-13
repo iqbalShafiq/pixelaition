@@ -267,15 +267,14 @@ export function Checkbox({
             the label baseline inside the layers panel's clipped 18px wrapper);
             preserveAspectRatio still draws the 12px glyph. */}
         <svg
-          viewBox="0 0 8 8"
+          viewBox="0 0 6 6"
           width={12}
-          height={13}
-          preserveAspectRatio="xMidYMid meet"
+          height={12}
           shapeRendering="crispEdges"
           aria-hidden
         >
           <path
-            d="M1 4h1v1h1v1h1V5h1V4h1V3h1V2H6v1H5v1H4V3H3v1H2v1H1z"
+            d="M1 3h1v1H1zM2 4h1v1H2zM3 5h1v1H3zM4 4h1v1H4zM5 3h1v1H5zM5 2h1v1H5zM5 1h1v1H5z"
             fill="currentColor"
           />
         </svg>
@@ -283,7 +282,17 @@ export function Checkbox({
       {hideLabel ? (
         <span className="sr-only">{label}</span>
       ) : (
-        <span className={checked ? "text-ink" : "text-muted"}>{label}</span>
+        <span className="group/label relative min-w-0">
+          <span className={`block truncate ${checked ? "text-ink" : "text-muted"}`}>
+            {label}
+          </span>
+          <span
+            role="tooltip"
+            className="pointer-events-none absolute top-full left-0 z-50 mt-1 hidden max-w-[34rem] border-2 border-line bg-raised px-2 py-1 text-pixel-mono whitespace-normal text-ink shadow-pixel group-hover/label:block"
+          >
+            {label}
+          </span>
+        </span>
       )}
     </label>
   );
