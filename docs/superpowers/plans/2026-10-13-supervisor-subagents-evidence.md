@@ -120,3 +120,12 @@ Changed by the user's follow-up review (commits `87fc50f`, + `activeTaskId`):
 - (Earlier) the task stream closes on unmount; the trace harness fails on an unreadable trace.
 
 **Open:** none from the review. Live-deferred matrix cases still listed above (fix round, workspace/home binding, cancel, reference view_image, parallel-question pair, reduced-motion emulation, home transition) — each has code + unit coverage and a named live check.
+
+## Live matrix closers
+
+- **Case 9 — cancel mid-task** ✓: `POST /api/tasks/:id/cancel` → `204`; the task row, its plan child, and the durable task all read `cancelled`, and the asset unlocked.
+- **Workspace/home task binds its own asset (Critical fix #2)** ✓: a `scope: "workspace"` task started with `assetId: null`; the plan child created the asset (`run_tasks.asset_id` filled from the plan) and the worker child bound to it and painted.
+- **Case 2b — two workers in parallel** ✓ (recorded above): w1 and w2 both `running`, each owning different frames.
+- **Case 10 — steering relay** ✓ (recorded above): anchored `lari-a` → routed to w1 → relayed into the live run (`delivered: true`), `202 {routed:"w1"}`.
+
+**Still live-deferred** (code + unit coverage in place): a review-ordered fix round, `view_image` of a supervisor reference, two workers asking at once, emulated `prefers-reduced-motion` screenshots, and the home→editor transition with a live task.
