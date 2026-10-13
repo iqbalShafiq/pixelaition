@@ -11,6 +11,7 @@ import {
   type FrameChange,
   type ProjectSummary,
   type RunAsset,
+  type RunBinding,
   type Stroke,
 } from "./runs.js";
 import { createPixelTools } from "./tools.js";
@@ -69,6 +70,7 @@ function hopBuffer(): FrameBuffer {
 function boundRun(
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void,
   onFrameChange?: (change: FrameChange) => void | Promise<void>,
+  overrides: Partial<RunBinding> = {},
 ): void {
   bindRun("run-1", {
     assetId: "asset-1",
@@ -89,8 +91,47 @@ function boundRun(
     issues: [],
     ...(onStroke ? { onStroke } : {}),
     ...(onFrameChange ? { onFrameChange } : {}),
+    ...overrides,
   });
 }
+
+describe("worker frame ownership", () => {
+  it("refuses a write to a frame outside the worker's set, with the cause named", async () => {
+    boundRun(undefined, undefined, { ownedFrameIds: new Set(["frame-1"]) });
+    await expect(
+      tool("paint_stroke").call(
+        {
+          frameId: "frame-2",
+          layerId: "base",
+          label: "x",
+          points: [{ x: 0, y: 0, color: 1 }],
+        },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("That frame belongs to another worker.");
+    releaseRun("run-1");
+  });
+  it("allows a write to an owned frame", async () => {
+    boundRun(undefined, undefined, { ownedFrameIds: new Set(["frame-1"]) });
+    await tool("paint_stroke").call(
+      {
+        frameId: "frame-1",
+        layerId: "base",
+        label: "dot",
+        points: [{ x: 1, y: 1, color: 1 }],
+      },
+      { operationId: "run-1" },
+    );
+    releaseRun("run-1");
+  });
+  it("refuses use_frame to a sibling frame", async () => {
+    boundRun(undefined, undefined, { ownedFrameIds: new Set(["frame-1"]) });
+    await expect(
+      tool("use_frame").call({ frameId: "frame-2" }, { operationId: "run-1" }),
+    ).rejects.toThrow("That frame belongs to another worker.");
+    releaseRun("run-1");
+  });
+});
 
 type Tool = {
   call: (args: unknown, context: { operationId: string }) => Promise<unknown>;

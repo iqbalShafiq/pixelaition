@@ -35,6 +35,7 @@ import {
   planFrameSchema,
   refreshCritique,
   replaceFrameBuffer,
+  assertOwnedFrame,
   requireAsset,
   requireRun,
   resolveLayerRef,
@@ -72,8 +73,9 @@ function resolveFrame(
   run: BoundRunBinding,
   frameId?: string,
 ): { id: string; name: string; buffer: FrameBuffer; frame: RunFrame } {
-  const buffer = frameBuffer(run, frameId);
   const id = frameId ?? run.currentFrameId;
+  assertOwnedFrame(run, id);
+  const buffer = frameBuffer(run, frameId);
   const frame = run.frames.get(id);
   if (!frame) throw new Error("Choose or create a frame first.");
   return { id, name: frame.name, buffer, frame };

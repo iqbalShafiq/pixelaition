@@ -172,7 +172,26 @@ export type RunBinding = {
    * and nothing else, so the model cannot point the worker at arbitrary hosts.
    */
   searchImages?: Set<string>;
+  /** The task this run belongs to, when a supervisor owns it. */
+  taskId?: string;
+  /** The role this run plays inside its task. */
+  role?: "plan" | "worker" | "review" | "fix";
+  /** w1..w4 for a worker child. */
+  workerKey?: string;
+  /** Workers carry the frames they own; every write is checked against it. */
+  ownedFrameIds?: ReadonlySet<string>;
 };
+
+/**
+ * A worker may only write its own frames. Plan and review runs carry no set,
+ * so nothing changes for them; a worker that reaches for a sibling frame is
+ * refused with the cause instead of painting over another worker's work.
+ */
+export function assertOwnedFrame(run: RunBinding, frameId: string): void {
+  if (run.ownedFrameIds !== undefined && !run.ownedFrameIds.has(frameId)) {
+    throw new Error("That frame belongs to another worker.");
+  }
+}
 
 /** The run's seen-image set, created on first use. */
 export function searchImagesFor(run: RunBinding): Set<string> {
@@ -334,6 +353,7 @@ export function paintStroke(
   points: Stroke["points"],
 ): Stroke {
   const id = frameId ?? run.currentFrameId;
+  assertOwnedFrame(run, id);
   const buffer = frameBuffer(run, frameId);
   const result = applyCommand(buffer, {
     type: "paint",
