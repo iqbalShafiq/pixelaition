@@ -284,10 +284,12 @@ export function EditorScreen() {
       ? activeLayerId
       : (buffer?.layers[0]?.id ?? "");
   const taskActive =
-    taskId !== null &&
     task.data?.task !== null &&
     task.data?.task !== undefined &&
     ["queued", "running", "waiting"].includes(task.data.task.status);
+  // A reload may have rejoined through a child run; the snapshot's own task
+  // id keeps questions, badges, and frame-context steering wired either way.
+  const activeTaskId = taskId ?? (taskActive ? (task.data?.task?.id ?? null) : null);
   const running = runId !== null || taskActive;
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // A live run can touch every frame of the asset, so the editor locks all of
@@ -807,7 +809,7 @@ export function EditorScreen() {
   // A worker's question surfaces when the user opens its frame; the frame
   // list badge and the counter near the composer point the way.
   useEffect(() => {
-    if (taskId === null) return;
+    if (activeTaskId === null) return;
     const workers = task.data?.workers ?? [];
     // A supervisor question (plan/review) matters whatever frame is open; a
     // worker question surfaces when its frame is the one in view.
@@ -830,7 +832,7 @@ export function EditorScreen() {
       current?.id === interaction.id ? current : (interaction as PendingInteraction),
     );
     setPendingRunId(chosen.runId);
-  }, [taskId, frameId, task.data]);
+  }, [activeTaskId, frameId, task.data]);
 
   // While a task runs, each worker's own stream feeds its frame's canvas; the
   // task stream stays lean (no strokes) and drives the tree.
@@ -839,7 +841,7 @@ export function EditorScreen() {
     .filter((id): id is string => typeof id === "string");
   const workerRunKey = workerRunIds.join(",");
   useEffect(() => {
-    if (taskId === null || workerRunIds.length === 0) return;
+    if (activeTaskId === null || workerRunIds.length === 0) return;
     const sources = workerRunIds.map((id) => {
       const source = new EventSource(`/api/runs/${id}/stream?after=0`);
       source.onmessage = (event) => {
@@ -852,7 +854,7 @@ export function EditorScreen() {
     return () => {
       for (const source of sources) source.close();
     };
-  }, [taskId, workerRunKey, applyStroke]);
+  }, [activeTaskId, workerRunKey, applyStroke]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1168,13 +1170,13 @@ export function EditorScreen() {
     const text = (textOverride ?? prompt).trim();
     // Frame context with a live task: the message steers that frame's worker
     // through the task endpoint instead of starting another run.
-    if (frameContextOn && taskId !== null && text.length > 0) {
+    if (frameContextOn && activeTaskId !== null && text.length > 0) {
       const frameName = frames.find((frame) => frame.id === frameId)?.name;
       if (textOverride === undefined) setPrompt("");
       startTransition(async () => {
         try {
           const result = await api<{ routed: string; candidates?: string[] }>(
-            `/api/tasks/${taskId}/steer`,
+            `/api/tasks/${activeTaskId}/steer`,
             {
               method: "POST",
               body: JSON.stringify({
@@ -1786,8 +1788,8 @@ export function EditorScreen() {
                             const message = clarify.message;
                             setClarify(null);
                             startTransition(async () => {
-                              if (taskId === null) return;
-                              await api(`/api/tasks/${taskId}/steer`, {
+                              if (activeTaskId === null) return;
+                              await api(`/api/tasks/${activeTaskId}/steer`, {
                                 method: "POST",
                                 body: JSON.stringify({
                                   prompt: message,
