@@ -48,20 +48,21 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
   z.object({
     phase: z.literal("plan"),
     attempt: z.number().int().min(0).max(2),
-    planChildId: z.string().optional(),
+    // The child's KEY, not its task id: `continueFrom` names a sibling key.
+    planKey: z.string().optional(),
   }),
   z.object({
     phase: z.literal("execute"),
     plan: drawPlanSchema,
-    planChildId: z.string(),
+    planKey: z.string(),
     workerIds: z.array(z.string()),
   }),
   z.object({
     phase: z.literal("review"),
     plan: drawPlanSchema,
-    planChildId: z.string(),
+    planKey: z.string(),
     round: z.number().int().min(1).max(2),
-    reviewChildId: z.string().optional(),
+    reviewKey: z.string().optional(),
     fixIds: z.array(z.string()),
   }),
 ]);
@@ -97,10 +98,26 @@ export function withAttachments(
   };
 }
 
+/**
+ * The exact shape the plan child must answer with. The model kept inventing
+ * its own schema; showing the literal object removed the guesswork.
+ */
+export const PLAN_SCHEMA_EXAMPLE = [
+  "Answer with exactly this JSON shape (no other fields):",
+  '{"assetId":"<the asset id from read_project>",',
+  '"frames":[{"name":"idle","intent":"what this frame shows","layers":["body","shadow"]}],',
+  '"palette":[{"color":"#rrggbb","name":"glow"}],',
+  '"references":[{"url":"https://...","note":"what to look at","appliesTo":"all"}],',
+  '"workers":[{"key":"w1","frames":["idle"]}],',
+  '"review":true}',
+  "Every frame appears in exactly one worker; palette holds only the colours you added; references only when you actually searched.",
+].join("\n");
+
 export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): string {
   return [
     input.request,
     planInstructions,
+    PLAN_SCHEMA_EXAMPLE,
     retryError === undefined
       ? ""
       : `Your previous plan was rejected: ${retryError} Answer again with one corrected JSON object.`,
@@ -135,9 +152,9 @@ type Transition = TaskTransition<AssetDrawCheckpoint, AssetDrawOutput>;
 
 function childOutput(
   ctx: Ctx,
-  id: string,
+  key: string,
 ): { status: string; output?: unknown; error?: string } | undefined {
-  const child = ctx.children().find((record) => record.id === id);
+  const child = ctx.children().find((record) => record.key === key);
   return child?.outcome;
 }
 
@@ -162,7 +179,7 @@ function deliveredSteers(ctx: Ctx): string {
 
 function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transition {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "plan" }>;
-  if (checkpoint.planChildId === undefined) {
+  if (checkpoint.planKey === undefined) {
     return (async () => {
       const context = await deps.loadPlanContext(ctx.input);
       const key = checkpoint.attempt === 0 ? "plan" : `plan-${checkpoint.attempt}`;
@@ -175,12 +192,12 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       });
       return {
         status: "waiting",
-        checkpoint: { ...checkpoint, planChildId: id },
+        checkpoint: { ...checkpoint, planKey: key },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     })();
   }
-  const outcome = childOutput(ctx, checkpoint.planChildId);
+  const outcome = childOutput(ctx, checkpoint.planKey);
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
     return {
       status: "failed",
@@ -206,7 +223,11 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
     });
     return {
       status: "waiting",
-      checkpoint: { phase: "plan", attempt: checkpoint.attempt + 1, planChildId: id },
+      checkpoint: {
+        phase: "plan",
+        attempt: checkpoint.attempt + 1,
+        planKey: `plan-${checkpoint.attempt + 1}`,
+      },
       wait: { type: "children", ids: [id], policy: "allSettled" },
     };
   }
@@ -247,7 +268,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
             ].join("\n\n"),
             ctx.input.attachments,
           ),
-          continueFrom: checkpoint.planChildId,
+          continueFrom: checkpoint.planKey,
         }),
       );
     }
@@ -256,7 +277,7 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       checkpoint: {
         phase: "execute",
         plan,
-        planChildId: checkpoint.planChildId as string,
+        planKey: checkpoint.planKey as string,
         workerIds,
       },
       wait: { type: "children", ids: workerIds, policy: "allSettled" },
@@ -292,16 +313,16 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
       ]
         .filter((line) => line.length > 0)
         .join("\n\n"),
-      continueFrom: checkpoint.planChildId,
+      continueFrom: checkpoint.planKey,
     });
     return {
       status: "waiting",
       checkpoint: {
         phase: "review",
         plan: checkpoint.plan,
-        planChildId: checkpoint.planChildId,
+        planKey: checkpoint.planKey,
         round: 1,
-        reviewChildId: id,
+        reviewKey: "review-1",
         fixIds: [],
       },
       wait: { type: "children", ids: [id], policy: "allSettled" },
@@ -320,7 +341,7 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
       workers: checkpoint.plan.workers.length,
     },
   });
-  if (checkpoint.reviewChildId === undefined) {
+  if (checkpoint.reviewKey === undefined) {
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
       const id = ctx.spawnAgent(`review-${checkpoint.round}`, {
@@ -328,11 +349,11 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
         prompt: [reviewInstructions, context, deliveredSteers(ctx)]
           .filter((line) => line.length > 0)
           .join("\n\n"),
-        continueFrom: checkpoint.planChildId,
+        continueFrom: checkpoint.planKey,
       });
       return {
         status: "waiting",
-        checkpoint: { ...checkpoint, reviewChildId: id },
+        checkpoint: { ...checkpoint, reviewKey: `review-${checkpoint.round}` },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     })();
@@ -347,23 +368,23 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
         prompt: [reviewInstructions, context, deliveredSteers(ctx)]
           .filter((line) => line.length > 0)
           .join("\n\n"),
-        continueFrom: checkpoint.planChildId,
+        continueFrom: checkpoint.planKey,
       });
       return {
         status: "waiting",
         checkpoint: {
           phase: "review",
           plan: checkpoint.plan,
-          planChildId: checkpoint.planChildId,
+          planKey: checkpoint.planKey,
           round: checkpoint.round + 1,
-          reviewChildId: id,
+          reviewKey: `review-${checkpoint.round + 1}`,
           fixIds: [],
         },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     })();
   }
-  const outcome = childOutput(ctx, checkpoint.reviewChildId);
+  const outcome = childOutput(ctx, checkpoint.reviewKey);
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
     return {
       status: "failed",
@@ -392,7 +413,7 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
         `Fix "${fix.frame}": ${fix.note}`,
         `Intent: ${frame?.intent ?? ""}.`,
       ].join("\n\n"),
-      continueFrom: checkpoint.reviewChildId,
+      continueFrom: checkpoint.reviewKey,
     });
   });
   return {

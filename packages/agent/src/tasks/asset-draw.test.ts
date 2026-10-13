@@ -160,7 +160,7 @@ describe("asset-draw plan phase", () => {
   it("validates the plan child's output and spawns one worker per assignment with continueFrom", async () => {
     const task = createAssetDrawTask(deps);
     const { ctx, spawns } = fakeCtx({
-      checkpoint: { phase: "plan", attempt: 0, planChildId: "child-plan" },
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
       children: [
         {
           id: "child-plan",
@@ -171,7 +171,7 @@ describe("asset-draw plan phase", () => {
     });
     const transition = await run(task, ctx);
     expect(spawns.map((spawn) => spawn.key)).toEqual(["w1", "w2"]);
-    expect(spawns.every((spawn) => spawn.continueFrom === "child-plan")).toBe(true);
+    expect(spawns.every((spawn) => spawn.continueFrom === "plan")).toBe(true);
     expect(transition).toMatchObject({
       status: "waiting",
       wait: { type: "children", ids: ["child-w1", "child-w2"] },
@@ -185,7 +185,7 @@ describe("asset-draw plan phase", () => {
       workers: [{ key: "w1", frames: ["idle"] }],
     });
     const first = fakeCtx({
-      checkpoint: { phase: "plan", attempt: 0, planChildId: "child-plan" },
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
       children: [
         { id: "child-plan", key: "plan", outcome: { status: "completed", output: bad } },
       ],
@@ -198,7 +198,7 @@ describe("asset-draw plan phase", () => {
     expect(retry).toMatchObject({ status: "waiting" });
 
     const second = fakeCtx({
-      checkpoint: { phase: "plan", attempt: 1, planChildId: "child-plan-1" },
+      checkpoint: { phase: "plan", attempt: 1, planKey: "plan-1" },
       children: [
         {
           id: "child-plan-1",
@@ -217,7 +217,7 @@ describe("asset-draw plan phase", () => {
   it("fails when the plan child itself fails", async () => {
     const task = createAssetDrawTask(deps);
     const { ctx } = fakeCtx({
-      checkpoint: { phase: "plan", attempt: 0, planChildId: "child-plan" },
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
       children: [
         {
           id: "child-plan",
@@ -241,7 +241,7 @@ describe("asset-draw review phase", () => {
       checkpoint: {
         phase: "review",
         plan,
-        planChildId: "child-plan",
+        planKey: "plan",
         round: 1,
         fixIds: [],
       },
@@ -249,15 +249,15 @@ describe("asset-draw review phase", () => {
     });
     await run(task, first.ctx);
     expect(first.spawns[0]?.key).toBe("review-1");
-    expect(first.spawns[0]?.continueFrom).toBe("child-plan");
+    expect(first.spawns[0]?.continueFrom).toBe("plan");
 
     const approved = fakeCtx({
       checkpoint: {
         phase: "review",
         plan,
-        planChildId: "child-plan",
+        planKey: "plan",
         round: 1,
-        reviewChildId: "child-review-1",
+        reviewKey: "review-1",
         fixIds: [],
       },
       children: [
@@ -282,9 +282,9 @@ describe("asset-draw review phase", () => {
       checkpoint: {
         phase: "review",
         plan,
-        planChildId: "child-plan",
+        planKey: "plan",
         round: 1,
-        reviewChildId: "child-review-1",
+        reviewKey: "review-1",
         fixIds: [],
       },
       children: [
@@ -300,7 +300,7 @@ describe("asset-draw review phase", () => {
     });
     const transition = await run(task, ctx);
     expect(spawns.map((spawn) => spawn.key)).toEqual(["fix-1-1"]);
-    expect(spawns[0]?.continueFrom).toBe("child-review-1");
+    expect(spawns[0]?.continueFrom).toBe("review-1");
     expect(transition).toMatchObject({
       status: "waiting",
       wait: { type: "children", ids: ["child-fix-1-1"] },
@@ -327,5 +327,18 @@ describe("buildPlanPrompt", () => {
     expect(buildPlanPrompt(input, 'Frame "x" is not assigned to a worker.')).toContain(
       'Frame "x" is not assigned to a worker.',
     );
+  });
+  it("shows the exact schema so the answer conforms", () => {
+    const prompt = buildPlanPrompt(input);
+    for (const field of [
+      '"workers"',
+      '"appliesTo"',
+      '"review"',
+      '"layers"',
+      '"palette"',
+    ]) {
+      expect(prompt).toContain(field);
+    }
+    expect(prompt).toContain('"key":"w1"');
   });
 });

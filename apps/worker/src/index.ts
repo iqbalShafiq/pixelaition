@@ -23,6 +23,8 @@ import {
 import { frameToPng } from "@pixelaition/export";
 import {
   createAssetDrawTask,
+  type AssetDrawInput,
+  type DrawPlan,
   fixInstructions,
   planInstructions,
   reviewInstructions,
@@ -846,6 +848,223 @@ async function backfillSummaries(): Promise<void> {
 // handler at module scope is an unhandled rejection and Node exits on it.
 let durableFailure: string | undefined;
 
+// --- Tasks: watch a durable task, bind its children, persist progress ------
+
+const taskWatchers = new Map<string, AbortController>();
+const boundChildRuns = new Set<string>();
+
+/** model and effort parsed from a registered agent id (…:<model>:<effort>). */
+function modelEffortFromAgentId(agentId: string): { modelId: string; effort: string } {
+  const parts = agentId.split(":");
+  return {
+    effort: parts.at(-1) ?? "medium",
+    modelId: parts.at(-2) ?? "unknown",
+  };
+}
+
+/** Frame ids a child owns: a worker its assignment, plan and review all frames. */
+function framesForRole(
+  plan: DrawPlan | null,
+  role: string,
+  workerKey: string | undefined,
+  assetFrames: Array<{ id: string; name: string }>,
+): string[] {
+  if (plan === null) return assetFrames.slice(0, 1).map((frame) => frame.id);
+  const names =
+    role === "worker" || role === "fix"
+      ? (plan.workers.find((worker) => worker.key === workerKey)?.frames ?? [])
+      : plan.frames.map((frame) => frame.name);
+  return names
+    .map((name) => assetFrames.find((frame) => frame.name === name)?.id)
+    .filter((id): id is string => id !== undefined);
+}
+
+/**
+ * Child events mirror into the task stream so one subscription drives the
+ * console tree; strokes stay out because each one carries a whole frame.
+ */
+function mirrorChildEvents(
+  taskId: string,
+  childPublicId: string,
+  workerKey?: string,
+): void {
+  const set = listeners.get(childPublicId) ?? new Set<(event: PublicEvent) => void>();
+  set.add((event) => {
+    if (event.type === "canvas-stroke") return;
+    publish(taskId, event.type, {
+      ...(event.data as Record<string, unknown>),
+      runId: childPublicId,
+      ...(workerKey ? { workerKey } : {}),
+    });
+  });
+  listeners.set(childPublicId, set);
+}
+
+async function bindTaskChild(
+  runtime: DurableRuntime,
+  durableTaskId: string,
+  taskRowId: string,
+  input: AssetDrawInput,
+  plan: DrawPlan | null,
+  node: { key: string; agentRunId?: string; status: string; input?: unknown },
+): Promise<void> {
+  const childRunId = node.agentRunId;
+  if (childRunId === undefined || boundChildRuns.has(childRunId)) return;
+  boundChildRuns.add(childRunId);
+  const role: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
+    ? "plan"
+    : node.key.startsWith("w")
+      ? "worker"
+      : node.key.startsWith("review")
+        ? "review"
+        : "fix";
+  const workerKey =
+    role === "worker" || role === "fix" ? node.key.split("-")[0] : undefined;
+  const agentId =
+    typeof (node.input as { agentId?: unknown } | undefined)?.agentId === "string"
+      ? (node.input as { agentId: string }).agentId
+      : input.agentIds.plan;
+  const { modelId, effort } = modelEffortFromAgentId(agentId);
+  const publicRunId = crypto.randomUUID();
+  publicIdByDurable.set(childRunId, publicRunId);
+
+  const asset = input.assetId === null ? undefined : await loadAsset(input.assetId);
+  const assetFrames =
+    asset?.frames.map((frame) => ({ id: frame.id, name: frame.name })) ?? [];
+  const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames);
+  const spawnPrompt =
+    typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
+      ? (node.input as { prompt: string }).prompt
+      : "(prompt with reference images)";
+
+  await db.insert(generationRuns).values({
+    id: publicRunId,
+    threadId: input.threadId,
+    // respond/steer/cancel resolve a child by this column, exactly like a
+    // single run; without it every interaction answers "not waiting".
+    durableRunId: childRunId,
+    requestId: childRunId,
+    status: "running",
+    modelId,
+    reasoningEffort: effort,
+    frameId: ownedFrameIds[0] ?? null,
+    prompt: spawnPrompt,
+    taskId: taskRowId,
+    role,
+    workerKey: workerKey ?? null,
+    frameIds: ownedFrameIds,
+  });
+
+  if (asset !== undefined && ownedFrameIds.length > 0) {
+    bindAssetRun({
+      durableRunId: childRunId,
+      publicRunId,
+      assetId: asset.id,
+      asset,
+      originFrameId: ownedFrameIds[0] as string,
+      request: input.request,
+      approvedScope: plan === null ? undefined : assetFrames.map((frame) => frame.id),
+      role,
+      ...(workerKey ? { workerKey } : {}),
+      ...(role === "worker" || role === "fix" ? { ownedFrameIds } : {}),
+    });
+  } else if (role === "plan") {
+    // A workspace task starts with no asset; the plan child binds one lazily.
+    bindWorkspaceRun({
+      durableRunId: childRunId,
+      publicRunId,
+      userId: input.userId,
+      style: defaultStyle,
+      request: input.request,
+    });
+  }
+
+  mirrorChildEvents(durableTaskId, publicRunId, workerKey);
+  void follow(runtime, childRunId, publicRunId, effort);
+}
+
+async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promise<void> {
+  const children = await db
+    .select({ durableRunId: generationRuns.durableRunId })
+    .from(generationRuns)
+    .where(eq(generationRuns.taskId, taskRowId));
+  const totals = emptyUsage();
+  for (const child of children) {
+    if (child.durableRunId === null) continue;
+    const usage = usageFor(child.durableRunId);
+    totals.input += usage.input;
+    totals.output += usage.output;
+    totals.total += usage.total;
+    totals.cached += usage.cached;
+    totals.cost += usage.cost;
+    totals.modelCalls += usage.modelCalls;
+    totals.modelCost += usage.modelCost;
+    totals.jevCalls += usage.jevCalls;
+    totals.jevCost += usage.jevCost;
+  }
+  await db.update(runTasks).set({ usage: totals }).where(eq(runTasks.id, taskRowId));
+  publish(durableTaskId, "usage", { ...totals });
+}
+
+async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promise<void> {
+  if (taskWatchers.has(durableTaskId)) return;
+  const controller = new AbortController();
+  taskWatchers.set(durableTaskId, controller);
+  const [row] = await db
+    .select()
+    .from(runTasks)
+    .where(eq(runTasks.durableTaskId, durableTaskId));
+  if (!row) return;
+  try {
+    const handle = await runtime.getTask(durableTaskId);
+    for await (const _event of handle.stream({ abortSignal: controller.signal })) {
+      const snapshot = await handle.snapshot();
+      const record = snapshot.task;
+      const graph = await handle.graph();
+      const input = record.input as AssetDrawInput;
+      const checkpoint = record.checkpoint as { phase?: string; plan?: DrawPlan };
+      const plan = checkpoint.plan ?? (row.plan as DrawPlan | null) ?? null;
+      const terminal = ["completed", "failed", "cancelled"].includes(record.status);
+      await db
+        .update(runTasks)
+        .set({
+          phase: checkpoint.phase ?? row.phase,
+          status: record.status,
+          ...(checkpoint.plan !== undefined ? { plan: checkpoint.plan } : {}),
+          ...(plan !== null && plan.assetId.length > 0 ? { assetId: plan.assetId } : {}),
+          ...(terminal ? { finishedAt: new Date() } : {}),
+        })
+        .where(eq(runTasks.id, row.id));
+      publish(durableTaskId, "task-phase", {
+        phase: checkpoint.phase ?? row.phase,
+        status: record.status,
+      });
+      for (const node of graph.nodes) {
+        if (node.id === record.id) continue;
+        await bindTaskChild(runtime, durableTaskId, row.id, input, plan, {
+          key: node.key,
+          ...(node.agentRunId !== undefined ? { agentRunId: node.agentRunId } : {}),
+          status: node.status,
+          input: node.input,
+        });
+        publish(durableTaskId, node.agentRunId ? "worker-status" : "worker-spawned", {
+          workerKey: node.key,
+          status: node.status,
+        });
+      }
+      if (terminal) {
+        await rollupTaskUsage(row.id, durableTaskId);
+        publish(durableTaskId, "task-complete", { status: record.status });
+        break;
+      }
+    }
+  } catch (reason) {
+    console.error(`[task] watch ${durableTaskId} stopped: ${boundedReason(reason)}`);
+  } finally {
+    taskWatchers.delete(durableTaskId);
+  }
+}
+
 /**
  * One row per drawing task, created the moment the durable task exists so the
  * API and the recovery pass can find it even before a child run starts.
@@ -1250,6 +1469,7 @@ app.post("/internal/runs", async (req, res) => {
         review: String(shape.review),
       },
     });
+    void watchTask(runtime, task.id);
     return res.status(202).json({ durableTaskId: task.id });
   }
 
@@ -2053,6 +2273,11 @@ function bindAssetRun(options: {
   request?: string;
   /** Frames the user already approved; absent means only the origin frame. */
   approvedScope?: string[];
+  /** The task role this child plays, for ownership and the console tree. */
+  role?: "plan" | "worker" | "review" | "fix";
+  workerKey?: string;
+  /** Frames this child may write; plan and review runs leave it unset. */
+  ownedFrameIds?: string[];
 }): void {
   const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
   const writes = frameWrites({
@@ -2089,6 +2314,9 @@ function bindAssetRun(options: {
     onFrameChange: writes.onFrameChange,
     onScopeChange: (scope) => persistScope(publicRunId, scope),
     onJevCheck: (check) => recordGateCheck(durableRunId, check),
+    ...(options.role ? { role: options.role } : {}),
+    ...(options.workerKey ? { workerKey: options.workerKey } : {}),
+    ...(options.ownedFrameIds ? { ownedFrameIds: new Set(options.ownedFrameIds) } : {}),
   });
 }
 
