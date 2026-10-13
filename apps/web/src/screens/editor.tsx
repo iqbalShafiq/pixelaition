@@ -1470,7 +1470,7 @@ export function EditorScreen() {
               .filter(([id]) => !taskActive || !viewedFrames.current.has(id))
               .map(
                 ([id, workerKey]) =>
-                  [id, { status: "done" as const, workerKey }] as const,
+                  [id, { status: "done" as const, workerKey, seen: false }] as const,
               ),
           ])
         }
