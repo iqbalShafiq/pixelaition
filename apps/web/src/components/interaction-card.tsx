@@ -1,4 +1,5 @@
 import { motion } from "motion/react";
+import { agentLabel } from "../lib/agent-label.js";
 import { useState } from "react";
 import { FrameThumb } from "./editor-panels.js";
 import { Button, Checkbox, SelectControl, Textarea, TextInput } from "./ui.js";
@@ -157,7 +158,7 @@ export function InteractionCard({
           ? "Approve the agent's request"
           : "Answer the agent"
       }
-      className="pointer-events-auto pixel-window w-full bg-panel"
+      className="pointer-events-auto pixel-window max-h-[85vh] w-full overflow-hidden bg-panel"
       style={{ maxWidth: "40rem" }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onEscape();
@@ -252,105 +253,107 @@ function ApprovalBody({
       {!plan && interaction.reason ? (
         <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
       ) : null}
-      {plan !== null ? (
-        <>
-          {plan.summary ? (
-            <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
-          ) : null}
-          {plan.extras.workers !== undefined ? (
-            <ul className="mt-2 grid gap-1 text-pixel-mono text-muted">
-              {plan.extras.workers.map((worker) => (
-                <li key={worker.key}>
-                  <span className="text-accent">{worker.key}</span> →{" "}
-                  {worker.frames.join(", ")}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {plan.extras.palette !== undefined ? (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-pixel-mono text-muted">
-              <span>palette +{plan.extras.palette.length}</span>
-              {plan.extras.palette.map((entry) => (
-                <span
-                  key={`${entry.color}-${entry.name}`}
-                  className="flex items-center gap-1"
-                >
+      <div className="max-h-[54vh] overflow-y-auto overscroll-contain pr-1">
+        {plan !== null ? (
+          <>
+            {plan.summary ? (
+              <p className="mt-2 text-pixel-body text-ink">{plan.summary}</p>
+            ) : null}
+            {plan.extras.workers !== undefined ? (
+              <ul className="mt-2 grid gap-1 text-pixel-mono text-muted">
+                {plan.extras.workers.map((worker) => (
+                  <li key={worker.key}>
+                    <span className="text-accent">{agentLabel(worker.key)}</span> →{" "}
+                    {worker.frames.join(", ")}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {plan.extras.palette !== undefined ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-pixel-mono text-muted">
+                <span>palette +{plan.extras.palette.length}</span>
+                {plan.extras.palette.map((entry) => (
                   <span
-                    aria-hidden
-                    className="inline-block h-3 w-3 border-2 border-line"
-                    style={{ backgroundColor: entry.color }}
-                  />
-                  {entry.name}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {plan.extras.references !== undefined ? (
-            <p className="mt-2 text-pixel-mono text-muted">
-              {plan.extras.references.length} reference
-              {plan.extras.references.length === 1 ? "" : "s"} to look at
-            </p>
-          ) : null}
-        </>
-      ) : null}
-      {inputLines.length > 0 ? (
-        <ul className="mt-2 grid gap-0.5">
-          {inputLines.map((line) => (
-            <li key={line.key} className="text-pixel-mono text-ink">
-              <span className="text-muted">{line.key}:</span> {line.value}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {planFrames.length > 0 ? (
-        <ul className="mt-2 grid gap-1.5">
-          {planFrames.map((frame, index) => {
-            const assetFrame = frame.frameId ? frameById.get(frame.frameId) : undefined;
-            return (
-              <li
-                key={frame.frameId ?? `new-${index}`}
-                className="flex items-center gap-2 border-2 border-line bg-field px-2 py-1.5"
-              >
-                {assetFrame ? (
-                  <FrameThumb frame={assetFrame} palette={palette} />
-                ) : (
-                  <span
-                    aria-hidden
-                    className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line bg-screen text-pixel-mono text-muted"
+                    key={`${entry.color}-${entry.name}`}
+                    className="flex items-center gap-1"
                   >
-                    new
+                    <span
+                      aria-hidden
+                      className="inline-block h-3 w-3 border-2 border-line"
+                      style={{ backgroundColor: entry.color }}
+                    />
+                    {entry.name}
                   </span>
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-ink">
-                    {frame.name}
-                  </span>
-                  <span
-                    className="block truncate text-pixel-mono text-muted"
-                    title={frame.description}
-                  >
-                    {frame.description}
-                  </span>
-                </span>
-                <Checkbox
-                  hideLabel
-                  label={`Include ${frame.name}`}
-                  checked={!removed.has(index)}
-                  disabled={busy}
-                  onChange={(next) =>
-                    setRemoved((current) => {
-                      const indexes = new Set(current);
-                      if (next) indexes.delete(index);
-                      else indexes.add(index);
-                      return indexes;
-                    })
-                  }
-                />
+                ))}
+              </div>
+            ) : null}
+            {plan.extras.references !== undefined ? (
+              <p className="mt-2 text-pixel-mono text-muted">
+                {plan.extras.references.length} reference
+                {plan.extras.references.length === 1 ? "" : "s"} to look at
+              </p>
+            ) : null}
+          </>
+        ) : null}
+        {inputLines.length > 0 ? (
+          <ul className="mt-2 grid gap-0.5">
+            {inputLines.map((line) => (
+              <li key={line.key} className="text-pixel-mono text-ink">
+                <span className="text-muted">{line.key}:</span> {line.value}
               </li>
-            );
-          })}
-        </ul>
-      ) : null}
+            ))}
+          </ul>
+        ) : null}
+        {planFrames.length > 0 ? (
+          <ul className="mt-2 grid gap-1.5">
+            {planFrames.map((frame, index) => {
+              const assetFrame = frame.frameId ? frameById.get(frame.frameId) : undefined;
+              return (
+                <li
+                  key={frame.frameId ?? `new-${index}`}
+                  className="flex items-center gap-2 border-2 border-line bg-field px-2 py-1.5"
+                >
+                  {assetFrame ? (
+                    <FrameThumb frame={assetFrame} palette={palette} />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line bg-screen text-pixel-mono text-muted"
+                    >
+                      new
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] text-ink">
+                      {frame.name}
+                    </span>
+                    <span
+                      className="block truncate text-pixel-mono text-muted"
+                      title={frame.description}
+                    >
+                      {frame.description}
+                    </span>
+                  </span>
+                  <Checkbox
+                    hideLabel
+                    label={`Include ${frame.name}`}
+                    checked={!removed.has(index)}
+                    disabled={busy}
+                    onChange={(next) =>
+                      setRemoved((current) => {
+                        const indexes = new Set(current);
+                        if (next) indexes.delete(index);
+                        else indexes.add(index);
+                        return indexes;
+                      })
+                    }
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </div>
       <Textarea
         value={note}
         aria-label="Note to the agent"

@@ -607,10 +607,17 @@ export function EditorScreen() {
             applyStroke(body.data as Record<string, unknown>, fallbackFrameId);
             return;
           }
+          if (body.type !== "canvas-stroke" && body.type !== "usage") {
+            // The plan and the workers create frames mid-run; the list must
+            // follow them, not wait for the task to end.
+            void client.invalidateQueries({ queryKey: ["asset", assetId] });
+          }
           if (body.type === "task-complete") {
             setTaskId(null);
             taskStream.close();
             void task.refetch();
+            void client.invalidateQueries({ queryKey: ["asset", assetId] });
+            void client.invalidateQueries({ queryKey: ["versions", assetId] });
             log("The task finished");
           }
         },
@@ -636,7 +643,7 @@ export function EditorScreen() {
         },
       });
     },
-    [applyStroke, assetId, log, paceRejoin, resetRejoin, task, taskStream],
+    [applyStroke, assetId, client, log, paceRejoin, resetRejoin, task, taskStream],
   );
 
   const listen = useCallback(
@@ -1417,20 +1424,24 @@ export function EditorScreen() {
         taskFrames={
           new Map([
             ...(taskActive
-              ? (task.data?.workers ?? []).flatMap((worker) =>
-                  worker.frames
-                    .filter(
-                      (frame) =>
-                        !(frame.status === "done" && viewedFrames.current.has(frame.id)),
-                    )
-                    .map(
-                      (frame) =>
-                        [
-                          frame.id,
-                          { status: frame.status, workerKey: worker.key },
-                        ] as const,
-                    ),
-                )
+              ? (task.data?.workers ?? [])
+                  .filter((worker) => /^(w\d+|fix-)/.test(worker.key))
+                  .flatMap((worker) =>
+                    worker.frames
+                      .filter(
+                        (frame) =>
+                          !(
+                            frame.status === "done" && viewedFrames.current.has(frame.id)
+                          ),
+                      )
+                      .map(
+                        (frame) =>
+                          [
+                            frame.id,
+                            { status: frame.status, workerKey: worker.key },
+                          ] as const,
+                      ),
+                  )
               : []),
             ...[...unseenDone.entries()]
               .filter(([id]) => !taskActive || !viewedFrames.current.has(id))
@@ -1596,7 +1607,7 @@ export function EditorScreen() {
 
       <div className="grid min-h-0 min-w-0 grid-rows-[1fr]">
         <div className="grid min-h-0 min-w-0 lg:grid-cols-[280px_1fr_300px]">
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-3 lg:flex">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 p-3 lg:flex">
             {leftPanels}
           </aside>
 

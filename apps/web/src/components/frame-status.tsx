@@ -1,3 +1,4 @@
+import { agentLabel } from "../lib/agent-label.js";
 import { PixelLoader } from "./pixel-loader.js";
 import { Check, Close } from "./pixel-icons.js";
 
@@ -26,7 +27,7 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
       <span className="flex items-center gap-1 text-pixel-mono text-accent">
         <span className="worker-blink h-2 w-2 bg-accent" />
         <PixelLoader size={12} />
-        {state.workerKey}
+        {agentLabel(state.workerKey)}
       </span>
     );
   }

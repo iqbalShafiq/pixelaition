@@ -112,11 +112,22 @@ export const PLAN_SCHEMA_EXAMPLE = [
   "Every frame appears in exactly one worker; palette holds only the colours you added; references only when you actually searched.",
 ].join("\n");
 
+/** A request that describes the subject acting needs key frames, not one pose. */
+const MOTION_REQUEST =
+  /(mengepak|kepak|flap|melompat|lompat|jump|berlari|lari|run|berjalan|jalan|walk|beranimasi|animasi|animation|looping|loop)/i;
+
+export function minFramesFor(request: string): number {
+  return MOTION_REQUEST.test(request) ? 3 : 1;
+}
+
 export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): string {
   return [
     input.request,
     planInstructions,
-    `Limits: at most ${input.maxWorkers} workers, at most ${input.maxFrames} frames, at most ${input.maxPalette} new palette colours.`,
+    `Limits: at most ${input.maxWorkers} workers, at most ${input.maxFrames} frames, at most ${input.maxPalette} new palette colours.` +
+      (minFramesFor(input.request) > 1
+        ? ` This request describes movement: plan at least ${minFramesFor(input.request)} key frames, one per key pose.`
+        : ""),
     PLAN_SCHEMA_EXAMPLE,
     retryError === undefined
       ? ""
@@ -205,15 +216,26 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
     };
   }
   const parsed = parsePlanOutput(outcome.output);
-  const checked = parsed.ok
+  let checked: { ok: true } | { ok: false; error: string } = parsed.ok
     ? validatePlan(parsed.plan, {
         maxWorkers: ctx.input.maxWorkers,
         maxFrames: ctx.input.maxFrames,
         maxPalette: ctx.input.maxPalette,
+        minFrames: minFramesFor(ctx.input.request),
       })
-    : { ok: false as const, error: parsed.error };
+    : { ok: false, error: parsed.error };
+  if (!checked.ok && checkpoint.attempt >= 1 && parsed.ok) {
+    // A supervisor that keeps one frame against the motion rule is taken at
+    // its word on the second attempt: the plan card shows the frames, and
+    // failing the run over a still pose helps nobody.
+    const lenient = validatePlan(parsed.plan, {
+      maxWorkers: ctx.input.maxWorkers,
+      maxFrames: ctx.input.maxFrames,
+      maxPalette: ctx.input.maxPalette,
+    });
+    if (lenient.ok) checked = lenient;
+  }
   if (!checked.ok) {
-    // One bounded re-plan: attempt 0 may retry once with the named error.
     if (checkpoint.attempt >= 1) {
       return { status: "failed", error: `The plan was invalid twice: ${checked.error}` };
     }

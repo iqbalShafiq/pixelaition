@@ -27,6 +27,7 @@ import {
   Send,
   type IconProps,
 } from "./pixel-icons.js";
+import { agentLabel } from "../lib/agent-label.js";
 import { groupRowsByWorker, formatDuration, type RunRow } from "../lib/run-activity.js";
 import {
   InteractionCard,
@@ -276,7 +277,7 @@ export function RunConsole({
                       key={`group-${group.workerKey}`}
                       className="assemble-rise mt-1 flex items-center gap-1.5 border-t-2 border-line pt-1 text-pixel-mono tracking-[0.16em] text-muted uppercase"
                     >
-                      <span className="text-accent">{group.workerKey}</span>
+                      <span className="text-accent">{agentLabel(group.workerKey)}</span>
                       <span>worker</span>
                     </li>,
                   ]),
@@ -312,7 +313,7 @@ export function RunConsole({
                     </span>
                   ) : row.kind === "worker" ? (
                     <span className={row.status === "failed" ? "text-erase" : "text-ink"}>
-                      {row.workerKey} · {row.status}
+                      {agentLabel(row.workerKey)} · {row.status}
                       {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
                     </span>
                   ) : row.kind === "task-phase" ? (
@@ -337,7 +338,9 @@ export function RunConsole({
                       {row.message ? ` · ${row.message.slice(0, 60)}` : ""}
                     </span>
                   ) : row.kind === "question" ? (
-                    <span className="text-accent">{row.workerKey} needs you</span>
+                    <span className="text-accent">
+                      {agentLabel(row.workerKey)} needs you
+                    </span>
                   ) : (
                     <span className={row.state === "failed" ? "text-erase" : "text-ink"}>
                       {row.label}

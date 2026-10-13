@@ -127,6 +127,7 @@ function FrameRow({
   const controls = useDragControls();
   return (
     <Reorder.Item
+      data-frame-row={frame.id}
       value={frame}
       dragListener={false}
       dragControls={controls}
@@ -135,7 +136,11 @@ function FrameRow({
       transition={{ duration: 0.16, ease: "easeOut" }}
       className="relative flex min-w-0 items-center gap-1"
     >
-      <div className={`${frameRowClass(current, editing)} relative min-w-0 flex-1`}>
+      <div
+        className={`${frameRowClass(current, editing)} relative min-w-0 flex-1 ${
+          taskState?.status === "working" ? "agent-paint-ring" : ""
+        }`}
+      >
         <button
           type="button"
           onClick={onSelect}
@@ -153,10 +158,16 @@ function FrameRow({
             opacity: editing ? 0 : 1,
           }}
           transition={{ duration: 0.18, ease: "easeOut" }}
-          className="pointer-events-none shrink-0 overflow-hidden"
+          className="pointer-events-none relative shrink-0 overflow-hidden"
           style={{ height: 36 }}
         >
           <FrameThumb frame={frame} palette={palette} />
+          {taskState?.status === "working" ? (
+            // The agent's own cursor, painting inside this frame's square.
+            <span aria-hidden className="agent-cursor">
+              <span className="agent-cursor-tip" />
+            </span>
+          ) : null}
         </motion.span>
         {editing ? (
           <motion.span
@@ -257,9 +268,9 @@ function FrameRow({
             onKeyboardMove(index + 1);
           }
         }}
-        className="grid h-6 w-5 shrink-0 cursor-grab place-items-center text-muted hover:text-ink disabled:cursor-default disabled:opacity-50"
+        className="grid h-8 w-7 shrink-0 cursor-grab place-items-center border-2 border-transparent text-muted transition-colors duration-150 hover:border-line hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-50"
       >
-        <MenuIcon width={12} height={12} />
+        <MenuIcon width={14} height={14} />
       </button>
     </Reorder.Item>
   );
@@ -298,6 +309,14 @@ export function FramePanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<FrameDto | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Playback (and any selection) keeps the active row on screen without
+  // yanking the list when it already is.
+  useEffect(() => {
+    const row = listRef.current?.querySelector(`[data-frame-row="${activeId}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
   const [orderDraft, setOrderDraft] = useState<FrameDto[] | null>(null);
   const draftOrderRef = useRef<FrameDto[] | null>(null);
   const list = orderDraft ?? frames;
@@ -378,7 +397,10 @@ export function FramePanel({
           body="A frame holds the pixels for one state of this asset."
         />
       ) : (
-        <div className="max-h-[13.75rem] overflow-y-auto overscroll-contain pr-0.5">
+        <div
+          ref={listRef}
+          className="max-h-[13.75rem] overflow-y-auto overscroll-contain pr-0.5"
+        >
           {/* Four rows fit; a longer list scrolls inside its own frame. */}
           <Reorder.Group
             axis="y"
@@ -479,6 +501,7 @@ export function LayerPanel({
 
   return (
     <Panel
+      className="min-h-0 flex-1"
       title="Layers"
       action={
         <IconButton
@@ -491,9 +514,9 @@ export function LayerPanel({
         </IconButton>
       }
     >
-      <div className="max-h-[9.75rem] overflow-y-auto overscroll-contain pr-0.5">
-        {/* Four layers fit; the layer list scrolls on its own, apart from
-            the frame list. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+        {/* The layer list fills what is left and scrolls on its own, apart
+            from the frame list. */}
         <ul className="grid gap-1">
           {layers.map((layer) => {
             const current = layer.id === activeId;

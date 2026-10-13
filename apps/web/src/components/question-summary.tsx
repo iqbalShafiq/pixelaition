@@ -1,3 +1,4 @@
+import { agentLabel } from "../lib/agent-label.js";
 import type { TaskWorkerState } from "../lib/task.js";
 
 /**
@@ -44,7 +45,7 @@ export function QuestionSummary({
                 }}
                 className="flex w-full items-center gap-2 border-2 border-line bg-field px-2 py-1.5 text-left text-pixel-mono text-ink transition-colors duration-150 hover:border-line-strong disabled:opacity-60"
               >
-                <span className="text-accent">{worker.key}</span>
+                <span className="text-accent">{agentLabel(worker.key)}</span>
                 <span className="min-w-0 flex-1 truncate">{label}</span>
                 {frame !== undefined ? (
                   <span className="shrink-0 text-muted">{frame.name}</span>

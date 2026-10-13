@@ -626,3 +626,57 @@
     animation: none;
   }
 }
+
+/* The agent's own cursor, painting inside a frame's square while its worker
+   works. Whole-pixel steps, and prefers-reduced-motion turns it off. */
+.agent-cursor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: agent-cursor-move 1.7s steps(4, end) infinite;
+}
+.agent-cursor-tip {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 7px;
+  height: 7px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(16, 18, 31, 0.8);
+  clip-path: polygon(0 0, 100% 42%, 52% 54%, 42% 100%);
+}
+@keyframes agent-cursor-move {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(17px, 7px);
+  }
+  50% {
+    transform: translate(6px, 19px);
+  }
+  75% {
+    transform: translate(21px, 22px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+.agent-paint-ring {
+  animation: agent-paint-ring 1.3s steps(2, end) infinite;
+}
+@keyframes agent-paint-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(141, 230, 176, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(141, 230, 176, 0.6);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-cursor,
+  .agent-paint-ring {
+    animation: none;
+  }
+}

@@ -35,7 +35,13 @@ export const drawPlanSchema = z.object({
 export type DrawPlan = z.infer<typeof drawPlanSchema>;
 export type DrawPlanFrame = z.infer<typeof drawPlanFrameSchema>;
 
-export type PlanLimits = { maxWorkers: number; maxFrames: number; maxPalette: number };
+export type PlanLimits = {
+  maxWorkers: number;
+  maxFrames: number;
+  maxPalette: number;
+  /** Key frames a motion request needs; 1 leaves a still pose free to pass. */
+  minFrames?: number;
+};
 
 /** Every rejection names what the supervisor must fix in its next attempt. */
 export function validatePlan(
@@ -53,6 +59,13 @@ export function validatePlan(
     return {
       ok: false,
       error: `The plan draws ${plan.frames.length} frames; the cap is ${limits.maxFrames}.`,
+    };
+  }
+  const minFrames = limits.minFrames ?? 1;
+  if (plan.frames.length < minFrames) {
+    return {
+      ok: false,
+      error: `The request describes movement, so the plan needs at least ${minFrames} key frames; it drew ${plan.frames.length}.`,
     };
   }
   const keys = new Set<string>();

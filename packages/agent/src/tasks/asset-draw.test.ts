@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPlanPrompt,
   createAssetDrawTask,
+  minFramesFor,
   parsePlanOutput,
   type AssetDrawCheckpoint,
   type AssetDrawDeps,
@@ -11,7 +12,7 @@ import {
 } from "./asset-draw.js";
 
 const input: AssetDrawInput = {
-  request: "draw a walking knight",
+  request: "draw a knight standing still",
   projectId: "p1",
   assetId: "a1",
   userId: "u1",
@@ -361,6 +362,37 @@ describe("parsePlanOutput", () => {
   it("names a schema failure", () => {
     const result = parsePlanOutput('{"frames":[]}');
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("plan limits", () => {
+  it("reads a motion request as needing key frames", () => {
+    expect(minFramesFor("a bird flapping its wings")).toBe(3);
+    expect(minFramesFor("seekor burung yang mengepakkan sayapnya")).toBe(3);
+    expect(minFramesFor("a knight standing still")).toBe(1);
+  });
+
+  it("refuses a one-frame plan for a motion request and re-plans with the cause", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        {
+          id: "child-plan",
+          key: "plan",
+          outcome: { status: "completed", output: JSON.stringify(plan) },
+        },
+      ],
+    });
+    const flapping = {
+      ...ctx,
+      input: { ...input, request: "seekor burung yang mengepakkan sayapnya" },
+    } as typeof ctx;
+    const transition = await run(task, flapping);
+    expect(transition).toMatchObject({ status: "waiting" });
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["plan-1"]);
+    expect(spawns[0]?.prompt).toContain("at least 3 key frames");
   });
 });
 
