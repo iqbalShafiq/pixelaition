@@ -896,6 +896,30 @@ async function bindTaskChild(
   const childRunId = node.agentRunId;
   if (childRunId === undefined || boundChildRuns.has(childRunId)) return;
   boundChildRuns.add(childRunId);
+  const earlyRole: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
+    ? "plan"
+    : node.key.startsWith("w")
+      ? "worker"
+      : node.key.startsWith("review")
+        ? "review"
+        : "fix";
+  const earlyWorkerKey =
+    earlyRole === "worker" || earlyRole === "fix" ? node.key.split("-")[0] : undefined;
+  // Idempotent across a restart: recovery may have bound this child and
+  // started its follow loop already, and a second insert would duplicate the
+  // row (live finding from the mid-execute kill test).
+  if (getRun(childRunId) !== undefined) {
+    mirrorChildEvents(
+      durableTaskId,
+      publicIdByDurable.get(childRunId) ?? "",
+      earlyWorkerKey,
+    );
+    return;
+  }
+  const [existingRow] = await db
+    .select({ id: generationRuns.id })
+    .from(generationRuns)
+    .where(eq(generationRuns.durableRunId, childRunId));
   const role: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
     ? "plan"
     : node.key.startsWith("w")
@@ -910,7 +934,7 @@ async function bindTaskChild(
       ? (node.input as { agentId: string }).agentId
       : input.agentId;
   const { modelId, effort } = modelEffortFromAgentId(agentId);
-  const publicRunId = crypto.randomUUID();
+  const publicRunId = existingRow?.id ?? crypto.randomUUID();
   publicIdByDurable.set(childRunId, publicRunId);
 
   const asset = input.assetId === null ? undefined : await loadAsset(input.assetId);
@@ -922,23 +946,25 @@ async function bindTaskChild(
       ? (node.input as { prompt: string }).prompt
       : "(prompt with reference images)";
 
-  await db.insert(generationRuns).values({
-    id: publicRunId,
-    threadId: input.threadId,
-    // respond/steer/cancel resolve a child by this column, exactly like a
-    // single run; without it every interaction answers "not waiting".
-    durableRunId: childRunId,
-    requestId: childRunId,
-    status: "running",
-    modelId,
-    reasoningEffort: effort,
-    frameId: ownedFrameIds[0] ?? null,
-    prompt: spawnPrompt,
-    taskId: taskRowId,
-    role,
-    workerKey: workerKey ?? null,
-    frameIds: ownedFrameIds,
-  });
+  if (existingRow === undefined) {
+    await db.insert(generationRuns).values({
+      id: publicRunId,
+      threadId: input.threadId,
+      // respond/steer/cancel resolve a child by this column, exactly like a
+      // single run; without it every interaction answers "not waiting".
+      durableRunId: childRunId,
+      requestId: childRunId,
+      status: "running",
+      modelId,
+      reasoningEffort: effort,
+      frameId: ownedFrameIds[0] ?? null,
+      prompt: spawnPrompt,
+      taskId: taskRowId,
+      role,
+      workerKey: workerKey ?? null,
+      frameIds: ownedFrameIds,
+    });
+  }
 
   if (asset !== undefined && ownedFrameIds.length > 0) {
     bindAssetRun({
@@ -1109,6 +1135,7 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
     // would see an unbound run (every frame "unapproved") and ask the human
     // for scope it was already granted.
     await recoverInterruptedRuns(runtime);
+    await recoverInterruptedTasks(runtime);
     await runtime.resume();
     // Backfill runs in the background: boot never waits on a model call.
     void backfillSummaries().catch((reason) => {
@@ -2678,6 +2705,32 @@ function bindWorkspaceRun(options: {
  * run's tools would have no binding. Rebuild both from the database; a row
  * that cannot be recovered is logged and skipped, never a boot failure.
  */
+/**
+ * A non-terminal task re-attaches its watcher before resume pumps it, so every
+ * child it spawns or resumes finds its binding, exactly like a single run.
+ */
+async function recoverInterruptedTasks(runtime: DurableRuntime): Promise<void> {
+  let rows: Array<typeof runTasks.$inferSelect>;
+  try {
+    rows = await db
+      .select()
+      .from(runTasks)
+      .where(inArray(runTasks.status, ["queued", "running", "waiting"]));
+  } catch (reason) {
+    console.error(`[recovery] tasks could not be listed: ${boundedReason(reason)}`);
+    return;
+  }
+  for (const row of rows) {
+    if (row.durableTaskId === null) continue;
+    void watchTask(runtime, row.durableTaskId).catch((reason: unknown) => {
+      console.error(
+        `[recovery] task ${row.id} could not be re-attached: ${boundedReason(reason)}`,
+      );
+    });
+    console.log(`[recovery] re-attached task ${row.id} (${row.status})`);
+  }
+}
+
 async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
   let rows: Array<{
     run: typeof generationRuns.$inferSelect;
@@ -2782,6 +2835,20 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
         originFrameId,
         request: run.prompt ?? undefined,
         ...(approvedScope !== undefined ? { approvedScope } : {}),
+        // A recovered task child keeps its role and owned frames, so the
+        // ownership and role gates survive a restart exactly as submitted.
+        ...(run.role === "plan" ||
+        run.role === "worker" ||
+        run.role === "review" ||
+        run.role === "fix"
+          ? { role: run.role }
+          : {}),
+        ...(run.workerKey !== null && run.workerKey !== undefined
+          ? { workerKey: run.workerKey }
+          : {}),
+        ...(run.role === "worker" || run.role === "fix"
+          ? { ownedFrameIds: (run.frameIds as string[] | null) ?? [] }
+          : {}),
       });
       void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
         (reason: unknown) => {
