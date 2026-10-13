@@ -22,6 +22,12 @@ import {
 } from "@anvia/core/completion";
 import { frameToPng } from "@pixelaition/export";
 import {
+  createAssetDrawTask,
+  fixInstructions,
+  planInstructions,
+  reviewInstructions,
+  toolsForRole,
+  workerInstructions,
   askInstructions,
   bindRun,
   clearGateOutcomes,
@@ -30,7 +36,6 @@ import {
   LangfuseTelemetry,
   openCodeGoHeaders,
   parseModelSpecRow,
-  pixelInstructions,
   releaseRun,
   screenOutput,
   selectRunTarget,
@@ -57,6 +62,7 @@ import {
   generationThreads,
   models,
   projects,
+  runTasks,
 } from "@pixelaition/db";
 import {
   bufferToFrame,
@@ -90,6 +96,7 @@ import {
   type SummaryKind,
 } from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
+import { buildTaskDeps } from "./tasks.js";
 
 type PublicEvent = {
   sequence: number;
@@ -548,21 +555,39 @@ const agents = completions.flatMap(({ spec, model }) => {
     createQuestionTool(),
   ];
   const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
-  return spec.efforts.flatMap((effort) => [
+  const roleAgents = [
+    { suffix: "", instructions: planInstructions, tools: drawingTools },
     {
-      id: `${agentPrefix}:${spec.id}:${effort}`,
+      suffix: ":worker",
+      instructions: workerInstructions,
+      tools: toolsForRole("worker", drawingTools),
+    },
+    {
+      suffix: ":review",
+      instructions: reviewInstructions,
+      tools: toolsForRole("review", drawingTools),
+    },
+    {
+      suffix: ":fix",
+      instructions: fixInstructions,
+      tools: toolsForRole("fix", drawingTools),
+    },
+  ];
+  return spec.efforts.flatMap((effort) => [
+    ...roleAgents.map((role) => ({
+      id: `${agentPrefix}${role.suffix}:${spec.id}:${effort}`,
       vision: spec.vision,
-      tools: drawingTools,
+      tools: role.tools,
       agent: new Agent({
-        id: `${agentPrefix}:${spec.id}:${effort}`,
+        id: `${agentPrefix}${role.suffix}:${spec.id}:${effort}`,
         model,
-        instructions: pixelInstructions,
-        tools: drawingTools,
-        maxTurns: 120,
+        instructions: role.instructions,
+        tools: role.tools,
+        maxTurns: role.suffix === "" ? 120 : role.suffix === ":review" ? 16 : 60,
         controls: { reasoningEffort: effort },
         observability,
       }),
-    },
+    })),
     {
       id: `${agentPrefix}:ask:${spec.id}:${effort}`,
       vision: spec.vision,
@@ -821,6 +846,28 @@ async function backfillSummaries(): Promise<void> {
 // handler at module scope is an unhandled rejection and Node exits on it.
 let durableFailure: string | undefined;
 
+/**
+ * One row per drawing task, created the moment the durable task exists so the
+ * API and the recovery pass can find it even before a child run starts.
+ */
+async function recordTaskRow(input: {
+  durableTaskId: string;
+  threadId: string;
+  assetId: string | null;
+  shape: { workers: number; review: boolean };
+}): Promise<void> {
+  await db.insert(runTasks).values({
+    id: crypto.randomUUID(),
+    threadId: input.threadId,
+    assetId: input.assetId,
+    status: "queued",
+    phase: "plan",
+    shape: input.shape,
+    durableTaskId: input.durableTaskId,
+  });
+}
+
+const assetDraw = createAssetDrawTask(buildTaskDeps(db));
 const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
@@ -833,7 +880,11 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
         })),
       }
     : {}),
-  maxConcurrentRuns: 2,
+  tasks: [{ registration: assetDraw.registration }],
+  // Four workers may paint at once, with headroom for the plan/review/fix
+  // phases and the ask agents.
+  maxConcurrentRuns: 6,
+  maxConcurrentTasks: 2,
   // Reference images travel as base64 media parts; the 1 MB default payload
   // cap would reject a run that carries two or three attachments.
   limits: { maxPayloadBytes: 8 * 1024 * 1024 },
@@ -992,6 +1043,11 @@ app.post("/internal/runs", async (req, res) => {
       threadId: z.string(),
       // The decision chooses the mode; the run picks the matching agent.
       mode: z.enum(["draw", "ask"]).default("draw"),
+      // Jev's shape for the task: how many workers, whether a review round is
+      // worth it. The API always sends it; a missing one fails loud below.
+      shape: z
+        .object({ workers: z.number().int().min(1).max(4), review: z.boolean() })
+        .optional(),
       // Reference images ride as media parts; the durable runtime persists them
       // for restart and retry. The web app downscales before sending, and the
       // API validates the sizes again before forwarding.
@@ -1132,10 +1188,75 @@ app.post("/internal/runs", async (req, res) => {
         }
       : promptText;
 
+  // Every drawing request runs one durable asset-draw task; only ask mode
+  // stays a single read-only run.
+  if (body.mode === "draw") {
+    const shape = body.shape ?? { workers: 2, review: true };
+    let task: Awaited<ReturnType<typeof runtime.submitTask>>;
+    try {
+      task = await runtime.submitTask(assetDraw, {
+        sessionId: body.threadId,
+        requestId: body.requestId,
+        input: {
+          request: body.prompt,
+          projectId: body.projectId ?? null,
+          assetId: body.assetId ?? null,
+          userId: body.userId,
+          threadId: body.threadId,
+          attachments: body.attachments ?? [],
+          agentIds: {
+            plan: `${agentPrefix}:${target.modelId}:${target.effort}`,
+            worker: `${agentPrefix}:worker:${target.modelId}:${target.effort}`,
+            review: `${agentPrefix}:review:${target.modelId}:${target.effort}`,
+            fix: `${agentPrefix}:fix:${target.modelId}:${target.effort}`,
+          },
+          maxWorkers: shape.workers,
+          review: shape.review,
+          maxFrames: 12,
+          maxPalette: 8,
+        },
+      });
+    } catch (reason) {
+      if (reason instanceof DurableConflictError) {
+        return res.status(409).json({
+          message:
+            "This frame already has an unfinished run; wait for it to finish or cancel it first.",
+        });
+      }
+      // The SDK's message is generic ("Invalid task input."); the cause chain
+      // carries the zod detail, so log it and name it to the caller.
+      console.error("[task] submit rejected:", reason);
+      return res.status(502).json({
+        message: `The task could not start: ${boundedReason(reason)}`,
+      });
+    }
+    await recordTaskRow({
+      durableTaskId: task.id,
+      threadId: body.threadId,
+      assetId: body.assetId ?? null,
+      shape,
+    });
+    telemetry?.setTraceContext(task.id, {
+      name: "draw-task",
+      userId: body.userId,
+      sessionId: body.threadId,
+      tags: ["pixelaition", "draw", "task"],
+      metadata: {
+        ...(body.assetId ? { assetId: body.assetId } : {}),
+        ...(body.projectId ? { projectId: body.projectId } : {}),
+        modelId: target.modelId,
+        reasoningEffort: target.effort,
+        workers: String(shape.workers),
+        review: String(shape.review),
+      },
+    });
+    return res.status(202).json({ durableTaskId: task.id });
+  }
+
   let run: Awaited<ReturnType<typeof runtime.submit>>;
   try {
     run = await runtime.submit({
-      agentId: `${agentPrefix}${body.mode === "ask" ? ":ask" : ""}:${target.modelId}:${target.effort}`,
+      agentId: `${agentPrefix}:ask:${target.modelId}:${target.effort}`,
       sessionId: body.threadId,
       requestId: body.requestId,
       prompt,

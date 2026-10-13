@@ -16,7 +16,7 @@ const input: AssetDrawInput = {
   assetId: "a1",
   userId: "u1",
   threadId: "t1",
-  attachments: 0,
+  attachments: [],
   agentIds: {
     plan: "pixel-draw:muse:medium",
     worker: "pixel-draw:worker:muse:medium",
@@ -73,7 +73,11 @@ type ChildRecord = {
   outcome?: { status: string; output?: unknown; error?: string };
 };
 
-function fakeCtx(options: { checkpoint: AssetDrawCheckpoint; children: ChildRecord[] }) {
+function fakeCtx(options: {
+  checkpoint: AssetDrawCheckpoint;
+  children: ChildRecord[];
+  attachments?: Array<{ mediaType: string; data: string }>;
+}) {
   const spawns: Array<{
     key: string;
     agentId: string;
@@ -82,7 +86,10 @@ function fakeCtx(options: { checkpoint: AssetDrawCheckpoint; children: ChildReco
   }> = [];
   const ctx = {
     id: "task-1",
-    input,
+    input: {
+      ...input,
+      ...(options.attachments ? { attachments: options.attachments } : {}),
+    },
     checkpoint: options.checkpoint,
     signal: new AbortController().signal,
     spawnAgent: (
@@ -122,6 +129,19 @@ async function run(
 }
 
 describe("asset-draw plan phase", () => {
+  it("carries the user's attachment images into the plan child's prompt", async () => {
+    const withImages = createAssetDrawTask(deps);
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0 },
+      children: [],
+      attachments: [{ mediaType: "image/png", data: "AAAA" }],
+    });
+    await withImages.run(ctx);
+    const prompt = spawns[0]?.prompt as { content?: Array<{ type: string }> };
+    expect(Array.isArray(prompt?.content)).toBe(true);
+    expect(prompt.content?.some((part) => part.type === "image")).toBe(true);
+  });
+
   it("spawns the plan child on the first transition", async () => {
     const task = createAssetDrawTask(deps);
     const { ctx, spawns } = fakeCtx({

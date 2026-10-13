@@ -1,3 +1,4 @@
+import type { AgentPrompt } from "@anvia/core/agent";
 import { defineTask, type TaskContext, type TaskTransition } from "@anvia/durable";
 import { z } from "zod";
 import { drawPlanSchema, validatePlan, type DrawPlan } from "./plan.js";
@@ -18,11 +19,18 @@ import { buildWorkerPrompt, type WorkerPromptInput } from "./worker-prompt.js";
 
 export const assetDrawInputSchema = z.object({
   request: z.string().min(1).max(4000),
-  projectId: z.string().min(1),
+  projectId: z.string().min(1).nullable(),
   assetId: z.string().min(1).nullable(),
   userId: z.string().min(1),
   threadId: z.string().min(1),
-  attachments: z.number().int().min(0).max(4),
+  attachments: z
+    .array(
+      z.object({
+        mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+        data: z.string().min(16),
+      }),
+    )
+    .max(4),
   agentIds: z.object({
     plan: z.string().min(1),
     worker: z.string().min(1),
@@ -66,6 +74,28 @@ export const assetDrawOutputSchema = z.object({
   workers: z.number().int().min(1).max(4),
 });
 export type AssetDrawOutput = z.infer<typeof assetDrawOutputSchema>;
+
+/**
+ * Attachments ride as media parts the model sees directly; a prompt without
+ * them stays a plain string, which keeps journals and replay simple.
+ */
+export function withAttachments(
+  text: string,
+  attachments: AssetDrawInput["attachments"],
+): AgentPrompt {
+  if (attachments.length === 0) return text;
+  return {
+    role: "user",
+    content: [
+      { type: "text", text },
+      ...attachments.map((attachment) => ({
+        type: "image" as const,
+        image: { type: "data" as const, data: attachment.data },
+        mediaType: attachment.mediaType,
+      })),
+    ],
+  };
+}
 
 export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): string {
   return [
@@ -138,7 +168,10 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       const key = checkpoint.attempt === 0 ? "plan" : `plan-${checkpoint.attempt}`;
       const id = ctx.spawnAgent(key, {
         agentId: ctx.input.agentIds.plan,
-        prompt: `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
+        prompt: withAttachments(
+          `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
+          ctx.input.attachments,
+        ),
       });
       return {
         status: "waiting",
@@ -201,15 +234,19 @@ function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transit
       workerIds.push(
         ctx.spawnAgent(worker.key, {
           agentId: ctx.input.agentIds.worker,
-          prompt: [
-            workerInstructions,
-            buildWorkerPrompt({
-              ...context.promptData,
-              ownedFrames,
-              readOnlyFrames: readOnly,
-              references,
-            }),
-          ].join("\n\n"),
+          prompt: withAttachments(
+            [
+              workerInstructions,
+              buildWorkerPrompt({
+                ...context.promptData,
+                attachments: ctx.input.attachments.length,
+                ownedFrames,
+                readOnlyFrames: readOnly,
+                references,
+              }),
+            ].join("\n\n"),
+            ctx.input.attachments,
+          ),
           continueFrom: checkpoint.planChildId,
         }),
       );
