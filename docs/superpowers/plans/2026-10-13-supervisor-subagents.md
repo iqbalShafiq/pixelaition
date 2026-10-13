@@ -610,6 +610,7 @@ git push origin feat/multi-model-choice
   - `const planInstructions: string`, `workerInstructions: string`, `reviewInstructions: string`, `fixInstructions: string`
   - `const WORKER_TOOL_NAMES: ReadonlySet<string>`, `REVIEW_TOOL_NAMES: ReadonlySet<string>`
   - `function toolsForRole<T extends { name: string }>(role: AgentRole, tools: readonly T[]): T[]`
+- Used by: Task 7's role-agent registration (one agent per role per model and effort, because an Anvia agent carries a fixed tool list).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -930,7 +931,7 @@ export type AssetDrawInput = {
   userId: string;
   threadId: string;
   attachments: number;
-  drawAgentId: string;
+  agentIds: { plan: string; worker: string; review: string; fix: string };
   maxWorkers: number;
   review: boolean;
   maxFrames: number;
@@ -980,7 +981,12 @@ const input = {
   userId: "u1",
   threadId: "t1",
   attachments: 0,
-  drawAgentId: "pixel-draw:muse:medium",
+  agentIds: {
+    plan: "pixel-draw:muse:medium",
+    worker: "pixel-draw:worker:muse:medium",
+    review: "pixel-draw:review:muse:medium",
+    fix: "pixel-draw:fix:muse:medium",
+  },
   maxWorkers: 4,
   review: true,
   maxFrames: 12,
@@ -1076,7 +1082,7 @@ describe("asset-draw plan phase", () => {
     });
     const transition = await task.run(ctx as never);
     expect(spawns[0]?.key).toBe("plan");
-    expect(spawns[0]?.agentId).toBe(input.drawAgentId);
+    expect(spawns[0]?.agentId).toBe(input.agentIds.plan);
     expect(transition).toMatchObject({
       status: "waiting",
       wait: { type: "children", ids: ["child-plan"] },
@@ -1280,7 +1286,12 @@ export const assetDrawInputSchema = z.object({
   userId: z.string().min(1),
   threadId: z.string().min(1),
   attachments: z.number().int().min(0).max(4),
-  drawAgentId: z.string().min(1),
+  agentIds: z.object({
+    plan: z.string().min(1),
+    worker: z.string().min(1),
+    review: z.string().min(1),
+    fix: z.string().min(1),
+  }),
   maxWorkers: z.number().int().min(1).max(4),
   review: z.boolean(),
   maxFrames: z.number().int().min(1).max(12),
@@ -1363,6 +1374,23 @@ function childOutput(
   return child?.outcome;
 }
 
+/** Steering messages arrive as fixed signal names (steer-1, steer-2, …); the
+ *  task scans until the first gap and hands them to the next supervisor pass. */
+function deliveredSteers(ctx: Ctx): string {
+  const messages: string[] = [];
+  for (let index = 1; index <= 16; index += 1) {
+    const value = ctx.signalValue(`steer-${index}`);
+    if (value === undefined) break;
+    const record = value as { message?: string; frames?: string[] };
+    if (typeof record.message === "string") {
+      messages.push(
+        `The user steered${record.frames && record.frames.length > 0 ? ` (${record.frames.join(", ")})` : ""}: ${record.message}`,
+      );
+    }
+  }
+  return messages.length > 0 ? `User steering to honour: ${messages.join(" ")}` : "";
+}
+
 async function planPhase(
   ctx: Ctx,
   deps: AssetDrawDeps,
@@ -1372,7 +1400,7 @@ async function planPhase(
     const context = await deps.loadPlanContext(ctx.input);
     const key = checkpoint.attempt === 0 ? "plan" : `plan-${checkpoint.attempt}`;
     const id = ctx.spawnAgent(key, {
-      agentId: ctx.input.drawAgentId,
+      agentId: ctx.input.agentIds.plan,
       prompt: `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
     });
     return {
@@ -1400,7 +1428,7 @@ async function planPhase(
     if (checkpoint.attempt >= 2)
       return { status: "failed", error: `The plan was invalid twice: ${checked.error}` };
     const id = ctx.spawnAgent(`plan-${checkpoint.attempt + 1}`, {
-      agentId: ctx.input.drawAgentId,
+      agentId: ctx.input.agentIds.plan,
       prompt: buildPlanPrompt(ctx.input, checked.error),
     });
     return {
@@ -1426,7 +1454,7 @@ async function planPhase(
       .map((reference) => ({ url: reference.url, note: reference.note }));
     workerIds.push(
       ctx.spawnAgent(worker.key, {
-        agentId: ctx.input.drawAgentId,
+        agentId: ctx.input.agentIds.worker,
         prompt: [
           workerInstructions,
           buildWorkerPrompt({
@@ -1473,12 +1501,15 @@ async function executePhase(
   }
   const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
   const id = ctx.spawnAgent("review-1", {
-    agentId: ctx.input.drawAgentId,
+    agentId: ctx.input.agentIds.review,
     prompt: [
       reviewInstructions,
       context,
       failed.length > 0 ? `Workers that did not finish: ${failed.join(", ")}.` : "",
-    ].join("\n\n"),
+      deliveredSteers(ctx),
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n\n"),
     continueFrom: checkpoint.planChildId,
   });
   return {
@@ -1514,8 +1545,10 @@ async function reviewPhase(
   if (checkpoint.reviewChildId === undefined) {
     const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
     const id = ctx.spawnAgent(`review-${checkpoint.round}`, {
-      agentId: ctx.input.drawAgentId,
-      prompt: [reviewInstructions, context].join("\n\n"),
+      agentId: ctx.input.agentIds.review,
+      prompt: [reviewInstructions, context, deliveredSteers(ctx)]
+        .filter((line) => line.length > 0)
+        .join("\n\n"),
       continueFrom: checkpoint.planChildId,
     });
     return {
@@ -1550,7 +1583,7 @@ async function reviewPhase(
       (candidate) => candidate.name === fix.frame,
     );
     return ctx.spawnAgent(`fix-${checkpoint.round}-${index + 1}`, {
-      agentId: ctx.input.drawAgentId,
+      agentId: ctx.input.agentIds.fix,
       prompt: [
         fixInstructions,
         `Fix "${fix.frame}": ${fix.note}`,
@@ -1634,7 +1667,7 @@ git push origin feat/multi-model-choice
 **Interfaces:**
 
 - Consumes: `createAssetDrawTask`, `AssetDrawDeps` (Task 6).
-- Produces: `export function buildTaskDeps(): AssetDrawDeps` (filled in Task 8); the runtime registers `tasks: [{ registration: assetDraw.registration }]`, `maxConcurrentRuns: 6`, `maxConcurrentTasks: 2`; draw-mode requests go through `runtime.submitTask(assetDraw, { sessionId: threadId, requestId, input })` and return `202 { durableTaskId }`.
+- Produces: `export function buildTaskDeps(): AssetDrawDeps` (created here, extended in Task 8); role agents registered as `pixel-draw:<model>:<effort>` (plan), `pixel-draw:worker:<model>:<effort>`, `pixel-draw:review:<model>:<effort>`, `pixel-draw:fix:<model>:<effort>`; the runtime registers `tasks: [{ registration: assetDraw.registration }]`, `maxConcurrentRuns: 6`, `maxConcurrentTasks: 2`; draw-mode requests go through `runtime.submitTask(assetDraw, { sessionId: threadId, requestId, input })` and return `202 { durableTaskId }`.
 
 - [ ] **Step 1: Register the task and raise concurrency**
 
@@ -1681,7 +1714,12 @@ if (mode === "draw") {
       userId,
       threadId,
       attachments: attachments?.length ?? 0,
-      drawAgentId: `${agentPrefix}:${modelId}:${reasoningEffort}`,
+      agentIds: {
+        plan: `${agentPrefix}:${modelId}:${reasoningEffort}`,
+        worker: `${agentPrefix}:worker:${modelId}:${reasoningEffort}`,
+        review: `${agentPrefix}:review:${modelId}:${reasoningEffort}`,
+        fix: `${agentPrefix}:fix:${modelId}:${reasoningEffort}`,
+      },
       maxWorkers: shape?.workers ?? 2,
       review: shape?.review ?? true,
       maxFrames: 12,
@@ -1722,7 +1760,7 @@ git push origin feat/multi-model-choice
 
 **Files:**
 
-- Create: `apps/worker/src/tasks.ts`
+- Modify: `apps/worker/src/tasks.ts` (created by Task 7 with `buildTaskDeps`)
 - Modify: `apps/worker/src/index.ts` (child binding + watcher start)
 - Test: live (DB + durable journal)
 
@@ -1730,7 +1768,7 @@ git push origin feat/multi-model-choice
 
 - Consumes: `AssetDrawDeps` (Task 6), `bindAssetRun`/`follow` machinery (`apps/worker/src/index.ts:1925+`), `publicIdByDurable`.
 - Produces:
-  - `buildTaskDeps(): AssetDrawDeps` — DB-backed loaders (plan/worker/review context)
+  - `buildTaskDeps(): AssetDrawDeps` — DB-backed loaders (created in Task 7, completed here if thin)
   - `watchTask(durableTaskId: string): void` — subscribes to `runtime.getTask(id).stream()`, binds each child run when its `agentRunId` appears, forwards child run events into the task's console event list, persists `run_tasks.plan/phase/status/usage`, and emits `task-phase`, `worker-spawned`, `worker-status`, `task-complete`.
   - `taskEvents(durableTaskId)` — the SSE source for `GET /api/tasks/:id/stream`.
 
@@ -1848,16 +1886,13 @@ git push origin feat/multi-model-choice
 // apps/api/src/tasks.test.ts — mirror home-routes.test.ts's live-DB probe and stubs
 it("stores the shape Jev chose and forwards it to the worker", async () => {
   stubProviders({ decision: { intent: "draw", shape: { workers: 3, review: true } } });
-  const started = await request(app)
-    .post("/api/runs")
-    .set("Cookie", cookie)
-    .send({
-      assetId,
-      frameId,
-      prompt: "walk cycle",
-      modelId: "muse-spark-1.3-contributor",
-      reasoningEffort: "medium",
-    });
+  const started = await request(app).post("/api/runs").set("Cookie", cookie).send({
+    assetId,
+    frameId,
+    prompt: "walk cycle",
+    modelId: "muse-spark-1.3-contributor",
+    reasoningEffort: "medium",
+  });
   expect(started.status).toBe(202);
   const body = lastWorkerBody as { shape?: { workers?: number } };
   expect(body.shape?.workers).toBe(3);
@@ -1865,16 +1900,13 @@ it("stores the shape Jev chose and forwards it to the worker", async () => {
   expect(row?.shape).toMatchObject({ workers: 3, review: true });
 });
 it("answers a second request for the same asset with RUN_IN_PROGRESS", async () => {
-  const again = await request(app)
-    .post("/api/runs")
-    .set("Cookie", cookie)
-    .send({
-      assetId,
-      frameId,
-      prompt: "again",
-      modelId: "muse-spark-1.3-contributor",
-      reasoningEffort: "medium",
-    });
+  const again = await request(app).post("/api/runs").set("Cookie", cookie).send({
+    assetId,
+    frameId,
+    prompt: "again",
+    modelId: "muse-spark-1.3-contributor",
+    reasoningEffort: "medium",
+  });
   expect(again.status).toBe(409);
   expect(again.body.code).toBe("RUN_IN_PROGRESS");
 });
@@ -1953,8 +1985,9 @@ Expected: FAIL — 404.
 - [ ] **Step 3: Implement**
 
 - Snapshot: join `run_tasks` + child `generation_runs` (`taskId`) + the frames each child owns (`frameIds`), and read the pending interaction of each waiting child from the worker (`GET /internal/runs/:id/state` if it does not exist yet — add a small internal endpoint that returns the run's current interaction, reusing the existing active-run logic).
-- Stream: proxy `/internal/tasks/:id/events?after=` (worker side: `taskEvents(durableTaskId)` from Task 8 plus the forwarded child run events).
-- Steer/signal: forward to the worker (`POST /internal/tasks/:id/steer`, `POST /internal/tasks/:id/signal`), which calls `handle.signal(name, requestId, value)`.
+- Stream: proxy `/internal/tasks/:id/events?after=`; create that worker endpoint here — `taskEvents(durableTaskId)` (Task 8) plus the forwarded child run events, same cursor contract as the run stream.
+- Steer/signal: create `POST /internal/tasks/:id/steer` and `POST /internal/tasks/:id/signal` in the worker; the signal endpoint calls `handle.signal(name, requestId, value)`, the steer endpoint stores the message and (until Task 19's routing) signals the supervisor with `steer-<n>`.
+- State: add `GET /internal/runs/:id/state` in the worker returning the run's current interaction, reusing the active-run logic.
 
 - [ ] **Step 4: Run test to verify it passes**
 
