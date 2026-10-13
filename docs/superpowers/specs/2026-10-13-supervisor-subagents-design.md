@@ -36,7 +36,7 @@
 7. **Steering**: Jev picks the target frame with confidence; high confidence routes directly, ambiguity asks the user (app-owned card, live frame list); the answer arrives as a task signal.
 8. **Workers may `ask_user`**; per-frame indicators; the question card surfaces on frame open.
 9. **The plan card always appears** (including one-frame plans).
-10. **Three implementation phases**, each shippable, gated, and live-tested.
+10. **One complete delivery.** The whole spec ships as a single implementation program; the earlier three-phase ordering is dropped (it was only an implementation order, never a scope split).
 
 ## Research grounding
 
@@ -236,22 +236,33 @@ Enforcement lives in the tool layer: the worker binding carries `ownedFrameIds`;
 
 **Durability matrix**: `kill -9` the worker at each phase (plan/execute/review/fix), restart, and verify resume, no duplicated children, pending approvals still pending, and signals intact.
 
-**Acceptance scenario**: the 2026-10-12 trial shape, repeated end-to-end with the new task path: a home-created project, several assets whose prompts never name frames/layers, per-frame indicators observed live, one steering message, one worker question answered, and a final structure report.
+**Tracing & context sufficiency (Langfuse, every agentic case).** Tracing is a first-class test here, not a nicety: after each case, the trace is pulled and read to judge whether the context each agent received was sufficient. Langfuse is configured (OTLP to `us.cloud.langfuse.com` with the v4 ingestion header; traces carry `langfuse.trace.name`, user, session, tags, metadata, and per-generation `usage_details`/`cost_details`).
 
-## Phasing
+For every case in the agentic matrix, verify from the trace:
 
-| Phase               | Contents                                                                                                                                                                                                                        | Gate                     |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| **1 — Foundation**  | Task + roles + plan validation + worker contract + palette planning + plan card + data model + task API/SSE + indicators + switching + console tree + durability + agentic matrix 1–9, 15, 16 + UI A–C, F–H + durability matrix | full gate, live evidence |
-| **2 — Interaction** | Reference injection + steering (Jev routing, signals, frame-picker card) + composer toggle + agentic 10–11, 14 + UI D                                                                                                           | full gate, live evidence |
-| **3 — Humans**      | Worker `ask_user` + parallel questions + badges/counter/surfacing + agentic 12–13 + UI E                                                                                                                                        | full gate, live evidence |
+| Question                                                                                                               | Where to look                           |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Did the supervisor receive the project, asset, frames, summaries, and request it needed to plan?                       | the plan generation's input             |
+| Did each worker receive its plan slice, the palette after additions, the style guide, ownership rules, and references? | each worker generation's input          |
+| Did the review see every child's outcome, the plan, and the frames it must judge?                                      | the review generation's input           |
+| Did Jev's shape/steering decision carry enough context, and is the confidence sensible?                                | the decision generation + metadata      |
+| Is cost and token usage attributed per child and rolled up on the task?                                                | generation usage details + the task row |
 
-Each phase commits and pushes separately; a later phase never starts before the previous phase's live evidence exists. Each phase gets its own implementation plan; the first plan covers Phase 1 only.
+If a trace shows missing or thin context (a worker that guessed at the style, a review that could not see a child's failure, a Jev decision that lacked the frame list), the context builder or prompt is improved and the case re-run. A case is only marked done when its trace shows sufficient context, and the trace finding is recorded in that case's evidence.
+
+**Trace delivery check**: send one run, confirm its trace actually lands in Langfuse (the worker previously logged `[telemetry] delivery failed [TimeoutError]`), and fix delivery (timeout/retry) before the matrix runs; a case whose trace cannot be read is not a passed case.
+
+**Acceptance scenario**: the 2026-10-12 trial shape, repeated end-to-end with the new task path: a home-created project, several assets whose prompts never name frames/layers, per-frame indicators observed live, one steering message, one worker question answered, a final structure report, and a full trace review of the whole tree.
+
+## Delivery
+
+One implementation plan covers the whole spec — no phased rollout. The plan's workstreams are ordered by dependency (data model and task skeleton first, then the worker contract and UI, then steering/questions/references), but every workstream ships in the same program, and the program is complete only when every matrix above (agentic, UI, durability, tracing) has live evidence. The gate stays what it has always been: `pnpm typecheck && pnpm lint && pnpm test` green, plus live evidence per case, committed and pushed to `feat/multi-model-choice` (never merged).
 
 ## Risks & open questions
 
-1. **Steering a running child**: the durable runtime exposes steering for runs; the design assumes child runs steer like any run. Phase 2 verifies live; the fallback is queueing the message for the review phase (still useful, not real-time).
-2. **Parallel suspended children**: several workers waiting on questions must all resume independently. Phase 3 verifies with the real provider.
-3. **Plan transcript size**: `continueFrom` copies the plan conversation into every worker. Mitigated by a lean plan (maxTurns ~6) and a prompt-only fallback if the transcript exceeds its budget.
+1. **Steering a running child**: the durable runtime exposes steering for runs; the design assumes child runs steer like any run. Verified live during the program; the fallback is queueing the message for the review phase (still useful, not real-time).
+2. **Parallel suspended children**: several workers waiting on questions must all resume independently. Verified live with the real provider.
+3. **Plan transcript size**: `continueFrom` copies the plan conversation into every worker. Mitigated by a lean plan (maxTurns 12) and a prompt-only fallback if the transcript exceeds its budget.
 4. **Task definition versioning**: `asset-draw` starts at version 1; any later change needs a pure `migrate(input, checkpoint, fromVersion)`.
 5. **Existing runs**: the migration adds nullable columns, so pre-existing runs stay valid; the API switches new drawing requests to the task path only.
+6. **Trace delivery reliability**: Langfuse is configured but the worker has logged OTLP delivery timeouts. The plan verifies delivery first and fixes it (timeout/retry) before the matrix relies on traces.
