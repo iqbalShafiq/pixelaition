@@ -297,16 +297,23 @@ export function Checkbox({
         {/* 13px layout box keeps the pre-change baseline (the svg bottom edge is
             the label baseline inside the layers panel's clipped 18px wrapper);
             preserveAspectRatio still draws the 12px glyph. */}
+        {/* The classic pixel check: two integer-grid strokes, two pixels
+            thick, square caps, no antialiasing. At an exact 2x scale every
+            pixel stays a crisp square. */}
         <svg
-          viewBox="0 0 6 6"
+          viewBox="0 0 12 12"
           width={12}
           height={12}
           shapeRendering="crispEdges"
           aria-hidden
         >
           <path
-            d="M1 3h1v1H1zM2 4h1v1H2zM3 5h1v1H3zM4 4h1v1H4zM5 3h1v1H5zM5 2h1v1H5zM5 1h1v1H5z"
-            fill="currentColor"
+            d="M2.5 6.5 L5.5 9.5 L9.5 3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="square"
+            strokeLinejoin="miter"
           />
         </svg>
       </span>
