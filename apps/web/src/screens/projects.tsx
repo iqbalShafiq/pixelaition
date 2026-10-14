@@ -843,6 +843,10 @@ export function ProjectsScreen() {
           {proposal !== null ? (
             <div ref={targetRef} className="grid gap-2">
               <ConfirmTargetCard
+                onRetryLists={() => {
+                  void projects.refetch();
+                  void assets.refetch();
+                }}
                 proposal={proposal.proposal}
                 projects={list.map((project) => ({
                   id: project.id,

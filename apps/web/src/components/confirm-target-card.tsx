@@ -23,11 +23,14 @@ export function ConfirmTargetCard({
   busy,
   onConfirm,
   onCancel,
+  /** The lists the dropdowns need could not be fetched; offer another try. */
+  onRetryLists,
 }: {
   proposal: TargetProposal;
   projects: ConfirmProject[];
   assets: ConfirmAsset[];
   busy: boolean;
+  onRetryLists?: () => void;
   onConfirm: (choice: ConfirmChoice) => void;
   onCancel: () => void;
 }) {
@@ -79,6 +82,16 @@ export function ConfirmTargetCard({
         confirm target
       </header>
       <p className="mt-2 text-pixel-body text-ink">{headline}</p>
+      {projects.length === 0 && onRetryLists !== undefined ? (
+        <div className="mt-2 flex items-center gap-2 border-2 border-line bg-field px-2 py-1.5">
+          <span className="text-pixel-mono text-muted">
+            the project list did not load
+          </span>
+          <Button tone="ghost" onClick={onRetryLists}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
       {proposal.reason !== undefined ? (
         <p className="mt-1 text-pixel-mono text-muted">{proposal.reason}</p>
       ) : null}
