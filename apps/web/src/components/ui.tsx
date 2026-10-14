@@ -135,11 +135,7 @@ export function TruncatedText({
 }) {
   return (
     <Tooltip label={text} instant>
-      {/* The native title is the guaranteed path: the text is always a hover
-          away, even where the styled popup is unavailable. */}
-      <span title={text} className={`block min-w-0 truncate ${className}`}>
-        {text}
-      </span>
+      <span className={`block min-w-0 truncate ${className}`}>{text}</span>
     </Tooltip>
   );
 }
