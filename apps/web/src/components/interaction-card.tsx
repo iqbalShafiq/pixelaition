@@ -158,7 +158,7 @@ export function InteractionCard({
           ? "Approve the agent's request"
           : "Answer the agent"
       }
-      className="pointer-events-auto pixel-window max-h-[85vh] w-full overflow-hidden bg-panel"
+      className="pointer-events-auto pixel-window flex max-h-[calc(100dvh-12rem)] w-full flex-col bg-panel"
       style={{ maxWidth: "40rem" }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onEscape();
@@ -253,7 +253,7 @@ function ApprovalBody({
       {!plan && interaction.reason ? (
         <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
       ) : null}
-      <div className="max-h-[54vh] overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
         {plan !== null ? (
           <>
             {plan.summary ? (
@@ -311,24 +311,24 @@ function ApprovalBody({
               return (
                 <li
                   key={frame.frameId ?? `new-${index}`}
-                  className="flex items-center gap-2 border-2 border-line bg-field px-2 py-1.5"
+                  className="flex items-center gap-2 border-2 border-line bg-field px-2 py-1"
                 >
                   {assetFrame ? (
                     <FrameThumb frame={assetFrame} palette={palette} />
                   ) : (
                     <span
                       aria-hidden
-                      className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line bg-screen text-pixel-mono text-muted"
+                      className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line bg-screen text-pixel-mono text-[10px] text-muted"
                     >
                       new
                     </span>
                   )}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] text-ink">
+                    <span className="block truncate text-[12px] leading-4 text-ink">
                       {frame.name}
                     </span>
                     <span
-                      className="block truncate text-pixel-mono text-muted"
+                      className="block truncate text-pixel-mono text-[11px] leading-4 text-muted"
                       title={frame.description}
                     >
                       {frame.description}
@@ -359,7 +359,7 @@ function ApprovalBody({
         aria-label="Note to the agent"
         placeholder="Add a note…"
         rows={2}
-        className="mt-3 min-h-[2.5rem]"
+        className="mt-2 min-h-[2.25rem]"
         onChange={(event) => setNote(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
