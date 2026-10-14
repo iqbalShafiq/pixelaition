@@ -1450,8 +1450,12 @@ describe("drawing approval", () => {
       ["mirror_frame", { frameId: "frame-3" }],
     ];
     for (const [name] of painting) {
-      // Harmless by declaration: no predicate, no question, no scope check.
-      expect(tool(name).requiresApproval).toBe(false);
+      // Harmless by declaration: the predicate exists but never asks.
+      const requirement = tool(name).requiresApproval;
+      expect(typeof requirement).toBe("function");
+      if (typeof requirement === "function") {
+        expect(await requirement({} as never, {} as never)).toBe(false);
+      }
     }
     // The correctors still ask outside the approved scope.
     expect(await approval("clear_region", { frameId: "frame-2" })).toBe(false);

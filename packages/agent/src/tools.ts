@@ -448,7 +448,7 @@ export function createPixelTools(
       label: z.string().min(1).max(40),
       points: z.array(point).min(1).max(48),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -476,7 +476,7 @@ export function createPixelTools(
       height: z.number().int().positive(),
       color: z.number().int().nonnegative(),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -497,7 +497,7 @@ export function createPixelTools(
       label: z.string().min(1).max(40),
       points: z.array(strokePoint).min(1).max(48),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -527,7 +527,7 @@ export function createPixelTools(
       to: strokePoint,
       color: z.number().int().nonnegative(),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -564,7 +564,7 @@ export function createPixelTools(
       y: z.number().int(),
       color: z.number().int().nonnegative(),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -588,7 +588,7 @@ export function createPixelTools(
       height: z.number().int().positive(),
       color: z.number().int().nonnegative(),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -661,7 +661,7 @@ export function createPixelTools(
       layerId: z.string().optional(),
       color: z.number().int().nonnegative().optional(),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -697,7 +697,7 @@ export function createPixelTools(
       colorB: z.number().int().nonnegative(),
       pattern: z.enum(["checker", "50"]),
     }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -1077,7 +1077,7 @@ export function createPixelTools(
     description:
       "Flip every layer of the current frame horizontally. Use this for a left/right variant before painting differences.",
     inputSchema: z.object({ frameId: z.string().optional() }),
-    requiresApproval: false,
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
