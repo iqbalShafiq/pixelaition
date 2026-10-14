@@ -96,6 +96,8 @@ export function IconButton({
   );
 }
 
+export const TooltipProvider = BaseTooltip.Provider;
+
 export function Tooltip({
   label,
   instant = false,
@@ -133,7 +135,11 @@ export function TruncatedText({
 }) {
   return (
     <Tooltip label={text} instant>
-      <span className={`block min-w-0 truncate ${className}`}>{text}</span>
+      {/* The native title is the guaranteed path: the text is always a hover
+          away, even where the styled popup is unavailable. */}
+      <span title={text} className={`block min-w-0 truncate ${className}`}>
+        {text}
+      </span>
     </Tooltip>
   );
 }

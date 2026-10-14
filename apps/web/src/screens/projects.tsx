@@ -489,8 +489,16 @@ export function ProjectsScreen() {
         // console open and poll alongside the stream events.
         setConsoleOpen(true);
         const bornAsset = (started as { assetId?: string | null }).assetId;
-        if (typeof bornAsset === "string" && bornAsset.length > 0) {
-          navigateToEditor(choice.projectId ?? "", bornAsset);
+        const knownProject =
+          choice.projectId === undefined || choice.projectId === "new"
+            ? ""
+            : choice.projectId;
+        if (
+          typeof bornAsset === "string" &&
+          bornAsset.length > 0 &&
+          knownProject.length > 0
+        ) {
+          navigateToEditor(knownProject, bornAsset);
         } else if (choice.assetName !== undefined) {
           // The named asset is created with the confirmation, so its row is a
           // moment away in the list: watch for it and open the editor at once.
