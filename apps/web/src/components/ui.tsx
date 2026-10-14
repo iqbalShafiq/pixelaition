@@ -311,7 +311,7 @@ export function Checkbox({
       {hideLabel ? (
         <span className="sr-only">{label}</span>
       ) : (
-        <span className="min-w-0 flex-1">
+        <span className="w-0 min-w-0 flex-1">
           <TruncatedText text={label} className={checked ? "text-ink" : "text-muted"} />
         </span>
       )}
