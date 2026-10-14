@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { agentLabel } from "../lib/agent-label.js";
+import { TruncatedText } from "./ui.js";
 import { useState } from "react";
 import { FrameThumb } from "./editor-panels.js";
 import { Button, Checkbox, SelectControl, Textarea, TextInput } from "./ui.js";
@@ -327,12 +328,10 @@ function ApprovalBody({
                     <span className="block truncate text-[12px] leading-4 text-ink">
                       {frame.name}
                     </span>
-                    <span
-                      className="block truncate text-pixel-mono text-[11px] leading-4 text-muted"
-                      title={frame.description}
-                    >
-                      {frame.description}
-                    </span>
+                    <TruncatedText
+                      text={frame.description}
+                      className="text-pixel-mono text-[11px] leading-4 text-muted"
+                    />
                   </span>
                   <Checkbox
                     hideLabel

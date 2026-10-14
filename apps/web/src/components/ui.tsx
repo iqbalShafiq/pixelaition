@@ -96,9 +96,17 @@ export function IconButton({
   );
 }
 
-export function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export function Tooltip({
+  label,
+  instant = false,
+  children,
+}: {
+  label: string;
+  instant?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <BaseTooltip.Root>
+    <BaseTooltip.Root {...(instant ? { delay: 0 } : {})}>
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner sideOffset={8} className="z-40">
@@ -108,6 +116,25 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
         </BaseTooltip.Positioner>
       </BaseTooltip.Portal>
     </BaseTooltip.Root>
+  );
+}
+
+/**
+ * Text that never wraps: it ellipsizes in place, and the full value arrives in
+ * a portalled tooltip on hover — no ancestor overflow can clip it, so the plan
+ * card, the question options, and the layer rows all behave the same.
+ */
+export function TruncatedText({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <Tooltip label={text} instant>
+      <span className={`block min-w-0 truncate ${className}`}>{text}</span>
+    </Tooltip>
   );
 }
 
@@ -284,16 +311,8 @@ export function Checkbox({
       {hideLabel ? (
         <span className="sr-only">{label}</span>
       ) : (
-        <span className="group/label relative min-w-0 flex-1">
-          <span className={`block truncate ${checked ? "text-ink" : "text-muted"}`}>
-            {label}
-          </span>
-          <span
-            role="tooltip"
-            className="pointer-events-none absolute top-full left-0 z-50 mt-1 hidden max-w-[34rem] border-2 border-line bg-raised px-2 py-1 text-pixel-mono whitespace-normal text-ink shadow-pixel group-hover/label:block"
-          >
-            {label}
-          </span>
+        <span className="min-w-0 flex-1">
+          <TruncatedText text={label} className={checked ? "text-ink" : "text-muted"} />
         </span>
       )}
     </label>
