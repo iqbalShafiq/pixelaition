@@ -1860,7 +1860,7 @@ export function EditorScreen() {
                 </button>
               </div>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center overflow-y-auto px-3">
+            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center overflow-hidden px-3">
               {/* One 40rem column holds the console, the queue, and the
                   composer — the same dock geometry the home page uses, so
                   every part lines up on the same edges. */}
@@ -1972,7 +1972,7 @@ export function EditorScreen() {
                     composer's prompt field, not on a guess from the DOM. */}
                 <div
                   ref={composerRef}
-                  className="sticky bottom-0 z-10 w-full bg-paper pt-1 [view-transition-name:composer-flight]"
+                  className="w-full shrink-0 [view-transition-name:composer-flight]"
                 >
                   <Composer
                     frameContext={

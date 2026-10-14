@@ -159,7 +159,7 @@ export function InteractionCard({
           ? "Approve the agent's request"
           : "Answer the agent"
       }
-      className="pointer-events-auto pixel-window flex max-h-[calc(100dvh-26rem)] min-h-0 w-full max-w-full flex-col bg-panel"
+      className="pointer-events-auto pixel-window flex max-h-[52vh] min-h-0 w-full max-w-full flex-col bg-panel"
       style={{ maxWidth: "40rem" }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onEscape();
@@ -254,7 +254,7 @@ function ApprovalBody({
       {!plan && interaction.reason ? (
         <p className="mt-1 text-pixel-mono text-muted">{interaction.reason}</p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1 pb-1">
         {plan !== null ? (
           <>
             {plan.summary ? (
