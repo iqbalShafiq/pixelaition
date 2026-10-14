@@ -1490,10 +1490,21 @@ export function createApp() {
             : status === "waiting"
               ? "asking"
               : "working";
+      // The children arrive oldest first, so a later attempt of the same role
+      // means this one was superseded — a retry that answers its failure.
+      const children = snapshot.children;
+      const baseKey = (child.workerKey ?? child.role ?? "run").split("-retry-")[0];
+      const superseded = children
+        .slice(children.indexOf(child) + 1)
+        .some(
+          (other) =>
+            (other.workerKey ?? other.role ?? "run").split("-retry-")[0] === baseKey,
+        );
       workers.push({
         key: child.workerKey ?? child.role ?? "run",
         runId: child.id,
         status,
+        ...(superseded ? { superseded: true } : {}),
         frames: frameIds.map((id) => ({
           id,
           name: frameName.get(id) ?? "frame",

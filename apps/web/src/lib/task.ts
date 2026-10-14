@@ -14,6 +14,8 @@ export type TaskWorkerState = {
   key: string;
   runId?: string;
   status: string;
+  /** A later attempt of the same role replaced this one. */
+  superseded?: boolean;
   frames: TaskFrameStatus[];
   pendingInteraction?: {
     id: string;

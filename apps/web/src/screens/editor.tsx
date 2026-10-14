@@ -1522,7 +1522,10 @@ export function EditorScreen() {
           const map = new Map([
             ...(taskActive
               ? (task.data?.workers ?? [])
-                  .filter((worker) => /^(w\d+|fix-)/.test(worker.key))
+                  .filter(
+                    (worker) =>
+                      /^(w\d+|fix-)/.test(worker.key) && worker.superseded !== true,
+                  )
                   .flatMap((worker) =>
                     worker.frames.map(
                       (frame) =>
