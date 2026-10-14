@@ -1424,9 +1424,8 @@ describe("workspace tools", () => {
 });
 
 describe("drawing approval", () => {
-  it("gates every pixel-mutating tool on the live approved scope", async () => {
+  it("never gates a painting tool, whatever the scope", async () => {
     boundRun();
-    // The four destructive tools also pass Jev's request check; approve it.
     stubJev(0.97);
     const run = getRun("run-1")!;
     run.approvedScope = new Set(["frame-2"]);
@@ -1436,58 +1435,64 @@ describe("drawing approval", () => {
       label: "dot",
       points: [{ x: 1, y: 1, color: 2 }],
     };
-    expect(await approval("paint_stroke", stroke)).toBe(false);
-    expect(await approval("paint_stroke", { ...stroke, frameId: "frame-3" })).toBe(true);
-    expect(await approval("fill_rect", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("fill_rect", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("erase_stroke", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("erase_stroke", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("draw_line", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("draw_line", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("flood_fill", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("flood_fill", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("fill_region", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("fill_region", { frameId: "frame-3" })).toBe(true);
+    // Drawing is harmless: laying pixels down is never a question, inside the
+    // approved scope or outside it.
+    const painting: Array<[string, Record<string, unknown>]> = [
+      ["paint_stroke", stroke],
+      ["paint_stroke", { ...stroke, frameId: "frame-3" }],
+      ["fill_rect", { frameId: "frame-3" }],
+      ["erase_stroke", { frameId: "frame-3" }],
+      ["draw_line", { frameId: "frame-3" }],
+      ["flood_fill", { frameId: "frame-3" }],
+      ["fill_region", { frameId: "frame-3" }],
+      ["apply_outline", { frameId: "frame-3" }],
+      ["dither_rect", { frameId: "frame-3" }],
+      ["mirror_frame", { frameId: "frame-3" }],
+    ];
+    for (const [name] of painting) {
+      // Harmless by declaration: no predicate, no question, no scope check.
+      expect(tool(name).requiresApproval).toBe(false);
+    }
+    // The correctors still ask outside the approved scope.
     expect(await approval("clear_region", { frameId: "frame-2" })).toBe(false);
     expect(await approval("clear_region", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("replace_color", { frameId: "frame-2" })).toBe(false);
     expect(await approval("replace_color", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("apply_outline", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("apply_outline", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("dither_rect", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("dither_rect", { frameId: "frame-3" })).toBe(true);
     expect(await approval("set_palette", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("mirror_frame", { frameId: "frame-3" })).toBe(true);
     releaseRun("run-1");
   });
 
-  it("gates a call without a frame id on the current frame", async () => {
+  it("gates a destructive call without a frame id on the current frame", async () => {
     boundRun();
+    stubJev(0.97);
     const run = getRun("run-1")!;
     run.approvedScope = new Set(["frame-2"]);
-    expect(await approval("paint_stroke", {})).toBe(true);
+    expect(await approval("clear_region", {})).toBe(true);
     run.currentFrameId = "frame-2";
-    expect(await approval("paint_stroke", {})).toBe(false);
+    expect(await approval("clear_region", {})).toBe(false);
     releaseRun("run-1");
   });
 
   it("reads the binding live, so a frame approved later stops asking", async () => {
     boundRun();
-    const stroke = {
-      frameId: "frame-2",
+    stubJev(0.97);
+    const call = {
       layerId: "layer-a",
-      label: "dot",
-      points: [{ x: 1, y: 1, color: 2 }],
+      x: 0,
+      y: 0,
+      width: 2,
+      height: 2,
+      frameId: "frame-2",
     };
-    expect(await approval("paint_stroke", stroke)).toBe(true);
+    expect(await approval("clear_region", call)).toBe(true);
     getRun("run-1")!.approvedScope.add("frame-2");
-    expect(await approval("paint_stroke", stroke)).toBe(false);
+    expect(await approval("clear_region", call)).toBe(false);
     releaseRun("run-1");
   });
 
   it("asks for approval when no binding is live", async () => {
     boundRun();
-    expect(await approval("paint_stroke", { frameId: "frame-1" }, "run-9")).toBe(true);
+    stubJev(0.97);
+    expect(await approval("clear_region", { frameId: "frame-1" }, "run-9")).toBe(true);
     releaseRun("run-1");
   });
 
