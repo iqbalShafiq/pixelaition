@@ -192,3 +192,30 @@ the API answers `502 WORKER_UNAVAILABLE: fetch failed` and the task row lands
 failed before any child exists. `pnpm dev` started from a shell that later
 died takes the worker with it; a harness-supervised background process does
 not. Before blaming a model or an adapter, check the three ports first.
+
+## Deepseek on the chat path: the stream-shape saga, resolved
+
+The provider ends a tool turn differently than the OpenAI reference stream, and
+`@anvia/openai`'s chat mapping rejected it. Five tolerances, each proven by
+replaying the exact failing request (`apps/worker/replay-plan.mjs`, which
+rebuilds a turn from the durable journal plus the content-addressed history —
+the SDK's request field is `chatHistory`, not `messages`) through the same SDK
+stack the worker uses:
+
+1. the provider's tool-call id is remembered per index (later deltas omit it);
+2. `callId` never goes empty (the core rejects a blank one);
+3. `name` is only sent when the delta carries it (empty string is rejected);
+4. deltas that arrive after a finish reason are still accumulated;
+5. a second `final` chunk replaces the first instead of throwing.
+
+They live in `tools/patch-anvia-openai.mjs` (postinstall) on top of
+`patches/@anvia__openai@1.3.0.patch`. With them deepseek's plan card appears
+~20-40 seconds after submission, where before every attempt died inside ten
+seconds.
+
+Two operational lessons, both paid for: a `pnpm dev` worker started inside a
+shell dies with that shell, and a harness system update resets background
+shells too — after either, restart the worker or every task fails in one
+second with `WORKER_UNAVAILABLE`. Slow turns are handled in layers now: the
+gateway client declares a fifteen-minute timeout with four SDK retries, and
+the task gives workers and the review four attempts each.
