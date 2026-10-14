@@ -905,6 +905,16 @@ function mirrorChildEvents(
   const set = listeners.get(childPublicId) ?? new Set<(event: PublicEvent) => void>();
   set.add((event) => {
     if (event.type === "canvas-stroke") return;
+    if (event.type === "error") {
+      // A child that dies says why: the envelope carries the provider output
+      // kind (invalid-tool-call, truncated-tool-call, ...), the offending tool
+      // call id, and the finish reason, so a failure is one readable line.
+      const data = event.data as { error?: unknown; usage?: unknown } | undefined;
+      const detail = data?.error ?? data;
+      console.error(
+        `[child] ${workerKey ?? childPublicId} failed: ${JSON.stringify(detail).slice(0, 400)}`,
+      );
+    }
     publish(taskId, event.type, {
       ...(event.data as Record<string, unknown>),
       runId: childPublicId,
