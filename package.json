@@ -27,7 +27,8 @@
     "db:migrate": "dotenv -e .env -- pnpm --filter @pixelaition/db migrate",
     "docker:up": "docker compose up --build",
     "prepare": "husky",
-    "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev"
+    "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev",
+    "postinstall": "node tools/patch-anvia-openai.mjs"
   },
   "lint-staged": {
     "*.{ts,tsx,js,css,md,json,yml}": "prettier --write"
