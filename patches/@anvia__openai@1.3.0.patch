@@ -1,0 +1,13 @@
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -312,7 +312,9 @@
+       assertOptionalToolCallString(toolCall.id);
+       assertOptionalToolCallString(fn.name);
+       const index = toolCallIndex(toolCall.index);
+-      const id = `tool_${index}`;
++      const openaiToolCallIds = globalThis.__anviaOpenAiToolCallIds ?? (globalThis.__anviaOpenAiToolCallIds = /* @__PURE__ */ new Map());
++      const id = toolCall.id ?? openaiToolCallIds.get(index) ?? `tool_${index}`;
++      if (typeof toolCall.id === "string" && toolCall.id.length > 0) openaiToolCallIds.set(index, toolCall.id);
+       assertOptionalToolArguments(id, fn.arguments);
+       events.push(
+         toolCallDelta(id, {
