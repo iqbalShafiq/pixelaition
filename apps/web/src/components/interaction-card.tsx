@@ -159,7 +159,7 @@ export function InteractionCard({
           ? "Approve the agent's request"
           : "Answer the agent"
       }
-      className="pointer-events-auto pixel-window flex max-h-[52vh] min-h-0 w-full max-w-full flex-col bg-panel"
+      className="pointer-events-auto pixel-window flex max-h-[38vh] min-h-0 w-full max-w-full flex-col bg-panel"
       style={{ maxWidth: "40rem" }}
       onKeyDown={(event) => {
         if (event.key === "Escape") onEscape();

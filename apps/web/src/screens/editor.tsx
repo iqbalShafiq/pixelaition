@@ -1860,11 +1860,14 @@ export function EditorScreen() {
                 </button>
               </div>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex max-h-[calc(100%-1.5rem)] flex-col items-center overflow-hidden px-3">
+            <div className="pointer-events-none absolute inset-x-0 top-3 bottom-3 z-20 flex flex-col items-center justify-end overflow-hidden px-3">
               {/* One 40rem column holds the console, the queue, and the
                   composer — the same dock geometry the home page uses, so
                   every part lines up on the same edges. */}
-              <div className="grid w-full gap-2" style={{ maxWidth: "40rem" }}>
+              <div
+                className="flex min-h-0 w-full flex-col gap-2"
+                style={{ maxWidth: "40rem" }}
+              >
                 {clarify !== null ? (
                   <section
                     aria-label="Which frame"
@@ -1917,15 +1920,17 @@ export function EditorScreen() {
                     </div>
                   </section>
                 ) : null}
-                <QuestionSummary
-                  workers={task.data?.workers ?? []}
-                  onJump={(id) => {
-                    setFrameId(id);
-                    setSelection(null);
-                    setPreview(null);
-                  }}
-                />
-                <div className="w-full [view-transition-name:console-flight]">
+                <div className="shrink-0">
+                  <QuestionSummary
+                    workers={task.data?.workers ?? []}
+                    onJump={(id) => {
+                      setFrameId(id);
+                      setSelection(null);
+                      setPreview(null);
+                    }}
+                  />
+                </div>
+                <div className="w-full shrink-0 [view-transition-name:console-flight]">
                   <RunConsole
                     taskProgress={
                       task.data?.task !== null && task.data?.task !== undefined
@@ -1957,17 +1962,19 @@ export function EditorScreen() {
                     onEscape={focusComposer}
                   />
                 </div>
-                <QueueDock
-                  items={optimisticQueue}
-                  canSteer={runId !== null}
-                  busy={steering}
-                  onSendNow={sendQueuedNow}
-                  onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
-                  onReorder={(from, to) =>
-                    setQueue((current) => reorderQueuedRun(current, from, to))
-                  }
-                  onRecall={recallQueued}
-                />
+                <div className="shrink-0">
+                  <QueueDock
+                    items={optimisticQueue}
+                    canSteer={runId !== null}
+                    busy={steering}
+                    onSendNow={sendQueuedNow}
+                    onRemove={(id) => setQueue((current) => removeQueuedRun(current, id))}
+                    onReorder={(from, to) =>
+                      setQueue((current) => reorderQueuedRun(current, from, to))
+                    }
+                    onRecall={recallQueued}
+                  />
+                </div>
                 {/* The ref hands Escape a real target: focus lands on the
                     composer's prompt field, not on a guess from the DOM. */}
                 <div
