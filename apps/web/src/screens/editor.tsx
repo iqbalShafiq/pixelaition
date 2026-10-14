@@ -1498,8 +1498,10 @@ export function EditorScreen() {
         playing={playing}
         locked={running}
         generating={taskActive}
-        taskFrames={
-          new Map([
+        taskFrames={(() => {
+          // Every frame a worker does not own is explicitly untouched, so no
+          // frame in a running task is ever without a state.
+          const map = new Map([
             ...(taskActive
               ? (task.data?.workers ?? [])
                   .filter((worker) => /^(w\d+|fix-)/.test(worker.key))
@@ -1527,8 +1529,19 @@ export function EditorScreen() {
                 ([id, workerKey]) =>
                   [id, { status: "done" as const, workerKey, seen: false }] as const,
               ),
-          ])
-        }
+          ]);
+          if (taskActive) {
+            for (const frame of frames) {
+              if (!map.has(frame.id)) {
+                map.set(frame.id, {
+                  status: "untouched",
+                  workerKey: "",
+                } as unknown as typeof map extends Map<string, infer V> ? V : never);
+              }
+            }
+          }
+          return map;
+        })()}
         onSelect={(id) => {
           setFrameId(id);
           setSelection(null);

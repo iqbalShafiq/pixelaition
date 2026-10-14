@@ -4,7 +4,7 @@ import { Check, Close } from "./pixel-icons.js";
 
 /** The states a frame can be in while its worker paints it. */
 export type FrameTaskState = {
-  status: "queued" | "working" | "done" | "failed" | "asking";
+  status: "untouched" | "queued" | "working" | "done" | "failed" | "asking";
   workerKey: string;
   /** The user already looked at this frame; its tick stays quiet. */
   seen?: boolean;
@@ -16,6 +16,16 @@ export type FrameTaskState = {
  * `steps()` loop that `prefers-reduced-motion` turns off.
  */
 export function FrameStatus({ state }: { state: FrameTaskState }) {
+  if (state.status === "untouched") {
+    // Nobody is painting this frame in the running task: say so quietly, so a
+    // frame without an agent is never mistaken for one in progress.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line-strong" />
+        untouched
+      </span>
+    );
+  }
   if (state.status === "queued") {
     return (
       <span className="flex items-center gap-1 text-pixel-mono text-muted">
