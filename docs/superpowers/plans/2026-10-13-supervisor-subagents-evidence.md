@@ -150,3 +150,36 @@ Fixes shipped (`69440b8`, `b7e74b9`, `882482d`):
 - Root cause of the empty cendrawasih: the plan child ended its turn right after `present_plan` came back approved and never called `add_frame`, so the asset kept only its default frame. The approval now carries the next step, the task reads the asset's frame names, sends the plan child back once to create what is missing, and fails with the names if they still are not there (tested).
 
 Recording: `~/Desktop/pixelaition-demo-v2.mp4` (1:46, 1920×1080) — home, target confirmed, plan approved, two agents painting their own frames (the recorder hops to whichever frame is being painted), review, done. No dead air, no foreign asset in the tail. The take predates `882482d`, so its asset still ends on the plan's default frame; the provider was returning stream failures during every later attempt ("Completion provider stream ended before its tool call was complete"), so the fresh take with the frames that are now enforced has to wait for the provider.
+
+## Provider failures traced: thinking mode needs its reasoning back
+
+The run behind `298af3d5` (deepseek-v4.1-flash, effort high) finished with
+`task completed` but a red step: `worker:failed`, its retry `failed`, and
+`fix:failed`. The durable summaries name the cause:
+
+```
+400 The `reasoning_text` in the thinking mode must be passed back to the API.
+502 Bad Gateway (cloudflare)
+```
+
+So the model's **thinking mode** requires the reasoning text of the previous
+turn to travel back with the next request. The OpenAI-style adapter we call
+through does not round-trip reasoning, so every follow-up turn in a tool loop
+is rejected mid-stream — which is exactly what the SDK reports as
+"stream ended before its tool call was complete" / "invalid tool call" on
+other models too. It is not a flaky provider and not our retry logic (the
+retry itself worked: `worker:failed` -> `w2-retry-1` -> `failed`).
+
+Fix paths, in order of reach:
+
+1. Run drawing agents on an effort that does not think (muse's `minimal` is
+   the only non-thinking step in the catalog today) — no reasoning to send
+   back, so the 400 cannot happen. Needs a live run to confirm.
+2. Teach the adapter to include the reasoning part of the previous assistant
+   turn (a change in the provider adapter, outside this repository).
+3. Keep bounded retries, but never retry a failure whose cause is this 400:
+   the task sees only child status, so classification needs the child's
+   error text to reach the task checkpoint first.
+
+Until one of those lands, a "completed" task may still show failed steps for
+the frames the review then fixed — the asset is right, the tree is honest.
