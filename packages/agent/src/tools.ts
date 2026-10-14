@@ -894,9 +894,13 @@ export function createPixelTools(
     name: "present_plan",
     description:
       "Propose the frames for the job and wait for the user to approve or edit the list. The plan only runs once approved, and the approved frames become the run's editable scope; frames added later with add_frame join that scope. If the user edited the list, the executed plan reflects the edited version.",
+    // The plan itself rides in the supervisor's reply as JSON (the runtime
+    // reads it and the card shows it). This call is only the approval, so its
+    // arguments stay one short string: a tool call the provider streams in a
+    // single delta, which every chat-completions model handles.
     inputSchema: z.object({
       summary: z.string().min(1).max(300),
-      frames: z.array(planFrameSchema).min(1).max(24),
+      frames: z.array(planFrameSchema).max(24).optional(),
       // The structured plan the card renders: which worker paints which
       // frames, the palette additions, and the references the workers may
       // look at. Optional so an older caller still validates.
@@ -926,7 +930,7 @@ export function createPixelTools(
       // for the interaction it was staged for; a denied card clears it.
       const staged = run.stagedOverride;
       run.stagedOverride = undefined;
-      let frames = input.frames;
+      let frames = input.frames ?? [];
       if (staged !== undefined) {
         const parsed = stagedOverrideSchema.safeParse(staged);
         if (!parsed.success) throw new Error("The staged plan override is malformed.");
@@ -945,7 +949,7 @@ export function createPixelTools(
       run.onScopeChange?.([...scope]);
       return {
         approved: true,
-        plan: { summary: input.summary, frames },
+        summary: input.summary,
         scope: [...scope],
         next: "Create the approved frames now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
       };

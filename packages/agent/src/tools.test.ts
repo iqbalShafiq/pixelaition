@@ -1076,9 +1076,9 @@ describe("present_plan", () => {
     const result = (await tool("present_plan").call(
       { summary: "hop cycle", frames },
       { operationId: "run-1" },
-    )) as { approved: boolean; plan: unknown; scope: string[] };
+    )) as { approved: boolean; summary: string; scope: string[] };
     expect(result.approved).toBe(true);
-    expect(result.plan).toEqual({ summary: "hop cycle", frames });
+    expect(result.summary).toBe("hop cycle");
     expect(result.scope).toEqual(["frame-1", "frame-2"]);
     expect(getRun("run-1")?.approvedScope).toEqual(new Set(["frame-1", "frame-2"]));
     releaseRun("run-1");
@@ -1110,11 +1110,8 @@ describe("present_plan", () => {
     const result = (await tool("present_plan").call(
       { summary: "hop cycle", frames },
       { operationId: "run-1" },
-    )) as { plan: { summary: string; frames: unknown[] }; scope: string[] };
-    expect(result.plan).toEqual({
-      summary: "hop cycle",
-      frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
-    });
+    )) as { summary: string; scope: string[] };
+    expect(result.summary).toBe("hop cycle");
     expect(result.scope).toEqual(["frame-1", "frame-2"]);
     expect(run.stagedOverride).toBeUndefined();
     releaseRun("run-1");
@@ -1146,8 +1143,8 @@ describe("present_plan", () => {
     const second = (await tool("present_plan").call(
       { summary: "second proposal", frames },
       { operationId: "run-1" },
-    )) as { plan: { summary: string; frames: unknown[] }; scope: string[] };
-    expect(second.plan).toEqual({ summary: "second proposal", frames });
+    )) as { summary: string; scope: string[] };
+    expect(second.summary).toBe("second proposal");
     expect(second.scope).toEqual(["frame-1", "frame-2"]);
     releaseRun("run-1");
   });

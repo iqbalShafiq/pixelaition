@@ -59,8 +59,9 @@ export const planInstructions = [
   "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the style guide's colour maximum), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
   "Plan painting, not erasing: a frame is drawn by laying colours down (paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, dither_rect). Never plan a clear-then-draw or replace-colour step for routine work — those calls stop for the user's approval, and only a plan or a review that genuinely removes existing pixels should name them.",
   "A request that describes the subject acting — a flap, a jump, a walk, a pose change — means key frames: plan three to six separate frames, one per key pose, never a single frame. One frame is only right for a still pose.",
-  "Call present_plan first with the full structured plan (frames, workers, palette, references); create the frames with add_frame and set the palette additions with set_palette only after the user approves it.",
-  "Pass the worker split, the palette additions, and the references in present_plan so the approval card shows them.",
+  "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",
+  "Then call present_plan with a one-line summary only. Its arguments stay small on purpose: the card is the user's approval of the plan you wrote, not a second copy of it.",
+  "Create the frames with add_frame and set the palette additions with set_palette only after the user approves the plan.",
   "Finish by answering with one JSON object matching the plan schema and nothing else.",
 ].join("\n");
 

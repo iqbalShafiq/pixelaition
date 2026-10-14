@@ -897,6 +897,49 @@ function framesForRole(
  * Child events mirror into the task stream so one subscription drives the
  * console tree; strokes stay out because each one carries a whole frame.
  */
+/** The text a child has streamed, so a plan card can show the plan it wrote. */
+const childText = new Map<string, string>();
+
+/** The last complete JSON object in a text buffer, or null. */
+function lastJsonObject(text: string): Record<string, unknown> | null {
+  for (let end = text.length; end > 1; end -= 1) {
+    if (text[end - 1] !== "}") continue;
+    for (
+      let start = text.lastIndexOf("{", end - 1);
+      start >= 0;
+      start = text.lastIndexOf("{", start - 1)
+    ) {
+      try {
+        const parsed: unknown = JSON.parse(text.slice(start, end));
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // keep looking left for a brace that starts valid JSON
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The approval tool carries only a summary; the plan it approves was written in
+ * the child's reply. The card the user sees is enriched here, so a small tool
+ * call and a full card travel together.
+ */
+function enrichInteraction(
+  childPublicId: string,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const input = data.input;
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return data;
+  const fields = input as Record<string, unknown>;
+  if (Array.isArray(fields.frames)) return data;
+  const plan = lastJsonObject(childText.get(childPublicId) ?? "");
+  if (plan === null || !Array.isArray(plan.frames)) return data;
+  return { ...data, input: { ...fields, ...plan } };
+}
+
 function mirrorChildEvents(
   taskId: string,
   childPublicId: string,
@@ -905,6 +948,21 @@ function mirrorChildEvents(
   const set = listeners.get(childPublicId) ?? new Set<(event: PublicEvent) => void>();
   set.add((event) => {
     if (event.type === "canvas-stroke") return;
+    if (event.type === "model_delta") {
+      const inner = (
+        event.data as { event?: { type?: unknown; text?: unknown; delta?: unknown } }
+      )?.event;
+      const kind = typeof inner?.type === "string" ? inner.type : undefined;
+      if (kind === "text" || kind === "text_delta") {
+        const piece = inner?.text ?? inner?.delta;
+        if (typeof piece === "string") {
+          childText.set(
+            childPublicId,
+            `${childText.get(childPublicId) ?? ""}${piece}`.slice(-24000),
+          );
+        }
+      }
+    }
     if (event.type === "error") {
       // A child that dies says why: the envelope carries the provider output
       // kind (invalid-tool-call, truncated-tool-call, ...), the offending tool
@@ -915,8 +973,12 @@ function mirrorChildEvents(
         `[child] ${workerKey ?? childPublicId} failed: ${JSON.stringify(detail).slice(0, 400)}`,
       );
     }
+    const data =
+      event.type === "interaction"
+        ? enrichInteraction(childPublicId, event.data as Record<string, unknown>)
+        : (event.data as Record<string, unknown>);
     publish(taskId, event.type, {
-      ...(event.data as Record<string, unknown>),
+      ...data,
       runId: childPublicId,
       ...(workerKey ? { workerKey } : {}),
     });
