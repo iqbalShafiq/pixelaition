@@ -555,6 +555,10 @@ export function EditorScreen() {
   // A stroke that lands on the frame in view says so on the canvas itself:
   // the agent is painting here, right now.
   const [agentPulse, setAgentPulse] = useState(0);
+  /** The frame the most recent agent stroke landed on. */
+  const [lastStrokeFrame, setLastStrokeFrame] = useState<string | null>(null);
+  /** The user picked a frame themselves: stop following the agent. */
+  const manualPickRef = useRef(false);
   useEffect(() => {
     if (agentPulse === 0) return;
     const timer = window.setTimeout(() => setAgentPulse(0), 1100);
@@ -569,6 +573,7 @@ export function EditorScreen() {
         palette?: string[];
       };
       const target = data.frameId ?? fallbackFrameId;
+      setLastStrokeFrame(target);
       if (target === frameId) setAgentPulse(Date.now());
       // A set_palette repaint carries the asset's new palette: every frame
       // adopts it, exactly like the editor's palette panel.
@@ -1119,6 +1124,19 @@ export function EditorScreen() {
     return () => window.clearInterval(timer);
   }, [assetId, client, taskActive]);
 
+  // While a task runs the editor follows the frame being painted; a manual
+  // pick wins until the next run.
+  useEffect(() => {
+    manualPickRef.current = false;
+  }, [taskId]);
+
+  useEffect(() => {
+    if (!taskActive || lastStrokeFrame === null) return;
+    if (manualPickRef.current) return;
+    if (lastStrokeFrame === frameId) return;
+    setFrameId(lastStrokeFrame);
+  }, [frameId, lastStrokeFrame, taskActive]);
+
   const refresh = () => client.invalidateQueries({ queryKey: ["asset", assetId] });
 
   /**
@@ -1511,7 +1529,10 @@ export function EditorScreen() {
                         [
                           frame.id,
                           {
-                            status: frame.status,
+                            status:
+                              frame.status === "working" && frame.id !== lastStrokeFrame
+                                ? "queued"
+                                : frame.status,
                             workerKey: worker.key,
                             // A frame already looked at keeps a quiet tick, so
                             // the panel still names who painted it.
@@ -1543,6 +1564,7 @@ export function EditorScreen() {
           return map;
         })()}
         onSelect={(id) => {
+          manualPickRef.current = true;
           setFrameId(id);
           setSelection(null);
           setPreview(null);
