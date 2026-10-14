@@ -1972,7 +1972,7 @@ export function EditorScreen() {
                     composer's prompt field, not on a guess from the DOM. */}
                 <div
                   ref={composerRef}
-                  className="w-full [view-transition-name:composer-flight]"
+                  className="sticky bottom-0 z-10 w-full bg-paper pt-1 [view-transition-name:composer-flight]"
                 >
                   <Composer
                     frameContext={
