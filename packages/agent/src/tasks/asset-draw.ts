@@ -79,6 +79,8 @@ export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema>;
 
 /** A child that died on a provider hiccup gets a fresh attempt, bounded. */
 const CHILD_RETRIES = 2;
+/** A plan call whose stream the provider mangled is worth attempting again. */
+const PLAN_RETRIES = 4;
 
 function retriesFor(
   checkpoint: { retries?: Record<string, number> },
@@ -244,8 +246,12 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   }
   if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
     const key = "plan";
-    if (retriesFor(checkpoint, key) < CHILD_RETRIES) {
-      const childKey = `plan-retry-${retriesFor(checkpoint, key) + 1}`;
+    if (retriesFor(checkpoint, key) < PLAN_RETRIES) {
+      const attempt = retriesFor(checkpoint, key) + 1;
+      console.error(
+        `[task] plan child failed (${outcome?.status ?? "unknown"}); attempt ${attempt}/${PLAN_RETRIES}`,
+      );
+      const childKey = `plan-retry-${attempt}`;
       const id = ctx.spawnAgent(childKey, {
         agentId: ctx.input.agentId,
         prompt: buildPlanPrompt(ctx.input),
@@ -263,7 +269,7 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     }
     return {
       status: "failed",
-      error: `The plan phase did not complete after ${CHILD_RETRIES} retries: ${outcome?.status ?? "unknown"}.`,
+      error: `The plan phase did not complete after ${PLAN_RETRIES} retries: ${outcome?.status ?? "unknown"}.`,
     };
   }
   const parsed = parsePlanOutput(outcome.output);

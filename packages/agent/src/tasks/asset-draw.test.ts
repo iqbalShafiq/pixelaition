@@ -229,11 +229,11 @@ describe("asset-draw plan phase", () => {
 
     const spent = await run(task, {
       ...ctx,
-      checkpoint: { phase: "plan", attempt: 0, planKey: "plan", retries: { plan: 2 } },
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan", retries: { plan: 4 } },
     } as typeof ctx);
     expect(spent).toMatchObject({
       status: "failed",
-      error: "The plan phase did not complete after 2 retries: failed.",
+      error: "The plan phase did not complete after 4 retries: failed.",
     });
   });
 });
