@@ -165,7 +165,7 @@ export function InteractionCard({
         if (event.key === "Escape") onEscape();
       }}
     >
-      <div className="p-3">
+      <div className="flex min-h-0 flex-1 flex-col p-3">
         {interaction.type === "tool-approval" ? (
           <ApprovalBody
             interaction={interaction}
@@ -487,71 +487,73 @@ function QuestionBody({
 
   return (
     <>
-      <h3 className="text-pixel-title text-accent">The agent asks</h3>
-      <div className="mt-2 grid gap-2">
-        {questions.map((question) => {
-          const state = answers[question.id];
-          const target = isTargetQuestion(question.id) ? question.id : undefined;
-          const chosenProject = answers.project?.choice;
-          const assetOptions =
-            chosenProject === undefined || chosenProject === "new"
-              ? assets
-              : assets.filter((asset) => asset.projectId === chosenProject);
-          return (
-            <fieldset key={question.id} className="border-2 border-line bg-field p-2.5">
-              <legend className="px-1 text-[13px] text-ink">{question.text}</legend>
-              {target === "project" && projects.length > 0 ? (
-                <SelectControl
-                  label="Project"
-                  value={state?.choice ?? ""}
-                  options={projects.map((project) => ({
-                    value: project.id,
-                    label: project.name,
-                  }))}
-                  onChange={(value) => setChoice(question.id, value)}
-                  className="mt-1.5"
-                />
-              ) : target === "asset" && assetOptions.length > 0 ? (
-                <SelectControl
-                  label="Asset"
-                  value={state?.choice ?? ""}
-                  options={[
-                    ...assetOptions.map((asset) => ({
-                      value: asset.id,
-                      label: asset.name,
-                    })),
-                    { value: "new", label: "＋ New asset" },
-                    { value: "none", label: "No asset" },
-                  ]}
-                  onChange={(value) => setChoice(question.id, value)}
-                  className="mt-1.5"
-                />
-              ) : target === "project_name" || target === "asset_name" ? (
-                <TextInput
-                  value={state?.text ?? ""}
-                  aria-label={question.text}
-                  placeholder="name"
-                  disabled={busy}
-                  className="mt-1.5"
-                  onChange={(event) => setText(question.id, event.target.value)}
-                />
-              ) : (
-                defaultBody(question, state)
-              )}
-              {(target === "project" && projects.length > 0) ||
-              (target === "asset" && assetOptions.length > 0) ? (
-                <TextInput
-                  value={state?.text ?? ""}
-                  aria-label={`Or answer in your own words: ${question.text}`}
-                  placeholder="Or type your own answer…"
-                  disabled={busy}
-                  className="mt-2"
-                  onChange={(event) => setText(question.id, event.target.value)}
-                />
-              ) : null}
-            </fieldset>
-          );
-        })}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
+        <h3 className="text-pixel-title text-accent">The agent asks</h3>
+        <div className="mt-2 grid gap-2">
+          {questions.map((question) => {
+            const state = answers[question.id];
+            const target = isTargetQuestion(question.id) ? question.id : undefined;
+            const chosenProject = answers.project?.choice;
+            const assetOptions =
+              chosenProject === undefined || chosenProject === "new"
+                ? assets
+                : assets.filter((asset) => asset.projectId === chosenProject);
+            return (
+              <fieldset key={question.id} className="border-2 border-line bg-field p-2.5">
+                <legend className="px-1 text-[13px] text-ink">{question.text}</legend>
+                {target === "project" && projects.length > 0 ? (
+                  <SelectControl
+                    label="Project"
+                    value={state?.choice ?? ""}
+                    options={projects.map((project) => ({
+                      value: project.id,
+                      label: project.name,
+                    }))}
+                    onChange={(value) => setChoice(question.id, value)}
+                    className="mt-1.5"
+                  />
+                ) : target === "asset" && assetOptions.length > 0 ? (
+                  <SelectControl
+                    label="Asset"
+                    value={state?.choice ?? ""}
+                    options={[
+                      ...assetOptions.map((asset) => ({
+                        value: asset.id,
+                        label: asset.name,
+                      })),
+                      { value: "new", label: "＋ New asset" },
+                      { value: "none", label: "No asset" },
+                    ]}
+                    onChange={(value) => setChoice(question.id, value)}
+                    className="mt-1.5"
+                  />
+                ) : target === "project_name" || target === "asset_name" ? (
+                  <TextInput
+                    value={state?.text ?? ""}
+                    aria-label={question.text}
+                    placeholder="name"
+                    disabled={busy}
+                    className="mt-1.5"
+                    onChange={(event) => setText(question.id, event.target.value)}
+                  />
+                ) : (
+                  defaultBody(question, state)
+                )}
+                {(target === "project" && projects.length > 0) ||
+                (target === "asset" && assetOptions.length > 0) ? (
+                  <TextInput
+                    value={state?.text ?? ""}
+                    aria-label={`Or answer in your own words: ${question.text}`}
+                    placeholder="Or type your own answer…"
+                    disabled={busy}
+                    className="mt-2"
+                    onChange={(event) => setText(question.id, event.target.value)}
+                  />
+                ) : null}
+              </fieldset>
+            );
+          })}
+        </div>
       </div>
       <div className="mt-3 flex items-center gap-2">
         <Button disabled={busy || !complete} onClick={() => void submit()}>
