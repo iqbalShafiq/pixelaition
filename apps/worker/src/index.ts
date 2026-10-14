@@ -484,7 +484,11 @@ const openai = apiKey
         apiKey,
         ...(baseUrl ? { baseURL: baseUrl } : {}),
         ...(headers ? { defaultHeaders: headers } : {}),
-        maxRetries: 2,
+        // A thinking model on a big tool set can take a long time per turn;
+        // the request gets room, and the SDK retries timeouts, 429s, and 5xx
+        // with backoff so one slow turn never ends a run.
+        timeout: 15 * 60 * 1000,
+        maxRetries: 4,
       }),
     })
   : undefined;

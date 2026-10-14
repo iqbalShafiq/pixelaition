@@ -10,12 +10,19 @@ const sqlite = (sql) =>
     sql,
   ]).toString();
 
-// The newest plan-shaped model call on the chat path.
-const rows = sqlite(
-  "select run_id || '|' || json_extract(data,'$.input.request.chatHistory.head') || '|' || length(data) from anvia_durable_events where type='model_started' and data like '%deepseek%' order by sequence desc limit 1;",
-)
-  .trim()
-  .split("|");
+// A specific run can be named; otherwise take the newest failed worker turn,
+// falling back to the newest chat call of any role.
+const wanted = process.argv[2];
+const pick = (where) =>
+  sqlite(
+    `select run_id || '|' || json_extract(data,'$.input.request.chatHistory.head') || '|' || length(data) from anvia_durable_events where type='model_started' ${where} order by sequence desc limit 1;`,
+  ).trim();
+let picked = wanted
+  ? pick(`and run_id='${wanted}'`)
+  : pick(
+      "and run_id in (select distinct run_id from anvia_durable_events where type='model_attempt_failed' order by sequence desc limit 40)",
+    ) || pick("and data like '%deepseek%'");
+const rows = picked.split("|");
 const [runId, head] = rows;
 console.log("run:", runId?.slice(0, 8), "head:", head?.slice(0, 12), "bytes:", rows[2]);
 

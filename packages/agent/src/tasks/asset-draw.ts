@@ -78,7 +78,7 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
 export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema>;
 
 /** A child that died on a provider hiccup gets a fresh attempt, bounded. */
-const CHILD_RETRIES = 2;
+const CHILD_RETRIES = 4;
 /** A plan call whose stream the provider mangled is worth attempting again. */
 const PLAN_RETRIES = 4;
 
