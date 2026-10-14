@@ -900,27 +900,6 @@ export function createPixelTools(
     // single delta, which every chat-completions model handles.
     inputSchema: z.object({
       summary: z.string().min(1).max(300),
-      frames: z.array(planFrameSchema).max(24).optional(),
-      // The structured plan the card renders: which worker paints which
-      // frames, the palette additions, and the references the workers may
-      // look at. Optional so an older caller still validates.
-      workers: z
-        .array(
-          z.object({
-            key: z.string().min(1).max(8),
-            frames: z.array(z.string().min(1)).min(1),
-          }),
-        )
-        .max(4)
-        .optional(),
-      palette: z
-        .array(z.object({ color: z.string(), name: z.string().min(1).max(40) }))
-        .max(8)
-        .optional(),
-      references: z
-        .array(z.object({ url: z.string().url(), note: z.string().max(200) }))
-        .max(8)
-        .optional(),
     }),
     requiresApproval: true,
     execute: (input, context) => {
@@ -930,7 +909,7 @@ export function createPixelTools(
       // for the interaction it was staged for; a denied card clears it.
       const staged = run.stagedOverride;
       run.stagedOverride = undefined;
-      let frames = input.frames ?? [];
+      let frames: Array<{ name: string; frameId?: string }> = [];
       if (staged !== undefined) {
         const parsed = stagedOverrideSchema.safeParse(staged);
         if (!parsed.success) throw new Error("The staged plan override is malformed.");

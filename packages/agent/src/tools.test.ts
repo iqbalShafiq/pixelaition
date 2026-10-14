@@ -1071,32 +1071,18 @@ describe("present_plan", () => {
     expect(tool("present_plan").requiresApproval).toBe(true);
   });
 
-  it("scopes the plan's existing frames plus the origin frame", async () => {
+  it("scopes the run's origin frame; the frames arrive with add_frame", async () => {
     boundRun();
     const result = (await tool("present_plan").call(
-      { summary: "hop cycle", frames },
+      { summary: "hop cycle" },
       { operationId: "run-1" },
     )) as { approved: boolean; summary: string; scope: string[] };
     expect(result.approved).toBe(true);
     expect(result.summary).toBe("hop cycle");
-    expect(result.scope).toEqual(["frame-1", "frame-2"]);
-    expect(getRun("run-1")?.approvedScope).toEqual(new Set(["frame-1", "frame-2"]));
-    releaseRun("run-1");
-  });
-
-  it("drops a planned frame id the asset does not have from the scope", async () => {
-    boundRun();
-    const result = (await tool("present_plan").call(
-      {
-        summary: "hop cycle",
-        frames: [
-          ...frames,
-          { frameId: "frame-9", name: "ghost", description: "not in the asset" },
-        ],
-      },
-      { operationId: "run-1" },
-    )) as { scope: string[] };
-    expect(result.scope).toEqual(["frame-1", "frame-2"]);
+    // The approval carries one line; frames the plan creates join the scope
+    // through add_frame, which is where frame ids come from now.
+    expect(result.scope).toEqual(["frame-1"]);
+    expect(getRun("run-1")?.approvedScope).toEqual(new Set(["frame-1"]));
     releaseRun("run-1");
   });
 
@@ -1108,7 +1094,7 @@ describe("present_plan", () => {
       frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
     };
     const result = (await tool("present_plan").call(
-      { summary: "hop cycle", frames },
+      { summary: "hop cycle" },
       { operationId: "run-1" },
     )) as { summary: string; scope: string[] };
     expect(result.summary).toBe("hop cycle");
@@ -1137,15 +1123,16 @@ describe("present_plan", () => {
       frames: [{ frameId: "frame-2", name: "hop", description: "airborne only" }],
     };
     await tool("present_plan").call(
-      { summary: "first proposal", frames },
+      { summary: "first proposal" },
       { operationId: "run-1" },
     );
     const second = (await tool("present_plan").call(
-      { summary: "second proposal", frames },
+      { summary: "second proposal" },
       { operationId: "run-1" },
     )) as { summary: string; scope: string[] };
     expect(second.summary).toBe("second proposal");
-    expect(second.scope).toEqual(["frame-1", "frame-2"]);
+    // The override fed the first proposal only; the second scopes the origin.
+    expect(second.scope).toEqual(["frame-1"]);
     releaseRun("run-1");
   });
 
