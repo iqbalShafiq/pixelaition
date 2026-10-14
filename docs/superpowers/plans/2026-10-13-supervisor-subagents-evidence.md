@@ -183,3 +183,12 @@ Fix paths, in order of reach:
 
 Until one of those lands, a "completed" task may still show failed steps for
 the frames the review then fixed — the asset is right, the tree is honest.
+
+## Runs that look stuck are usually a missing worker
+
+Every "the task failed in one second" and "the plan card never came" episode in
+this stretch traced back to the worker process being gone (port 4002 closed):
+the API answers `502 WORKER_UNAVAILABLE: fetch failed` and the task row lands
+failed before any child exists. `pnpm dev` started from a shell that later
+died takes the worker with it; a harness-supervised background process does
+not. Before blaming a model or an adapter, check the three ports first.
