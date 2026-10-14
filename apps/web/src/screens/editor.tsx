@@ -37,7 +37,7 @@ import {
 } from "../components/interaction-card.js";
 import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
-import { useTaskSnapshot, useTaskStream } from "../lib/task.js";
+import { useTaskSnapshot, useTaskStream, type TaskSnapshot } from "../lib/task.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
 import { QueueDock } from "../components/queue-dock.js";
@@ -1080,8 +1080,7 @@ export function EditorScreen() {
   // The run console is the supervisor's stage: open it while a task is live,
   // and keep the frame list following frames that appear mid-run.
   useEffect(() => {
-    if (!taskActive) return;
-    setConsoleOpen(true);
+    if (taskActive) setConsoleOpen(true);
     const timer = window.setInterval(() => {
       void client.invalidateQueries({ queryKey: ["asset", assetId] });
       void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
@@ -1092,6 +1091,28 @@ export function EditorScreen() {
           setPendingInteraction((current) => current ?? card);
           const owner = result.run?.id;
           if (typeof owner === "string") setPendingRunId(owner);
+        })
+        .catch(() => undefined);
+      // The plan child waits for the user too; the snapshot carries it even
+      // when the run's own stream never reached this tab.
+      void api<TaskSnapshot>(`/api/assets/${assetId}/task`)
+        .then((snapshot) => {
+          if (snapshot.task !== null)
+            setTaskId((current) => current ?? snapshot.task?.id ?? null);
+          const waiting = snapshot.workers.find(
+            (worker) => worker.pendingInteraction !== undefined,
+          );
+          const card = waiting?.pendingInteraction;
+          if (card === undefined || answeredIdsRef.current.has(card.id)) return;
+          if (card.type === undefined) return;
+          const pending = {
+            id: card.id,
+            type: card.type,
+            toolName: card.toolName ?? "tool",
+            ...(card.questions === undefined ? {} : { questions: card.questions }),
+          };
+          setPendingInteraction((current) => current ?? pending);
+          if (typeof waiting?.runId === "string") setPendingRunId(waiting.runId);
         })
         .catch(() => undefined);
     }, 3000);

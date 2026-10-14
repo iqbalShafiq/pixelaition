@@ -389,9 +389,20 @@ async function startRunViaWorker(
       .set({ durableRunId: started.durableRunId, status: "running" })
       .where(eq(generationRuns.id, runId));
   }
-  res
-    .status(202)
-    .json({ runId, streamId: runId, kind: input.mode === "draw" ? "task" : "run" });
+  // The home opens the editor from this response, so the bound target rides
+  // along: without it the plan card stayed unreachable until a refresh.
+  const bound = await db
+    .select({ assetId: runTasks.assetId })
+    .from(runTasks)
+    .where(eq(runTasks.id, runId))
+    .limit(1);
+  const boundAssetId = bound[0]?.assetId ?? null;
+  res.status(202).json({
+    runId,
+    streamId: runId,
+    kind: input.mode === "draw" ? "task" : "run",
+    ...(boundAssetId === null ? {} : { assetId: boundAssetId }),
+  });
 }
 
 export function createApp() {
@@ -1389,12 +1400,19 @@ export function createApp() {
       const origin = asset.frames[0];
       if (!origin) return fail(res, 422, "ASSET_EMPTY", "That asset has no frames.");
       target = { scope: "asset", assetId: asset.id, frameId: origin.id };
+    } else if (confirm.assetName !== undefined) {
+      // The user named the asset: create it here, so the run binds a real
+      // target and the home opens the editor without waiting for the agent
+      // (which used to leave the plan card unreachable until a refresh).
+      const created = await createAssetRecord(db, userId, projectId, confirm.assetName);
+      if (!created) return fail(res, 404, "NOT_FOUND", "That project is not available.");
+      const origin = created.frames[0];
+      if (!origin) return fail(res, 422, "ASSET_EMPTY", "That asset has no frames.");
+      target = { scope: "asset", assetId: created.id, frameId: origin.id };
+      prompt = `${prompt}\n\nAsset name to use: ${confirm.assetName}`;
     } else {
       // The agent creates the asset (or asks) inside the confirmed project.
       target = { scope: "workspace", projectId };
-      if (confirm.assetName !== undefined) {
-        prompt = `${prompt}\n\nAsset name to use: ${confirm.assetName}`;
-      }
     }
     const thread = await ensureThread(
       db,

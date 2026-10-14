@@ -488,6 +488,29 @@ export function ProjectsScreen() {
         // A new run needs the plan card in view and its asset known: keep the
         // console open and poll alongside the stream events.
         setConsoleOpen(true);
+        const bornAsset = (started as { assetId?: string | null }).assetId;
+        if (typeof bornAsset === "string" && bornAsset.length > 0) {
+          navigateToEditor(choice.projectId ?? "", bornAsset);
+        } else if (choice.assetName !== undefined) {
+          // The named asset is created with the confirmation, so its row is a
+          // moment away in the list: watch for it and open the editor at once.
+          const bornName = choice.assetName;
+          const bornPoll = window.setInterval(() => {
+            void queryClient.invalidateQueries({ queryKey: ["assets"] });
+            const list =
+              (
+                assets.data as
+                  | { assets?: Array<{ id: string; name: string; projectId: string }> }
+                  | undefined
+              )?.assets ?? [];
+            const born = list.find((item) => item.name === bornName);
+            if (born !== undefined) {
+              window.clearInterval(bornPoll);
+              navigateToEditor(born.projectId ?? choice.projectId ?? "", born.id);
+            }
+          }, 1500);
+          window.setTimeout(() => window.clearInterval(bornPoll), 5 * 60 * 1000);
+        }
         // A run that binds its asset mid-flight must not strand the user here:
         // keep an eye on the recent list as a fallback for a missed event.
         const bound = window.setInterval(() => {
@@ -500,14 +523,26 @@ export function ProjectsScreen() {
                 : undefined;
             if (!Array.isArray(list)) return;
             const row = list.find(
-              (item): item is { id?: string; assetId?: string; projectId?: string } =>
+              (
+                item,
+              ): item is {
+                id?: string;
+                runId?: string;
+                asset?: { id?: string; projectId?: string };
+              } =>
                 typeof item === "object" &&
                 item !== null &&
-                (item as { id?: unknown }).id === started.runId,
+                ((item as { id?: unknown }).id === started.runId ||
+                  (item as { runId?: unknown }).runId === started.runId),
             );
-            if (typeof row?.assetId === "string" && row.assetId.length > 0) {
+            // A recent row carries the run's bound asset as an object.
+            const boundAsset = row?.asset?.id;
+            if (typeof boundAsset === "string" && boundAsset.length > 0) {
               window.clearInterval(bound);
-              navigateToEditor(row.projectId ?? choice.projectId ?? "", row.assetId);
+              navigateToEditor(
+                row?.asset?.projectId ?? choice.projectId ?? "",
+                boundAsset,
+              );
             }
           });
         }, 2500);

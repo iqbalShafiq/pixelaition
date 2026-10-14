@@ -2676,6 +2676,26 @@ function bindWorkspaceRun(options: {
       .update(generationRuns)
       .set({ frameId: origin.id })
       .where(eq(generationRuns.id, publicRunId));
+    // A task that began without an asset (the home's "new asset" runs) must
+    // learn its target the moment a child creates it: bind the task row and
+    // announce it on the task's own stream, or the home never opens the editor.
+    const owner = await db
+      .select({ taskId: generationRuns.taskId })
+      .from(generationRuns)
+      .where(eq(generationRuns.id, publicRunId))
+      .limit(1);
+    const ownerTaskId = owner[0]?.taskId ?? null;
+    if (ownerTaskId !== null) {
+      await db
+        .update(runTasks)
+        .set({ assetId: asset.id })
+        .where(eq(runTasks.id, ownerTaskId));
+      publish(ownerTaskId, "asset-bound", {
+        assetId: asset.id,
+        projectId: asset.projectId,
+        name: asset.name,
+      });
+    }
     // Every binding (use_asset or create_asset) announces itself: the console
     // shows the target and the home assembles into the editor on this event.
     publish(publicRunId, "asset-bound", {

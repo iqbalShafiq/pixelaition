@@ -51,7 +51,9 @@ export function useTaskSnapshot(assetId: string, enabled = true) {
         data?.task !== null &&
         data?.task !== undefined &&
         ["queued", "running", "waiting"].includes(data.task.status);
-      return active ? 3000 : false;
+      // A task started from the home is only discovered by asking again:
+      // never stop the probe, just slow it down when nothing is running.
+      return active ? 3000 : 5000;
     },
     enabled,
   });
