@@ -32,7 +32,6 @@ import {
   frameBuffer,
   getRun,
   paintStroke,
-  planFrameSchema,
   refreshCritique,
   replaceFrameBuffer,
   assertOwnedFrame,
