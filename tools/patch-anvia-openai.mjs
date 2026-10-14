@@ -15,17 +15,28 @@ const ID_NEW = `      const openaiToolCallIds = globalThis.__anviaOpenAiToolCall
       const id = toolCall.id ?? openaiToolCallIds.get(index) ?? \`tool_\${index}\`;
       if (typeof toolCall.id === "string" && toolCall.id.length > 0) openaiToolCallIds.set(index, toolCall.id);`;
 
+const DUP_FINAL_OLD = `      if (event.type === "final") {
+        if (this.finalResponse !== void 0) throw invalidToolCallError();
+        this.finalResponse = event.response;
+      }`;
+const DUP_FINAL_NEW = `      if (event.type === "final") {
+        this.finalResponse = event.response;
+      }`;
+
+const POST_FINISH_OLD = `    if (this.hasFinishReason && hasSemanticProgress) {
+      throw invalidToolCallError();
+    }`;
+const POST_FINISH_NEW = `    // Some providers send the finish reason and then a few more tool-call
+    // deltas for the same response; they are accumulated, not rejected.
+    void hasSemanticProgress;`;
+
+const NAME_OLD = `          name: stringFrom(fn.name),`;
+const NAME_NEW = `          ...(typeof fn.name === "string" && fn.name.length > 0 ? { name: fn.name } : {}),`;
+
 const CALLID_OLD = "          callId: stringFrom(toolCall.id),";
 const CALLID_NEW = "          callId: id,";
 
-const REASONING_ANCHOR = `    if (typeof delta.refusal === "string" && delta.refusal.length > 0) {
-      events.push({ type: "text_delta", delta: delta.refusal });
-    }
-`;
-const REASONING_ADD = `    if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-      events.push({ type: "reasoning_delta", delta: delta.reasoning_content });
-    }
-`;
+
 
 let touched = 0;
 for (const file of globSync("node_modules/.pnpm/@anvia+openai@*/node_modules/@anvia/openai/dist/index.js")) {
@@ -33,9 +44,9 @@ for (const file of globSync("node_modules/.pnpm/@anvia+openai@*/node_modules/@an
   const before = text;
   if (text.includes(ID_OLD)) text = text.replace(ID_OLD, ID_NEW);
   if (text.includes(CALLID_OLD)) text = text.replace(CALLID_OLD, CALLID_NEW);
-  if (!text.includes("reasoning_delta") && text.includes(REASONING_ANCHOR)) {
-    text = text.replace(REASONING_ANCHOR, REASONING_ANCHOR + REASONING_ADD);
-  }
+  if (text.includes(NAME_OLD)) text = text.replace(NAME_OLD, NAME_NEW);
+  if (text.includes(POST_FINISH_OLD)) text = text.replace(POST_FINISH_OLD, POST_FINISH_NEW);
+  if (text.includes(DUP_FINAL_OLD)) text = text.replace(DUP_FINAL_OLD, DUP_FINAL_NEW);
   if (text !== before) {
     writeFileSync(file, text);
     touched += 1;
