@@ -93,7 +93,7 @@ export function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color,opacity] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
+        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
       >
         {children}
       </motion.button>
