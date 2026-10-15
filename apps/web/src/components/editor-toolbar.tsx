@@ -100,7 +100,7 @@ export function Toolbar({
   onDeselect: () => void;
 }) {
   return (
-    <div className="relative flex items-center gap-1 overflow-x-auto bg-paper px-2 py-2">
+    <div className="relative flex items-center gap-1 overflow-x-auto bg-panel px-2 py-2">
       {tools.map((entry) => {
         const Icon = entry.icon;
         return (
@@ -134,7 +134,7 @@ export function Toolbar({
           <Separator vertical />
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-xs"
+            className="px-2 py-1.5 text-pixel-label"
             disabled={locked}
             onClick={onSelectionFill}
           >
@@ -142,13 +142,17 @@ export function Toolbar({
           </Button>
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-xs"
+            className="px-2 py-1.5 text-pixel-label"
             disabled={locked}
             onClick={onSelectionClear}
           >
             Clear
           </Button>
-          <Button tone="quiet" className="px-2 py-1.5 text-xs" onClick={onDeselect}>
+          <Button
+            tone="quiet"
+            className="px-2 py-1.5 text-pixel-label"
+            onClick={onDeselect}
+          >
             Deselect
           </Button>
         </>

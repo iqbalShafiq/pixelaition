@@ -35,9 +35,7 @@ export function LibraryGrid({
           <Card key={project.id} className="group grid gap-3">
             <header className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="truncate text-[17px] leading-tight text-ink">
-                  {project.name}
-                </h3>
+                <h3 className="truncate text-pixel-title text-ink">{project.name}</h3>
                 {project.summary.length > 0 ? (
                   <p className="mt-1 text-pixel-mono text-muted">{project.summary}</p>
                 ) : null}
@@ -49,7 +47,7 @@ export function LibraryGrid({
                 {onNewAsset !== undefined ? (
                   <button
                     type="button"
-                    className="pixel-corners-sm border-2 border-line px-2.5 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-line-strong hover:text-ink"
+                    className="pixel-corners-sm border-2 border-line px-2.5 py-1.5 text-pixel-label text-muted transition-colors duration-150 hover:border-line-strong hover:text-ink"
                     onClick={() => onNewAsset(project.id)}
                   >
                     New asset
@@ -60,7 +58,7 @@ export function LibraryGrid({
                     tone="danger"
                     size="sm"
                     label={`Delete ${project.name}`}
-                    className="bg-paper opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
+                    className="bg-paper opacity-100 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                     onClick={() =>
                       onDeleteProject({
                         id: project.id,
@@ -75,7 +73,7 @@ export function LibraryGrid({
               </span>
             </header>
             {project.assets.length > 0 ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
                 {project.assets.map((asset) => (
                   <AssetCard
                     key={asset.id}
@@ -98,7 +96,7 @@ export function LibraryGrid({
     return <EmptyState title="Nothing matches" body="Try another search." />;
   }
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
       {result.assets.map((asset) => (
         <AssetCard
           key={asset.id}
@@ -134,23 +132,23 @@ function AssetCard({
       <Link
         to="/projects/$projectId/assets/$assetId"
         params={{ projectId: asset.projectId, assetId: asset.id }}
-        className="pixel-window grid gap-2 bg-raised p-2.5 transition-transform duration-150 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5"
+        className="pixel-window grid gap-2 bg-raised p-2 transition-transform duration-150 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5"
       >
-        <div className="grid place-items-center border-2 border-line bg-field p-2">
+        <div className="grid aspect-square place-items-center border-2 border-line bg-field p-2">
           <SpriteThumb assetId={asset.id} display={64} />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-[13px] text-ink">{asset.name}</p>
+          <p className="truncate text-pixel-label text-ink">{asset.name}</p>
           {asset.summary.length > 0 ? (
             <p className="mt-0.5 line-clamp-2 text-pixel-mono text-muted">
               {asset.summary}
             </p>
           ) : null}
-          <p className="mt-1 flex items-center gap-1.5 text-pixel-mono text-muted">
+          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-pixel-mono text-muted">
             {projectName !== undefined ? (
-              <span className="truncate text-accent">{projectName}</span>
+              <span className="truncate">{projectName}</span>
             ) : null}
-            <span>
+            <span className="shrink-0">
               {asset.width}×{asset.height}
             </span>
           </p>
@@ -163,7 +161,7 @@ function AssetCard({
           tone="danger"
           size="sm"
           label={`Delete ${asset.name}`}
-          className="absolute top-1 right-1 z-10 bg-paper opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
+          className="absolute top-1 right-1 z-10 bg-paper opacity-100 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
           onClick={onDelete}
         >
           <Close width={12} height={12} />

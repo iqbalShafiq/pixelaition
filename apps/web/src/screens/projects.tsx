@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Close, Search } from "../components/pixel-icons.js";
+import { Close, Search } from "../components/pixel-icons.js";
 import {
   startTransition,
   useCallback,
@@ -13,6 +13,7 @@ import { Composer } from "../components/composer.js";
 import { RunConsole } from "../components/run-console.js";
 import { ConfirmTargetCard } from "../components/confirm-target-card.js";
 import { LibraryGrid } from "../components/library-grid.js";
+import { ProjectNav } from "../components/project-nav.js";
 import { PixelLoader } from "../components/pixel-loader.js";
 import { RecentRunsRail } from "../components/recent-runs-rail.js";
 import { filterLibrary } from "../lib/library.js";
@@ -25,11 +26,10 @@ import {
 import {
   Button,
   Callout,
-  Card,
   ConfirmDialog,
-  Field,
-  PixelMark,
+  SegmentedControl,
   TextInput,
+  Wordmark,
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
@@ -135,6 +135,7 @@ export function ProjectsScreen() {
   const [effort, setEffort] = useState("medium");
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState<"recent" | "project">("recent");
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [rows, setRows] = useState<RunRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -350,9 +351,18 @@ export function ProjectsScreen() {
   }, [recent.data, runId, listen, log]);
 
   const list = projects.data?.projects ?? [];
+  useEffect(() => {
+    if (projectId === null || !projects.isSuccess) return;
+    if (!list.some((project) => project.id === projectId)) setProjectId(null);
+  }, [list, projectId, projects.isSuccess]);
   const projectNames = Object.fromEntries(
     list.map((project) => [project.id, project.name]),
   );
+  const assetRows = assets.data?.assets ?? [];
+  const counts = assetRows.reduce<Record<string, number>>((map, asset) => {
+    map[asset.projectId] = (map[asset.projectId] ?? 0) + 1;
+    return map;
+  }, {});
   const library = filterLibrary({
     projects: list.map((project) => ({
       id: project.id,
@@ -360,9 +370,10 @@ export function ProjectsScreen() {
       summary: project.summary ?? "",
       updatedAt: project.updatedAt ?? "",
     })),
-    assets: assets.data?.assets ?? [],
+    assets: assetRows,
     query: search,
     group,
+    ...(projectId !== null ? { projectId } : {}),
   });
   // Deleting names what goes with it; the API refuses while a run is live.
   const [pendingDelete, setPendingDelete] = useState<{
@@ -731,163 +742,123 @@ export function ProjectsScreen() {
     composerRef.current?.querySelector("textarea")?.focus();
   }
 
+  const navProps = {
+    projects: list.map((project) => ({ id: project.id, name: project.name })),
+    counts,
+    activeId: projectId,
+    onSelect: setProjectId,
+    name,
+    onName: setName,
+    onCreate: () => create.mutate(),
+    creating: create.isPending,
+  };
+
   return (
-    <main id="content" className="pixel-grid-lg min-h-dvh bg-paper">
-      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-8 pb-48">
-        <header className="flex items-center justify-between gap-4 border-b-2 border-line pb-4">
-          <span className="flex items-center gap-2.5">
-            <PixelMark />
-            <span className="text-pixel-display text-accent">PIXELAITION</span>
-          </span>
-          <Button
-            tone="ghost"
-            className="px-3 py-1.5 text-[12px]"
-            onClick={() => {
-              void authClient.signOut().then(() => window.location.assign("/login"));
-            }}
-          >
-            Sign out
-          </Button>
-        </header>
+    <main id="content" className="min-h-dvh bg-paper">
+      <header className="flex items-center justify-between gap-3 border-b-2 border-line bg-panel px-4 py-2.5">
+        <Wordmark />
+        <Button
+          tone="ghost"
+          className="px-3 py-1.5 text-pixel-label"
+          onClick={() => {
+            void authClient.signOut().then(() => window.location.assign("/login"));
+          }}
+        >
+          Sign out
+        </Button>
+      </header>
 
-        <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
-          <div className="grid gap-5">
-            <div>
-              <p className="text-pixel-mono tracking-[0.2em] text-muted uppercase">
-                Workspace
-              </p>
-              <h1 className="mt-3 text-pixel-hero text-ink text-balance">
-                Your sprite families
-              </h1>
-              <p className="mt-3 max-w-[46ch] text-[14px] leading-relaxed text-muted">
-                Describe a sprite and the agent finds it a home, or draw one by hand from
-                a project below. One project keeps one palette and one style guide, so
-                every asset inside it stays recognisably related.
-              </p>
-            </div>
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 pb-80 lg:flex-row lg:items-start">
+        <aside className="hidden w-60 shrink-0 lg:sticky lg:top-4 lg:block lg:max-h-[calc(100dvh-8rem)] lg:overflow-y-auto">
+          <ProjectNav {...navProps} layout="rail" />
+        </aside>
+
+        <div className="grid min-w-0 flex-1 gap-4">
+          <div className="lg:hidden">
+            <ProjectNav {...navProps} layout="strip" />
           </div>
-
-          <Card className="grid gap-3">
-            <form
-              className="grid gap-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (name.trim()) create.mutate();
-              }}
-            >
-              <Field label="New project" htmlFor="project-name">
-                <TextInput
-                  id="project-name"
-                  value={name}
-                  placeholder="Knights, potions, dungeon tiles…"
-                  autoComplete="off"
-                  onChange={(event) => setName(event.target.value)}
+          <div className="grid gap-3 border-b-2 border-line pb-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h1 className="text-pixel-title text-ink">Library</h1>
+              <span className="text-pixel-mono text-muted">
+                {library.assets.length.toString().padStart(2, "0")} assets
+              </span>
+            </div>
+            <p className="text-pixel-label text-muted">
+              Describe a sprite in the composer, or open one from the grid.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search
+                  aria-hidden
+                  width={12}
+                  height={12}
+                  className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
                 />
-              </Field>
-              <Button
-                type="submit"
-                disabled={!name.trim() || create.isPending}
-                className="w-full"
-              >
-                {create.isPending ? "Creating" : "Create project"}
-                <ArrowRight />
-              </Button>
-            </form>
-          </Card>
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
-          <div className="grid min-w-0 gap-4">
-            <div className="grid gap-3 border-b-2 border-line pb-3">
-              <div className="flex items-baseline gap-3">
-                <h2 className="text-pixel-title text-muted">Library</h2>
-                <span className="pixel-corners-sm border-2 border-line px-1.5 py-0.5 text-pixel-mono text-muted">
-                  {library.assets.length.toString().padStart(2, "0")}
-                </span>
+                <TextInput
+                  value={search}
+                  aria-label="Search projects and assets"
+                  placeholder="Search projects and assets…"
+                  className="pl-7"
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                {search.length > 0 ? (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    className="absolute top-1/2 right-1.5 grid h-6 w-6 -translate-y-1/2 place-items-center text-muted transition-colors duration-150 hover:text-ink"
+                    onClick={() => setSearch("")}
+                  >
+                    <Close width={12} height={12} />
+                  </button>
+                ) : null}
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="relative min-w-0 flex-1 sm:max-w-[20rem]">
-                  <Search
-                    aria-hidden
-                    width={12}
-                    height={12}
-                    className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted"
-                  />
-                  <TextInput
-                    value={search}
-                    aria-label="Search projects and assets"
-                    placeholder="Search projects and assets…"
-                    className="pl-7"
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                  {search.length > 0 ? (
-                    <button
-                      type="button"
-                      aria-label="Clear search"
-                      className="absolute top-1/2 right-1.5 grid h-6 w-6 -translate-y-1/2 place-items-center text-muted transition-colors duration-150 hover:text-ink"
-                      onClick={() => setSearch("")}
-                    >
-                      <Close width={12} height={12} />
-                    </button>
-                  ) : null}
-                </div>
-                <div className="pixel-corners-sm inline-flex w-fit border-2 border-line sm:ml-auto">
-                  {(["recent", "project"] as const).map((value, index) => (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={group === value}
-                      className={`px-3 py-1.5 text-xs transition-colors duration-150 ${
-                        index > 0 ? "border-l-2 border-line" : ""
-                      } ${
-                        group === value
-                          ? "bg-accent/15 text-accent"
-                          : "text-muted hover:text-ink"
-                      }`}
-                      onClick={() => setGroup(value)}
-                    >
-                      {value === "recent" ? "Recent" : "By project"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {projects.isPending || assets.isPending ? (
-              <p className="flex items-center gap-2 text-pixel-mono text-muted">
-                <PixelLoader size={12} />
-                Reading your library…
-              </p>
-            ) : projects.isError || assets.isError ? (
-              <Callout tone="danger">The library could not be loaded.</Callout>
-            ) : (
-              <LibraryGrid
-                result={library}
-                group={group}
-                projectNames={projectNames}
-                onNewAsset={(projectId) => newAsset.mutate(projectId)}
-                onDeleteAsset={(asset) =>
-                  setPendingDelete({
-                    kind: "asset",
-                    id: asset.id,
-                    name: asset.name,
-                    assets: 0,
-                  })
-                }
-                onDeleteProject={(project) =>
-                  setPendingDelete({
-                    kind: "project",
-                    id: project.id,
-                    name: project.name,
-                    assets: project.assets,
-                  })
-                }
+              <SegmentedControl
+                label="Library grouping"
+                value={group}
+                options={[
+                  { value: "recent", label: "Recent" },
+                  { value: "project", label: "By project" },
+                ]}
+                onChange={setGroup}
               />
-            )}
+            </div>
           </div>
-          <div className="grid min-w-0 gap-4">
-            <RecentRunsRail runs={recent.data?.runs ?? []} />
-          </div>
-        </section>
+          {projects.isPending || assets.isPending ? (
+            <p className="flex items-center gap-2 text-pixel-mono text-muted">
+              <PixelLoader size={12} />
+              Reading your library…
+            </p>
+          ) : projects.isError || assets.isError ? (
+            <Callout tone="danger">The library could not be loaded.</Callout>
+          ) : (
+            <LibraryGrid
+              result={library}
+              group={group}
+              projectNames={projectNames}
+              onNewAsset={(id) => newAsset.mutate(id)}
+              onDeleteAsset={(asset) =>
+                setPendingDelete({
+                  kind: "asset",
+                  id: asset.id,
+                  name: asset.name,
+                  assets: 0,
+                })
+              }
+              onDeleteProject={(project) =>
+                setPendingDelete({
+                  kind: "project",
+                  id: project.id,
+                  name: project.name,
+                  assets: project.assets,
+                })
+              }
+            />
+          )}
+        </div>
+        <aside className="w-full shrink-0 lg:sticky lg:top-4 lg:w-72">
+          <RecentRunsRail runs={recent.data?.runs ?? []} />
+        </aside>
       </div>
 
       <ConfirmDialog

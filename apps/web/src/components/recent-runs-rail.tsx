@@ -47,7 +47,7 @@ export function RecentRunsRail({ runs }: { runs: RecentRunRailRow[] }) {
   return (
     <Card className="grid min-w-0 gap-2 overflow-hidden">
       <header className="flex items-center justify-between gap-3">
-        <h2 className="text-pixel-label text-accent">recent runs</h2>
+        <h2 className="text-pixel-title text-ink">Recent runs</h2>
         <span className="text-pixel-mono text-muted">
           {runs.length.toString().padStart(2, "0")}
         </span>
@@ -63,7 +63,7 @@ export function RecentRunsRail({ runs }: { runs: RecentRunRailRow[] }) {
                 className="grid min-w-0 gap-1 border-2 border-line bg-field px-2 py-1.5"
               >
                 <p
-                  className="line-clamp-2 min-w-0 text-[13px] leading-snug text-ink"
+                  className="line-clamp-2 min-w-0 text-pixel-label leading-snug text-ink"
                   title={run.prompt ?? undefined}
                 >
                   {run.prompt ?? "(no prompt)"}

@@ -33,19 +33,16 @@ const rootRoute = createRootRoute({
 
 function NotFound() {
   return (
-    <main
-      id="content"
-      className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4"
-    >
+    <main id="content" className="grid min-h-dvh place-items-center bg-paper px-4">
       <div className="max-w-sm text-center">
         <p className="text-pixel-mono tracking-[0.22em] text-accent">404</p>
-        <h1 className="mt-3 text-2xl font-medium text-ink">This square is empty</h1>
-        <p className="mt-2 text-[13px] text-muted">
+        <h1 className="mt-3 text-pixel-display text-ink">This square is empty</h1>
+        <p className="mt-2 text-pixel-body text-muted">
           The page you asked for is not part of this canvas.
         </p>
         <Link
           to="/projects"
-          className="mt-6 inline-block min-h-11 border-2 border-accent-deep bg-accent px-4 py-2.5 text-sm text-navy"
+          className="mt-6 inline-flex min-h-11 items-center justify-center border-2 border-accent-deep bg-accent px-3.5 py-2 text-pixel-label text-navy shadow-pixel-sm"
         >
           Back to projects
         </Link>

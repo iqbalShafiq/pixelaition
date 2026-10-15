@@ -62,4 +62,26 @@ describe("filterLibrary", () => {
       filterLibrary({ projects, assets, query: "  ", group: "recent" }).assets,
     ).toHaveLength(assets.length);
   });
+
+  it("limits both views to one project", () => {
+    const recent = filterLibrary({
+      projects,
+      assets,
+      query: "",
+      group: "recent",
+      projectId: "p2",
+    });
+    expect(recent.assets.map((asset) => asset.id)).toEqual(["a2", "a1"]);
+    expect(recent.projects.map((project) => project.id)).toEqual(["p2"]);
+
+    const named = filterLibrary({
+      projects,
+      assets,
+      query: "knights",
+      group: "project",
+      projectId: "p2",
+    });
+    expect(named.projects).toEqual([]);
+    expect(named.assets).toEqual([]);
+  });
 });

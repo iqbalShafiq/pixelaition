@@ -32,7 +32,9 @@ the way a handheld console does.
 | line-strong | `rgba(148, 176, 194, 0.55)` | slot 13    | Edges that must read as a boundary   |
 
 Only `accent` and `erase` carry hue. The accent is for state, never for a large
-fill besides the primary button, and that button's label is `navy`.
+fill besides the primary button, and that button's label is `navy`. Wordmarks,
+page titles, and panel headers are `ink`. `muted` is secondary copy, never a
+title.
 
 `faint` is for hairlines, marks, and the checkered transparency field. It
 measures about 3.1:1 against the page, which clears the 3:1 a UI boundary needs
@@ -70,8 +72,10 @@ The interface is built from the vocabulary of a limited-colour screen.
   `pixel-icons.tsx`, and any missing glyph is drawn on the same 24 grid. Sizes
   are **24 or 12, never 16 or 20** — the library is a 24 grid and 12 is its half
   scale, so both sizes stay crisp at DPR 2.
-- **Textures are flat grids** (`pixel-grid`, `pixel-grid-lg`), never gradients or
-  noise.
+- **Page backgrounds are flat `paper`.** `pixel-grid` and `pixel-grid-lg` are
+  not page wallpaper. The only full-field checker belongs to the canvas, one
+  square per document pixel. Empty states may use a small `dither` behind solid
+  copy. Never gradients or noise.
 
 Anything the pointer can act on shows a pointer cursor, declared once in
 `@layer base` for buttons, menu items, options, checkboxes, and labels that wrap
@@ -112,7 +116,11 @@ The left rail is 280px and the right rail is 300px. The composer is a 220px band
 
 ## Editor
 
-Wide screens keep frames and layers on the left, the canvas in the center, and the palette and style guide on the right. Below 1100px both columns become sheets opened from the header, because a hidden rail with no way to reach it is a dead end rather than a layout choice. Below 720px the toolbar becomes a bottom dock above the composer, and the canvas stays the main surface.
+Wide screens keep frames and layers on the left, the canvas in the center, and the palette and style guide on the right. The header and both rails share the `panel` surface and meet the canvas on a `line` border. The canvas column is the `field` well, so the sprite reads as the stage and the chrome stays quiet. Rails flex between 240px and their caps (280px left, 300px right) so a narrow laptop does not crush the canvas. Below 1100px both columns become sheets opened from the header, because a hidden rail with no way to reach it is a dead end rather than a layout choice. Below 720px the toolbar becomes a bottom dock above the composer, and the canvas stays the main surface.
+
+The signed-in home is the same shell: a `panel` bar, a project list (a sticky rail from 1024px, a scrolling chip row below that), the library, and recent runs. The page has no hero and no graph-paper background. The composer stays the dock the editor uses.
+
+The signed-out page puts the account form in a full-height `panel` column, from 28rem up to 36rem. The other column is a slide. Branding stays on flat paper at the left. A `pixel-grid-slide` covers the rest of the slide, at 12px so the squares read as a field, and fades out before the type. Assets sit where they belong in that field: a cloud and a bird high, the knight, potion, and slime on the ground. Each asset has two poses and at least two layers. The first pose paints layer by layer. Later poses replace it at once. The name under an asset stays put, with the pose name beside it. Two marks show which pose is on screen, and another set shows how many layers of the current pose are drawn. Below 1024px the same picture is a short band above the form. `prefers-reduced-motion` shows every asset on its second pose, finished.
 
 Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32, and always aims at the cursor. Opening an asset frames the whole sprite instead of a corner of it.
 

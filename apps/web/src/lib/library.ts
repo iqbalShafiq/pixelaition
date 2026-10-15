@@ -42,15 +42,22 @@ export function filterLibrary(input: {
   assets: LibraryAsset[];
   query: string;
   group: "recent" | "project";
+  /** When set, the library shows only this project. Search still applies inside it. */
+  projectId?: string;
 }): LibraryResult {
   const query = input.query.trim().toLowerCase();
+  const inScope = (projectId: string) =>
+    input.projectId === undefined || projectId === input.projectId;
   const matchedAssets = newestFirst(
-    input.assets.filter((asset) => matches(query, asset.name, asset.summary)),
+    input.assets.filter(
+      (asset) => inScope(asset.projectId) && matches(query, asset.name, asset.summary),
+    ),
   );
   const matchedProjects = input.projects.filter(
     (project) =>
-      matches(query, project.name, project.summary) ||
-      matchedAssets.some((asset) => asset.projectId === project.id),
+      inScope(project.id) &&
+      (matches(query, project.name, project.summary) ||
+        matchedAssets.some((asset) => asset.projectId === project.id)),
   );
   return {
     assets: matchedAssets,

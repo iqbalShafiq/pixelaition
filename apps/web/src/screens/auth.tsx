@@ -1,11 +1,14 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Button, Field, PasswordInput, PixelMark, TextInput } from "../components/ui.js";
+import { AuthDemo } from "../components/auth-demo.js";
+import { Button, Field, PasswordInput, TextInput } from "../components/ui.js";
 import { authClient } from "../lib/auth.js";
+import { useMediaQuery } from "../lib/use-media.js";
 
 export function AuthScreen({ mode }: { mode: "login" | "register" }) {
   const navigate = useNavigate();
   const login = mode === "login";
+  const wide = useMediaQuery("(min-width: 1024px)");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,24 +42,22 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <main className="pixel-grid-lg grid min-h-dvh place-items-center bg-paper px-4 py-10">
-      <div className="w-full max-w-[26rem]">
-        <header className="mb-6 flex items-center gap-2.5">
-          <PixelMark />
-          <span className="text-pixel-display text-accent">PIXELAITION</span>
-        </header>
+    <main className="flex min-h-dvh flex-col bg-paper lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(28rem,36rem)]">
+      {wide ? <AuthDemo /> : <AuthDemo compact />}
 
-        <section className="pixel-window bg-raised p-6">
-          <h1 className="text-pixel-title text-accent">
+      <section className="flex flex-1 flex-col bg-panel px-6 py-8 sm:px-10 lg:min-h-dvh lg:justify-center lg:border-l-2 lg:border-line lg:px-10">
+        <div className="mx-auto w-full max-w-md">
+          <p className="text-pixel-mono text-muted">Account</p>
+          <h1 className="mt-2 text-pixel-display text-balance text-ink">
             {login ? "Sign in" : "Create your studio"}
           </h1>
-          <p className="mt-1.5 text-[13px] text-muted">
+          <p className="mt-3 text-pixel-body text-muted">
             {login
-              ? "Pick up the pixel family you left."
+              ? "Pick up the sprite family you left."
               : "One account holds every project, palette, and style guide."}
           </p>
 
-          <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
+          <form className="mt-8 grid gap-4" onSubmit={(event) => void submit(event)}>
             {login ? null : (
               <Field label="Name" htmlFor="auth-name">
                 <TextInput
@@ -88,7 +89,11 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
               />
             </Field>
 
-            <Field label="Password" htmlFor="auth-password" hint="at least 8 characters">
+            <Field
+              label="Password"
+              htmlFor="auth-password"
+              note={login ? undefined : "At least 8 characters."}
+            >
               <PasswordInput
                 id="auth-password"
                 name="password"
@@ -104,7 +109,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             {error ? (
               <p
                 role="alert"
-                className="border-2 border-erase bg-field px-3 py-2 text-[13px] text-erase"
+                className="border-2 border-erase bg-field px-3 py-2 text-pixel-label text-erase"
               >
                 {error}
               </p>
@@ -118,31 +123,31 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
             >
               {busy ? "Working" : login ? "Sign in" : "Create account"}
             </Button>
+
+            <p className="text-pixel-label text-muted">
+              {login ? "No account yet? " : "Already registered? "}
+              <Link
+                to={login ? "/register" : "/login"}
+                className="text-ink underline underline-offset-4 hover:text-accent"
+              >
+                {login ? "Create one" : "Sign in"}
+              </Link>
+            </p>
           </form>
 
-          <p className="mt-5 border-t-2 border-line pt-4 text-[13px] text-muted">
-            {login ? "No account yet? " : "Already registered? "}
-            <Link
-              to={login ? "/register" : "/login"}
-              className="text-ink underline underline-offset-4 hover:text-accent"
+          <p className="mt-10 text-pixel-mono text-muted">
+            MIT licensed ·{" "}
+            <a
+              href="https://github.com/iqbalShafiq/pixelaition"
+              className="underline underline-offset-2 hover:text-ink"
+              rel="noreferrer noopener"
+              target="_blank"
             >
-              {login ? "Create one" : "Sign in"}
-            </Link>
+              source on GitHub
+            </a>
           </p>
-        </section>
-
-        <p className="mt-4 text-center text-pixel-mono text-muted">
-          MIT licensed ·{" "}
-          <a
-            href="https://github.com/iqbalShafiq/pixelaition"
-            className="underline underline-offset-2 hover:text-muted"
-            rel="noreferrer noopener"
-            target="_blank"
-          >
-            source on GitHub
-          </a>
-        </p>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }

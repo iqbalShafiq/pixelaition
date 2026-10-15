@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   useCallback,
   useEffect,
@@ -80,8 +80,8 @@ import {
   EmptyState,
   ConfirmDialog,
   IconButton,
-  PixelMark,
   Sheet,
+  Wordmark,
   useToast,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
@@ -1864,17 +1864,14 @@ export function EditorScreen() {
   return (
     <main
       id="content"
-      className="grid h-dvh min-h-0 grid-rows-[auto_1fr] overflow-hidden bg-paper"
+      className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-paper"
     >
-      <header className="flex min-w-0 items-center gap-3 px-3 py-2">
-        <a
-          href="/projects"
-          className="flex items-center gap-2.5 text-pixel-display text-accent whitespace-nowrap"
-        >
-          <PixelMark />
-          PIXELAITION
-        </a>
-        <p className="min-w-0 truncate text-sm text-muted">
+      <header className="flex min-h-12 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3">
+        <Link to="/projects" className="shrink-0">
+          <Wordmark hideLabelOnNarrow />
+        </Link>
+        <span className="h-4 w-0.5 shrink-0 bg-line" aria-hidden />
+        <p className="min-w-0 truncate text-pixel-label text-muted">
           {asset.data ? (
             <>
               <span className="text-ink">{asset.data.name}</span>
@@ -1916,7 +1913,7 @@ export function EditorScreen() {
           </IconButton>
           <Button
             tone="ghost"
-            className="px-2.5 py-1.5 text-xs"
+            className="px-2.5 py-1.5 text-pixel-label"
             disabled={!asset.data}
             onClick={() => {
               flush();
@@ -1929,13 +1926,13 @@ export function EditorScreen() {
       </header>
 
       <div className="grid min-h-0 min-w-0 grid-rows-[1fr]">
-        <div className="grid min-h-0 min-w-0 lg:grid-cols-[280px_1fr_300px]">
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 p-3 lg:flex">
+        <div className="grid min-h-0 min-w-0 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)_minmax(240px,300px)]">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r-2 border-line bg-panel p-3 lg:flex">
             {leftPanels}
           </aside>
 
-          <div className="relative flex min-h-0 min-w-0 flex-col">
-            <div className="order-2 min-w-0 sm:order-1">
+          <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
+            <div className="order-2 min-w-0 border-t-2 border-line bg-panel sm:order-1 sm:border-t-0 sm:border-b-2">
               <Toolbar
                 tool={tool}
                 brushSize={brushSize}
@@ -2265,7 +2262,7 @@ export function EditorScreen() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden p-3 lg:flex">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
             <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
             {historyPanel("min-h-0 flex-1")}
           </aside>

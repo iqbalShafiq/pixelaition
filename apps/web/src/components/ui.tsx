@@ -156,18 +156,21 @@ export function Field({
   label,
   htmlFor,
   hint,
+  note,
   error,
   children,
 }: {
   label: string;
   htmlFor: string;
   hint?: string;
+  /** Sits under the control, not beside the label. */
+  note?: string;
   error?: string;
   children: ReactNode;
 }) {
   return (
     <div className="grid gap-1.5">
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="grid gap-0.5">
         <label
           htmlFor={htmlFor}
           className="text-pixel-mono tracking-[0.14em] text-muted uppercase"
@@ -177,6 +180,7 @@ export function Field({
         {hint ? <span className="text-pixel-mono text-muted">{hint}</span> : null}
       </div>
       {children}
+      {note ? <p className="text-pixel-mono text-muted">{note}</p> : null}
       {/* Colour is never the only signal: the message carries the meaning. The
           field chip keeps coral at 6.85:1 even when the field sits on `raised`,
           where coral directly on the surface would be 4.02:1. */}
@@ -425,7 +429,7 @@ export function Panel({
         {/* Micro-label decision: panel headers are Silkscreen 16, the same
             display face as dialog and sheet titles (see DESIGN.md). */}
         <div className="min-w-0">
-          <h2 className="text-pixel-title text-muted">{title}</h2>
+          <h2 className="text-pixel-title text-ink">{title}</h2>
           {subtitle ? (
             <p className="flex items-center gap-1 text-pixel-mono text-accent uppercase">
               <span className="worker-blink inline-block h-1.5 w-1.5 bg-accent" />
@@ -821,8 +825,71 @@ export function useToast() {
 /* ------------------------------------------------------------------- brand */
 
 /**
- * The wordmark's mark: a 16px logo glyph drawn on a 16 grid, not a UI icon,
- * so the 24/12 icon rule does not apply. `currentColor` keeps it on `accent`.
+ * The product name next to the mark. Titles stay ink; the mark carries the
+ * accent, so a header does not read as a row of green labels.
+ */
+export function Wordmark({
+  size = "title",
+  hideLabelOnNarrow = false,
+}: {
+  size?: "title" | "display";
+  /** Keep the mark and drop the name when the bar has no room, such as the editor. */
+  hideLabelOnNarrow?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 text-ink">
+      <PixelMark />
+      <span
+        className={`${size === "display" ? "text-pixel-display" : "text-pixel-title"} ${
+          hideLabelOnNarrow ? "max-sm:sr-only" : ""
+        }`}
+      >
+        PIXELAITION
+      </span>
+    </span>
+  );
+}
+
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="pixel-corners-sm inline-flex w-fit max-w-full border-2 border-line"
+    >
+      {options.map((option, index) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={selected}
+            className={`px-3 py-1.5 text-pixel-label transition-colors duration-150 ${
+              index > 0 ? "border-l-2 border-line" : ""
+            } ${selected ? "bg-raised text-ink" : "text-muted hover:text-ink"}`}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * A 16px logo glyph drawn on a 16 grid, not a UI icon, so the 24/12 icon rule
+ * does not apply. `currentColor` keeps it on `accent`.
  */
 export function PixelMark() {
   return (
