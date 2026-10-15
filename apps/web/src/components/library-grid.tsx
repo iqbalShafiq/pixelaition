@@ -60,7 +60,7 @@ export function LibraryGrid({
                     tone="danger"
                     size="sm"
                     label={`Delete ${project.name}`}
-                    className="opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
+                    className="bg-paper opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={() =>
                       onDeleteProject({
                         id: project.id,
@@ -163,7 +163,7 @@ function AssetCard({
           tone="danger"
           size="sm"
           label={`Delete ${asset.name}`}
-          className="absolute top-1 right-1 z-10 opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
+          className="absolute top-1 right-1 z-10 bg-paper opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
           onClick={onDelete}
         >
           <Close width={12} height={12} />
