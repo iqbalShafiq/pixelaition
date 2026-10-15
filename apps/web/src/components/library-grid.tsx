@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Close } from "./pixel-icons.js";
-import { Card, EmptyState } from "./ui.js";
+import { Card, EmptyState, IconButton } from "./ui.js";
 import { SpriteThumb } from "./sprite-thumb.js";
 import type { LibraryResult } from "../lib/library.js";
 
@@ -56,10 +56,11 @@ export function LibraryGrid({
                   </button>
                 ) : null}
                 {onDeleteProject !== undefined ? (
-                  <button
-                    type="button"
-                    aria-label={`Delete ${project.name}`}
-                    className="grid h-7 w-7 place-items-center border-2 border-erase/60 text-erase opacity-0 transition-[opacity,transform] duration-150 group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100 hover:border-erase hover:bg-erase/15 focus-visible:opacity-100"
+                  <IconButton
+                    tone="danger"
+                    size="sm"
+                    label={`Delete ${project.name}`}
+                    className="opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
                     onClick={() =>
                       onDeleteProject({
                         id: project.id,
@@ -69,7 +70,7 @@ export function LibraryGrid({
                     }
                   >
                     <Close width={12} height={12} />
-                  </button>
+                  </IconButton>
                 ) : null}
               </span>
             </header>
@@ -133,7 +134,7 @@ function AssetCard({
       <Link
         to="/projects/$projectId/assets/$assetId"
         params={{ projectId: asset.projectId, assetId: asset.id }}
-        className="pixel-window grid gap-2 bg-raised p-2.5 transition-transform duration-150 group-hover:-translate-x-[2px] group-hover:-translate-y-[2px]"
+        className="pixel-window grid gap-2 bg-raised p-2.5 transition-transform duration-150 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5"
       >
         <div className="grid place-items-center border-2 border-line bg-field p-2">
           <SpriteThumb assetId={asset.id} display={64} />
@@ -156,15 +157,17 @@ function AssetCard({
         </div>
       </Link>
       {onDelete !== undefined ? (
-        // The X appears on hover, in the card's top-right corner.
-        <button
-          type="button"
-          aria-label={`Delete ${asset.name}`}
-          className="absolute top-1 right-1 z-10 grid h-6 w-6 place-items-center border-2 border-erase/60 bg-paper text-erase opacity-0 transition-[opacity,transform] duration-150 group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100 hover:border-erase hover:bg-erase/15 focus-visible:opacity-100"
+        // The X appears on hover, in the card's top-right corner, and rides
+        // the card's own lift so the corner gaps stay equal.
+        <IconButton
+          tone="danger"
+          size="sm"
+          label={`Delete ${asset.name}`}
+          className="absolute top-1 right-1 z-10 opacity-0 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 focus-visible:opacity-100"
           onClick={onDelete}
         >
           <Close width={12} height={12} />
-        </button>
+        </IconButton>
       ) : null}
     </div>
   );

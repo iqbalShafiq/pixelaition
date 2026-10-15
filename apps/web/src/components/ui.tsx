@@ -57,6 +57,7 @@ export function IconButton({
   subtle = false,
   disabled,
   size = "md",
+  tone = "default",
   onClick,
   children,
   className = "",
@@ -66,6 +67,8 @@ export function IconButton({
   active?: boolean;
   /** Active state shown as an accent edge rather than a solid fill. */
   subtle?: boolean;
+  /** danger reads red at rest and fills solid (never translucent) on hover. */
+  tone?: "default" | "danger";
   disabled?: boolean;
   /** sm 28px, md 36px, lg 40px — lg matches the composer bar's controls. */
   size?: "sm" | "md" | "lg";
@@ -75,7 +78,9 @@ export function IconButton({
 }) {
   const box = size === "sm" ? "h-7 w-7" : size === "lg" ? "h-10 w-10" : "h-9 w-9";
   const state = !active
-    ? "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
+    ? tone === "danger"
+      ? "border-erase/60 text-erase hover:border-erase hover:bg-erase hover:text-navy"
+      : "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
     : subtle
       ? "border-accent bg-accent/15 text-accent"
       : "border-accent bg-accent text-navy";
@@ -88,7 +93,7 @@ export function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
+        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color,opacity] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
       >
         {children}
       </motion.button>

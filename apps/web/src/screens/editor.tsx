@@ -1729,6 +1729,7 @@ export function EditorScreen() {
             ◨
           </IconButton>
           <IconButton
+            tone="danger"
             label="Delete asset"
             disabled={!asset.data || running}
             onClick={() => setDeleteOpen(true)}
