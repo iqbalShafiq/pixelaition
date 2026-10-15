@@ -687,10 +687,9 @@ export function ConfirmDialog({
             {description}
           </BaseDialog.Description>
           <div className="mt-4 flex justify-end gap-2">
-            <DialogClose>
-              <Close />
-              <span className="sr-only">Cancel</span>
-            </DialogClose>
+            <Button tone="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
             <Button
               tone="danger"
               onClick={() => {
