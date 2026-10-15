@@ -348,3 +348,31 @@ describe("groupRowsByWorker", () => {
     ]);
   });
 });
+
+describe("replayed streams", () => {
+  it("keeps one phase row per phase, however often the task republishes it", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(rows, 1, "task-phase", { phase: "plan", status: "waiting" });
+    rows = applyRunEvent(rows, 2, "task-phase", { phase: "plan", status: "running" });
+    rows = applyRunEvent(rows, 1, "task-phase", { phase: "plan", status: "waiting" });
+    const phases = rows.filter((row) => row.kind === "task-phase");
+    expect(phases).toHaveLength(1);
+    expect(phases[0]).toMatchObject({ phase: "plan" });
+  });
+
+  it("keeps two children's text apart when their operation ids collide", () => {
+    let rows: RunRow[] = [];
+    const delta = (runId: string, text: string) => ({
+      operationId: "0:model:1",
+      runId,
+      event: { type: "text", text },
+    });
+    rows = applyRunEvent(rows, 1, "model_delta", delta("run-1", "first"));
+    rows = applyRunEvent(rows, 2, "model_delta", delta("run-2", "second"));
+    const texts = rows.filter((row) => row.kind === "supervisor");
+    expect(texts).toHaveLength(2);
+    const messages = texts.map((row) => (row as { message: string }).message);
+    expect(messages).toContain("first");
+    expect(messages).toContain("second");
+  });
+});

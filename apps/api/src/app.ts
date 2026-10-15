@@ -1491,20 +1491,33 @@ export function createApp() {
               ? "asking"
               : "working";
       // The children arrive oldest first, so a later attempt of the same role
-      // means this one was superseded — a retry that answers its failure.
+      // means this one was superseded — a retry that answers its failure. The
+      // latest attempt of a role that already failed once is retrying, and
+      // the UI says so instead of showing the dead attempt's failure.
       const children = snapshot.children;
       const baseKey = (child.workerKey ?? child.role ?? "run").split("-retry-")[0];
+      const siblings = children.filter(
+        (other) =>
+          (other.workerKey ?? other.role ?? "run").split("-retry-")[0] === baseKey,
+      );
       const superseded = children
         .slice(children.indexOf(child) + 1)
         .some(
           (other) =>
             (other.workerKey ?? other.role ?? "run").split("-retry-")[0] === baseKey,
         );
+      const retrying =
+        !superseded &&
+        siblings
+          .slice(0, -1)
+          .some((other) => other.status === "failed" || other.status === "cancelled") &&
+        !["failed", "cancelled", "succeeded", "completed"].includes(status);
       workers.push({
         key: child.workerKey ?? child.role ?? "run",
         runId: child.id,
         status,
         ...(superseded ? { superseded: true } : {}),
+        ...(retrying ? { retrying: true } : {}),
         frames: frameIds.map((id) => ({
           id,
           name: frameName.get(id) ?? "frame",

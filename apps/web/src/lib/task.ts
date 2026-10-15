@@ -16,6 +16,8 @@ export type TaskWorkerState = {
   status: string;
   /** A later attempt of the same role replaced this one. */
   superseded?: boolean;
+  /** This latest attempt is answering an earlier failure of the same role. */
+  retrying?: boolean;
   frames: TaskFrameStatus[];
   pendingInteraction?: {
     id: string;

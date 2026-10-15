@@ -184,7 +184,17 @@ export function applyRunEvent(
   const body = data as Record<string, unknown> | undefined;
   const operationId =
     typeof body?.operationId === "string" ? body.operationId : undefined;
-  const id = operationId ?? `seq-${sequence}`;
+  // Operation ids repeat inside every child ("0:model:1" lives in each one);
+  // scoping by the child keeps one agent's rows from merging into another's,
+  // and keeps a replayed stream from stacking the same row twice.
+  const scope =
+    typeof body?.runId === "string"
+      ? body.runId
+      : typeof body?.workerKey === "string"
+        ? body.workerKey
+        : "";
+  const scoped = (raw: string): string => (scope === "" ? raw : `${scope}:${raw}`);
+  const id = scoped(operationId ?? `seq-${sequence}`);
   // Child events mirrored into the task stream carry their worker key; every
   // row they create belongs to that worker's group in the console tree.
   const workerKey = typeof body?.workerKey === "string" ? body.workerKey : undefined;
@@ -212,7 +222,7 @@ export function applyRunEvent(
       const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trimStart() : "";
       if (text.length === 0) return rows;
       // One growing line per model call, not one row per token.
-      const id = `text-${operation ?? sequence}`;
+      const id = scoped(`text-${operation ?? sequence}`);
       const index = rows.findIndex((row) => row.id === id);
       const previous =
         index >= 0 && rows[index]?.kind === "supervisor"
@@ -342,7 +352,13 @@ export function applyRunEvent(
   if (type === "task-phase") {
     const phase = typeof body?.phase === "string" ? body.phase : "task";
     const status = typeof body?.status === "string" ? body.status : "running";
-    return [...rows, { id: `phase-${sequence}`, kind: "task-phase", phase, status }];
+    // One row per phase, updated in place: the task republishes its phase on
+    // every status change, and a rejoined stream replays them all.
+    const id = scoped("phase");
+    if (rows.some((row) => row.id === id)) {
+      return rows.map((row) => (row.id === id ? { ...row, phase, status } : row));
+    }
+    return [...rows, { id, kind: "task-phase", phase, status }];
   }
   if (type === "worker-spawned" || type === "worker-status") {
     const key = typeof body?.workerKey === "string" ? body.workerKey : "worker";

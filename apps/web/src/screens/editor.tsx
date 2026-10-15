@@ -1533,9 +1533,12 @@ export function EditorScreen() {
                           frame.id,
                           {
                             status:
-                              frame.status === "working" && frame.id !== lastStrokeFrame
-                                ? "queued"
-                                : frame.status,
+                              frame.status === "working" && worker.retrying === true
+                                ? "retrying"
+                                : frame.status === "working" &&
+                                    frame.id !== lastStrokeFrame
+                                  ? "queued"
+                                  : frame.status,
                             workerKey: worker.key,
                             // A frame already looked at keeps a quiet tick, so
                             // the panel still names who painted it.

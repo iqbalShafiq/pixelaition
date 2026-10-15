@@ -4,7 +4,7 @@ import { Check, Close } from "./pixel-icons.js";
 
 /** The states a frame can be in while its worker paints it. */
 export type FrameTaskState = {
-  status: "untouched" | "queued" | "working" | "done" | "failed" | "asking";
+  status: "untouched" | "queued" | "working" | "retrying" | "done" | "failed" | "asking";
   workerKey: string;
   /** The user already looked at this frame; its tick stays quiet. */
   seen?: boolean;
@@ -40,6 +40,17 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
         <span className="worker-blink h-2 w-2 bg-accent" />
         <PixelLoader size={12} />
         {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "retrying") {
+    // A retry that answers a failure is its own state: the frame is alive
+    // again, and the label says so instead of showing the dead attempt.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-ink">
+        <span className="worker-blink h-2 w-2 bg-ink" />
+        <PixelLoader size={12} />
+        retrying · {agentLabel(state.workerKey)}
       </span>
     );
   }

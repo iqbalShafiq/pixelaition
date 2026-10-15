@@ -881,7 +881,14 @@ function framesForRole(
   assetFrames: Array<{ id: string; name: string }>,
   prompt: string,
 ): string[] {
-  if (plan === null) return assetFrames.slice(0, 1).map((frame) => frame.id);
+  if (plan === null) {
+    // No plan means no frame assignment to read; only the plan/review children
+    // have a meaningful single-frame default, and workers are never bound here
+    // (the caller waits for the plan).
+    return role === "worker" || role === "fix"
+      ? []
+      : assetFrames.slice(0, 1).map((frame) => frame.id);
+  }
   const names =
     role === "worker"
       ? (plan.workers.find((worker) => worker.key === workerKey)?.frames ?? [])
@@ -1000,7 +1007,6 @@ async function bindTaskChild(
 ): Promise<void> {
   const childRunId = node.agentRunId;
   if (childRunId === undefined || boundChildRuns.has(childRunId)) return;
-  boundChildRuns.add(childRunId);
   const earlyRole: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
     ? "plan"
     : node.key.startsWith("w")
@@ -1010,6 +1016,15 @@ async function bindTaskChild(
         : "fix";
   const earlyWorkerKey =
     earlyRole === "worker" || earlyRole === "fix" ? node.key.split("-")[0] : undefined;
+  if (plan === null && (earlyRole === "worker" || earlyRole === "fix")) {
+    // A worker's frame assignment lives in the plan. Binding before the plan
+    // is readable would guess (the old path handed out the asset's first
+    // frame silently, so a worker painted someone else's frame or none at
+    // all); staying unbound lets the next scan bind it with the real names.
+    console.log(`[bind] ${earlyWorkerKey ?? "?"} deferred: the plan is not readable yet`);
+    return;
+  }
+  boundChildRuns.add(childRunId);
   // Idempotent across a restart: recovery may have bound this child and
   // started its follow loop already, and a second insert would duplicate the
   // row (live finding from the mid-execute kill test).
@@ -1072,6 +1087,13 @@ async function bindTaskChild(
   const assetFrames =
     asset?.frames.map((frame) => ({ id: frame.id, name: frame.name })) ?? [];
   const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames, spawnPrompt);
+  if (role === "worker" || role === "fix") {
+    const planned =
+      plan?.workers.find((worker) => worker.key === workerKey)?.frames ?? [];
+    console.log(
+      `[bind] ${workerKey ?? "?"} ${role}: plan=${plan === null ? "null" : "yes"} planned=[${planned.join(",")}] asset=[${assetFrames.map((frame) => frame.name).join(",")}] owned=${ownedFrameIds.length}`,
+    );
+  }
 
   if (existingRow === undefined) {
     await db.insert(generationRuns).values({
