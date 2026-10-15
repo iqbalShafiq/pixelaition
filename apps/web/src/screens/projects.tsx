@@ -26,6 +26,7 @@ import {
   Button,
   Callout,
   Card,
+  ConfirmDialog,
   Field,
   PixelMark,
   TextInput,
@@ -362,6 +363,47 @@ export function ProjectsScreen() {
     assets: assets.data?.assets ?? [],
     query: search,
     group,
+  });
+  // Deleting names what goes with it; the API refuses while a run is live.
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: "asset" | "project";
+    id: string;
+    name: string;
+    assets: number;
+  } | null>(null);
+  const removeAsset = useMutation({
+    mutationFn: (assetId: string) =>
+      api<{ ok: boolean }>(`/api/assets/${assetId}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      setPendingDelete(null);
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+    },
+    onError: (reason: unknown) => {
+      setPendingDelete(null);
+      notify({
+        title: "Could not delete the asset",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    },
+  });
+  const removeProject = useMutation({
+    mutationFn: (projectId: string) =>
+      api<{ ok: boolean }>(`/api/projects/${projectId}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      setPendingDelete(null);
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+    },
+    onError: (reason: unknown) => {
+      setPendingDelete(null);
+      notify({
+        title: "Could not delete the project",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    },
   });
   const newAsset = useMutation({
     mutationFn: (projectId: string) =>
@@ -823,6 +865,22 @@ export function ProjectsScreen() {
                 group={group}
                 projectNames={projectNames}
                 onNewAsset={(projectId) => newAsset.mutate(projectId)}
+                onDeleteAsset={(asset) =>
+                  setPendingDelete({
+                    kind: "asset",
+                    id: asset.id,
+                    name: asset.name,
+                    assets: 0,
+                  })
+                }
+                onDeleteProject={(project) =>
+                  setPendingDelete({
+                    kind: "project",
+                    id: project.id,
+                    name: project.name,
+                    assets: project.assets,
+                  })
+                }
               />
             )}
           </div>
@@ -831,6 +889,28 @@ export function ProjectsScreen() {
           </div>
         </section>
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={pendingDelete === null ? "" : `Delete “${pendingDelete.name}”?`}
+        description={
+          pendingDelete === null
+            ? ""
+            : pendingDelete.kind === "asset"
+              ? "Its frames, versions, and run history go with it. This cannot be undone."
+              : `The project and its ${pendingDelete.assets} asset${
+                  pendingDelete.assets === 1 ? "" : "s"
+                } — with their frames, versions, and run history — go with it. This cannot be undone.`
+        }
+        onConfirm={() => {
+          if (pendingDelete === null) return;
+          if (pendingDelete.kind === "asset") removeAsset.mutate(pendingDelete.id);
+          else removeProject.mutate(pendingDelete.id);
+        }}
+      />
 
       {/* The dock: the same composer as the editor, fixed at the bottom
           centre with the console and the confirmation card stacked above it. */}

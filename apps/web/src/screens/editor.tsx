@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   useCallback,
   useEffect,
@@ -59,7 +59,7 @@ import {
   StylePanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import { Minus, Plus } from "../components/pixel-icons.js";
+import { Minus, Plus, Trash } from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -72,6 +72,7 @@ import {
   Button,
   Callout,
   EmptyState,
+  ConfirmDialog,
   IconButton,
   PixelMark,
   Sheet,
@@ -133,6 +134,7 @@ type ActiveRunResponse = {
 
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
+  const navigate = useNavigate();
   const client = useQueryClient();
   const notify = useToast();
 
@@ -216,6 +218,22 @@ export function EditorScreen() {
   runFrameIdRef.current = runFrameId;
   const displayedRunIdRef = useRef<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const removeAsset = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean }>(`/api/assets/${assetId}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["assets"] });
+      await client.invalidateQueries({ queryKey: ["projects"] });
+      await client.invalidateQueries({ queryKey: ["recent-runs"] });
+      void navigate({ to: "/" });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not delete the asset",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
   const [consoleOpen, setConsoleOpen] = useState(false);
   // The run that owns the pending interaction: a task child asks through its
   // own run id, so answering goes to that run, not the task.
@@ -1710,6 +1728,13 @@ export function EditorScreen() {
           >
             ◨
           </IconButton>
+          <IconButton
+            label="Delete asset"
+            disabled={!asset.data || running}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash width={14} height={14} />
+          </IconButton>
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-xs"
@@ -2100,6 +2125,13 @@ export function EditorScreen() {
         frameName={frame?.name ?? ""}
         assetName={asset.data?.name ?? ""}
         onBeforeExport={flush}
+      />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete “${asset.data?.name ?? "this asset"}”?`}
+        description={`Its ${frames.length} frames, versions, and run history go with it. This cannot be undone.`}
+        onConfirm={() => removeAsset.mutate()}
       />
     </main>
   );

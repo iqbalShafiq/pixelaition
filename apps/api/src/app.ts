@@ -675,6 +675,47 @@ export function createApp() {
     res.json(asset);
   });
 
+  app.delete("/api/assets/:id", async (req, res) => {
+    const assetId = req.params.id;
+    const asset = await getAssetRecord(db, res.locals.userId as string, assetId);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const tasks = await db
+      .select({ status: runTasks.status })
+      .from(runTasks)
+      .where(eq(runTasks.assetId, assetId));
+    if (tasks.some((task) => ["queued", "running", "waiting"].includes(task.status))) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "That asset is being drawn right now — stop the run first.",
+      );
+    }
+    await db.delete(assets).where(eq(assets.id, assetId));
+    return res.json({ ok: true });
+  });
+
+  app.delete("/api/projects/:id", async (req, res) => {
+    const projectId = req.params.id;
+    const project = await getProjectRecord(db, res.locals.userId as string, projectId);
+    if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
+    const tasks = await db
+      .select({ status: runTasks.status })
+      .from(runTasks)
+      .innerJoin(assets, eq(runTasks.assetId, assets.id))
+      .where(eq(assets.projectId, projectId));
+    if (tasks.some((task) => ["queued", "running", "waiting"].includes(task.status))) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "A project asset is being drawn right now — stop that run first.",
+      );
+    }
+    await db.delete(projects).where(eq(projects.id, projectId));
+    return res.json({ ok: true });
+  });
+
   app.delete("/api/assets/:id/frames/:frameId", async (req, res) => {
     if (await activeRunFor(req.params.id ?? "")) {
       return fail(
