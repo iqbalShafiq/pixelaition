@@ -139,9 +139,21 @@ function FrameRow({
     >
       <div
         className={`${frameRowClass(current, editing)} relative min-w-0 flex-1 ${
-          taskState?.status === "working" ? "agent-paint-ring" : ""
+          taskState?.status === "working" || taskState?.status === "retrying"
+            ? "agent-paint-ring"
+            : ""
         }`}
       >
+        {taskState?.status === "working" || taskState?.status === "retrying" ? (
+          // The whole card glints while an agent paints it: pixel by pixel,
+          // corner by corner, so the working frame reads from across the panel.
+          <span aria-hidden className="card-sparkle pointer-events-none absolute inset-0">
+            <span className="glint" />
+            <span className="glint" />
+            <span className="glint" />
+            <span className="glint" />
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={onSelect}
@@ -192,18 +204,22 @@ function FrameRow({
             />
           </motion.span>
         ) : (
-          <span className="pointer-events-none min-w-0 flex-1 truncate leading-5">
-            {frame.name}
+          <span className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center leading-5">
+            <span className="truncate">{frame.name}</span>
+            {taskState !== undefined ? (
+              <span className="flex min-w-0">
+                <FrameStatus state={taskState} />
+              </span>
+            ) : current && locked ? (
+              <span className="text-pixel-mono">drawing</span>
+            ) : null}
           </span>
         )}
-        {taskState !== undefined ? (
-          <span className="pointer-events-none ml-1 shrink-0">
-            <FrameStatus state={taskState} />
-          </span>
-        ) : current && locked ? (
-          <span className="pointer-events-none text-pixel-mono">drawing</span>
-        ) : null}
-        <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
+        <span
+          className={`relative z-10 ml-auto shrink-0 items-center justify-end gap-0.5 ${
+            locked ? "hidden" : "flex w-[58px]"
+          }`}
+        >
           <AnimatePresence initial={false} mode="popLayout">
             {editing ? (
               <motion.span
@@ -269,7 +285,9 @@ function FrameRow({
             onKeyboardMove(index + 1);
           }
         }}
-        className="grid h-8 w-7 shrink-0 cursor-grab place-items-center border-2 border-transparent text-muted transition-colors duration-150 hover:border-line hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-50"
+        className={`${
+          locked ? "hidden" : "grid"
+        } h-8 w-7 shrink-0 cursor-grab place-items-center border-2 border-transparent text-muted transition-colors duration-150 hover:border-line hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-50`}
       >
         <MenuIcon width={14} height={14} />
       </button>
@@ -407,10 +425,7 @@ export function FramePanel({
           body="A frame holds the pixels for one state of this asset."
         />
       ) : (
-        <div
-          ref={listRef}
-          className="max-h-[13.75rem] overflow-y-auto overscroll-contain pr-0.5"
-        >
+        <div ref={listRef} className="pr-0.5">
           {/* Four rows fit; a longer list scrolls inside its own frame. */}
           <Reorder.Group
             axis="y"
