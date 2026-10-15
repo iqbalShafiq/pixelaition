@@ -12,10 +12,11 @@ export function agentLabel(key: string): string {
   if (base === "plan" || base.startsWith("plan-")) return "Supervisor";
   const review = /^review-(\d+)/.exec(base);
   if (review) return `Reviewer ${review[1]}`;
+  if (base === "review") return "Reviewer";
   // A fix is its own child, spawned by the review for one frame: it is Fix N
   // (not the agent number again, which read as three agents called Agent 2).
   const fix = /^fix-(\d+)-(\d+)$/.exec(base);
   if (fix) return fix[2] === "1" ? `Fix ${fix[1]}` : `Fix ${fix[1]}.${fix[2]}`;
-  if (base === "fix-unpainted") return "Fix";
+  if (base === "fix" || base === "fix-unpainted") return "Fix";
   return base;
 }

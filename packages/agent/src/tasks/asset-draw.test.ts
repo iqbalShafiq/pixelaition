@@ -99,6 +99,18 @@ function fakeCtx(options: {
       spawns.push({ key, ...child });
       return `child-${key}`;
     },
+    spawn: (
+      key: string,
+      _task: unknown,
+      child: { agentId?: string; prompt?: unknown },
+    ) => {
+      spawns.push({
+        key,
+        agentId: child.agentId ?? "",
+        prompt: child.prompt,
+      });
+      return `child-${key}`;
+    },
     children: () =>
       options.children.map((child) => ({
         ...child,
@@ -170,11 +182,57 @@ describe("asset-draw plan phase", () => {
       ],
     });
     const transition = await run(task, ctx);
-    expect(spawns.map((spawn) => spawn.key)).toEqual(["w1", "w2"]);
-    expect(spawns.every((spawn) => spawn.continueFrom === "plan")).toBe(true);
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["slot-w1", "slot-w2"]);
+    expect(String(spawns[0]?.prompt)).toContain("Paint only these frames");
     expect(transition).toMatchObject({
       status: "waiting",
-      wait: { type: "children", ids: ["child-w1", "child-w2"] },
+      wait: {
+        type: "children",
+        ids: ["child-slot-w1", "child-slot-w2"],
+        policy: "allSettled",
+      },
+    });
+  });
+
+  it("loads worker contexts together so the spawns are not staggered", async () => {
+    let active = 0;
+    let peak = 0;
+    const task = createAssetDrawTask({
+      ...deps,
+      loadWorkerContext: async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+        return {
+          promptData: {
+            request: input.request,
+            projectName: "P",
+            assetName: "A",
+            width: 32,
+            height: 32,
+            paletteSize: 8,
+            styleLines: ["outline"],
+            attachments: 0,
+          },
+        };
+      },
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        {
+          id: "child-plan",
+          key: "plan",
+          outcome: { status: "completed", output: planJson },
+        },
+      ],
+    });
+    const transition = await run(task, ctx);
+    expect(peak).toBe(2);
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["slot-w1", "slot-w2"]);
+    expect(transition).toMatchObject({
+      wait: { type: "children", policy: "allSettled" },
     });
   });
 

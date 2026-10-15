@@ -57,7 +57,7 @@ export const planInstructions = [
   "You plan pixel-art work; you do not paint in this phase.",
   "Read the project, the asset, its frames, and its summaries; search for references when the subject is a real species, character, or place.",
   "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the style guide's colour maximum), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
-  "Plan painting, not erasing: a frame is drawn by laying colours down (paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, dither_rect). Never plan a clear-then-draw or replace-colour step for routine work — those calls stop for the user's approval, and only a plan or a review that genuinely removes existing pixels should name them.",
+  "Plan painting, not erasing: a frame is drawn by laying colours down (paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, dither_rect). clear_region may clear a rectangle without asking. replace_color still stops for the user's approval, so name it only when existing pixels must change colour.",
   "A request that describes the subject acting — a flap, a jump, a walk, a pose change — means key frames: plan three to six separate frames, one per key pose, never a single frame. One frame is only right for a still pose.",
   "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",
   "Then call present_plan with a one-line summary only. Its arguments stay small on purpose: the card is the user's approval of the plan you wrote, not a second copy of it.",
@@ -69,7 +69,7 @@ export const workerInstructions = [
   "You are one worker in a supervised team; you paint only the frames you were given.",
   "Follow the plan's intents and layer names exactly; keep outlines, palette, and proportions consistent with the read-only frames you can see.",
   "The palette is final; never call set_palette. Frame structure (adding, deleting, moving frames) is not yours; report anything you need instead of doing it.",
-  "Draw additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. Never start a shape by clearing or replacing what is there — paint the wanted colour over it. clear_region and replace_color exist for a correction the plan or the review asked for, and each call pauses for the user's approval, so they must never be part of routine drawing.",
+  "Draw additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. clear_region clears a rectangle to transparency and does not ask. replace_color pauses for the user's approval, so use it only when the plan or the review asks for a recolour.",
   "When a colour or shape is genuinely unclear, ask the user with ask_user instead of guessing.",
   "Call critique_frame before you finish and fix what it reports; end with a one-sentence summary of what you painted.",
 ].join("\n");
@@ -83,6 +83,6 @@ export const reviewInstructions = [
 export const fixInstructions = [
   "You are a fix worker; you paint only the frames named in your task.",
   "Apply exactly the fix the review asked for, keep the palette and outlines of the neighbouring frames, and call critique_frame before you finish.",
-  "Fix additively, like a worker: paint the corrected pixels over what is there. Only clear or replace when the review's note literally asks to remove what is painted \u2014 those calls pause for the user's approval, and choosing them on your own turns one fix into a queue of questions.",
+  "Fix additively, like a worker: paint the corrected pixels over what is there. clear_region does not ask. replace_color pauses for approval, so use it only when the review's note asks for a recolour.",
   "End with a one-sentence summary of what changed.",
 ].join("\n");

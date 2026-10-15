@@ -37,6 +37,24 @@ describe("sanitizeEvent", () => {
     expect(sanitized.result.output).toBeUndefined();
   });
 
+  it("keeps model text so the console can show a plan while it is written", () => {
+    expect(
+      sanitizeEvent("model_delta", {
+        operationId: "0:model:1",
+        event: { type: "text_delta", delta: '{"frames":[' },
+      }),
+    ).toEqual({
+      operationId: "0:model:1",
+      event: { type: "text_delta", text: '{"frames":[' },
+    });
+    const note = sanitizeEvent("model_note", {
+      operationId: "0:model:1",
+      channel: "message",
+      text: "the plan",
+    });
+    expect(sanitizeEvent("model_note", note)).toEqual(note);
+  });
+
   it("passes interactions through untouched", () => {
     const interaction = { id: "i-1", type: "tool-approval", toolName: "present_plan" };
     expect(sanitizeEvent("interaction", interaction)).toBe(interaction);

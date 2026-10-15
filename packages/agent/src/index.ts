@@ -90,6 +90,7 @@ export {
   createAssetDrawTask,
   parsePlanOutput,
 } from "./tasks/asset-draw.js";
+export { WORKER_ATTEMPTS, workerAttemptTask } from "./tasks/worker-attempt.js";
 export type {
   AssetDrawCheckpoint,
   AssetDrawDeps,

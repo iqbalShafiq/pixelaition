@@ -1,6 +1,10 @@
-import type { FrameBuffer, StyleGuide } from "@pixelaition/pixel";
+import {
+  composite,
+  frameToBuffer,
+  type FrameBuffer,
+  type StyleGuide,
+} from "@pixelaition/pixel";
 import { FrameStatus, type FrameTaskState } from "./frame-status.js";
-import { PixelLoader } from "./pixel-loader.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
@@ -34,37 +38,82 @@ import { base64ToBytes, type FrameDto } from "../lib/types.js";
 
 /* ------------------------------------------------------------------ frames */
 
+/** Stack every visible layer. The first layer alone is often just the shadow. */
+function thumbBuffer(
+  frame: FrameDto | undefined,
+  palette: string[],
+  width: number | undefined,
+  height: number | undefined,
+  live: FrameBuffer | undefined,
+): FrameBuffer | null {
+  if (live) return live;
+  if (!frame) return null;
+  const side = (() => {
+    if (width && height) return { width, height };
+    const encoded = frame.layers[0]?.pixels;
+    if (!encoded) return null;
+    try {
+      const length = base64ToBytes(encoded).length;
+      const square = Math.sqrt(length);
+      if (!Number.isInteger(square) || square < 1) return null;
+      return { width: square, height: square };
+    } catch {
+      return null;
+    }
+  })();
+  if (!side) return null;
+  try {
+    return frameToBuffer(frame, side.width, side.height, palette);
+  } catch {
+    return null;
+  }
+}
+
+function paintThumb(canvas: HTMLCanvasElement, buffer: FrameBuffer) {
+  canvas.width = buffer.width;
+  canvas.height = buffer.height;
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  const image = context.createImageData(buffer.width, buffer.height);
+  const indexes = composite(buffer);
+  for (let index = 0; index < indexes.length; index += 1) {
+    const value = indexes[index] ?? 0;
+    if (value === 0) continue;
+    const [r, g, b, a] = hexToRgba(buffer.palette[value] ?? "#000000");
+    const offset = index * 4;
+    image.data[offset] = r;
+    image.data[offset + 1] = g;
+    image.data[offset + 2] = b;
+    image.data[offset + 3] = a;
+  }
+  context.putImageData(image, 0, 0);
+}
+
 export function FrameThumb({
   frame,
   palette,
   size = 36,
+  width,
+  height,
+  live,
 }: {
   frame: FrameDto;
   palette: string[];
   size?: number;
+  /** Document size. Without it a square frame is inferred from its pixels. */
+  width?: number;
+  height?: number;
+  /** The editor's live buffer, so the thumb follows a stroke as it lands. */
+  live?: FrameBuffer;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
-    const layer = frame.layers.find((item) => item.visible) ?? frame.layers[0];
-    if (!layer) return;
-    const pixels = base64ToBytes(layer.pixels);
-    const width = Math.sqrt(pixels.length);
-    if (!Number.isInteger(width)) return;
-    canvas.width = width;
-    canvas.height = width;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    const image = context.createImageData(width, width);
-    for (let index = 0; index < pixels.length; index += 1) {
-      const value = pixels[index] ?? 0;
-      if (value === 0) continue;
-      const [r, g, b, a] = hexToRgba(palette[value] ?? "#000000");
-      image.data.set([r, g, b, a], index * 4);
-    }
-    context.putImageData(image, 0, 0);
-  }, [frame, palette]);
+    const buffer = thumbBuffer(frame, palette, width, height, live);
+    if (!buffer) return;
+    paintThumb(canvas, buffer);
+  }, [frame, palette, width, height, live]);
   return (
     <canvas
       ref={ref}
@@ -91,6 +140,9 @@ function FrameRow({
   index,
   count,
   palette,
+  pixelWidth,
+  pixelHeight,
+  live,
   current,
   locked,
   editing,
@@ -111,6 +163,9 @@ function FrameRow({
   index: number;
   count: number;
   palette: string[];
+  pixelWidth?: number;
+  pixelHeight?: number;
+  live?: FrameBuffer;
   current: boolean;
   locked: boolean;
   editing: boolean;
@@ -139,12 +194,10 @@ function FrameRow({
     >
       <div
         className={`${frameRowClass(current, editing)} relative min-w-0 flex-1 ${
-          taskState?.status === "working" || taskState?.status === "retrying"
-            ? "agent-paint-ring"
-            : ""
+          taskState?.painting === true ? "agent-paint-ring" : ""
         }`}
       >
-        {taskState?.status === "working" || taskState?.status === "retrying" ? (
+        {taskState?.painting === true ? (
           // The whole card glints while an agent paints it: pixel by pixel,
           // corner by corner, so the working frame reads from across the panel.
           <span aria-hidden className="card-sparkle pointer-events-none absolute inset-0">
@@ -174,8 +227,14 @@ function FrameRow({
           className="pointer-events-none relative shrink-0 overflow-hidden"
           style={{ height: 36 }}
         >
-          <FrameThumb frame={frame} palette={palette} />
-          {taskState?.status === "working" ? (
+          <FrameThumb
+            frame={frame}
+            palette={live?.palette ?? palette}
+            width={pixelWidth}
+            height={pixelHeight}
+            live={live}
+          />
+          {taskState?.painting === true ? (
             // The agent's own cursor, painting inside this frame's square.
             <span aria-hidden className="agent-cursor">
               <span className="agent-cursor-tip" />
@@ -298,10 +357,13 @@ function FrameRow({
 export function FramePanel({
   frames,
   palette,
+  pixelWidth,
+  pixelHeight,
+  liveFrames,
   activeId,
   playing,
   locked,
-  generating = false,
+  activity,
   taskFrames,
   onSelect,
   onTogglePlay,
@@ -313,11 +375,15 @@ export function FramePanel({
 }: {
   frames: FrameDto[];
   palette: string[];
+  pixelWidth?: number;
+  pixelHeight?: number;
+  /** Drafts the editor is showing, keyed by frame id. */
+  liveFrames?: Record<string, FrameBuffer>;
   activeId: string | null;
   playing: boolean;
   locked: boolean;
-  /** A task is live: the panel names the work in progress. */
-  generating?: boolean;
+  /** Planning, Generating, or Reviewing. Sits under the frame count. */
+  activity?: string;
   /** Per-frame task state, keyed by frame id, while a task runs. */
   taskFrames?: Map<string, FrameTaskState>;
   onSelect: (frameId: string) => void;
@@ -397,14 +463,9 @@ export function FramePanel({
   return (
     <Panel
       title={`${frames.length} frame${frames.length === 1 ? "" : "s"}`}
+      subtitle={activity}
       action={
         <div className="flex items-center gap-1">
-          {generating ? (
-            <span className="worker-blink mr-1 flex items-center gap-1 text-pixel-mono text-accent uppercase">
-              <PixelLoader size={12} />
-              generating
-            </span>
-          ) : null}
           <IconButton
             label={playing ? "Stop playback" : "Play frames"}
             size="sm"
@@ -442,6 +503,9 @@ export function FramePanel({
                   index={index}
                   count={list.length}
                   palette={palette}
+                  pixelWidth={pixelWidth}
+                  pixelHeight={pixelHeight}
+                  live={liveFrames?.[frame.id]}
                   current={current}
                   {...(taskFrames?.get(frame.id) !== undefined
                     ? { taskState: taskFrames.get(frame.id) }

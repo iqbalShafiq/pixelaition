@@ -1429,6 +1429,7 @@ describe("drawing approval", () => {
       ["draw_line", { frameId: "frame-3" }],
       ["flood_fill", { frameId: "frame-3" }],
       ["fill_region", { frameId: "frame-3" }],
+      ["clear_region", { frameId: "frame-3" }],
       ["apply_outline", { frameId: "frame-3" }],
       ["dither_rect", { frameId: "frame-3" }],
       ["mirror_frame", { frameId: "frame-3" }],
@@ -1441,10 +1442,13 @@ describe("drawing approval", () => {
         expect(await requirement({} as never, {} as never)).toBe(false);
       }
     }
-    // The correctors still ask outside the approved scope.
-    expect(await approval("clear_region", { frameId: "frame-2" })).toBe(false);
-    expect(await approval("clear_region", { frameId: "frame-3" })).toBe(true);
-    expect(await approval("replace_color", { frameId: "frame-3" })).toBe(true);
+    // Recolour still asks outside the approved scope. Clearing a rectangle does not.
+    expect(await approval("replace_color", { frameId: "frame-2", from: 1, to: 0 })).toBe(
+      false,
+    );
+    expect(await approval("replace_color", { frameId: "frame-3", from: 1, to: 0 })).toBe(
+      true,
+    );
     expect(await approval("set_palette", { frameId: "frame-2" })).toBe(false);
     releaseRun("run-1");
   });
@@ -1454,9 +1458,9 @@ describe("drawing approval", () => {
     stubJev(0.97);
     const run = getRun("run-1")!;
     run.approvedScope = new Set(["frame-2"]);
-    expect(await approval("clear_region", {})).toBe(true);
+    expect(await approval("replace_color", { from: 1, to: 0 })).toBe(true);
     run.currentFrameId = "frame-2";
-    expect(await approval("clear_region", {})).toBe(false);
+    expect(await approval("replace_color", { from: 1, to: 0 })).toBe(false);
     releaseRun("run-1");
   });
 
@@ -1471,25 +1475,29 @@ describe("drawing approval", () => {
       height: 2,
       frameId: "frame-2",
     };
-    expect(await approval("clear_region", call)).toBe(true);
+    expect(await approval("replace_color", { ...call, from: 1, to: 0 })).toBe(true);
     getRun("run-1")!.approvedScope.add("frame-2");
-    expect(await approval("clear_region", call)).toBe(false);
+    expect(await approval("replace_color", { ...call, from: 1, to: 0 })).toBe(false);
     releaseRun("run-1");
   });
 
   it("asks for approval when no binding is live", async () => {
     boundRun();
     stubJev(0.97);
-    expect(await approval("clear_region", { frameId: "frame-1" }, "run-9")).toBe(true);
+    expect(
+      await approval("replace_color", { frameId: "frame-1", from: 1, to: 0 }, "run-9"),
+    ).toBe(true);
     releaseRun("run-1");
   });
 
   it("refuses a call Jev blocks instead of touching the frame", async () => {
     boundRun();
     stubJev(0.02);
-    expect(await approval("clear_region", { frameId: "frame-1" })).toBe(false);
-    const result = await tool("clear_region").call(
-      { layerId: "layer-base", x: 0, y: 0, width: 4, height: 4 },
+    expect(await approval("replace_color", { frameId: "frame-1", from: 1, to: 0 })).toBe(
+      false,
+    );
+    const result = await tool("replace_color").call(
+      { from: 1, to: 0 },
       { operationId: "run-1" },
     );
     expect(result).toMatchObject({

@@ -38,6 +38,8 @@ type Props = {
   ghost?: FrameBuffer | null;
   selection: Rect | null;
   locked: boolean;
+  /** The cell the agent is about to ink. Drawn with the same border as a hover. */
+  agentCursor?: Point | null;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
 };
@@ -186,6 +188,31 @@ function lineCells(from: Point, to: Point): Point[] {
   return points;
 }
 
+/**
+ * The hover outline on one document cell. A navy edge sits under the accent
+ * so the border stays visible on a pixel of any colour, including the accent.
+ */
+function strokeCell(
+  context: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
+  cell: number,
+  point: Point,
+) {
+  const x = originX + point.x * cell + 0.5;
+  const y = originY + point.y * cell + 0.5;
+  const size = Math.max(0, cell - 1);
+  context.lineWidth = 1;
+  context.strokeStyle = "#1a1c2c";
+  context.strokeRect(x, y, size, size);
+  context.strokeStyle = "rgba(167, 240, 112, 0.95)";
+  if (cell >= 8) {
+    context.strokeRect(x + 1, y + 1, Math.max(0, size - 2), Math.max(0, size - 2));
+  } else {
+    context.strokeRect(x, y, size, size);
+  }
+}
+
 function rectCells(box: Rect, filled: boolean): Point[] {
   const cells: Point[] = [];
   for (let y = box.y; y < box.y + box.height; y += 1) {
@@ -212,6 +239,7 @@ export function PixelCanvas({
   ghost = null,
   selection,
   locked,
+  agentCursor = null,
   onAction,
   onCamera,
 }: Props) {
@@ -418,20 +446,24 @@ export function PixelCanvas({
       }
 
       const pointed = hover.current;
-      if (pointed && !locked) {
-        context.strokeStyle = "rgba(167, 240, 112, 0.85)";
-        context.strokeRect(
-          originX + pointed.x * cell + 0.5,
-          originY + pointed.y * cell + 0.5,
-          cell - 1,
-          cell - 1,
-        );
+      if (pointed && !locked) strokeCell(context, originX, originY, cell, pointed);
+      // The agent's border leads the pixel: it sits on the cell, then the
+      // pixel inks and the border steps to the next one.
+      if (
+        agentCursor &&
+        agentCursor.x >= 0 &&
+        agentCursor.y >= 0 &&
+        agentCursor.x < doc.width &&
+        agentCursor.y < doc.height &&
+        (!pointed || locked || pointed.x !== agentCursor.x || pointed.y !== agentCursor.y)
+      ) {
+        strokeCell(context, originX, originY, cell, agentCursor);
       }
     };
 
     repaint.current = draw;
     draw();
-  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked]);
+  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked, agentCursor]);
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;

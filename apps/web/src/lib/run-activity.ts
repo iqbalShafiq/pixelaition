@@ -1,3 +1,5 @@
+import { agentLabel } from "./agent-label.js";
+
 export type RunRow =
   | { id: string; kind: "phase"; label: string; state: "running" | "done" }
   | {
@@ -48,10 +50,11 @@ export type RunRow =
       relayed?: boolean;
     }
   | {
-      /** The supervisor's own line: what it just told a worker, or why it waits. */
+      /** The supervisor's own line, or any agent's thinking or reply. */
       id: string;
       kind: "supervisor";
       message: string;
+      channel?: "thinking" | "message";
       to?: string;
       held?: boolean;
     }
@@ -217,12 +220,15 @@ export function applyRunEvent(
       typeof inner?.operationId === "string" ? inner.operationId : undefined;
     const streamed = inner?.event;
     const kind = typeof streamed?.type === "string" ? streamed.type : undefined;
-    if (kind === "text" || kind === "text_delta" || kind === "reasoning") {
+    const thinking = kind === "reasoning" || (kind?.startsWith("reasoning") ?? false);
+    if (kind === "text" || kind === "text_delta" || thinking) {
       const raw = streamed?.text ?? streamed?.delta;
       const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trimStart() : "";
       if (text.length === 0) return rows;
-      // One growing line per model call, not one row per token.
-      const id = scoped(`text-${operation ?? sequence}`);
+      // Thinking and the reply of one model call stay two rows, so a plan
+      // can be read while the agent is still writing it.
+      const channel = thinking ? "thinking" : "message";
+      const id = scoped(`text-${operation ?? sequence}:${channel}`);
       const index = rows.findIndex((row) => row.id === id);
       const previous =
         index >= 0 && rows[index]?.kind === "supervisor"
@@ -231,14 +237,17 @@ export function applyRunEvent(
       const merged = tag({
         id,
         kind: "supervisor" as const,
-        message: `${previous}${text}`.slice(-180),
+        channel: channel as "thinking" | "message",
+        message: `${previous}${text}`.slice(-8000),
       });
       if (index < 0) return [...rows, merged];
       return rows.map((row, at) => (at === index ? merged : row));
     }
     if (kind === "tool_call" && typeof streamed?.toolCall?.toolName === "string") {
       const name = streamed.toolCall.toolName;
-      const id = `call-${String(streamed.toolCall.toolCallId ?? `${operation ?? sequence}`)}`;
+      const id = scoped(
+        `call-${String(streamed.toolCall.toolCallId ?? `${operation ?? sequence}`)}`,
+      );
       if (rows.some((row) => row.id === id)) return rows;
       // The arguments arrive before the call completes: the console shows what
       // the agent is about to do, not just that it is running.
@@ -262,6 +271,24 @@ export function applyRunEvent(
   // Interactions render as the card above the composer, never as step rows;
   // the resolved marker only retires the card.
   if (type === "interaction" || type === "interaction-resolved") return rows;
+  if (type === "model_note") {
+    const text = typeof body?.text === "string" ? body.text : "";
+    if (text.length === 0) return rows;
+    const channel = body?.channel === "thinking" ? "thinking" : "message";
+    const operation =
+      typeof body?.operationId === "string" ? body.operationId : String(sequence);
+    const noteId = scoped(`note-${operation}:${channel}`);
+    const streamId = scoped(`text-${operation}:${channel}`);
+    const existing = rows.findIndex((row) => row.id === noteId || row.id === streamId);
+    const next = tag({
+      id: existing >= 0 ? rows[existing]!.id : noteId,
+      kind: "supervisor" as const,
+      channel,
+      message: text.slice(0, 8000),
+    });
+    if (existing < 0) return [...rows, next];
+    return rows.map((row, index) => (index === existing ? next : row));
+  }
   if (type === "model_completed") {
     return rows.map((row) =>
       row.id === id && row.kind === "phase" ? { ...row, state: "done" } : row,
@@ -487,10 +514,200 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
+export type TaskLogRun = {
+  id: string;
+  role: string | null;
+  workerKey: string | null;
+  status: string;
+  answer: string | null;
+  createdAt: string;
+  events: Array<{ sequence: number; type: string; data: unknown }>;
+};
+
+/** Rebuild the console from the persisted children, oldest agent first. */
+export function rowsFromTaskLog(runs: TaskLogRun[], plan?: unknown): RunRow[] {
+  const ordered = [...runs].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+  let rows: RunRow[] = [];
+  for (const run of ordered) {
+    const key =
+      run.workerKey && run.workerKey.length > 0
+        ? run.workerKey
+        : run.role === "plan"
+          ? "plan"
+          : run.role === "review"
+            ? "review"
+            : run.role === "fix"
+              ? "fix"
+              : undefined;
+    const stamp = key ? { workerKey: key, runId: run.id } : { runId: run.id };
+    for (const event of [...run.events].sort(
+      (left, right) => left.sequence - right.sequence,
+    )) {
+      const data =
+        event.data !== null && typeof event.data === "object"
+          ? { ...(event.data as Record<string, unknown>), ...stamp }
+          : stamp;
+      rows = applyRunEvent(rows, event.sequence, event.type, data);
+    }
+    const hasNote = run.events.some((event) => event.type === "model_note");
+    if (!hasNote && run.answer && run.answer.trim().length > 0) {
+      rows = applyRunEvent(rows, 1_000_000, "model_note", {
+        ...stamp,
+        operationId: `${run.id}:answer`,
+        channel: "message",
+        text: run.answer,
+      });
+    }
+  }
+  // Older runs stored the approved plan on the task, and the plan child's
+  // streamed text was not kept. Show that plan when the supervisor left no line.
+  const supervisorSpoke = rows.some(
+    (row) =>
+      row.kind === "supervisor" &&
+      "workerKey" in row &&
+      typeof row.workerKey === "string" &&
+      (row.workerKey === "plan" || row.workerKey.startsWith("plan")) &&
+      row.message.trim().length > 0,
+  );
+  if (!supervisorSpoke && plan !== null && typeof plan === "object") {
+    const text = JSON.stringify(plan, null, 2).slice(0, 8000);
+    if (text.length > 2) {
+      const note = applyRunEvent([], 0, "model_note", {
+        workerKey: "plan",
+        runId: "stored-plan",
+        operationId: "stored-plan",
+        channel: "message",
+        text,
+      });
+      rows = [...note, ...rows];
+    }
+  }
+  return rows;
+}
+
+export type ConsoleTab = {
+  id: string;
+  label: string;
+  status: "running" | "done" | "failed";
+  rows: RunRow[];
+};
+
+function rowOwner(row: RunRow): string | null {
+  if (
+    "workerKey" in row &&
+    typeof row.workerKey === "string" &&
+    row.workerKey.length > 0
+  ) {
+    return row.workerKey;
+  }
+  if (row.kind === "steering") {
+    if (row.routed === "supervisor" || row.routed === "plan") return "supervisor";
+    return row.routed;
+  }
+  if (row.kind === "supervisor") return "supervisor";
+  return null;
+}
+
+function rowLive(row: RunRow): boolean {
+  if (row.kind === "phase" || row.kind === "tool") return row.state === "running";
+  if (row.kind === "status") return row.state === "running";
+  if (row.kind === "worker") {
+    return !["succeeded", "completed", "failed", "cancelled", "done"].includes(
+      row.status,
+    );
+  }
+  return false;
+}
+
+function rowFailed(row: RunRow): boolean {
+  if (row.kind === "tool") return row.state === "error";
+  if (row.kind === "status") return row.state === "failed" || row.state === "cancelled";
+  if (row.kind === "worker") return row.status === "failed" || row.status === "cancelled";
+  return false;
+}
+
+function tabStatus(rows: RunRow[], settled: boolean): ConsoleTab["status"] {
+  // A finished session must not keep spinning because one tool row never
+  // received its completion. While the run is live, a running row is the spinner.
+  if (!settled && rows.some(rowLive)) return "running";
+  const workers = rows.filter((row) => row.kind === "worker");
+  const lastWorker = workers.at(-1);
+  if (
+    lastWorker?.kind === "worker" &&
+    (lastWorker.status === "failed" || lastWorker.status === "cancelled")
+  ) {
+    return "failed";
+  }
+  if (workers.length === 0) {
+    const lastStatus = [...rows].reverse().find((row) => row.kind === "status");
+    if (
+      lastStatus?.kind === "status" &&
+      (lastStatus.state === "failed" || lastStatus.state === "cancelled")
+    ) {
+      return "failed";
+    }
+    if (rows.some(rowFailed) && lastStatus === undefined) return "failed";
+  }
+  return "done";
+}
+
+function tabOrder(label: string): number {
+  if (label === "All") return 0;
+  if (label.startsWith("Supervisor")) return 1;
+  if (label.startsWith("Agent")) return 2;
+  if (label.startsWith("Fix")) return 3;
+  if (label.startsWith("Reviewer")) return 4;
+  return 5;
+}
+
+/**
+ * All is the whole transcript in arrival order. The other tabs are one per
+ * agent that actually spoke, merged when they share a label (plan and plan-1
+ * are both Supervisor).
+ */
+export function consoleTabs(rows: RunRow[], settled = false): ConsoleTab[] {
+  const groups = new Map<string, RunRow[]>();
+  for (const row of rows) {
+    const owner = rowOwner(row);
+    if (!owner) continue;
+    const label = owner === "supervisor" ? "Supervisor" : agentLabel(owner);
+    groups.set(label, [...(groups.get(label) ?? []), row]);
+  }
+  const rest = [...groups.entries()]
+    .sort(
+      (left, right) =>
+        tabOrder(left[0]) - tabOrder(right[0]) || left[0].localeCompare(right[0]),
+    )
+    .map(([label, group]) => ({
+      id: label,
+      label,
+      status: tabStatus(group, settled),
+      rows: group,
+    }));
+  return [{ id: "all", label: "All", status: tabStatus(rows, settled), rows }, ...rest];
+}
+
+/**
+ * Plan rows sit above the workers. Review rows sit last, so the pass that is
+ * happening now is at the bottom of the console, where the eye already is.
+ */
+function rankWorker(key: string | null): number {
+  if (key === null || key.startsWith("plan")) return 0;
+  if (key.startsWith("review")) return 2;
+  return 1;
+}
+
+function compareKeys(left: string | null, right: string | null): number {
+  if (left === null) return -1;
+  if (right === null) return 1;
+  return left.localeCompare(right);
+}
+
 /**
  * The console tree: supervisor rows (no worker key) first, then each worker's
- * rows in key order, so the plan, the workers, and the review read top to
- * bottom.
+ * rows in key order, and the review after the workers.
  */
 export function groupRowsByWorker(
   rows: Array<RunRow & { workerKey?: string | null }>,
@@ -503,10 +720,8 @@ export function groupRowsByWorker(
     const key = row.workerKey ?? null;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
-  const keys = [...groups.keys()].sort((left, right) => {
-    if (left === null) return -1;
-    if (right === null) return 1;
-    return left.localeCompare(right);
-  });
+  const keys = [...groups.keys()].sort(
+    (left, right) => rankWorker(left) - rankWorker(right) || compareKeys(left, right),
+  );
   return keys.map((workerKey) => ({ workerKey, rows: groups.get(workerKey) ?? [] }));
 }

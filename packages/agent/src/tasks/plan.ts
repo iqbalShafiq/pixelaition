@@ -8,7 +8,7 @@ import { z } from "zod";
 
 export const drawPlanFrameSchema = z.object({
   name: z.string().min(1).max(40),
-  intent: z.string().min(1).max(160),
+  intent: z.string().min(1).max(320),
   layers: z.array(z.string().min(1).max(40)).max(4),
 });
 export const paletteAdditionSchema = z.object({
@@ -17,7 +17,7 @@ export const paletteAdditionSchema = z.object({
 });
 export const planReferenceSchema = z.object({
   url: z.string().url(),
-  note: z.string().max(200),
+  note: z.string().max(400),
   appliesTo: z.union([z.literal("all"), z.array(z.string().min(1).max(40)).min(1)]),
 });
 export const planWorkerSchema = z.object({

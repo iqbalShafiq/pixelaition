@@ -28,7 +28,7 @@ import {
   type IconProps,
 } from "./pixel-icons.js";
 import { agentLabel } from "../lib/agent-label.js";
-import { groupRowsByWorker, formatDuration, type RunRow } from "../lib/run-activity.js";
+import { consoleTabs, formatDuration, type RunRow } from "../lib/run-activity.js";
 import {
   InteractionCard,
   type InteractionResponse,
@@ -62,6 +62,14 @@ const toolIcons: Record<string, ComponentType<IconProps>> = {
   mirror_frame: Flip,
   follow_up: Checklist,
 };
+
+/** The phase a person reads. The task stores plan, execute, and review. */
+function phaseLabel(phase: string): string {
+  if (phase === "plan") return "planning";
+  if (phase === "review") return "reviewing";
+  if (phase === "execute") return "drawing";
+  return phase;
+}
 
 /** `$0.00042` — small costs keep five decimals; large ones keep two. */
 function formatCost(cost: number): string {
@@ -130,6 +138,7 @@ export function RunConsole({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
+  const [tabId, setTabId] = useState("all");
   const startedAt = useRef<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [lastRunMs, setLastRunMs] = useState<number | null>(null);
@@ -150,9 +159,20 @@ export function RunConsole({
       window.clearInterval(timer);
     };
   }, [running]);
+  const settled = !running;
+  const tabs = consoleTabs(rows, settled);
+  const tab = tabs.find((item) => item.id === tabId) ?? tabs[0];
   useEffect(() => {
     if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [rows, follow, message]);
+  }, [rows, follow, message, tab?.id]);
+  // Review starts after a long worker log. Bring that pass to the bottom,
+  // where follow already keeps the latest line.
+  useEffect(() => {
+    if (taskProgress?.phase !== "review") return;
+    setTabId("all");
+    setFollow(true);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [taskProgress?.phase]);
 
   const steps = rows.length;
   const lastStatus = [...rows].reverse().find((row) => row.kind === "status");
@@ -225,6 +245,29 @@ export function RunConsole({
     return <PixelLoader size={12} />;
   };
 
+  const rowAgent = (row: RunRow): string | null => {
+    if (
+      "workerKey" in row &&
+      typeof row.workerKey === "string" &&
+      row.workerKey.length > 0
+    ) {
+      return agentLabel(row.workerKey);
+    }
+    if (row.kind === "supervisor") return "Supervisor";
+    if (row.kind === "steering") {
+      return row.routed === "supervisor" || row.routed === "plan"
+        ? "Supervisor"
+        : agentLabel(row.routed);
+    }
+    return null;
+  };
+
+  const tabMark = (status: "running" | "done" | "failed") => {
+    if (status === "running") return <PixelLoader size={12} />;
+    if (status === "failed") return <Close width={12} height={12} />;
+    return <Check width={12} height={12} />;
+  };
+
   return (
     <section
       aria-label="Agent activity"
@@ -242,7 +285,7 @@ export function RunConsole({
         <span className={running ? "text-accent" : ""}>agent</span>
         {taskProgress !== undefined ? (
           <span className="text-accent normal-case">
-            {taskProgress.phase} · {taskProgress.done}/{taskProgress.total}
+            {phaseLabel(taskProgress.phase)} · {taskProgress.done}/{taskProgress.total}
           </span>
         ) : null}
         <span>{summary}</span>
@@ -255,33 +298,60 @@ export function RunConsole({
             const el = event.currentTarget;
             setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
           }}
-          className="max-h-40 overflow-auto border-t-2 border-line p-2"
+          className="max-h-80 overflow-auto border-t-2 border-line"
           aria-live="polite"
         >
-          {prompt ? (
-            <div className="mb-2 border-b-2 border-line pb-2">
-              <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
-                you
-              </p>
-              <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
-                {prompt}
-              </p>
+          {prompt || tabs.length > 1 ? (
+            <div className="sticky top-0 z-10 border-b-2 border-line bg-panel px-2 pt-2">
+              {prompt ? (
+                <div className="pb-2">
+                  <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
+                    you
+                  </p>
+                  <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
+                    {prompt}
+                  </p>
+                </div>
+              ) : null}
+              {tabs.length > 1 ? (
+                <div
+                  role="tablist"
+                  aria-label="Agent steps"
+                  className="flex gap-1 overflow-x-auto pb-2"
+                >
+                  {tabs.map((item) => {
+                    const selected = item.id === tab?.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={selected}
+                        onClick={() => {
+                          setTabId(item.id);
+                          setFollow(true);
+                        }}
+                        className={`flex shrink-0 items-center gap-1 border-2 px-1.5 py-1 text-pixel-mono tracking-[0.12em] uppercase ${
+                          selected
+                            ? "border-accent bg-accent text-navy"
+                            : "border-line bg-panel text-muted hover:text-ink"
+                        }`}
+                      >
+                        <span className="grid h-3 w-3 place-items-center">
+                          {tabMark(item.status)}
+                        </span>
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           ) : null}
-          <ul className="grid gap-1">
-            {groupRowsByWorker(rows).flatMap((group) => [
-              ...(group.workerKey === null
-                ? []
-                : [
-                    <li
-                      key={`group-${group.workerKey}`}
-                      className="assemble-rise mt-1 flex items-center gap-1.5 border-t-2 border-line pt-1 text-pixel-mono tracking-[0.16em] text-muted uppercase"
-                    >
-                      <span className="text-accent">{agentLabel(group.workerKey)}</span>
-                      <span>worker</span>
-                    </li>,
-                  ]),
-              ...group.rows.map((row) => (
+          <ul className="grid gap-1.5 px-2 py-2">
+            {(tab?.rows ?? []).map((row) => {
+              const owner = tab?.id === "all" ? rowAgent(row) : null;
+              return (
                 <li
                   key={row.id}
                   className="flex items-start gap-1.5 text-pixel-mono text-muted"
@@ -289,70 +359,79 @@ export function RunConsole({
                   <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
                     {rowIcon(row)}
                   </span>
-                  {row.kind === "phase" ? (
-                    <span className={row.state === "running" ? "text-ink" : ""}>
-                      {row.label}
-                      {row.state === "running" ? "…" : ""}
-                    </span>
-                  ) : row.kind === "asset" ? (
-                    <span className="text-ink">asset · {row.name}</span>
-                  ) : row.kind === "usage" ? (
-                    <span
-                      className="text-ink"
-                      title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
-                    >
-                      usage · {formatCost(row.cost)}
-                      {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
-                      {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
-                    </span>
-                  ) : row.kind === "tool" ? (
-                    <span className={row.state === "error" ? "text-erase" : "text-ink"}>
-                      {row.name}
-                      {row.summary ? ` · ${row.summary}` : ""}
-                      {row.detail ? ` — ${row.detail}` : ""}
-                    </span>
-                  ) : row.kind === "worker" ? (
-                    <span className={row.status === "failed" ? "text-erase" : "text-ink"}>
-                      {agentLabel(row.workerKey)} · {row.status}
-                      {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
-                    </span>
-                  ) : row.kind === "task-phase" ? (
-                    <span className="text-muted">
-                      {row.phase} · {row.status}
-                    </span>
-                  ) : row.kind === "supervisor" ? (
-                    <span className="text-muted">
-                      {row.to !== undefined
-                        ? `supervisor → ${row.to}: `
-                        : row.held === true
-                          ? "supervisor: noted — I will apply this in the review: "
-                          : "supervisor: "}
-                      {row.message.slice(0, 70)}
-                    </span>
-                  ) : row.kind === "steering" ? (
-                    <span className="text-accent">
-                      {row.relayed === true
-                        ? `relayed → ${row.routed}`
-                        : "supervisor keeps it"}
-                      {row.frameName ? ` (${row.frameName})` : ""}
-                      {row.message ? ` · ${row.message.slice(0, 60)}` : ""}
-                    </span>
-                  ) : row.kind === "question" ? (
-                    <span className="text-accent">
-                      {agentLabel(row.workerKey)} needs you
-                    </span>
-                  ) : (
-                    <span className={row.state === "failed" ? "text-erase" : "text-ink"}>
-                      {row.label}
-                      {row.detail ? ` — ${row.detail}` : ""}
-                    </span>
-                  )}
+                  <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
+                    {owner ? <span className="text-accent">{owner} · </span> : null}
+                    {row.kind === "phase" ? (
+                      <span className={row.state === "running" ? "text-ink" : ""}>
+                        {row.label}
+                        {row.state === "running" ? "…" : ""}
+                      </span>
+                    ) : row.kind === "asset" ? (
+                      <span className="text-ink">asset · {row.name}</span>
+                    ) : row.kind === "usage" ? (
+                      <span
+                        className="text-ink"
+                        title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
+                      >
+                        usage · {formatCost(row.cost)}
+                        {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
+                        {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
+                      </span>
+                    ) : row.kind === "tool" ? (
+                      <span className={row.state === "error" ? "text-erase" : "text-ink"}>
+                        {row.name}
+                        {row.summary ? ` · ${row.summary}` : ""}
+                        {row.detail ? ` — ${row.detail}` : ""}
+                      </span>
+                    ) : row.kind === "worker" ? (
+                      <span
+                        className={row.status === "failed" ? "text-erase" : "text-ink"}
+                      >
+                        {row.status}
+                        {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
+                      </span>
+                    ) : row.kind === "task-phase" ? (
+                      <span className="text-muted">
+                        {row.phase} · {row.status}
+                      </span>
+                    ) : row.kind === "supervisor" ? (
+                      <span
+                        className={row.channel === "thinking" ? "text-muted" : "text-ink"}
+                      >
+                        {row.channel === "thinking"
+                          ? "thinking · "
+                          : row.to !== undefined
+                            ? `to ${agentLabel(row.to)} · `
+                            : row.held === true
+                              ? "noted for review · "
+                              : ""}
+                        {row.message}
+                      </span>
+                    ) : row.kind === "steering" ? (
+                      <span className="text-accent">
+                        {row.relayed === true
+                          ? `relayed to ${agentLabel(row.routed)}`
+                          : "kept by the supervisor"}
+                        {row.frameName ? ` (${row.frameName})` : ""}
+                        {row.message ? ` · ${row.message}` : ""}
+                      </span>
+                    ) : row.kind === "question" ? (
+                      <span className="text-accent">needs you</span>
+                    ) : (
+                      <span
+                        className={row.state === "failed" ? "text-erase" : "text-ink"}
+                      >
+                        {row.label}
+                        {row.detail ? ` — ${row.detail}` : ""}
+                      </span>
+                    )}
+                  </span>
                 </li>
-              )),
-            ])}
+              );
+            })}
           </ul>
           {asset && !running ? (
-            <div className="mt-2 border-t-2 border-line pt-2">
+            <div className="mx-2 mt-2 border-t-2 border-line pt-2">
               <Link
                 to="/projects/$projectId/assets/$assetId"
                 params={{ projectId: asset.projectId, assetId: asset.assetId }}
@@ -363,7 +442,7 @@ export function RunConsole({
             </div>
           ) : null}
           {message ? (
-            <div className="mt-2 border-t-2 border-line pt-2 text-pixel-body text-ink">
+            <div className="mx-2 mt-2 border-t-2 border-line pt-2 pb-2 text-pixel-body text-ink">
               <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
                 agent
               </p>
@@ -373,7 +452,7 @@ export function RunConsole({
             </div>
           ) : null}
           {history.length > 0 ? (
-            <div className="mt-2 border-t-2 border-line pt-2">
+            <div className="mx-2 mt-2 border-t-2 border-line pt-2 pb-2">
               <p className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
                 earlier
               </p>

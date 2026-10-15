@@ -15,6 +15,31 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
   const operationId =
     typeof data?.operationId === "string" ? data.operationId : undefined;
   if (type === "model_started" || type === "model_completed") return { operationId };
+  if (type === "model_delta") {
+    const event = data?.event as
+      { type?: unknown; text?: unknown; delta?: unknown } | undefined;
+    const text =
+      typeof event?.text === "string"
+        ? event.text
+        : typeof event?.delta === "string"
+          ? event.delta
+          : "";
+    return {
+      operationId,
+      event: {
+        type: typeof event?.type === "string" ? event.type : "text",
+        ...(text.length > 0 ? { text: text.slice(0, 4000) } : {}),
+      },
+    };
+  }
+  if (type === "model_note") {
+    const note = raw as { operationId?: unknown; channel?: unknown; text?: unknown };
+    return {
+      operationId: typeof note.operationId === "string" ? note.operationId : undefined,
+      channel: note.channel === "thinking" ? "thinking" : "message",
+      text: typeof note.text === "string" ? note.text.slice(0, 8000) : "",
+    };
+  }
   if (type === "tool_started") {
     const input = data?.input as
       { toolCall?: { toolName?: unknown; input?: unknown } } | undefined;

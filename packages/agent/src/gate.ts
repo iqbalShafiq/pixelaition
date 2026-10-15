@@ -52,9 +52,10 @@ const proportionateQuestion: NoulQuestion = {
 /**
  * What each destructive tool is judged on. The description is written for the
  * check, not for the drawing model: it tells Jev what the call means and how
- * it normally fits into drawing. A palette change, a layer removal, a frame
- * delete, or a canvas resize is a single-question call; a region clear or a
- * color swap also has a size that can outgrow the request.
+ * it normally fits into drawing. A palette change, a frame delete, or a
+ * canvas resize is a single-question call; a region clear or a color swap
+ * also has a size that can outgrow the request. `remove_layer` stays
+ * described here for the gate eval; the drawing tool does not call it.
  */
 const TOOL_GATES: Record<
   string,

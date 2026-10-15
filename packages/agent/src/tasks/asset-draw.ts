@@ -9,6 +9,7 @@ import {
   workerInstructions,
 } from "./roles.js";
 import { buildWorkerPrompt, type WorkerPromptInput } from "./worker-prompt.js";
+import { workerAttemptTask } from "./worker-attempt.js";
 
 /**
  * One durable task per drawing request. Task code — never the model — decides
@@ -64,6 +65,11 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     workerIds: z.array(z.string()),
     // The join needs spawn ids; outcome checks need the stable keys.
     workerKeys: z.array(z.string()).optional(),
+    /**
+     * Each worker is its own task and retries there. Older checkpoints spawned
+     * the agents directly and retry them in this phase.
+     */
+    workerSlots: z.boolean().optional(),
   }),
   z.object({
     ...PHASE_EXTRAS,
@@ -298,7 +304,14 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     }
     const id = ctx.spawnAgent(`plan-${checkpoint.attempt + 1}`, {
       agentId: ctx.input.agentId,
-      prompt: buildPlanPrompt(ctx.input, checked.error),
+      // The user already approved this plan. Continue that conversation and
+      // correct the JSON; a fresh child would call present_plan and ask again.
+      continueFrom: checkpoint.planKey,
+      prompt: [
+        "The user already approved this plan. Do not call present_plan.",
+        `The plan JSON was rejected: ${checked.error}`,
+        "Reply with one corrected JSON object and nothing else. Keep the approved frame names and worker split; change only what the rejection names.",
+      ].join("\n"),
     });
     return {
       status: "waiting",
@@ -336,6 +349,7 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
         prompt: [
           `The user approved the plan, but these frames do not exist on the asset yet: ${missingFrames.join(", ")}.`,
           "Create each one now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
+          "Do not call present_plan. The plan is already approved.",
           "Answer with one short sentence.",
         ].join("\n"),
         continueFrom: checkpoint.planKey,
@@ -356,9 +370,16 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     };
   }
   return (async () => {
+    // Load every worker's context together, then spawn them in one turn.
+    // The allSettled join below is what keeps the workers painting in parallel.
+    const loaded = await Promise.all(
+      plan.workers.map(async (worker) => ({
+        worker,
+        context: await deps.loadWorkerContext(ctx.input, plan, worker.key),
+      })),
+    );
     const workerIds: string[] = [];
-    for (const worker of plan.workers) {
-      const context = await deps.loadWorkerContext(ctx.input, plan, worker.key);
+    for (const { worker, context } of loaded) {
       const ownedFrames = plan.frames.filter((frame) =>
         worker.frames.includes(frame.name),
       );
@@ -372,23 +393,26 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
             reference.appliesTo.some((name) => worker.frames.includes(name)),
         )
         .map((reference) => ({ url: reference.url, note: reference.note }));
+      const prompt = withAttachments(
+        [
+          workerInstructions,
+          buildWorkerPrompt({
+            ...context.promptData,
+            attachments: ctx.input.attachments.length,
+            ownedFrames,
+            readOnlyFrames: readOnly,
+            references,
+          }),
+        ].join("\n\n"),
+        ctx.input.attachments,
+      );
+      // The slot retries this worker on its own, so a sibling stuck on a
+      // question does not leave a failed worker sitting until the join.
       workerIds.push(
-        ctx.spawnAgent(worker.key, {
+        ctx.spawn(`slot-${worker.key}`, workerAttemptTask, {
           agentId: ctx.input.agentId,
-          prompt: withAttachments(
-            [
-              workerInstructions,
-              buildWorkerPrompt({
-                ...context.promptData,
-                attachments: ctx.input.attachments.length,
-                ownedFrames,
-                readOnlyFrames: readOnly,
-                references,
-              }),
-            ].join("\n\n"),
-            ctx.input.attachments,
-          ),
-          continueFrom: checkpoint.planKey,
+          workerKey: worker.key,
+          prompt,
         }),
       );
     }
@@ -399,7 +423,8 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
         plan,
         planKey: checkpoint.planKey as string,
         workerIds,
-        workerKeys: plan.workers.map((worker) => worker.key),
+        workerKeys: plan.workers.map((worker) => `slot-${worker.key}`),
+        workerSlots: true,
       },
       wait: { type: "children", ids: workerIds, policy: "allSettled" },
     };
@@ -424,20 +449,32 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   );
   // A paint that never happened cannot be reviewed: the worker's assignment is
   // handed to a fresh child first.
-  const retryable = failed.filter(
-    (key) => retriesFor(checkpoint, `worker:${key}`) < CHILD_RETRIES,
-  );
+  const retryable = checkpoint.workerSlots
+    ? []
+    : failed.filter((key) => retriesFor(checkpoint, `worker:${key}`) < CHILD_RETRIES);
   if (retryable.length > 0) {
     return (async () => {
       const ids: string[] = [];
       const keys: string[] = [];
       let retries = checkpoint.retries ?? {};
-      for (const key of retryable) {
-        const worker = checkpoint.plan.workers.find((candidate) => candidate.key === key);
-        if (worker === undefined) continue;
+      const prepared = await Promise.all(
+        retryable.map(async (key) => {
+          const worker = checkpoint.plan.workers.find(
+            (candidate) => candidate.key === key,
+          );
+          if (worker === undefined) return null;
+          return {
+            key,
+            worker,
+            context: await deps.loadWorkerContext(ctx.input, checkpoint.plan, key),
+          };
+        }),
+      );
+      for (const item of prepared) {
+        if (item === null) continue;
+        const { key, worker, context } = item;
         retries = withRetry({ retries }, `worker:${key}`);
         const childKey = `${key}-retry-${retriesFor(checkpoint, `worker:${key}`) + 1}`;
-        const context = await deps.loadWorkerContext(ctx.input, checkpoint.plan, key);
         const ownedFrames = checkpoint.plan.frames.filter((frame) =>
           worker.frames.includes(frame.name),
         );
@@ -499,7 +536,9 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
       prompt: [
         reviewInstructions,
         context,
-        failed.length > 0 ? `Workers that did not finish: ${failed.join(", ")}.` : "",
+        failed.length > 0
+          ? `Workers that did not finish: ${failed.map((key) => key.replace(/^slot-/, "")).join(", ")}.`
+          : "",
         deliveredSteers(ctx),
       ]
         .filter((line) => line.length > 0)

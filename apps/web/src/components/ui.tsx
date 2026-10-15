@@ -407,11 +407,14 @@ export function Card({
 
 export function Panel({
   title,
+  subtitle,
   action,
   children,
   className = "",
 }: {
   title: string;
+  /** A second line under the title, so the title itself stays one line. */
+  subtitle?: string;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -421,7 +424,15 @@ export function Panel({
       <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
         {/* Micro-label decision: panel headers are Silkscreen 16, the same
             display face as dialog and sheet titles (see DESIGN.md). */}
-        <h2 className="text-pixel-title text-muted">{title}</h2>
+        <div className="min-w-0">
+          <h2 className="text-pixel-title text-muted">{title}</h2>
+          {subtitle ? (
+            <p className="flex items-center gap-1 text-pixel-mono text-accent uppercase">
+              <span className="worker-blink inline-block h-1.5 w-1.5 bg-accent" />
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
         {action}
       </header>
       {children}

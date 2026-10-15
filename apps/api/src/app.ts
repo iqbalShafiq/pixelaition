@@ -31,6 +31,7 @@ import {
   parseModelSpecRow,
   screenInput,
   stagedOverrideSchema,
+  WORKER_ATTEMPTS,
   traceIdFor,
   type DecisionContext,
   type DrawDecision,
@@ -107,6 +108,34 @@ const scaleSchema = z.union([
 
 function fail(res: Response, status: number, code: string, message: string) {
   res.status(status).json({ code, message });
+}
+
+/**
+ * The line a person typed. Worker prompts start with `Request:`; the plan
+ * prompt starts with the request itself. Later correction prompts do not.
+ */
+function requestFromChildPrompt(
+  role: string | null,
+  prompt: string | null,
+): string | null {
+  if (prompt === null || prompt.length === 0) return null;
+  const requestLine = prompt.split("\n").find((line) => line.startsWith("Request: "));
+  if (requestLine !== undefined) {
+    const text = requestLine.slice("Request: ".length).trim();
+    if (text.length > 0) return text.slice(0, 4000);
+  }
+  if (role === "plan") {
+    const first = prompt.split("\n")[0]?.trim() ?? "";
+    if (
+      first.length > 0 &&
+      !first.startsWith("The user ") &&
+      !first.startsWith("Limits:") &&
+      !first.startsWith("Answer with")
+    ) {
+      return first.slice(0, 4000);
+    }
+  }
+  return null;
 }
 
 async function actor(req: Request): Promise<string | undefined> {
@@ -1512,6 +1541,7 @@ export function createApp() {
             headers: {
               authorization: `Bearer ${process.env.WORKER_INTERNAL_TOKEN ?? ""}`,
             },
+            signal: AbortSignal.timeout(2000),
           },
         ).catch(() => null);
         const state = probe?.ok
@@ -1526,11 +1556,13 @@ export function createApp() {
       const frameStatus =
         status === "succeeded" || status === "completed"
           ? "done"
-          : status === "failed" || status === "cancelled"
+          : status === "cancelled"
             ? "failed"
-            : status === "waiting"
-              ? "asking"
-              : "working";
+            : status === "failed"
+              ? "failed"
+              : status === "waiting"
+                ? "asking"
+                : "working";
       // The children arrive oldest first, so a later attempt of the same role
       // means this one was superseded — a retry that answers its failure. The
       // latest attempt of a role that already failed once is retrying, and
@@ -1553,16 +1585,24 @@ export function createApp() {
           .slice(0, -1)
           .some((other) => other.status === "failed" || other.status === "cancelled") &&
         !["failed", "cancelled", "succeeded", "completed"].includes(status);
+      // A failed attempt that still has tries left is not a failure the user
+      // should see. The slot spawns the next attempt on its own.
+      const willRetry =
+        !superseded &&
+        status === "failed" &&
+        snapshot.task.phase === "execute" &&
+        siblings.length < WORKER_ATTEMPTS;
+      const shownStatus = willRetry ? "retrying" : frameStatus;
       workers.push({
         key: child.workerKey ?? child.role ?? "run",
         runId: child.id,
-        status,
+        status: willRetry ? "running" : status,
         ...(superseded ? { superseded: true } : {}),
-        ...(retrying ? { retrying: true } : {}),
+        ...(retrying || willRetry ? { retrying: true } : {}),
         frames: frameIds.map((id) => ({
           id,
           name: frameName.get(id) ?? "frame",
-          status: frameStatus,
+          status: shownStatus,
         })),
         ...(pendingInteraction !== undefined ? { pendingInteraction } : {}),
       });
@@ -1577,6 +1617,55 @@ export function createApp() {
       },
       workers,
       pendingQuestions,
+    });
+  });
+
+  app.get("/api/assets/:id/task/log", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const snapshot = await taskSnapshot(db, asset.id);
+    if (snapshot === undefined) return res.json({ task: null, prompt: null, runs: [] });
+    const children = await db
+      .select({
+        id: generationRuns.id,
+        role: generationRuns.role,
+        workerKey: generationRuns.workerKey,
+        status: generationRuns.status,
+        answer: generationRuns.answer,
+        prompt: generationRuns.prompt,
+        createdAt: generationRuns.createdAt,
+        events: generationRuns.events,
+      })
+      .from(generationRuns)
+      .where(eq(generationRuns.taskId, snapshot.task.id))
+      .orderBy(asc(generationRuns.createdAt));
+    const prompt =
+      children
+        .map((child) => requestFromChildPrompt(child.role, child.prompt))
+        .find((text) => text !== null) ?? null;
+    res.json({
+      task: {
+        id: snapshot.task.id,
+        status: snapshot.task.status,
+        phase: snapshot.task.phase,
+      },
+      prompt,
+      plan: snapshot.task.plan ?? null,
+      runs: children
+        .filter((child) => !(child.workerKey ?? "").startsWith("slot-"))
+        .map((child) => ({
+          id: child.id,
+          role: child.role,
+          workerKey: child.workerKey,
+          status: child.status,
+          answer: child.answer,
+          createdAt: child.createdAt.toISOString(),
+          events: Array.isArray(child.events) ? child.events : [],
+        })),
     });
   });
 

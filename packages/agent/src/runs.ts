@@ -179,6 +179,11 @@ export type RunBinding = {
   role?: "plan" | "worker" | "review" | "fix";
   /** w1..w4 for a worker child. */
   workerKey?: string;
+  /**
+   * The user already approved this plan. A correction pass must not call
+   * present_plan again, or the same card appears twice.
+   */
+  planApproved?: boolean;
   /** Workers carry the frames they own; every write is checked against it. */
   ownedFrameIds?: ReadonlySet<string>;
 };
@@ -190,6 +195,11 @@ export type RunBinding = {
  * across plan and worker), so the refusal lives here, named.
  */
 export function assertRoleAllowsTool(run: RunBinding, toolName: string): void {
+  if (run.planApproved === true && toolName === "present_plan") {
+    throw new Error(
+      "The user already approved this plan. Do not call present_plan. Reply with the corrected JSON only.",
+    );
+  }
   if (run.role === undefined) return;
   const allowed =
     run.role === "plan"

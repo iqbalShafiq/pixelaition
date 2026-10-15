@@ -25,6 +25,7 @@ import {
   assertRoleAllowsTool,
   searchImagesFor,
   createAssetDrawTask,
+  workerAttemptTask,
   type AssetDrawInput,
   type DrawPlan,
   pixelInstructions,
@@ -854,6 +855,11 @@ const taskWatchers = new Map<string, AbortController>();
 const boundChildRuns = new Set<string>();
 
 /** model and effort parsed from a registered agent id (…:<model>:<effort>). */
+/** A plan child spawned after the user already approved. plan-retry has not. */
+function planAlreadyApproved(key: string): boolean {
+  return /^plan-\d+$/.test(key) || key === "plan-create";
+}
+
 /** plan | worker | review | fix, from a task child's key. */
 function roleOfKey(key: string): "plan" | "worker" | "review" | "fix" {
   return key.startsWith("plan")
@@ -1029,11 +1035,7 @@ async function bindTaskChild(
   // started its follow loop already, and a second insert would duplicate the
   // row (live finding from the mid-execute kill test).
   if (getRun(childRunId) !== undefined) {
-    mirrorChildEvents(
-      durableTaskId,
-      publicIdByDurable.get(childRunId) ?? "",
-      earlyWorkerKey,
-    );
+    mirrorChildEvents(durableTaskId, publicIdByDurable.get(childRunId) ?? "", node.key);
     return;
   }
   const [existingRow] = await db
@@ -1110,7 +1112,7 @@ async function bindTaskChild(
       prompt: spawnPrompt,
       taskId: taskRowId,
       role,
-      workerKey: workerKey ?? null,
+      workerKey: node.key,
       frameIds: ownedFrameIds,
     });
   }
@@ -1127,6 +1129,9 @@ async function bindTaskChild(
       role,
       ...(workerKey ? { workerKey } : {}),
       ...(role === "worker" || role === "fix" ? { ownedFrameIds } : {}),
+      // plan-1 corrects JSON after approval; plan-create only adds the frames.
+      // plan-retry is a child that never reached approval, so it may still ask.
+      ...(role === "plan" && planAlreadyApproved(node.key) ? { planApproved: true } : {}),
     });
   } else if (role === "plan") {
     // A workspace task starts with no asset; the plan child binds one lazily.
@@ -1136,6 +1141,8 @@ async function bindTaskChild(
       userId: input.userId,
       style: defaultStyle,
       request: input.request,
+      role: "plan",
+      ...(planAlreadyApproved(node.key) ? { planApproved: true } : {}),
     });
   }
 
@@ -1148,7 +1155,7 @@ async function bindTaskChild(
       for (const url of referencesForWorker(plan, workerKey)) allowed.add(url);
     }
   }
-  mirrorChildEvents(durableTaskId, publicRunId, workerKey);
+  mirrorChildEvents(durableTaskId, publicRunId, node.key);
   void follow(runtime, childRunId, publicRunId, effort);
 }
 
@@ -1221,6 +1228,9 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
         });
         for (const node of graph.nodes) {
           if (node.id === record.id) continue;
+          // slot-w1 is the retry wrapper. It has no agent of its own; the
+          // agent children underneath are the rows the console shows.
+          if (node.key.startsWith("slot-")) continue;
           await bindTaskChild(runtime, durableTaskId, row.id, input, plan, {
             key: node.key,
             ...(node.agentRunId !== undefined ? { agentRunId: node.agentRunId } : {}),
@@ -1312,11 +1322,14 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
         })),
       }
     : {}),
-  tasks: [{ registration: assetDraw.registration }],
-  // Four workers may paint at once, with headroom for the plan/review/fix
-  // phases and the ask agents.
+  tasks: [
+    { registration: assetDraw.registration },
+    { registration: workerAttemptTask.registration },
+  ],
+  // Four worker-attempt tasks may run beside the parent draw task. A waiting
+  // parent releases its slot, so the cap has to fit the workers themselves.
   maxConcurrentRuns: 6,
-  maxConcurrentTasks: 2,
+  maxConcurrentTasks: 8,
   // Reference images travel as base64 media parts; the 1 MB default payload
   // cap would reject a run that carries two or three attachments.
   limits: { maxPayloadBytes: 8 * 1024 * 1024 },
@@ -2115,8 +2128,8 @@ app.post("/internal/runs/:id/respond", async (req, res) => {
 function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
   const kept = [
     "model_started",
-    "model_delta",
     "model_completed",
+    "model_note",
     "tool_started",
     "tool_completed",
     "status",
@@ -2154,7 +2167,68 @@ function consoleEvents(runId: string, extra: StoredInteraction[] = []) {
       });
     }
   }
+  // Deltas are for the live stream. The note is the whole turn, and it stays
+  // even when the retained list has been trimmed down to the latest tool calls.
+  for (const note of notesFor(runId)) {
+    const already = stored.some(
+      (event) =>
+        event.type === "model_note" &&
+        (event.data as { operationId?: unknown; channel?: unknown }).operationId ===
+          note.operationId &&
+        (event.data as { channel?: unknown }).channel === note.channel,
+    );
+    if (already) continue;
+    stored.push({
+      sequence: note.sequence,
+      type: "model_note",
+      data: sanitizeEvent("model_note", note),
+    });
+  }
   return stored.sort((a, b) => a.sequence - b.sequence);
+}
+
+type ModelNote = {
+  operationId: string;
+  channel: "thinking" | "message";
+  text: string;
+  sequence: number;
+  published: boolean;
+};
+
+const modelNotes = new Map<string, Map<string, ModelNote>>();
+
+function rememberModelPiece(runId: string, data: unknown, sequence: number): void {
+  const body = data as {
+    operationId?: unknown;
+    event?: { type?: unknown; text?: unknown; delta?: unknown };
+  };
+  if (typeof body.operationId !== "string") return;
+  const event = body.event;
+  const text =
+    typeof event?.text === "string"
+      ? event.text
+      : typeof event?.delta === "string"
+        ? event.delta
+        : "";
+  if (text.length === 0) return;
+  const kind = typeof event?.type === "string" ? event.type : "";
+  const channel =
+    kind === "reasoning" || kind.startsWith("reasoning") ? "thinking" : "message";
+  const notes = modelNotes.get(runId) ?? new Map<string, ModelNote>();
+  const key = `${body.operationId}:${channel}`;
+  const previous = notes.get(key);
+  notes.set(key, {
+    operationId: body.operationId,
+    channel,
+    text: `${previous?.text ?? ""}${text}`.slice(-8000),
+    sequence: previous?.sequence ?? sequence,
+    published: previous?.published ?? false,
+  });
+  modelNotes.set(runId, notes);
+}
+
+function notesFor(runId: string): ModelNote[] {
+  return [...(modelNotes.get(runId)?.values() ?? [])];
 }
 
 function interactionsFor(runId: string): StoredInteraction[] {
@@ -2217,7 +2291,23 @@ async function follow(
         // AgentInteractionRequest, call ids included. Sanitize before anything
         // leaves the worker; the SSE path forwards the published payload
         // byte-for-byte.
+        if (event.type === "model_delta")
+          rememberModelPiece(publicId, event.data, event.sequence);
         publish(publicId, event.type, sanitizeEvent(event.type, event.data));
+        if (event.type === "model_completed") {
+          const operationId = (event.data as { operationId?: unknown } | undefined)
+            ?.operationId;
+          for (const note of notesFor(publicId)) {
+            if (note.published || note.operationId !== operationId) continue;
+            const published = publish(publicId, "model_note", {
+              operationId: note.operationId,
+              channel: note.channel,
+              text: note.text,
+            });
+            note.sequence = published.sequence;
+            note.published = true;
+          }
+        }
       }
       const snapshot = runtime.snapshot(durableId);
       // A suspended run is still this run: publish the pending card once per
@@ -2491,11 +2581,7 @@ function frameWrites(options: {
     framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
   };
 
-  const onStroke = (
-    _stroke: Stroke,
-    buffer: FrameBuffer,
-    editedFrameId: string,
-  ): void => {
+  const onStroke = (stroke: Stroke, buffer: FrameBuffer, editedFrameId: string): void => {
     publish(publicRunId, "canvas-stroke", {
       assetId,
       frameId: editedFrameId,
@@ -2506,6 +2592,12 @@ function frameWrites(options: {
         ...layer,
         pixels: encodePixels(layer.pixels),
       })),
+      // Paint order for the editor's cursor. Empty for fills; the client then
+      // walks the changed cells in scan order. Capped so a huge stroke stays
+      // a frame event, not a transcript.
+      ...(stroke.points.length > 0 && stroke.points.length <= 2048
+        ? { points: stroke.points.map((point) => ({ x: point.x, y: point.y })) }
+        : {}),
     });
     // A stroke always targets a frame the binding knows: a frame from the
     // loaded asset, or one a frame tool inserted and registered below.
@@ -2691,6 +2783,8 @@ function bindAssetRun(options: {
   workerKey?: string;
   /** Frames this child may write; plan and review runs leave it unset. */
   ownedFrameIds?: string[];
+  /** A correction of a plan the user already approved. */
+  planApproved?: boolean;
 }): void {
   const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
   const writes = frameWrites({
@@ -2730,6 +2824,7 @@ function bindAssetRun(options: {
     ...(options.role ? { role: options.role } : {}),
     ...(options.workerKey ? { workerKey: options.workerKey } : {}),
     ...(options.ownedFrameIds ? { ownedFrameIds: new Set(options.ownedFrameIds) } : {}),
+    ...(options.planApproved ? { planApproved: true } : {}),
   });
 }
 
@@ -2749,6 +2844,8 @@ function bindWorkspaceRun(options: {
   request?: string;
   /** Frames the user already approved; a workspace run starts empty. */
   approvedScope?: string[];
+  role?: "plan";
+  planApproved?: boolean;
 }): void {
   const { durableRunId, publicRunId, userId, style, request } = options;
   let writes: ReturnType<typeof frameWrites> | undefined;
@@ -2838,6 +2935,8 @@ function bindWorkspaceRun(options: {
     strokes: [],
     issues: [],
     userId,
+    ...(options.role ? { role: options.role } : {}),
+    ...(options.planApproved ? { planApproved: true } : {}),
     onListProjects: async (ownerId): Promise<ProjectSummary[]> => {
       const rows = await db
         .select({

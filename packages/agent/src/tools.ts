@@ -610,10 +610,10 @@ export function createPixelTools(
       width: z.number().int().positive(),
       height: z.number().int().positive(),
     }),
-    requiresApproval: gatedApproval("clear_region", frameNeedsApproval),
+    // Clearing a rectangle is part of drawing. It does not pause for Jev or
+    // a clarification card; the frame tools still refuse a bad rectangle.
+    requiresApproval: () => false,
     execute: (input, context) => {
-      const refused = gateRefusal(context.operationId, "clear_region");
-      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const { frameId, ...region } = input;
@@ -860,10 +860,10 @@ export function createPixelTools(
     description:
       "Remove a layer from the current frame; layerId takes the layer id or its name. A frame keeps at least one layer, so the last layer cannot be removed.",
     inputSchema: z.object({ layerId: z.string() }),
-    requiresApproval: gatedApproval("remove_layer", frameNeedsApproval),
+    // Layer cleanup during drawing does not ask. The frame keeps its last
+    // layer, and the call is not a Jev review the way a clear or a delete is.
+    requiresApproval: () => false,
     execute: (input, context) => {
-      const refused = gateRefusal(context.operationId, "remove_layer");
-      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const edited = editFrame(run, undefined, {

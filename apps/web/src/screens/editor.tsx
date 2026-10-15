@@ -35,7 +35,13 @@ import {
   type PendingInteraction,
   type StagedPlanFrame,
 } from "../components/interaction-card.js";
-import { applyRunEvent, type RunRow } from "../lib/run-activity.js";
+import {
+  applyRunEvent,
+  rowsFromTaskLog,
+  type RunRow,
+  type TaskLogRun,
+} from "../lib/run-activity.js";
+import { markTaskSeen, taskSeen } from "../lib/seen-task.js";
 import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 import { useTaskSnapshot, useTaskStream, type TaskSnapshot } from "../lib/task.js";
 import { ExportDialog } from "../components/export-dialog.js";
@@ -81,12 +87,15 @@ import {
 import { api } from "../lib/api.js";
 import { useAttachments } from "../lib/use-attachments.js";
 import { useMediaQuery } from "../lib/use-media.js";
-import {
-  base64ToBytes,
-  bytesToBase64,
-  type AssetDto,
-  type FrameDto,
-} from "../lib/types.js";
+import { useAgentPaint } from "../lib/use-agent-paint.js";
+import { bytesToBase64, type AssetDto } from "../lib/types.js";
+
+/** The frame panel's second line. The title stays "4 Frames". */
+function activityLabel(phase: string | undefined): string {
+  if (phase === "plan") return "Planning";
+  if (phase === "review") return "Reviewing";
+  return "Generating";
+}
 
 const toolByKey = new Map<string, Tool>([
   ["v", "select"],
@@ -159,6 +168,8 @@ export function EditorScreen() {
   });
 
   const [frameId, setFrameId] = useState<string | null>(null);
+  const viewedFrameRef = useRef(frameId);
+  viewedFrameRef.current = frameId;
   // The interaction card's target questions render live dropdowns; the editor
   // needs the same library the home uses.
   const libraryProjects = useQuery({
@@ -174,6 +185,13 @@ export function EditorScreen() {
       }>("/api/assets"),
   });
   const [drafts, setDrafts] = useState<Record<string, History>>({});
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const {
+    receive: receiveStroke,
+    stop: stopStroke,
+    cursors: agentCursors,
+  } = useAgentPaint(draftsRef, setDrafts);
   const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(1);
   const [color, setColor] = useState(1);
@@ -203,6 +221,13 @@ export function EditorScreen() {
   // opened that frame, and it never lingers after the task ends.
   const viewedFrames = useRef(new Set<string>());
   const [unseenDone, setUnseenDone] = useState<Map<string, string>>(new Map());
+  // Set once this visit has streamed the task, so a later terminal snapshot
+  // does not replace the live transcript with the stored log.
+  const sawLiveTask = useRef<string | null>(null);
+  const loadedTaskLog = useRef<string | null>(null);
+  // Strict mode unmounts once on mount. The mark waits a tick so that
+  // simulated unmount can be cancelled by the remount.
+  const seenMarkTimer = useRef<number | null>(null);
   // Free-form steering the router could not place: the user picks the frame.
   const [clarify, setClarify] = useState<{
     message: string;
@@ -292,6 +317,11 @@ export function EditorScreen() {
   const steering = optimisticQueue !== queue;
 
   const frames = asset.data?.frames ?? [];
+  const liveFrames = useMemo(() => {
+    const next: Record<string, FrameBuffer> = {};
+    for (const [id, history] of Object.entries(drafts)) next[id] = history.present;
+    return next;
+  }, [drafts]);
   const frame = frames.find((item) => item.id === frameId) ?? null;
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
@@ -575,6 +605,8 @@ export function EditorScreen() {
   const [agentPulse, setAgentPulse] = useState(0);
   /** The frame the most recent agent stroke landed on. */
   const [lastStrokeFrame, setLastStrokeFrame] = useState<string | null>(null);
+  /** The frame each worker is painting right now. Other owned frames stay quiet. */
+  const [activePaint, setActivePaint] = useState<Record<string, string>>({});
   /** The user picked a frame themselves: stop following the agent. */
   const manualPickRef = useRef(false);
   useEffect(() => {
@@ -585,51 +617,27 @@ export function EditorScreen() {
 
   const applyStroke = useCallback(
     (raw: Record<string, unknown>, fallbackFrameId: string) => {
-      const data = raw as {
-        frameId?: string;
-        layers?: FrameDto["layers"];
-        palette?: string[];
-      };
-      const target = data.frameId ?? fallbackFrameId;
-      setLastStrokeFrame(target);
-      if (target === frameId) setAgentPulse(Date.now());
-      // A set_palette repaint carries the asset's new palette: every frame
-      // adopts it, exactly like the editor's palette panel.
-      if (data.palette) {
-        const palette = [...data.palette];
-        setDrafts((current) => {
-          let changed = false;
-          const next = { ...current };
-          for (const [id, entry] of Object.entries(next)) {
-            if (entry.present.palette.join(",") === palette.join(",")) continue;
-            next[id] = { ...entry, present: { ...entry.present, palette } };
-            changed = true;
-          }
-          return changed ? next : current;
-        });
-      }
-      if (data.layers && target) {
+      const data = raw as { frameId?: string };
+      const target =
+        typeof data.frameId === "string" && data.frameId.length > 0
+          ? data.frameId
+          : fallbackFrameId;
+      if (target) {
+        setLastStrokeFrame(target);
+        if (target === viewedFrameRef.current) setAgentPulse(Date.now());
         setRunFrameId(target);
-        const layers = data.layers.map((layer) => ({
-          ...layer,
-          pixels: base64ToBytes(layer.pixels),
-        }));
-        setDrafts((current) => {
-          const entry = current[target];
-          if (!entry) return current;
-          return {
-            ...current,
-            [target]: { ...entry, present: { ...entry.present, layers } },
-          };
-        });
       }
+      // The stroke's pixels arrive whole. The painter reveals them one cell
+      // at a time and parks the hover border on the cell the agent is inking.
+      receiveStroke(raw, fallbackFrameId);
     },
-    [],
+    [receiveStroke],
   );
 
   /** The task stream drives the console tree; only task-complete ends it. */
   const listenTask = useCallback(
     (id: string, fallbackFrameId: string) => {
+      sawLiveTask.current = id;
       taskStream.open(id, {
         onMessage: (body) => {
           resetRejoin();
@@ -646,6 +654,7 @@ export function EditorScreen() {
             void client.invalidateQueries({ queryKey: ["asset", assetId] });
           }
           if (body.type === "task-complete") {
+            stopStroke();
             setTaskId(null);
             taskStream.close();
             void task.refetch();
@@ -668,6 +677,7 @@ export function EditorScreen() {
                 if (firstDrop) log("The task stream dropped; rejoining the agent");
                 return;
               }
+              stopStroke();
               setTaskId(null);
               setRunId(null);
               setRunFrameId(null);
@@ -676,7 +686,17 @@ export function EditorScreen() {
         },
       });
     },
-    [applyStroke, assetId, client, log, paceRejoin, resetRejoin, task, taskStream],
+    [
+      applyStroke,
+      assetId,
+      client,
+      log,
+      paceRejoin,
+      resetRejoin,
+      stopStroke,
+      task,
+      taskStream,
+    ],
   );
 
   const listen = useCallback(
@@ -735,6 +755,7 @@ export function EditorScreen() {
             setPendingInteraction(null);
             cancelRejoin();
             closeStream();
+            stopStroke();
             setRunId(null);
             setRunFrameId(null);
             // Drop the local draft for the drawn frame so the reloaded pixels
@@ -796,6 +817,7 @@ export function EditorScreen() {
                 if (firstDrop) log("The stream dropped; rejoining the running agent");
                 return;
               }
+              stopStroke();
               setRunId(null);
               setRunFrameId(null);
               setPendingInteraction(null);
@@ -814,15 +836,91 @@ export function EditorScreen() {
       rememberRunModel,
       resetRejoin,
       sourceRef,
+      stopStroke,
     ],
   );
 
+  // A refresh can miss the in-memory task log. The snapshot still knows who
+  // is working, so the console is never only the rejoin line.
   useEffect(() => {
+    if (taskActive) return;
+    setActivePaint({});
+  }, [taskActive]);
+
+  useEffect(() => {
+    if (!taskActive || !task.data?.task) return;
+    setRows((current) => {
+      if (
+        current.some(
+          (row) =>
+            row.kind === "worker" || row.kind === "tool" || row.kind === "task-phase",
+        )
+      ) {
+        return current;
+      }
+      let next = applyRunEvent(current, 0, "task-phase", {
+        phase: task.data?.task?.phase ?? "execute",
+        status: task.data?.task?.status ?? "running",
+      });
+      for (const worker of task.data?.workers ?? []) {
+        if (worker.superseded === true) continue;
+        next = applyRunEvent(next, 0, "worker-status", {
+          workerKey: worker.key,
+          status: worker.status,
+          frames: worker.frames.map((frame) => frame.name),
+        });
+      }
+      return next;
+    });
+  }, [taskActive, task.data]);
+
+  useEffect(() => {
+    viewedFrames.current = new Set();
+    setUnseenDone(new Map());
+    loadedTaskLog.current = null;
+  }, [assetId]);
+
+  const seenTaskId = task.data?.task?.id;
+  const seenTaskStatus = task.data?.task?.status;
+  useEffect(() => {
+    const terminal =
+      seenTaskStatus !== undefined &&
+      !["queued", "running", "waiting"].includes(seenTaskStatus);
+    // The first visit after the task finishes may show "done". Leaving that
+    // visit stores the flag, so the next open stays quiet.
+    if (!terminal || seenTaskId === undefined) return;
+    if (seenMarkTimer.current !== null) {
+      window.clearTimeout(seenMarkTimer.current);
+      seenMarkTimer.current = null;
+    }
+    const mark = () => markTaskSeen(seenTaskId);
+    window.addEventListener("pagehide", mark);
+    return () => {
+      window.removeEventListener("pagehide", mark);
+      seenMarkTimer.current = window.setTimeout(() => {
+        seenMarkTimer.current = null;
+        markTaskSeen(seenTaskId);
+      }, 0);
+    };
+  }, [seenTaskId, seenTaskStatus]);
+
+  useEffect(() => {
+    const record = task.data?.task;
+    const terminal =
+      record !== null &&
+      record !== undefined &&
+      !["queued", "running", "waiting"].includes(record.status);
+    if (terminal && record !== null && record !== undefined && taskSeen(record.id)) {
+      setUnseenDone((current) => (current.size === 0 ? current : new Map()));
+      return;
+    }
     const workers = task.data?.workers ?? [];
     if (workers.length === 0) return;
     setUnseenDone((current) => {
       let next = current;
       for (const worker of workers) {
+        if (worker.superseded === true) continue;
+        if (!/^(w\d+|fix-)/.test(worker.key)) continue;
         for (const frame of worker.frames) {
           const finished = frame.status === "done" || frame.status === "failed";
           if (finished && !viewedFrames.current.has(frame.id) && !next.has(frame.id)) {
@@ -874,27 +972,68 @@ export function EditorScreen() {
     setPendingRunId(chosen.runId);
   }, [activeTaskId, frameId, task.data]);
 
-  // While a task runs, each worker's own stream feeds its frame's canvas; the
-  // task stream stays lean (no strokes) and drives the tree.
-  const workerRunIds = (task.data?.workers ?? [])
-    .map((worker) => worker.runId)
-    .filter((id): id is string => typeof id === "string");
-  const workerRunKey = workerRunIds.join(",");
+  // Only the painters that are still running get a stroke stream. Opening one
+  // for every finished child (plan, review, both workers) held the browser's
+  // connection limit and made the next fetch fail. A new painter is added;
+  // the ones already open are left alone, so a live stroke is not replayed.
+  const painters = (task.data?.workers ?? []).filter(
+    (worker) =>
+      worker.runId !== undefined &&
+      worker.superseded !== true &&
+      /^(w\d+|fix-)/.test(worker.key) &&
+      !["succeeded", "completed", "failed", "cancelled"].includes(worker.status),
+  );
+  const painterKey = painters.map((worker) => worker.runId).join(",");
+  const painterByRun = useRef(new Map<string, string>());
+  painterByRun.current = new Map(
+    painters.flatMap((worker) =>
+      worker.runId ? [[worker.runId, worker.key] as const] : [],
+    ),
+  );
+  const strokeStreams = useRef(new Map<string, EventSource>());
+  const applyStrokeRef = useRef(applyStroke);
+  applyStrokeRef.current = applyStroke;
   useEffect(() => {
-    if (activeTaskId === null || workerRunIds.length === 0) return;
-    const sources = workerRunIds.map((id) => {
+    const open = strokeStreams.current;
+    if (activeTaskId === null) {
+      for (const source of open.values()) source.close();
+      open.clear();
+      return;
+    }
+    const wanted = new Set(painterKey.length === 0 ? [] : painterKey.split(","));
+    for (const [id, source] of open) {
+      if (wanted.has(id)) continue;
+      source.close();
+      open.delete(id);
+    }
+    for (const id of wanted) {
+      if (open.has(id)) continue;
       const source = new EventSource(`/api/runs/${id}/stream?after=0`);
       source.onmessage = (event) => {
         const body = JSON.parse(event.data) as { type: string; data: unknown };
         if (body.type !== "canvas-stroke") return;
-        applyStroke(body.data as Record<string, unknown>, "");
+        const data = body.data as Record<string, unknown>;
+        const paintedFrame = typeof data.frameId === "string" ? data.frameId : "";
+        const workerKey = painterByRun.current.get(id);
+        if (workerKey && paintedFrame) {
+          setActivePaint((current) =>
+            current[workerKey] === paintedFrame
+              ? current
+              : { ...current, [workerKey]: paintedFrame },
+          );
+        }
+        applyStrokeRef.current(data, "");
       };
-      return source;
-    });
-    return () => {
-      for (const source of sources) source.close();
-    };
-  }, [activeTaskId, workerRunKey, applyStroke]);
+      open.set(id, source);
+    }
+  }, [activeTaskId, painterKey]);
+  useEffect(
+    () => () => {
+      for (const source of strokeStreams.current.values()) source.close();
+      strokeStreams.current.clear();
+    },
+    [assetId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -942,10 +1081,45 @@ export function EditorScreen() {
     };
   }, [assetId, listen, log, rememberRunModel]);
 
+  // A finished drawing task keeps the whole transcript. A refresh has no live
+  // stream, so the stored children are the same steps the console showed
+  // while the agents were working.
+  useEffect(() => {
+    const record = task.data?.task;
+    if (record === null || record === undefined) return;
+    const terminal = !["queued", "running", "waiting"].includes(record.status);
+    if (
+      !terminal ||
+      sawLiveTask.current === record.id ||
+      loadedTaskLog.current === record.id
+    ) {
+      return;
+    }
+    const id = record.id;
+    let cancelled = false;
+    void api<{ prompt: string | null; plan?: unknown; runs: TaskLogRun[] }>(
+      `/api/assets/${assetId}/task/log`,
+    )
+      .catch(() => null)
+      .then((result) => {
+        if (cancelled || result === null || sawLiveTask.current === id) return;
+        loadedTaskLog.current = id;
+        setRows(rowsFromTaskLog(result.runs, result.plan));
+        if (result.prompt) setRunPrompt(result.prompt);
+        setMessage("");
+        setRunHistory([]);
+        displayedRunIdRef.current = `task:${id}`;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId, task.data?.task?.id, task.data?.task?.status]);
+
   // Switching frames rewinds the console to that frame's story: its last run's
   // steps and answer, plus the prompts and answers of the runs before it.
+  // A drawing task owns the console instead, across every frame.
   useEffect(() => {
-    if (!frameId) return;
+    if (!frameId || task.data?.task) return;
     let cancelled = false;
     void (async () => {
       const result = await api<ActiveRunResponse>(
@@ -968,7 +1142,7 @@ export function EditorScreen() {
     return () => {
       cancelled = true;
     };
-  }, [frameId, assetId]);
+  }, [frameId, assetId, task.data?.task?.id]);
 
   function onAction(action: CanvasAction) {
     if (!frameId) return;
@@ -1530,10 +1704,13 @@ export function EditorScreen() {
       <FramePanel
         frames={frames}
         palette={buffer?.palette ?? asset.data?.palette ?? []}
+        pixelWidth={asset.data?.width}
+        pixelHeight={asset.data?.height}
+        liveFrames={liveFrames}
         activeId={frameId}
         playing={playing}
         locked={running}
-        generating={taskActive}
+        activity={taskActive ? activityLabel(task.data?.task?.phase) : undefined}
         taskFrames={(() => {
           // Every frame a worker does not own is explicitly untouched, so no
           // frame in a running task is ever without a state.
@@ -1553,11 +1730,9 @@ export function EditorScreen() {
                             status:
                               frame.status === "working" && worker.retrying === true
                                 ? "retrying"
-                                : frame.status === "working" &&
-                                    frame.id !== lastStrokeFrame
-                                  ? "queued"
-                                  : frame.status,
+                                : frame.status,
                             workerKey: worker.key,
+                            painting: activePaint[worker.key] === frame.id,
                             // A frame already looked at keeps a quiet tick, so
                             // the panel still names who painted it.
                             seen:
@@ -1572,7 +1747,10 @@ export function EditorScreen() {
               .filter(([id]) => !taskActive || !viewedFrames.current.has(id))
               .map(
                 ([id, workerKey]) =>
-                  [id, { status: "done" as const, workerKey, seen: false }] as const,
+                  [
+                    id,
+                    { status: "done" as const, workerKey, seen: false, painting: false },
+                  ] as const,
               ),
           ]);
           if (taskActive) {
@@ -1827,6 +2005,7 @@ export function EditorScreen() {
                     ghost={ghost}
                     selection={selection}
                     locked={locked || preview !== null}
+                    agentCursor={frameId ? (agentCursors[frameId] ?? null) : null}
                     onAction={onAction}
                     onCamera={(next) => {
                       setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));

@@ -157,6 +157,8 @@ export function HistoryPanel({
         row={row}
         snapshot={frameSnapshotOf(snapshots.get(row.id))}
         palette={palette}
+        width={width}
+        height={height}
         previewing={previewingId === row.id}
         editing={editingId === row.id}
         draft={draft}
@@ -291,6 +293,8 @@ function VersionEntry({
   row,
   snapshot,
   palette,
+  width,
+  height,
   previewing,
   editing,
   draft,
@@ -305,6 +309,8 @@ function VersionEntry({
   row: HistoryRow;
   snapshot: ReturnType<typeof frameSnapshotOf>;
   palette: string[];
+  width: number;
+  height: number;
   previewing: boolean;
   editing: boolean;
   draft: string;
@@ -328,6 +334,8 @@ function VersionEntry({
         <FrameThumb
           frame={{ id: row.id, name: snapshot.name, index: 0, layers: snapshot.layers }}
           palette={palette}
+          width={width}
+          height={height}
           size={32}
         />
       ) : (

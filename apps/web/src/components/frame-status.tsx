@@ -8,6 +8,8 @@ export type FrameTaskState = {
   workerKey: string;
   /** The user already looked at this frame; its tick stays quiet. */
   seen?: boolean;
+  /** This frame is the one the worker is painting right now. */
+  painting?: boolean;
 };
 
 /**
@@ -34,12 +36,29 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
       </span>
     );
   }
+  if (state.status === "working" && state.painting !== true) {
+    // The worker owns this frame and is busy on another one. No loader.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line" />
+        {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
   if (state.status === "working") {
     // One indicator, not two: the loader is the circle that means "painting".
     return (
       <span className="flex items-center gap-1 text-pixel-mono text-accent">
         <PixelLoader size={12} />
         {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "retrying" && state.painting !== true) {
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line" />
+        retrying · {agentLabel(state.workerKey)}
       </span>
     );
   }
