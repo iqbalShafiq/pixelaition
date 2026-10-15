@@ -59,7 +59,7 @@ export function LibraryGrid({
                   <button
                     type="button"
                     aria-label={`Delete ${project.name}`}
-                    className="grid h-7 w-7 place-items-center border-2 border-line text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:border-line-strong hover:text-erase focus-visible:opacity-100"
+                    className="grid h-7 w-7 place-items-center border-2 border-erase/60 text-erase opacity-0 transition-[opacity,transform] duration-150 group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100 hover:border-erase hover:bg-erase/15 focus-visible:opacity-100"
                     onClick={() =>
                       onDeleteProject({
                         id: project.id,
@@ -160,7 +160,7 @@ function AssetCard({
         <button
           type="button"
           aria-label={`Delete ${asset.name}`}
-          className="absolute top-1 right-1 z-10 grid h-6 w-6 place-items-center border-2 border-line bg-paper text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:border-line-strong hover:text-erase focus-visible:opacity-100"
+          className="absolute top-1 right-1 z-10 grid h-6 w-6 place-items-center border-2 border-erase/60 bg-paper text-erase opacity-0 transition-[opacity,transform] duration-150 group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:opacity-100 hover:border-erase hover:bg-erase/15 focus-visible:opacity-100"
           onClick={onDelete}
         >
           <Close width={12} height={12} />
