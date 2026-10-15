@@ -1,5 +1,6 @@
 import type { TaskContext, TaskTransition } from "@anvia/durable";
 import { describe, expect, it } from "vitest";
+import type { DrawPlan } from "./plan.js";
 import {
   buildPlanPrompt,
   createAssetDrawTask,
@@ -27,6 +28,7 @@ const input: AssetDrawInput = {
 
 const deps: AssetDrawDeps = {
   claimDefaultFrame: async () => false,
+  unpaintedFrames: async () => [],
   loadPlanContext: async () => ({
     projectName: "P",
     assetName: "A",
@@ -522,5 +524,68 @@ describe("the empty default frame", () => {
     expect(first).toMatchObject({ status: "waiting" });
     expect(claimed).toEqual("walk-1");
     expect(spawns.map((spawn) => spawn.key)).not.toContain("plan-create");
+  });
+});
+
+describe("frames the review let through", () => {
+  const plan = JSON.parse(planJson) as DrawPlan;
+  const reviewChild = {
+    id: "child-review",
+    key: "review-1",
+    outcome: { status: "completed" as const, output: '{"ok":true}' },
+  };
+  it("gets one deterministic repair, then completes", async () => {
+    let empty = ["walk"];
+    const calls: string[][] = [];
+    const task = createAssetDrawTask({
+      ...deps,
+      unpaintedFrames: async (_input, names) => {
+        calls.push(names);
+        return empty;
+      },
+    });
+    const checkpoint = {
+      phase: "review" as const,
+      plan,
+      planKey: "plan",
+      round: 1,
+      reviewKey: "review-1",
+      fixIds: [],
+    };
+    const { ctx, spawns } = fakeCtx({ checkpoint, children: [reviewChild] });
+    const first = await run(task, ctx);
+    expect(first).toMatchObject({ status: "waiting" });
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["fix-unpainted"]);
+    expect(spawns[0]?.prompt).toContain("walk");
+
+    empty = [];
+    const second = await run(task, {
+      ...ctx,
+      checkpoint: { ...checkpoint, retries: { unpainted: 1 } },
+    } as typeof ctx);
+    expect(second).toMatchObject({ status: "completed" });
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("fails with the frame names when the repair left them empty", async () => {
+    const task = createAssetDrawTask({
+      ...deps,
+      unpaintedFrames: async () => ["walk"],
+    });
+    const { ctx } = fakeCtx({
+      checkpoint: {
+        phase: "review" as const,
+        plan,
+        planKey: "plan",
+        round: 1,
+        reviewKey: "review-1",
+        fixIds: [],
+        retries: { unpainted: 1 },
+      },
+      children: [reviewChild],
+    });
+    const out = await run(task, ctx as typeof ctx);
+    expect(out).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(out)).toContain("walk");
   });
 });

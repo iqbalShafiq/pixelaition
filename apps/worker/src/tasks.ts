@@ -61,6 +61,21 @@ export function buildTaskDeps(db: Database): AssetDrawDeps {
       await db.update(frames).set({ name }).where(eq(frames.id, row.id));
       return true;
     },
+    unpaintedFrames: async (input: AssetDrawInput, names: string[]) => {
+      if (names.length === 0) return [];
+      const rows = await db
+        .select({ name: frames.name, layers: frames.layers })
+        .from(frames)
+        .where(eq(frames.assetId, input.assetId ?? ""));
+      const byName = new Map(rows.map((row) => [row.name, row.layers]));
+      return names.filter((name) => {
+        const layers = (byName.get(name) ?? []) as Array<{ pixels?: string }>;
+        return (
+          layers.length === 0 ||
+          layers.every((layer) => /^A*$/.test((layer.pixels ?? "").replace(/=+$/, "")))
+        );
+      });
+    },
     loadWorkerContext: async (
       input: AssetDrawInput,
       plan: DrawPlan,

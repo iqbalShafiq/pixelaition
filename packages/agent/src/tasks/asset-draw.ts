@@ -523,15 +523,44 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
 
 function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transition {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "review" }>;
-  const finish = (rounds: number): Transition => ({
-    status: "completed",
-    output: {
-      assetId: checkpoint.plan.assetId,
-      frames: checkpoint.plan.frames.map((frame) => frame.name),
-      rounds,
-      workers: checkpoint.plan.workers.length,
-    },
-  });
+  const finish = async (rounds: number): Promise<Transition> => {
+    const names = checkpoint.plan.frames.map((frame) => frame.name);
+    const unpainted = await deps.unpaintedFrames(ctx.input, names);
+    if (unpainted.length === 0) {
+      return {
+        status: "completed",
+        output: {
+          assetId: checkpoint.plan.assetId,
+          frames: names,
+          rounds,
+          workers: checkpoint.plan.workers.length,
+        },
+      };
+    }
+    // The review reads frames with eyes; this is the deterministic backstop.
+    // One named repair first — a provider hiccup can leave a frame empty while
+    // the reviews pass — and a failure that names the frames after it.
+    if (retriesFor(checkpoint, "unpainted") < 1) {
+      const id = ctx.spawnAgent("fix-unpainted", {
+        agentId: ctx.input.agentId,
+        prompt: [
+          fixInstructions,
+          `These frames are still empty: ${unpainted.join(", ")}.`,
+          "Paint each of them now with the painting tools, then answer with one short sentence.",
+        ].join("\n\n"),
+        continueFrom: checkpoint.planKey,
+      });
+      return {
+        status: "waiting",
+        checkpoint: { ...checkpoint, retries: withRetry(checkpoint, "unpainted") },
+        wait: { type: "children", ids: [id], policy: "allSettled" },
+      };
+    }
+    return {
+      status: "failed",
+      error: `The reviews passed, but these frames are still unpainted: ${unpainted.join(", ")}.`,
+    };
+  };
   if (checkpoint.reviewKey === undefined) {
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
@@ -664,6 +693,12 @@ export type AssetDrawDeps = {
    * answer says whether the frame was claimed.
    */
   claimDefaultFrame(input: AssetDrawInput, name: string): Promise<boolean>;
+  /**
+   * The plan's frames whose pixels are all transparent. The review reads the
+   * frames with eyes; this is the deterministic backstop that keeps a run
+   * from reporting "completed" beside an empty frame.
+   */
+  unpaintedFrames(input: AssetDrawInput, names: string[]): Promise<string[]>;
   loadWorkerContext(
     input: AssetDrawInput,
     plan: DrawPlan,
