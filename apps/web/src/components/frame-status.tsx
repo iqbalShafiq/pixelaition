@@ -35,9 +35,9 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
     );
   }
   if (state.status === "working") {
+    // One indicator, not two: the loader is the circle that means "painting".
     return (
       <span className="flex items-center gap-1 text-pixel-mono text-accent">
-        <span className="worker-blink h-2 w-2 bg-accent" />
         <PixelLoader size={12} />
         {agentLabel(state.workerKey)}
       </span>
@@ -48,7 +48,6 @@ export function FrameStatus({ state }: { state: FrameTaskState }) {
     // again, and the label says so instead of showing the dead attempt.
     return (
       <span className="flex items-center gap-1 text-pixel-mono text-ink">
-        <span className="worker-blink h-2 w-2 bg-ink" />
         <PixelLoader size={12} />
         retrying · {agentLabel(state.workerKey)}
       </span>
