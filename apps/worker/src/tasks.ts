@@ -44,6 +44,23 @@ export function buildTaskDeps(db: Database): AssetDrawDeps {
         frames: frameRows.map((frame) => frame.name),
       };
     },
+    claimDefaultFrame: async (input: AssetDrawInput, name: string) => {
+      const rows = await db
+        .select({ id: frames.id, name: frames.name, layers: frames.layers })
+        .from(frames)
+        .where(eq(frames.assetId, input.assetId ?? ""));
+      if (rows.length !== 1) return false;
+      const row = rows[0];
+      if (row === undefined) return false;
+      const layers = (row.layers as Array<{ pixels?: string }> | null) ?? [];
+      const untouched =
+        layers.length > 0 &&
+        layers.every((layer) => /^A*$/.test((layer.pixels ?? "").replace(/=+$/, "")));
+      if (!untouched) return false;
+      if (row.name === name) return true;
+      await db.update(frames).set({ name }).where(eq(frames.id, row.id));
+      return true;
+    },
     loadWorkerContext: async (
       input: AssetDrawInput,
       plan: DrawPlan,

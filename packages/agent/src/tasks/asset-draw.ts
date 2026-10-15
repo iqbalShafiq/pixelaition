@@ -316,11 +316,19 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   }
   // The approval is only half the job: a supervisor that ends its turn without
   // creating the frames it promised would leave the asset empty, so the task
-  // checks the asset and names what is missing.
-  const context = await deps.loadPlanContext(ctx.input);
-  const missingFrames = plan.frames
-    .map((frame) => frame.name)
-    .filter((name) => !context.frames.includes(name));
+  // checks the asset and names what is missing. A fresh asset ships with one
+  // empty default frame; when the plan names its own frames, that frame is
+  // renamed to the plan's first name instead of shipping beside it unpainted.
+  let context = await deps.loadPlanContext(ctx.input);
+  const planNames = plan.frames.map((frame) => frame.name);
+  const adopted =
+    planNames.length > 0 &&
+    context.frames.length === 1 &&
+    !planNames.includes(context.frames[0] ?? "");
+  if (adopted && (await deps.claimDefaultFrame(ctx.input, planNames[0] ?? ""))) {
+    context = await deps.loadPlanContext(ctx.input);
+  }
+  const missingFrames = planNames.filter((name) => !context.frames.includes(name));
   if (missingFrames.length > 0) {
     if (checkpoint.framesCreateTried !== true) {
       const id = ctx.spawnAgent("plan-create", {
@@ -649,6 +657,13 @@ export type WorkerContext = {
 };
 export type AssetDrawDeps = {
   loadPlanContext(input: AssetDrawInput): Promise<PlanContext>;
+  /**
+   * A fresh asset ships with one empty default frame. When the plan names its
+   * own frames, that frame is renamed to the plan's first name so the asset
+   * never ships an unpainted orphan. Painted frames are never touched; the
+   * answer says whether the frame was claimed.
+   */
+  claimDefaultFrame(input: AssetDrawInput, name: string): Promise<boolean>;
   loadWorkerContext(
     input: AssetDrawInput,
     plan: DrawPlan,

@@ -26,6 +26,7 @@ const input: AssetDrawInput = {
 };
 
 const deps: AssetDrawDeps = {
+  claimDefaultFrame: async () => false,
   loadPlanContext: async () => ({
     projectName: "P",
     assetName: "A",
@@ -471,5 +472,55 @@ describe("buildPlanPrompt", () => {
     expect(prompt).toContain("at most 4 workers");
     expect(prompt).toContain("at most 12 frames");
     expect(prompt).toContain("at most 8 new palette colours");
+  });
+});
+
+describe("the empty default frame", () => {
+  it("is renamed to the plan's first frame instead of shipping empty", async () => {
+    let claimed: string | null = null;
+    const renamed = JSON.parse(planJson) as {
+      frames: Array<{ name: string }>;
+      workers: Array<{ frames: string[] }>;
+    };
+    const names: Record<string, string> = { idle: "walk-1", walk: "walk-2" };
+    renamed.frames = renamed.frames.map((frame) => ({
+      ...frame,
+      name: names[frame.name] ?? frame.name,
+    }));
+    renamed.workers = renamed.workers.map((worker) => ({
+      ...worker,
+      frames: worker.frames.map((name) => names[name] ?? name),
+    }));
+    let framesNow = ["idle"];
+    const task = createAssetDrawTask({
+      ...deps,
+      claimDefaultFrame: async (_input, name) => {
+        claimed = name;
+        framesNow = renamed.frames.map((frame) => frame.name);
+        return true;
+      },
+      loadPlanContext: async () => ({
+        projectName: "P",
+        assetName: "A",
+        assetId: "a1",
+        paletteSize: 8,
+        styleLines: ["outline"],
+        frames: framesNow,
+      }),
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        {
+          id: "child-plan",
+          key: "plan",
+          outcome: { status: "completed", output: JSON.stringify(renamed) },
+        },
+      ],
+    });
+    const first = await run(task, ctx);
+    expect(first).toMatchObject({ status: "waiting" });
+    expect(claimed).toEqual("walk-1");
+    expect(spawns.map((spawn) => spawn.key)).not.toContain("plan-create");
   });
 });
