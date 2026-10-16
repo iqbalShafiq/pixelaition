@@ -5,6 +5,8 @@ export type {
   DrawDecision,
   DrawIntent,
 } from "./decide.js";
+export { userTurnsFromRuns } from "./history.js";
+export type { ThreadRunRow, UserTurn } from "./history.js";
 export { decideHomeTarget, HomeDecisionError, HOME_PROJECT_LIMIT } from "./home.js";
 export type {
   HomeAssetOption,
