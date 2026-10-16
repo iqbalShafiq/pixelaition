@@ -46,6 +46,8 @@ describe("buildWorkerPrompt", () => {
     expect(prompt).toContain("idle");
     expect(prompt).toContain("read-only");
     expect(prompt).toContain("The palette already carries every colour you need");
+    expect(prompt).toContain("Do not call critique_frame");
+    expect(prompt).not.toContain("clean critique");
   });
   it("lists references with their notes and mentions attachments only when present", () => {
     const prompt = buildWorkerPrompt(input);

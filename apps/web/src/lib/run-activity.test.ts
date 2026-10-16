@@ -4,6 +4,8 @@ import {
   consoleTabs,
   formatDuration,
   groupRowsByWorker,
+  recordFollowUp,
+  turnsFromAssetLog,
   rowsFromTaskLog,
   type RunRow,
 } from "./run-activity.js";
@@ -289,6 +291,62 @@ describe("run activity rows", () => {
   });
 });
 
+describe("asset log", () => {
+  it("pairs each prompt with its own steps, oldest first", () => {
+    const turns = turnsFromAssetLog(
+      {
+        id: "latest",
+        prompt: "fix the face",
+        runs: [
+          {
+            id: "plan-2",
+            role: "plan",
+            workerKey: "plan",
+            status: "succeeded",
+            answer: null,
+            createdAt: "2026-10-16T00:00:00.000Z",
+            events: [
+              {
+                sequence: 1,
+                type: "tool_completed",
+                data: { operationId: "0:tool:1", result: { failed: false } },
+              },
+            ],
+          },
+        ],
+      },
+      [
+        {
+          id: "first",
+          prompt: "please make the sweet face",
+          runs: [
+            {
+              id: "plan-1",
+              role: "plan",
+              workerKey: "plan",
+              status: "succeeded",
+              answer: "planned",
+              createdAt: "2026-10-15T00:00:00.000Z",
+              events: [],
+            },
+          ],
+        },
+      ],
+    );
+    expect(turns.map((turn) => turn.prompt)).toEqual([
+      "please make the sweet face",
+      "fix the face",
+    ]);
+    expect(turns[0]?.rows.some((row) => row.kind === "steering")).toBe(false);
+    expect(
+      turns[0]?.rows.some(
+        (row) => row.kind === "supervisor" && row.message === "planned",
+      ),
+    ).toBe(true);
+    expect(turns[1]?.id).toBe("latest");
+  });
+});
+
 describe("formatting", () => {
   it("formats durations the way the summary bar reads", () => {
     expect(formatDuration(900)).toBe("0.9s");
@@ -324,6 +382,62 @@ describe("task events", () => {
     });
     rows = applyRunEvent(rows, 4, "question-pending", { workerKey: "w1" });
     expect(rows.at(-1)).toMatchObject({ kind: "question", workerKey: "w1" });
+  });
+
+  it("shows a follow-up once, as the user's own line, on the agent it reached", () => {
+    let rows: RunRow[] = [];
+    rows = recordFollowUp(rows, {
+      id: "local",
+      kind: "steering",
+      routed: "supervisor",
+      message: "draw the whole face",
+      requestId: "req-1",
+      delivery: "clarify",
+    });
+    rows = applyRunEvent(rows, 1, "supervisor-says", {
+      message: "draw the whole face",
+      to: "w1",
+      frames: ["sweet-face"],
+    });
+    rows = applyRunEvent(rows, 2, "steering-routed", {
+      routed: "w1",
+      message: "draw the whole face",
+      frameName: "sweet-face",
+      relayed: true,
+    });
+    const chats = rows.filter((row) => row.kind === "steering");
+    expect(chats).toHaveLength(1);
+    expect(chats[0]).toMatchObject({
+      message: "draw the whole face",
+      routed: "w1",
+      frameName: "sweet-face",
+      delivery: "relayed",
+      requestId: "req-1",
+    });
+    expect(rows.some((row) => row.kind === "supervisor")).toBe(false);
+    const tabs = consoleTabs(rows, false);
+    expect(tabs.find((tab) => tab.label === "Agent 1")?.rows).toEqual(chats);
+    expect(tabs.find((tab) => tab.id === "all")?.rows).toEqual(chats);
+  });
+
+  it("keeps the follow-up text when the run reports that request as applied", () => {
+    const noted = recordFollowUp([], {
+      id: "local",
+      kind: "steering",
+      routed: "supervisor",
+      message: "darken the blush",
+      requestId: "req-9",
+      delivery: "queued",
+    });
+    const applied = applyRunEvent(noted, 4, "steering_applied", { id: "req-9", turn: 3 });
+    expect(applied).toHaveLength(1);
+    expect(applied[0]).toMatchObject({
+      kind: "steering",
+      message: "darken the blush",
+      delivery: "applied",
+    });
+    const orphan = applyRunEvent([], 5, "steering_queued", { id: "missing" });
+    expect(orphan[0]).toMatchObject({ kind: "tool", name: "follow_up" });
   });
 
   it("tags rows a mirrored child event created with its worker key", () => {
@@ -422,6 +536,22 @@ describe("replayed streams", () => {
       channel: "message",
       message: "four views of a tiger",
     });
+  });
+
+  it("keeps markdown line breaks in a streaming thought", () => {
+    let rows: RunRow[] = [];
+    rows = applyRunEvent(rows, 1, "model_delta", {
+      operationId: "0:model:1",
+      event: { type: "reasoning", text: "Look at the mane.\n" },
+    });
+    rows = applyRunEvent(rows, 2, "model_delta", {
+      operationId: "0:model:1",
+      event: { type: "reasoning", text: "\n- ears\n- tail" },
+    });
+    const note = rows.find((row) => row.kind === "supervisor");
+    expect(note && note.kind === "supervisor" ? note.message : "").toBe(
+      "Look at the mane.\n\n- ears\n- tail",
+    );
   });
 });
 

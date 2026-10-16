@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseModelSpecRow, selectRunTarget, type ModelSpec } from "./models.js";
+import {
+  parseModelSpecRow,
+  seesUserImages,
+  selectRunTarget,
+  type ModelSpec,
+} from "./models.js";
 
 describe("model specs", () => {
   it("validates database rows instead of guessing", () => {
@@ -9,6 +14,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high"],
         vision: false,
+        userImages: false,
         roles: ["summary-text"],
       }),
     ).toEqual({
@@ -16,6 +22,7 @@ describe("model specs", () => {
       api: "chat",
       efforts: ["low", "high"],
       vision: false,
+      userImages: false,
       roles: ["summary-text"],
     });
     expect(
@@ -24,6 +31,7 @@ describe("model specs", () => {
         api: "responses",
         efforts: ["high"],
         vision: true,
+        userImages: false,
         roles: [],
       }).vision,
     ).toBe(true);
@@ -33,6 +41,7 @@ describe("model specs", () => {
         api: "respones",
         efforts: ["low"],
         vision: false,
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -42,6 +51,7 @@ describe("model specs", () => {
         api: "",
         efforts: ["low"],
         vision: false,
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -51,6 +61,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: [],
         vision: false,
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -60,6 +71,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", 7],
         vision: false,
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -69,6 +81,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low"],
         vision: "yes",
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/bad/);
@@ -78,9 +91,36 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low"],
         vision: true,
+        userImages: false,
         roles: [],
       }),
     ).toThrow(/vision/);
+    // A chat-shape model takes images a person attached: the chat adapter
+    // delivers user-message images as `image_url` parts, while `vision`
+    // (responses-only) guards the tool-result images it flattens.
+    expect(
+      parseModelSpecRow({
+        id: "m",
+        api: "chat",
+        efforts: ["low"],
+        vision: false,
+        userImages: true,
+        roles: ["summary-text"],
+      }),
+    ).toMatchObject({ vision: false, userImages: true });
+    expect(() =>
+      parseModelSpecRow({
+        id: "bad",
+        api: "chat",
+        efforts: ["low"],
+        vision: false,
+        userImages: "yes",
+        roles: [],
+      }),
+    ).toThrow(/userImages/);
+    expect(seesUserImages({ vision: false, userImages: true })).toBe(true);
+    expect(seesUserImages({ vision: true, userImages: false })).toBe(true);
+    expect(seesUserImages({ vision: false, userImages: false })).toBe(false);
     // Roles are an explicit catalog assignment; a malformed one fails loud.
     for (const bad of ["summary-text", ["ok", 7], [""]]) {
       expect(() =>
@@ -89,6 +129,7 @@ describe("model specs", () => {
           api: "chat",
           efforts: ["low"],
           vision: false,
+          userImages: false,
           roles: bad,
         }),
       ).toThrow(/roles/);
@@ -101,6 +142,7 @@ describe("model specs", () => {
         api: "chat",
         efforts: ["low", "high", "max"],
         vision: false,
+        userImages: false,
         roles: ["summary-text"],
       },
     ];

@@ -2,17 +2,111 @@ import {
   type AssetDrawDeps,
   type AssetDrawInput,
   type DrawPlan,
+  userRequestFromPrompt,
   type WorkerPromptInput,
 } from "@pixelaition/agent";
-import { assets, type Database, frames, projects } from "@pixelaition/db";
+import {
+  assets,
+  type Database,
+  frames,
+  generationRuns,
+  projects,
+  runTasks,
+} from "@pixelaition/db";
 import { defaultStyle, type StyleGuide } from "@pixelaition/pixel";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
+import {
+  formatPriorContext,
+  stepsFromRuns,
+  type DurableDrawRecord,
+  type PriorContext,
+  type PriorTurn,
+} from "./prior-context.js";
+
+/** The fields prior-context loading reads. An ask run builds the same shape. */
+export type PriorContextInput = {
+  threadId: string;
+  assetId: string | null;
+  taskId?: string;
+  /** false only when the chosen model cannot view images; omitted keeps them. */
+  modelVision?: boolean;
+};
+
+/**
+ * Every earlier task in the thread, oldest first: each user request, the
+ * follow-ups steered into it, its reference images, and a compact record of
+ * what its agents did. The drawing task builds prompts from this; an ask run
+ * receives the same material so a follow-up question lands on full history.
+ */
+export async function loadPriorContextFor(
+  db: Database,
+  readDurable: ((durableId: string) => DurableDrawRecord | undefined) | undefined,
+  input: PriorContextInput,
+): Promise<PriorContext> {
+  const rows = await db
+    .select({
+      id: runTasks.id,
+      durableTaskId: runTasks.durableTaskId,
+      assetId: runTasks.assetId,
+      status: runTasks.status,
+    })
+    .from(runTasks)
+    .where(eq(runTasks.threadId, input.threadId))
+    .orderBy(asc(runTasks.createdAt));
+  let prior = rows.filter((row) => row.id !== input.taskId);
+  if (input.assetId !== null) {
+    prior = prior.filter((row) => row.assetId === input.assetId);
+  }
+  if (input.taskId === undefined) {
+    const active = [...prior]
+      .reverse()
+      .find(
+        (row) =>
+          row.status === "queued" || row.status === "running" || row.status === "waiting",
+      );
+    if (active !== undefined) prior = prior.filter((row) => row.id !== active.id);
+  }
+  const turns: PriorTurn[] = [];
+  for (const task of prior) {
+    const children = await db
+      .select({
+        role: generationRuns.role,
+        workerKey: generationRuns.workerKey,
+        prompt: generationRuns.prompt,
+        events: generationRuns.events,
+      })
+      .from(generationRuns)
+      .where(eq(generationRuns.taskId, task.id))
+      .orderBy(asc(generationRuns.createdAt));
+    const durable =
+      task.durableTaskId !== null && readDurable !== undefined
+        ? readDurable(task.durableTaskId)
+        : undefined;
+    const request =
+      durable?.request?.trim() ||
+      children
+        .map((child) => userRequestFromPrompt(child.role, child.prompt))
+        .find((text): text is string => text !== null) ||
+      "";
+    if (request.length === 0) continue;
+    turns.push({
+      request,
+      followUps: durable?.followUps ?? [],
+      steps: stepsFromRuns(children),
+      attachments: durable?.attachments ?? [],
+    });
+  }
+  return formatPriorContext(turns, { images: input.modelVision !== false });
+}
 
 /**
  * The DB-backed context the asset-draw task injects. The task itself stays
  * pure and testable; every read of the live asset happens here.
  */
-export function buildTaskDeps(db: Database): AssetDrawDeps {
+export function buildTaskDeps(
+  db: Database,
+  readDurable?: (durableId: string) => DurableDrawRecord | undefined,
+): AssetDrawDeps {
   async function loadAsset(assetId: string | null) {
     if (assetId === null) return undefined;
     const [row] = await db
@@ -110,6 +204,8 @@ export function buildTaskDeps(db: Database): AssetDrawDeps {
       };
       return { promptData };
     },
+    loadPriorContext: (input: AssetDrawInput) =>
+      loadPriorContextFor(db, readDurable, input),
     loadReviewContext: async (_input: AssetDrawInput, plan: DrawPlan) => {
       const rows = await db
         .select({ name: frames.name, summary: frames.summary })

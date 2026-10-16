@@ -100,7 +100,7 @@ export function Toolbar({
   onDeselect: () => void;
 }) {
   return (
-    <div className="relative flex items-center gap-1 overflow-x-auto bg-panel px-2 py-2">
+    <div className="relative flex min-w-0 items-center gap-1 overflow-x-auto bg-panel">
       {tools.map((entry) => {
         const Icon = entry.icon;
         return (

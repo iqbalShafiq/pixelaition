@@ -20,6 +20,8 @@ const tools = [
   "resize_canvas",
   "use_asset",
   "create_asset",
+  "list_projects",
+  "list_assets",
   "plan",
   "present_plan",
   "use_frame",
@@ -34,10 +36,10 @@ describe("role tool sets", () => {
       "add_layer",
       "rename_layer",
       "read_frame",
-      "critique_frame",
-      "check_animation",
       "web_search",
       "view_image",
+      "list_projects",
+      "list_assets",
       "ask_user",
       "use_frame",
     ]) {
@@ -54,6 +56,8 @@ describe("role tool sets", () => {
       "create_asset",
       "plan",
       "present_plan",
+      "critique_frame",
+      "check_animation",
     ]) {
       expect(names).not.toContain(drop);
     }
@@ -67,6 +71,9 @@ describe("role tool sets", () => {
         "check_animation",
         "web_search",
         "view_image",
+        "list_projects",
+        "critique_frame",
+        "check_animation",
       ]),
     );
     expect(names).not.toContain("paint_stroke");

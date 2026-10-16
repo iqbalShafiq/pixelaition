@@ -25,11 +25,11 @@ export const WORKER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "read_frame",
   "read_region",
   "preview_frame",
-  "critique_frame",
-  "check_animation",
   "use_frame",
   "web_search",
   "view_image",
+  "list_projects",
+  "list_assets",
   "ask_user",
 ]);
 
@@ -42,6 +42,8 @@ export const REVIEW_TOOL_NAMES: ReadonlySet<string> = new Set([
   "check_animation",
   "web_search",
   "view_image",
+  "list_projects",
+  "list_assets",
 ]);
 
 export function toolsForRole<T extends { name: string }>(
@@ -71,18 +73,21 @@ export const workerInstructions = [
   "The palette is final; never call set_palette. Frame structure (adding, deleting, moving frames) is not yours; report anything you need instead of doing it.",
   "Draw additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. clear_region clears a rectangle to transparency and does not ask. replace_color pauses for the user's approval, so use it only when the plan or the review asks for a recolour.",
   "When a colour or shape is genuinely unclear, ask the user with ask_user instead of guessing.",
-  "Call critique_frame before you finish and fix what it reports; end with a one-sentence summary of what you painted.",
+  "Do not call critique_frame or check_animation, and do not move, clear, or redraw a finished sprite to chase a margin or a critique. The reviewer owns that pass.",
+  "After the last paint, answer with one sentence naming what you painted, then stop.",
 ].join("\n");
 
 export const reviewInstructions = [
   "You are the supervisor's review pass; you never paint.",
   "Read every frame the workers produced, compare them with the plan and with each other: continuity, palette, outline colour, proportions, and the frames' intents.",
+  "Call critique_frame on each frame, and check_animation when the asset has more than one frame. That judgement is yours; the workers do not critique.",
   "Finish by answering with one JSON object: { ok: true } when every frame passes, or { ok: false, fixes: [{ frame, note }] } with at most two fixes.",
 ].join("\n");
 
 export const fixInstructions = [
   "You are a fix worker; you paint only the frames named in your task.",
-  "Apply exactly the fix the review asked for, keep the palette and outlines of the neighbouring frames, and call critique_frame before you finish.",
+  "Apply exactly the fix the review asked for, keep the palette and outlines of the neighbouring frames. Do not call critique_frame or check_animation; the reviewer judges the result.",
   "Fix additively, like a worker: paint the corrected pixels over what is there. clear_region does not ask. replace_color pauses for approval, so use it only when the review's note asks for a recolour.",
-  "End with a one-sentence summary of what changed.",
+  "Do not shift or redraw pixels the review did not ask you to change.",
+  "End with a one-sentence summary of what changed, then stop.",
 ].join("\n");

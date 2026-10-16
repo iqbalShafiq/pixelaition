@@ -169,6 +169,11 @@ export type RunBinding = {
   onCreateAsset?: (userId: string, input: CreateAssetInput) => Promise<RunAsset>;
   onLoadAsset?: (userId: string, assetId: string) => Promise<RunAsset>;
   /**
+   * Describes a reference image for a model that cannot see file parts.
+   * The summary-vision model does the looking; a missing vision model throws.
+   */
+  onDescribeImage?: (image: { data: string; mediaType: string }) => Promise<string>;
+  /**
    * Image URLs this run's web searches returned; view_image may look at these
    * and nothing else, so the model cannot point the worker at arbitrary hosts.
    */
@@ -333,16 +338,42 @@ export function bindRunAsset(
 }
 
 /**
+ * A frame reference is an id or a name. Reads use this so any agent can look
+ * at a frame it does not paint; writes still pass the resolved id to the
+ * ownership check.
+ */
+export function resolveFrameId(run: BoundRunBinding, frameId?: string): string {
+  if (frameId === undefined) {
+    if (!run.frames.has(run.currentFrameId)) {
+      throw new Error("Choose or create a frame first.");
+    }
+    return run.currentFrameId;
+  }
+  if (run.frames.has(frameId)) return frameId;
+  const wanted = frameId.trim().toLowerCase();
+  const matches = [...run.frames.entries()].filter(
+    ([, frame]) => frame.name.trim().toLowerCase() === wanted,
+  );
+  if (matches.length === 1) {
+    const id = matches[0]?.[0];
+    if (id !== undefined) return id;
+  }
+  if (matches.length > 1) {
+    throw new Error(`More than one frame is named "${frameId}". Pass the frame id.`);
+  }
+  const names = [...run.frames.values()].map((frame) => frame.name);
+  const list = names.length > 0 ? names.join(", ") : "(none)";
+  throw new Error(
+    `No frame named or identified by "${frameId}". Frames on this asset: ${list}.`,
+  );
+}
+
+/**
  * The buffer of the frame named by the caller, or of the run's current frame.
  * An unknown frame id and a run without a current frame fail with named causes.
  */
 export function frameBuffer(run: BoundRunBinding, frameId?: string): FrameBuffer {
-  if (frameId !== undefined) {
-    const frame = run.frames.get(frameId);
-    if (!frame) throw new Error(`Frame ${frameId} is not part of this asset.`);
-    return frame.buffer;
-  }
-  const frame = run.frames.get(run.currentFrameId);
+  const frame = run.frames.get(resolveFrameId(run, frameId));
   if (!frame) throw new Error("Choose or create a frame first.");
   return frame.buffer;
 }
@@ -382,9 +413,9 @@ export function paintStroke(
   label: string,
   points: Stroke["points"],
 ): Stroke {
-  const id = frameId ?? run.currentFrameId;
+  const id = resolveFrameId(run, frameId);
   assertOwnedFrame(run, id);
-  const buffer = frameBuffer(run, frameId);
+  const buffer = frameBuffer(run, id);
   const result = applyCommand(buffer, {
     type: "paint",
     layerId: resolveLayerRef(buffer, layerId),

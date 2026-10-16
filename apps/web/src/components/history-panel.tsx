@@ -382,7 +382,6 @@ function VersionEntry({
             >
               <IconButton
                 label={`Save label for ${row.kindLabel}`}
-                size="sm"
                 onClick={onCommitEdit}
               >
                 <Check />
@@ -404,7 +403,6 @@ function VersionEntry({
                     : `Preview ${row.kindLabel}`
                 }
                 hint="Onion diff over the current frame"
-                size="sm"
                 subtle
                 active={previewing}
                 disabled={!snapshot}
@@ -412,11 +410,7 @@ function VersionEntry({
               >
                 <Eye />
               </IconButton>
-              <IconButton
-                label={`Label ${row.kindLabel}`}
-                size="sm"
-                onClick={onStartEdit}
-              >
+              <IconButton label={`Label ${row.kindLabel}`} onClick={onStartEdit}>
                 <Pencil />
               </IconButton>
               <Menu label={`Actions for ${row.kindLabel} · ${row.relativeTime}`}>

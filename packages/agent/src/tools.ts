@@ -38,6 +38,7 @@ import {
   assertRoleAllowsTool,
   requireAsset,
   requireRun,
+  resolveFrameId,
   resolveLayerRef,
   runIdFromOperation,
   searchImagesFor,
@@ -73,11 +74,10 @@ function resolveFrame(
   run: BoundRunBinding,
   frameId?: string,
 ): { id: string; name: string; buffer: FrameBuffer; frame: RunFrame } {
-  const id = frameId ?? run.currentFrameId;
-  const buffer = frameBuffer(run, frameId);
+  const id = resolveFrameId(run, frameId);
   const frame = run.frames.get(id);
   if (!frame) throw new Error("Choose or create a frame first.");
-  return { id, name: frame.name, buffer, frame };
+  return { id, name: frame.name, buffer: frame.buffer, frame };
 }
 
 function resolvePixels(
@@ -363,7 +363,7 @@ export function createPixelTools(
   const readFrame = createTool({
     name: "read_frame",
     description:
-      "Read a frame as RLE rows (`colorxcount`). Defaults to the current frame and to the composite of visible layers; pass frameId or layerId (id or name) to read another frame or one layer. Zero is transparent.",
+      "Read any frame on the asset as RLE rows (`colorxcount`), including a frame another worker is painting. Defaults to the current frame and to the composite of visible layers. frameId and layerId each accept an id or a name. Zero is transparent.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -753,10 +753,10 @@ export function createPixelTools(
       frameId: z.string().optional(),
       palette: z.array(z.string()).min(2).max(33),
     }),
-    requiresApproval: gatedApproval("set_palette", frameNeedsApproval),
+    // Choosing colours is part of drawing. It does not pause for Jev or a
+    // clarification card; index 0 and the hex rules still refuse a bad palette.
+    requiresApproval: () => false,
     execute: (input, context) => {
-      const refused = gateRefusal(context.operationId, "set_palette");
-      if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
       requireAsset(run);
       const current = resolveFrame(run, input.frameId);
@@ -1037,9 +1037,10 @@ export function createPixelTools(
         [...run.frames]
           .sort(([, left], [, right]) => left.index - right.index)
           .map(([id]) => id);
-      const frames = ids.map((id) => {
+      const frames = ids.map((ref) => {
+        const id = resolveFrameId(run, ref);
         const frame = run.frames.get(id);
-        if (!frame) throw new Error(`Frame ${id} is not part of this asset.`);
+        if (!frame) throw new Error("Choose or create a frame first.");
         return { id, name: frame.name, buffer: frame.buffer };
       });
       const report = checkAnimation(frames);
@@ -1330,7 +1331,7 @@ export function createPixelTools(
   const viewImage = createTool({
     name: "view_image",
     description:
-      "Look at one image a web_search in this run returned. The picture arrives for you to see; describe only what you actually saw.",
+      "Look at one image a web_search in this run returned. A model that can see receives the picture. A model that cannot receives a description from the vision model. Say only what this tool showed you.",
     inputSchema: z.object({ url: z.string().url() }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
@@ -1341,15 +1342,28 @@ export function createPixelTools(
         );
       }
       const image = await fetchReferenceImage(url);
-      return ToolOutput.content([
-        { type: "text", text: `${url.href} — ${image.mediaType}, ${image.bytes} bytes.` },
-        {
-          type: "file",
-          data: { type: "data", data: image.data },
-          mediaType: image.mediaType,
-          filename: "reference",
-        },
-      ]);
+      if (options.vision === true) {
+        return ToolOutput.content([
+          {
+            type: "text",
+            text: `${url.href} — ${image.mediaType}, ${image.bytes} bytes.`,
+          },
+          {
+            type: "file",
+            data: { type: "data", data: image.data },
+            mediaType: image.mediaType,
+            filename: "reference",
+          },
+        ]);
+      }
+      if (!run.onDescribeImage) {
+        throw new Error("This model cannot view images: no vision model is configured.");
+      }
+      const description = await run.onDescribeImage({
+        data: image.data,
+        mediaType: image.mediaType,
+      });
+      return `${url.href} — seen by the vision model:\n${description}`;
     },
   });
 
@@ -1388,8 +1402,7 @@ export function createPixelTools(
     renameFrameTool,
     moveFrameTool,
     deleteFrameTool,
-    ...(options.webSearch === true ? [webSearch] : []),
-    ...(options.vision === true && options.webSearch === true ? [viewImage] : []),
+    ...(options.webSearch === true ? [webSearch, viewImage] : []),
     ...(options.vision === true ? [preview] : []),
   ];
   // One agent carries the full tool list (so `continueFrom` keeps working

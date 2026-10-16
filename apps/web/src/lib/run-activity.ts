@@ -41,13 +41,22 @@ export type RunRow =
       status: string;
     }
   | {
-      /** A steering message and where it went. */
+      /** The user's follow-up, and how far it got. */
       id: string;
       kind: "steering";
       routed: string;
       message: string;
       frameName?: string;
       relayed?: boolean;
+      requestId?: string;
+      /**
+       * clarify: the router asked which frame, and nothing was signaled.
+       * queued: a single run accepted it for the next turn.
+       * held: the supervisor has it; no worker was running to take it.
+       * relayed: a live worker received it.
+       * applied: that worker's next turn consumed it.
+       */
+      delivery?: "clarify" | "queued" | "held" | "relayed" | "applied" | "record";
     }
   | {
       /** The supervisor's own line, or any agent's thinking or reply. */
@@ -166,6 +175,69 @@ function toolSummary(name: string, input: unknown): string | undefined {
   return undefined;
 }
 
+const FOLLOW_UP_RANK = {
+  clarify: 0,
+  queued: 1,
+  held: 2,
+  record: 2,
+  relayed: 3,
+  applied: 4,
+} as const;
+
+type FollowUp = Extract<RunRow, { kind: "steering" }>;
+
+/**
+ * One chat line per follow-up. A later receipt for the same request (or the
+ * same text that is still waiting) updates that line instead of stacking a
+ * second copy the user cannot tell apart from a new send.
+ */
+export function recordFollowUp(rows: RunRow[], next: FollowUp): RunRow[] {
+  const index = followUpIndex(rows, next);
+  if (index === -1) return [...rows, next];
+  const current = rows[index];
+  if (current?.kind !== "steering") return [...rows, next];
+  const merged: FollowUp = {
+    ...current,
+    routed: next.routed || current.routed,
+    message: next.message || current.message,
+    delivery: next.delivery ?? current.delivery,
+    relayed: next.relayed === true || current.relayed === true,
+    ...(next.frameName !== undefined || current.frameName !== undefined
+      ? { frameName: next.frameName ?? current.frameName }
+      : {}),
+    ...(next.requestId !== undefined || current.requestId !== undefined
+      ? { requestId: next.requestId ?? current.requestId }
+      : {}),
+  };
+  return rows.map((row, at) => (at === index ? merged : row));
+}
+
+function followUpIndex(rows: RunRow[], next: FollowUp): number {
+  if (next.requestId !== undefined) {
+    const byId = rows.findIndex(
+      (row) => row.kind === "steering" && row.requestId === next.requestId,
+    );
+    if (byId !== -1) return byId;
+  }
+  const incoming = FOLLOW_UP_RANK[next.delivery ?? "held"];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row?.kind !== "steering" || row.message !== next.message) continue;
+    if (
+      row.requestId !== undefined &&
+      next.requestId !== undefined &&
+      row.requestId !== next.requestId
+    ) {
+      continue;
+    }
+    const current = FOLLOW_UP_RANK[row.delivery ?? "held"];
+    // A repeat of text that already landed is a new send.
+    if (incoming < current) continue;
+    return index;
+  }
+  return -1;
+}
+
 /** `3 pairs · clean` when nothing is flagged, otherwise the flag count. */
 function animationSummary(pairs: number, flags: number): string {
   if (flags > 0) return `${flags} flag${flags === 1 ? "" : "s"}`;
@@ -223,8 +295,13 @@ export function applyRunEvent(
     const thinking = kind === "reasoning" || (kind?.startsWith("reasoning") ?? false);
     if (kind === "text" || kind === "text_delta" || thinking) {
       const raw = streamed?.text ?? streamed?.delta;
-      const text = typeof raw === "string" ? raw.replace(/\s+/g, " ").trimStart() : "";
-      if (text.length === 0) return rows;
+      // Keep line breaks so a live thought can render as markdown. Collapse
+      // only the horizontal gaps a token stream inserts. A chunk that is
+      // nothing but spaces still drops; a newline chunk stays.
+      const text = typeof raw === "string" ? raw.replace(/[^\S\n]+/g, " ") : "";
+      if (text.length === 0 || (text.trim().length === 0 && !text.includes("\n"))) {
+        return rows;
+      }
       // Thinking and the reply of one model call stay two rows, so a plan
       // can be read while the agent is still writing it.
       const channel = thinking ? "thinking" : "message";
@@ -407,36 +484,46 @@ export function applyRunEvent(
     ];
   }
   if (type === "supervisor-says") {
+    // This event is the user's follow-up, echoed once the task accepted it.
+    // It belongs in the chat as "you", not as a line the supervisor wrote.
     const message = typeof body?.message === "string" ? body.message : "";
     const to = typeof body?.to === "string" ? body.to : undefined;
-    const held = body?.held === true;
-    return [
-      ...rows,
+    const frameName = Array.isArray(body?.frames)
+      ? (body.frames as unknown[]).find(
+          (item): item is string => typeof item === "string",
+        )
+      : undefined;
+    return recordFollowUp(
+      rows,
       tag({
         id: `says-${sequence}`,
-        kind: "supervisor",
+        kind: "steering",
+        routed: to ?? "supervisor",
         message,
-        ...(to !== undefined ? { to } : {}),
-        ...(held ? { held: true } : {}),
+        delivery: to !== undefined ? "relayed" : "held",
+        ...(frameName !== undefined ? { frameName } : {}),
+        ...(to !== undefined ? { relayed: true } : {}),
       }),
-    ];
+    );
   }
   if (type === "steering-routed") {
     const routed = typeof body?.routed === "string" ? body.routed : "supervisor";
     const message = typeof body?.message === "string" ? body.message : "";
     const frameName = typeof body?.frameName === "string" ? body.frameName : undefined;
     const relayed = body?.relayed === true;
-    return [
-      ...rows,
+    const namedWorker = routed !== "supervisor" && routed !== "plan";
+    return recordFollowUp(
+      rows,
       tag({
         id: `steer-${sequence}`,
         kind: "steering",
         routed,
         message,
+        delivery: relayed || namedWorker ? "relayed" : "held",
         ...(frameName !== undefined ? { frameName } : {}),
-        ...(relayed ? { relayed: true } : {}),
+        ...(relayed || namedWorker ? { relayed: true } : {}),
       }),
-    ];
+    );
   }
   if (type === "question-pending") {
     const key = typeof body?.workerKey === "string" ? body.workerKey : "worker";
@@ -471,6 +558,27 @@ export function applyRunEvent(
     ];
   }
   if (type === "steering_queued" || type === "steering_applied") {
+    const requestId = typeof body?.id === "string" ? body.id : undefined;
+    const delivery = type === "steering_applied" ? "applied" : "queued";
+    if (requestId !== undefined) {
+      const index = rows.findIndex(
+        (row) => row.kind === "steering" && row.requestId === requestId,
+      );
+      const current = rows[index];
+      if (current?.kind === "steering") {
+        return rows.map((row, at) =>
+          at === index && row.kind === "steering"
+            ? {
+                ...row,
+                delivery,
+                ...(delivery === "applied" ? { relayed: true } : {}),
+              }
+            : row,
+        );
+      }
+    }
+    // A replay has the receipt and not the text. Say that it moved, without
+    // inventing the words.
     return [
       ...rows,
       tag({
@@ -585,6 +693,46 @@ export function rowsFromTaskLog(runs: TaskLogRun[], plan?: unknown): RunRow[] {
     }
   }
   return rows;
+}
+
+export type AssetLogTask = {
+  id: string;
+  prompt: string | null;
+  plan?: unknown;
+  runs: TaskLogRun[];
+};
+
+/** One user request and the agent steps that belong to it. */
+export type ConsoleTurn = {
+  id: string;
+  prompt: string;
+  rows: RunRow[];
+};
+
+/**
+ * Each task is its own turn, oldest first. The prompt stays on the turn so
+ * the sticky header can pair it with that turn's tabs.
+ */
+export function turnsFromAssetLog(
+  latest: AssetLogTask,
+  earlier: AssetLogTask[] = [],
+): ConsoleTurn[] {
+  return [...earlier, latest].map((task) => ({
+    id: task.id,
+    prompt: task.prompt?.trim() ?? "",
+    rows: rowsFromTaskLog(task.runs, task.plan).map((row) => ({
+      ...row,
+      id: `${task.id}:${row.id}`,
+    })),
+  }));
+}
+
+/** The flat transcript, oldest turn first. Prompts stay on the turns. */
+export function rowsFromAssetLog(
+  latest: AssetLogTask,
+  earlier: AssetLogTask[] = [],
+): RunRow[] {
+  return turnsFromAssetLog(latest, earlier).flatMap((turn) => turn.rows);
 }
 
 export type ConsoleTab = {

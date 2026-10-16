@@ -276,7 +276,7 @@ function FrameRow({
         )}
         <span
           className={`relative z-10 ml-auto shrink-0 items-center justify-end gap-0.5 ${
-            locked ? "hidden" : "flex w-[58px]"
+            locked ? "hidden" : "flex w-[74px]"
           }`}
         >
           <AnimatePresence initial={false} mode="popLayout">
@@ -289,7 +289,7 @@ function FrameRow({
                 transition={{ duration: 0.12 }}
                 onMouseDown={(event) => event.preventDefault()}
               >
-                <IconButton label={`Save ${frame.name}`} size="sm" onClick={onCommit}>
+                <IconButton label={`Save ${frame.name}`} onClick={onCommit}>
                   <Check />
                 </IconButton>
               </motion.span>
@@ -304,7 +304,6 @@ function FrameRow({
               >
                 <IconButton
                   label={`Rename ${frame.name}`}
-                  size="sm"
                   disabled={locked}
                   onClick={onStartEdit}
                 >
@@ -346,7 +345,7 @@ function FrameRow({
         }}
         className={`${
           locked ? "hidden" : "grid"
-        } h-8 w-7 shrink-0 cursor-grab place-items-center border-2 border-transparent text-muted transition-colors duration-150 hover:border-line hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-50`}
+        } h-9 w-9 shrink-0 cursor-grab place-items-center border-2 border-transparent text-muted transition-colors duration-150 hover:border-line hover:bg-raised hover:text-ink disabled:cursor-default disabled:opacity-50`}
       >
         <MenuIcon width={14} height={14} />
       </button>
@@ -468,13 +467,12 @@ export function FramePanel({
         <div className="flex items-center gap-1">
           <IconButton
             label={playing ? "Stop playback" : "Play frames"}
-            size="sm"
             disabled={frames.length < 2}
             onClick={onTogglePlay}
           >
             {playing ? <Stop /> : <Play />}
           </IconButton>
-          <IconButton label="Add frame" size="sm" disabled={locked} onClick={onAdd}>
+          <IconButton label="Add frame" disabled={locked} onClick={onAdd}>
             <Plus />
           </IconButton>
         </div>
@@ -595,7 +593,6 @@ export function LayerPanel({
       action={
         <IconButton
           label="Add layer"
-          size="sm"
           disabled={locked || layers.length >= 4}
           onClick={onAdd}
         >
@@ -678,7 +675,7 @@ export function LayerPanel({
                     {layer.name}
                   </span>
                 )}
-                <span className="relative z-10 ml-auto flex w-[58px] shrink-0 items-center justify-end gap-0.5">
+                <span className="relative z-10 ml-auto flex w-[74px] shrink-0 items-center justify-end gap-0.5">
                   <AnimatePresence initial={false} mode="popLayout">
                     {editingId === layer.id ? (
                       <motion.span
@@ -689,11 +686,7 @@ export function LayerPanel({
                         transition={{ duration: 0.12 }}
                         onMouseDown={(event) => event.preventDefault()}
                       >
-                        <IconButton
-                          label={`Save ${layer.name}`}
-                          size="sm"
-                          onClick={commitEdit}
-                        >
+                        <IconButton label={`Save ${layer.name}`} onClick={commitEdit}>
                           <Check />
                         </IconButton>
                       </motion.span>
@@ -708,7 +701,6 @@ export function LayerPanel({
                       >
                         <IconButton
                           label={`Rename ${layer.name}`}
-                          size="sm"
                           disabled={locked}
                           onClick={() => startEdit(layer.id, layer.name)}
                         >

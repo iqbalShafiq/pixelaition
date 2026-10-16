@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Agent } from "@anvia/core";
 import { createQuestionTool } from "@anvia/core/tool";
 import type { AgentPrompt } from "@anvia/core/agent";
@@ -25,6 +26,7 @@ import {
   assertRoleAllowsTool,
   searchImagesFor,
   createAssetDrawTask,
+  promptText,
   workerAttemptTask,
   type AssetDrawInput,
   type DrawPlan,
@@ -39,6 +41,7 @@ import {
   parseModelSpecRow,
   releaseRun,
   screenOutput,
+  seesUserImages,
   selectRunTarget,
   stagedOverrideSchema,
   traceIdFor,
@@ -89,7 +92,7 @@ import {
 } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
-import { sanitizeEvent } from "./events.js";
+import { outcomeTextFrom, sanitizeEvent } from "./events.js";
 import {
   buildFrameSummaryPrompt,
   clampSummary,
@@ -98,7 +101,9 @@ import {
   type SummaryKind,
 } from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
-import { buildTaskDeps, referencesForWorker } from "./tasks.js";
+import { parseDurableRecord } from "./prior-context.js";
+import { askSessionId } from "./sessions.js";
+import { buildTaskDeps, loadPriorContextFor, referencesForWorker } from "./tasks.js";
 
 type PublicEvent = {
   sequence: number;
@@ -1056,10 +1061,9 @@ async function bindTaskChild(
       ? (node.input as { agentId: string }).agentId
       : input.agentId;
   const { modelId, effort } = modelEffortFromAgentId(agentId);
-  const spawnPrompt =
-    typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
-      ? (node.input as { prompt: string }).prompt
-      : "(prompt with reference images)";
+  const spawnPrompt = promptText(
+    (node.input as { prompt?: unknown } | undefined)?.prompt,
+  );
   const publicRunId = existingRow?.id ?? crypto.randomUUID();
   publicIdByDurable.set(childRunId, publicRunId);
   // A child without a trace context drops every span; name its trace by role
@@ -1132,6 +1136,7 @@ async function bindTaskChild(
       // plan-1 corrects JSON after approval; plan-create only adds the frames.
       // plan-retry is a child that never reached approval, so it may still ask.
       ...(role === "plan" && planAlreadyApproved(node.key) ? { planApproved: true } : {}),
+      userId: input.userId,
     });
   } else if (role === "plan") {
     // A workspace task starts with no asset; the plan child binds one lazily.
@@ -1309,7 +1314,25 @@ async function recordTaskRow(input: {
     });
 }
 
-const assetDraw = createAssetDrawTask(buildTaskDeps(db));
+function readDurableDraw(durableId: string) {
+  const sqlite = new DatabaseSync(durablePath, { readOnly: true });
+  try {
+    const row = sqlite
+      .prepare("select record from anvia_durable_tasks where id = ?")
+      .get(durableId) as { record?: string } | undefined;
+    if (typeof row?.record !== "string") return undefined;
+    return parseDurableRecord(row.record);
+  } catch (reason) {
+    console.error(
+      `[prior] task ${durableId} could not be read: ${boundedReason(reason)}`,
+    );
+    return undefined;
+  } finally {
+    sqlite.close();
+  }
+}
+
+const assetDraw = createAssetDrawTask(buildTaskDeps(db, readDurableDraw));
 const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
@@ -1450,6 +1473,7 @@ app.get("/internal/agents", (req, res) => {
       id: spec.id,
       efforts: spec.efforts,
       vision: spec.vision,
+      userImages: spec.userImages,
     })),
     agents: agents.map((entry) => entry.id),
   });
@@ -1527,13 +1551,20 @@ app.post("/internal/runs", async (req, res) => {
       message: `Unknown model or effort: ${body.modelId} / ${body.reasoningEffort}.`,
     });
   }
+  const targetSpec = specs.find((spec) => spec.id === target.modelId);
+  // `selectRunTarget` returns only catalog pairs, so the spec is always
+  // present here; an impossible miss is named rather than defaulted.
+  if (targetSpec === undefined) {
+    return res.status(422).json({
+      message: `Unknown model or effort: ${body.modelId} / ${body.reasoningEffort}.`,
+    });
+  }
   // The API already refuses this; the worker re-checks so a direct internal
   // call cannot hand pixels to a model that cannot read them.
-  const targetSpec = specs.find((spec) => spec.id === target.modelId);
   if (
     body.attachments !== undefined &&
     body.attachments.length > 0 &&
-    targetSpec?.vision !== true
+    !seesUserImages(targetSpec)
   ) {
     return res.status(422).json({
       message: `Model ${target.modelId} cannot read attached images; pick a vision model or remove the attachments.`,
@@ -1617,22 +1648,37 @@ app.post("/internal/runs", async (req, res) => {
       : {}),
     recent,
   });
+  // An ask run is read-only, but it continues the thread: the earlier
+  // requests, their reference images (when this model can view them), and the
+  // agents' steps ride into its prompt the same way a drawing run gets them.
+  const prior =
+    body.mode === "ask"
+      ? await loadPriorContextFor(db, readDurableDraw, {
+          threadId: body.threadId,
+          assetId: body.assetId ?? null,
+          modelVision: seesUserImages(targetSpec),
+        })
+      : { text: "", attachments: [] };
+  const promptWithPrior =
+    prior.text.length > 0 ? `${prior.text}\n\n${promptText}` : promptText;
   // Attachments become media parts the model sees directly; a message without
   // them stays a plain string, which keeps old journals and replay simple.
+  // Earlier reference images come first, in the order the prior text names.
+  const mediaParts = [...prior.attachments, ...(body.attachments ?? [])];
   const prompt: AgentPrompt =
-    body.attachments !== undefined && body.attachments.length > 0
+    mediaParts.length > 0
       ? {
           role: "user",
           content: [
-            { type: "text", text: promptText },
-            ...body.attachments.map((attachment) => ({
+            { type: "text", text: promptWithPrior },
+            ...mediaParts.map((attachment) => ({
               type: "image" as const,
               image: { type: "data" as const, data: attachment.data },
               mediaType: attachment.mediaType,
             })),
           ],
         }
-      : promptText;
+      : promptWithPrior;
 
   // Every drawing request runs one durable asset-draw task; only ask mode
   // stays a single read-only run.
@@ -1671,6 +1717,8 @@ app.post("/internal/runs", async (req, res) => {
           userId: body.userId,
           threadId: body.threadId,
           attachments: body.attachments ?? [],
+          taskId: body.runId,
+          modelVision: seesUserImages(targetSpec),
           agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
           maxWorkers: shape.workers,
           review: shape.review,
@@ -1724,7 +1772,11 @@ app.post("/internal/runs", async (req, res) => {
   try {
     run = await runtime.submit({
       agentId: `${agentPrefix}:ask:${target.modelId}:${target.effort}`,
-      sessionId: body.threadId,
+      // One conversation per model and shape: the runtime continues a
+      // session's latest completed run whatever agent produced it, and a
+      // chat-shape turn's locally minted reasoning ids are not replayable
+      // to the responses endpoint. See `askSessionId`.
+      sessionId: askSessionId(body.threadId, target.modelId, targetSpec.api),
       requestId: body.requestId,
       prompt,
     });
@@ -1765,6 +1817,7 @@ app.post("/internal/runs", async (req, res) => {
       asset,
       originFrameId,
       request: body.prompt,
+      userId: body.userId,
     });
   } else if (body.scope === "workspace") {
     // A workspace run starts with no asset; its tools bind one lazily.
@@ -2370,11 +2423,7 @@ async function follow(
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
         const stored = consoleEvents(publicId, interactionsFor(publicId));
-        const outcome = (
-          stored.find((event) => event.type === "status")?.data as
-            { outcome?: { text?: string } } | undefined
-        )?.outcome;
-        const answer = await screenAnswer(durableId, outcome?.text);
+        const answer = await screenAnswer(durableId, outcomeTextFrom(stored));
         await db
           .update(generationRuns)
           .set({
@@ -2764,6 +2813,116 @@ function frameWrites(options: {
   return { onStroke, onFrameChange };
 }
 
+/** Projects the run owner can see. Asset runs and workspace runs share this. */
+async function listOwnedProjects(ownerId: string): Promise<ProjectSummary[]> {
+  const rows = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      summary: projects.summary,
+      updatedAt: projects.updatedAt,
+      assetCount: count(assets.id),
+    })
+    .from(projects)
+    .leftJoin(assets, eq(assets.projectId, projects.id))
+    .where(eq(projects.userId, ownerId))
+    .groupBy(projects.id)
+    .orderBy(desc(projects.updatedAt));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    summary: row.summary,
+    updatedAt: row.updatedAt.toISOString(),
+    assetCount: row.assetCount,
+  }));
+}
+
+/** Assets of one project the owner actually owns. A foreign id fails closed. */
+async function listOwnedAssets(
+  ownerId: string,
+  projectId: string,
+): Promise<AssetSummary[]> {
+  const [project] = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), eq(projects.userId, ownerId)));
+  if (!project) throw new Error("That project is not available.");
+  const rows = await db
+    .select({
+      id: assets.id,
+      name: assets.name,
+      summary: assets.summary,
+      width: assets.width,
+      height: assets.height,
+      updatedAt: assets.updatedAt,
+      frameCount: count(frames.id),
+    })
+    .from(assets)
+    .leftJoin(frames, eq(frames.assetId, assets.id))
+    .where(eq(assets.projectId, projectId))
+    .groupBy(assets.id)
+    .orderBy(desc(assets.updatedAt));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    summary: row.summary,
+    width: row.width,
+    height: row.height,
+    frameCount: row.frameCount,
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+/**
+ * A drawing model without vision still gets to look: the summary-vision model
+ * describes the bytes, and the tool returns that text. A missing vision model
+ * fails with the cause instead of pretending the picture was seen.
+ */
+async function describeReferenceImage(
+  traceId: string,
+  image: { data: string; mediaType: string },
+): Promise<string> {
+  if (!visionClient) {
+    throw new Error("This model cannot view images: no vision model is configured.");
+  }
+  const started = Date.now();
+  const result = await generateCompletion({
+    model: visionClient.model,
+    ...summaryControls(visionClient.spec),
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Describe this reference for a pixel artist in at most six sentences. Cover the silhouette, the pose, the main colours, and the separate parts (ears, mane, clothing, weapon, shadow). Do not invent pixel coordinates.",
+          },
+          {
+            type: "image",
+            image: { type: "data", data: image.data },
+            mediaType: image.mediaType,
+          },
+        ],
+      },
+    ],
+  });
+  const text = result.output.trim();
+  if (!text) throw new Error("The vision model returned an empty description.");
+  const description = text.length > 1200 ? `${text.slice(0, 1200)}…` : text;
+  void telemetry?.recordRunSpan({
+    traceId,
+    kind: "generation",
+    name: "view-image",
+    startMs: started,
+    endMs: Date.now(),
+    input: image.mediaType,
+    output: description,
+    model: visionClient.spec.id,
+    ...(result.usage !== undefined ? { usage: { ...result.usage } } : {}),
+  });
+  return description;
+}
+
 /**
  * Bind a durable run to its asset. Submission and boot recovery share this so a
  * recovered run persists strokes and frame changes exactly like a fresh one.
@@ -2778,6 +2937,8 @@ function bindAssetRun(options: {
   request?: string;
   /** Frames the user already approved; absent means only the origin frame. */
   approvedScope?: string[];
+  /** The account that owns the asset. List tools enforce it. */
+  userId: string;
   /** The task role this child plays, for ownership and the console tree. */
   role?: "plan" | "worker" | "review" | "fix";
   workerKey?: string;
@@ -2817,6 +2978,10 @@ function bindAssetRun(options: {
     touchedFrames: new Set(),
     strokes: [],
     issues: [],
+    userId: options.userId,
+    onListProjects: listOwnedProjects,
+    onListAssets: listOwnedAssets,
+    onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
     onStroke: writes.onStroke,
     onFrameChange: writes.onFrameChange,
     onScopeChange: (scope) => persistScope(publicRunId, scope),
@@ -2937,59 +3102,9 @@ function bindWorkspaceRun(options: {
     userId,
     ...(options.role ? { role: options.role } : {}),
     ...(options.planApproved ? { planApproved: true } : {}),
-    onListProjects: async (ownerId): Promise<ProjectSummary[]> => {
-      const rows = await db
-        .select({
-          id: projects.id,
-          name: projects.name,
-          summary: projects.summary,
-          updatedAt: projects.updatedAt,
-          assetCount: count(assets.id),
-        })
-        .from(projects)
-        .leftJoin(assets, eq(assets.projectId, projects.id))
-        .where(eq(projects.userId, ownerId))
-        .groupBy(projects.id)
-        .orderBy(desc(projects.updatedAt));
-      return rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        summary: row.summary,
-        updatedAt: row.updatedAt.toISOString(),
-        assetCount: row.assetCount,
-      }));
-    },
-    onListAssets: async (ownerId, projectId): Promise<AssetSummary[]> => {
-      const [project] = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(and(eq(projects.id, projectId), eq(projects.userId, ownerId)));
-      if (!project) throw new Error("That project is not available.");
-      const rows = await db
-        .select({
-          id: assets.id,
-          name: assets.name,
-          summary: assets.summary,
-          width: assets.width,
-          height: assets.height,
-          updatedAt: assets.updatedAt,
-          frameCount: count(frames.id),
-        })
-        .from(assets)
-        .leftJoin(frames, eq(frames.assetId, assets.id))
-        .where(eq(assets.projectId, projectId))
-        .groupBy(assets.id)
-        .orderBy(desc(assets.updatedAt));
-      return rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        summary: row.summary,
-        width: row.width,
-        height: row.height,
-        frameCount: row.frameCount,
-        updatedAt: row.updatedAt.toISOString(),
-      }));
-    },
+    onListProjects: listOwnedProjects,
+    onListAssets: listOwnedAssets,
+    onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
     onCreateAsset: async (ownerId, input: CreateAssetInput): Promise<RunAsset> => {
       const [project] = await db
         .select({ style: projects.style, summary: projects.summary })
@@ -3219,6 +3334,7 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
         ...(run.role === "worker" || run.role === "fix"
           ? { ownedFrameIds: (run.frameIds as string[] | null) ?? [] }
           : {}),
+        userId,
       });
       void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
         (reason: unknown) => {
@@ -3234,9 +3350,73 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
   }
 }
 
+/**
+ * A prompt that rode with reference images used to be stored as a placeholder.
+ * The user's words are on the durable task; put them back on the plan child
+ * so a refresh can show what was asked.
+ */
+async function repairAttachmentPrompts(): Promise<void> {
+  const rows = await db
+    .select({
+      id: generationRuns.id,
+      taskId: generationRuns.taskId,
+      role: generationRuns.role,
+    })
+    .from(generationRuns)
+    .where(eq(generationRuns.prompt, "(prompt with reference images)"));
+  const plans = rows.filter((row) => row.role === "plan" && row.taskId !== null);
+  if (plans.length === 0) return;
+  const durablePath = process.env.DURABLE_DATABASE_PATH ?? "./data/anvia-runs.sqlite";
+  const sqlite = new DatabaseSync(durablePath, { readOnly: true });
+  try {
+    const read = sqlite.prepare("select record from anvia_durable_tasks where id = ?");
+    const requests = new Map<string, string | null>();
+    for (const row of plans) {
+      const taskId = row.taskId;
+      if (taskId === null) continue;
+      let request = requests.get(taskId);
+      if (request === undefined) {
+        const [task] = await db
+          .select({ durableTaskId: runTasks.durableTaskId })
+          .from(runTasks)
+          .where(eq(runTasks.id, taskId));
+        request = null;
+        if (task?.durableTaskId) {
+          const record = read.get(task.durableTaskId) as { record?: string } | undefined;
+          if (typeof record?.record === "string") {
+            const parsed = JSON.parse(record.record) as { input?: { request?: unknown } };
+            if (
+              typeof parsed.input?.request === "string" &&
+              parsed.input.request.length > 0
+            ) {
+              request = parsed.input.request;
+            }
+          }
+        }
+        requests.set(taskId, request);
+      }
+      if (request === null) continue;
+      await db
+        .update(generationRuns)
+        .set({ prompt: request })
+        .where(eq(generationRuns.id, row.id));
+    }
+  } finally {
+    sqlite.close();
+  }
+}
+
 const port = Number(process.env.WORKER_PORT ?? 4002);
-app.listen(port, "0.0.0.0", () => {
-  console.log(
-    `worker listening on ${port}${completions.length > 0 ? ` with ${agents.length} drawing agents` : ""}`,
-  );
-});
+void repairAttachmentPrompts()
+  .catch((reason: unknown) => {
+    console.error(
+      `[repair] attachment prompts were not restored: ${boundedReason(reason)}`,
+    );
+  })
+  .finally(() => {
+    app.listen(port, "0.0.0.0", () => {
+      console.log(
+        `worker listening on ${port}${completions.length > 0 ? ` with ${agents.length} drawing agents` : ""}`,
+      );
+    });
+  });

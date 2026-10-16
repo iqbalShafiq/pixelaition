@@ -124,3 +124,22 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
   }
   return {};
 }
+
+/**
+ * The closing message a run left behind: the newest stored `status` event
+ * that carries an `outcome`. A stored window may still hold the run's bare
+ * `running` status, and picking that one first stored no answer at all — the
+ * decision then read a follow-up without the question it answers.
+ */
+export function outcomeTextFrom(
+  events: Array<{ type: string; data?: unknown }>,
+): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event === undefined || event.type !== "status") continue;
+    const text = (event.data as { outcome?: { text?: string } } | undefined)?.outcome
+      ?.text;
+    if (typeof text === "string" && text.length > 0) return text;
+  }
+  return undefined;
+}

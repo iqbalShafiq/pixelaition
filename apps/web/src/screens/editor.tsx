@@ -37,7 +37,10 @@ import {
 } from "../components/interaction-card.js";
 import {
   applyRunEvent,
-  rowsFromTaskLog,
+  recordFollowUp,
+  turnsFromAssetLog,
+  type AssetLogTask,
+  type ConsoleTurn,
   type RunRow,
   type TaskLogRun,
 } from "../lib/run-activity.js";
@@ -65,7 +68,7 @@ import {
   StylePanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import { Minus, Plus, Trash } from "../components/pixel-icons.js";
+import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -127,7 +130,7 @@ const fallbackBuffer: FrameBuffer = {
 };
 
 type ActiveRunResponse = {
-  run: { id: string; status: string; modelId?: string } | null;
+  run: { id: string; status: string; modelId?: string; prompt: string | null } | null;
   /** The pending card of a waiting run; null when the run is not waiting. */
   interaction: PendingInteraction | null;
   lastRun: {
@@ -140,6 +143,25 @@ type ActiveRunResponse = {
   } | null;
   history: HistoryRun[];
 };
+
+/** The task steer answer, shaped for the console's "you" line. */
+function steerOutcome(
+  routed: string,
+  extras: { frameName?: string; requestId?: string } = {},
+): {
+  routed: string;
+  delivery: "clarify" | "held" | "relayed";
+  frameName?: string;
+  requestId?: string;
+} {
+  const relayed = routed !== "clarify" && routed !== "queued";
+  return {
+    routed: relayed ? routed : "supervisor",
+    delivery: routed === "clarify" ? "clarify" : relayed ? "relayed" : "held",
+    ...(extras.frameName !== undefined ? { frameName: extras.frameName } : {}),
+    ...(extras.requestId !== undefined ? { requestId: extras.requestId } : {}),
+  };
+}
 
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
@@ -162,7 +184,12 @@ export function EditorScreen() {
     queryKey: ["models"],
     queryFn: () =>
       api<{
-        models: Array<{ id: string; efforts: string[]; vision: boolean }>;
+        models: Array<{
+          id: string;
+          efforts: string[];
+          vision: boolean;
+          userImages: boolean;
+        }>;
         modelReady: boolean;
       }>("/api/models"),
   });
@@ -224,7 +251,11 @@ export function EditorScreen() {
   // Set once this visit has streamed the task, so a later terminal snapshot
   // does not replace the live transcript with the stored log.
   const sawLiveTask = useRef<string | null>(null);
+  /** The task stream this tab is already attached to. Focus must not rejoin it. */
+  const taskListenRef = useRef<string | null>(null);
   const loadedTaskLog = useRef<string | null>(null);
+  /** Earlier turns already filled for this task, so a live refresh does not repeat the fetch. */
+  const earlierLoaded = useRef<string | null>(null);
   // Strict mode unmounts once on mount. The mark waits a tick so that
   // simulated unmount can be cancelled by the remount.
   const seenMarkTimer = useRef<number | null>(null);
@@ -232,6 +263,7 @@ export function EditorScreen() {
   const [clarify, setClarify] = useState<{
     message: string;
     candidates: string[];
+    requestId?: string;
   } | null>(null);
   const [runFrameId, setRunFrameId] = useState<string | null>(null);
   // The models of runs this session started or rejoined, so the history panel
@@ -242,6 +274,13 @@ export function EditorScreen() {
   const runFrameIdRef = useRef<string | null>(null);
   runFrameIdRef.current = runFrameId;
   const displayedRunIdRef = useRef<string | null>(null);
+  // The live run of this render, readable from async callbacks that must not
+  // treat a stored transcript as the console's owner.
+  const runIdRef = useRef<string | null>(null);
+  runIdRef.current = runId;
+  // Set once the mount-time rejoin has decided what the console shows: a live
+  // run or task owns it, and the stored transcript must not race in ahead.
+  const [rejoinDecided, setRejoinDecided] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const removeAsset = useMutation({
@@ -271,6 +310,9 @@ export function EditorScreen() {
   const answeredIdsRef = useRef<Set<string>>(new Set());
   const [restoredMs, setRestoredMs] = useState<number | null>(null);
   const [runPrompt, setRunPrompt] = useState("");
+  // Finished requests stay above the live one. Each turn keeps its own prompt
+  // so the console can pin that prompt with that turn's tabs.
+  const [earlierTurns, setEarlierTurns] = useState<ConsoleTurn[]>([]);
   const [runHistory, setRunHistory] = useState<HistoryRun[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
@@ -592,6 +634,36 @@ export function EditorScreen() {
     ]);
   }, []);
 
+  // The follow-up is a chat line in the agent steps the moment the API
+  // answers, including the case where nothing was signaled yet.
+  const noteFollowUp = useCallback(
+    (
+      message: string,
+      outcome: {
+        routed: string;
+        delivery: "clarify" | "queued" | "held" | "relayed";
+        frameName?: string;
+        requestId?: string;
+      },
+    ) => {
+      const relayed = outcome.delivery === "relayed";
+      setRows((current) =>
+        recordFollowUp(current, {
+          id: outcome.requestId ?? `you-${crypto.randomUUID()}`,
+          kind: "steering",
+          routed: outcome.routed,
+          message,
+          delivery: outcome.delivery,
+          ...(outcome.frameName !== undefined ? { frameName: outcome.frameName } : {}),
+          ...(outcome.requestId !== undefined ? { requestId: outcome.requestId } : {}),
+          ...(relayed ? { relayed: true } : {}),
+        }),
+      );
+      setConsoleOpen(true);
+    },
+    [],
+  );
+
   const rememberRunModel = useCallback((id: string, model: string | undefined) => {
     if (!model) return;
     setRunModels((current) =>
@@ -634,10 +706,46 @@ export function EditorScreen() {
     [receiveStroke],
   );
 
+  /**
+   * A finished task used to drop every draft at once. The canvas and the
+   * layer list read those drafts, and the asset query often still holds the
+   * pre-paint snapshot, so the sprite vanished until a full reload. Keep
+   * what is already on screen and only fill frames the stream never drafted,
+   * from a fresh read of the asset.
+   */
+  const adoptFinishedFrames = useCallback(() => {
+    void client
+      .fetchQuery({
+        queryKey: ["asset", assetId],
+        queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
+      })
+      .then((data) => {
+        setDrafts((current) => {
+          let changed = false;
+          const next = { ...current };
+          for (const item of data.frames) {
+            if (next[item.id]) continue;
+            next[item.id] = createHistory(
+              frameToBuffer(item, data.width, data.height, data.palette),
+            );
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+        setFrameId((current) =>
+          current !== null && data.frames.some((frame) => frame.id === current)
+            ? current
+            : (data.frames[0]?.id ?? current),
+        );
+      })
+      .catch(() => undefined);
+  }, [assetId, client]);
+
   /** The task stream drives the console tree; only task-complete ends it. */
   const listenTask = useCallback(
     (id: string, fallbackFrameId: string) => {
       sawLiveTask.current = id;
+      taskListenRef.current = id;
       taskStream.open(id, {
         onMessage: (body) => {
           resetRejoin();
@@ -655,15 +763,20 @@ export function EditorScreen() {
           }
           if (body.type === "task-complete") {
             stopStroke();
+            taskListenRef.current = null;
             setTaskId(null);
+            setRunId(null);
+            setRunFrameId(null);
+            pending.current.clear();
             taskStream.close();
             void task.refetch();
-            void client.invalidateQueries({ queryKey: ["asset", assetId] });
+            adoptFinishedFrames();
             void client.invalidateQueries({ queryKey: ["versions", assetId] });
             log("The task finished");
           }
         },
         onDrop: () => {
+          taskListenRef.current = null;
           // A dropped task stream is not a stopped task: the snapshot decides.
           void api<{ task: { status?: string } | null }>(`/api/assets/${assetId}/task`)
             .catch(() => ({ task: null }))
@@ -687,6 +800,7 @@ export function EditorScreen() {
       });
     },
     [
+      adoptFinishedFrames,
       applyStroke,
       assetId,
       client,
@@ -758,19 +872,12 @@ export function EditorScreen() {
             stopStroke();
             setRunId(null);
             setRunFrameId(null);
-            // Drop the local draft for the drawn frame so the reloaded pixels
-            // from the server become the truth.
             const target = runFrameIdRef.current;
-            if (target) {
-              pending.current.delete(target);
-              setDrafts((current) => {
-                if (!current[target]) return current;
-                const next = { ...current };
-                delete next[target];
-                return next;
-              });
-            }
-            void client.invalidateQueries({ queryKey: ["asset", assetId] });
+            if (target) pending.current.delete(target);
+            // The pixels on screen stay. A fresh read fills any frame the
+            // stream never drafted, instead of blanking the one the user
+            // was just looking at.
+            adoptFinishedFrames();
             void client.invalidateQueries({ queryKey: ["versions", assetId] });
             // The finished run is on screen already; only the earlier list needs
             // a refresh, and it is scoped to the frame the agent painted.
@@ -827,6 +934,7 @@ export function EditorScreen() {
       });
     },
     [
+      adoptFinishedFrames,
       assetId,
       client,
       closeStream,
@@ -878,6 +986,8 @@ export function EditorScreen() {
     viewedFrames.current = new Set();
     setUnseenDone(new Map());
     loadedTaskLog.current = null;
+    earlierLoaded.current = null;
+    setEarlierTurns([]);
   }, [assetId]);
 
   const seenTaskId = task.data?.task?.id;
@@ -1035,6 +1145,28 @@ export function EditorScreen() {
     [assetId],
   );
 
+  // task-complete is the live signal. A missed event still leaves the row
+  // completed, and a run id that outlives that row keeps the editor locked
+  // on Stop. Settle from the snapshot too.
+  useEffect(() => {
+    const record = task.data?.task;
+    if (record === null || record === undefined) return;
+    if (["queued", "running", "waiting"].includes(record.status)) return;
+    const watching =
+      taskId === record.id || runId === record.id || taskListenRef.current === record.id;
+    if (!watching) return;
+    taskListenRef.current = null;
+    setTaskId((current) => (current === record.id ? null : current));
+    setRunId((current) => (current === record.id ? null : current));
+    setRunFrameId(null);
+    pending.current.clear();
+    taskStream.close();
+    stopStroke();
+    // The live drafts are the sprite the user just watched. Fill only the
+    // frames they do not already hold, once this task has settled.
+    adoptFinishedFrames();
+  }, [adoptFinishedFrames, runId, stopStroke, task.data?.task, taskId, taskStream]);
+
   useEffect(() => {
     let cancelled = false;
     async function check() {
@@ -1051,29 +1183,45 @@ export function EditorScreen() {
         snapshot.task !== null &&
         ["queued", "running", "waiting"].includes(snapshot.task.status);
       if (active && snapshot.task !== null) {
+        // Switching back to this tab is not a new event. The console already
+        // has the live tree, so a second attach only repeats itself.
+        if (taskListenRef.current === snapshot.task.id) return;
         setTaskId(snapshot.task.id);
         setRunId(snapshot.task.id);
         setConsoleOpen(true);
         setPendingInteraction(result.interaction);
         listenTask(snapshot.task.id, "");
         void task.refetch();
-        log("Rejoined the supervisor task that was still going");
         return;
       }
       if (result.run) {
-        setRunId(result.run.id);
-        rememberRunModel(result.run.id, result.run.modelId);
+        const liveId = result.run.id;
+        setRunId(liveId);
+        rememberRunModel(liveId, result.run.modelId);
         setConsoleOpen(true);
         // A waiting run restores its card straight from the row's stored
         // events; the stream alone cannot be trusted to retain it.
         setPendingInteraction(result.interaction);
+        if (displayedRunIdRef.current !== liveId) {
+          // The console still shows an earlier turn. The live run takes it
+          // over, and the row's prompt names the turn from the first paint.
+          setRows([]);
+          setRunHistory([]);
+          setMessage("");
+          setRestoredMs(null);
+          setRunPrompt(result.run.prompt ?? "");
+          displayedRunIdRef.current = liveId;
+        }
         log("Rejoined a run that was still going");
-        listen(result.run.id, "", 0);
+        listen(liveId, "", 0);
         return;
       }
       setPendingInteraction(null);
     }
-    void check();
+    setRejoinDecided(false);
+    void check().finally(() => {
+      if (!cancelled) setRejoinDecided(true);
+    });
     window.addEventListener("focus", check);
     return () => {
       cancelled = true;
@@ -1085,35 +1233,62 @@ export function EditorScreen() {
   // stream, so the stored children are the same steps the console showed
   // while the agents were working.
   useEffect(() => {
+    // Rejoining is decided first: a live run or task owns the console, and
+    // this fill must not race in and overwrite the live turn.
+    if (!rejoinDecided) return;
     const record = task.data?.task;
     if (record === null || record === undefined) return;
     const terminal = !["queued", "running", "waiting"].includes(record.status);
-    if (
-      !terminal ||
-      sawLiveTask.current === record.id ||
-      loadedTaskLog.current === record.id
-    ) {
-      return;
-    }
     const id = record.id;
+    const replaceTranscript =
+      terminal &&
+      runIdRef.current === null &&
+      sawLiveTask.current !== id &&
+      loadedTaskLog.current !== id;
+    // A live task still needs the prompts before it. The streaming rows stay.
+    if (!replaceTranscript && earlierLoaded.current === id) return;
     let cancelled = false;
-    void api<{ prompt: string | null; plan?: unknown; runs: TaskLogRun[] }>(
-      `/api/assets/${assetId}/task/log`,
-    )
+    void api<{
+      prompt: string | null;
+      plan?: unknown;
+      runs: TaskLogRun[];
+      earlier?: AssetLogTask[];
+    }>(`/api/assets/${assetId}/task/log`)
       .catch(() => null)
       .then((result) => {
-        if (cancelled || result === null || sawLiveTask.current === id) return;
-        loadedTaskLog.current = id;
-        setRows(rowsFromTaskLog(result.runs, result.plan));
-        if (result.prompt) setRunPrompt(result.prompt);
-        setMessage("");
-        setRunHistory([]);
-        displayedRunIdRef.current = `task:${id}`;
+        if (cancelled || result === null) return;
+        const turns = turnsFromAssetLog(
+          { id, prompt: result.prompt, plan: result.plan, runs: result.runs },
+          result.earlier ?? [],
+        );
+        if (replaceTranscript) {
+          if (sawLiveTask.current === id) return;
+          loadedTaskLog.current = id;
+          earlierLoaded.current = id;
+          const last = turns.at(-1);
+          setEarlierTurns(turns.slice(0, -1));
+          setRows(last?.rows ?? []);
+          setRunPrompt(last?.prompt ?? "");
+          setMessage("");
+          setRunHistory([]);
+          displayedRunIdRef.current = `task:${id}`;
+          return;
+        }
+        earlierLoaded.current = id;
+        // A refresh mid-run rejoins without the prompt in memory; the log
+        // carries it. A prompt the send already set is left alone.
+        setRunPrompt((current) =>
+          current.trim().length > 0 ? current : (result.prompt ?? ""),
+        );
+        // Every stored turn stays listed; only the turn the live watcher
+        // already renders itself is dropped, exactly as the console's own
+        // filter drops it. An ask run's live turn is not in this log at all.
+        setEarlierTurns(turns.filter((turn) => turn.id !== (taskId ?? "live")));
       });
     return () => {
       cancelled = true;
     };
-  }, [assetId, task.data?.task?.id, task.data?.task?.status]);
+  }, [assetId, rejoinDecided, taskId, task.data?.task?.id, task.data?.task?.status]);
 
   // Switching frames rewinds the console to that frame's story: its last run's
   // steps and answer, plus the prompts and answers of the runs before it.
@@ -1294,8 +1469,12 @@ export function EditorScreen() {
       // when the run's own stream never reached this tab.
       void api<TaskSnapshot>(`/api/assets/${assetId}/task`)
         .then((snapshot) => {
-          if (snapshot.task !== null)
+          if (
+            snapshot.task !== null &&
+            ["queued", "running", "waiting"].includes(snapshot.task.status)
+          ) {
             setTaskId((current) => current ?? snapshot.task?.id ?? null);
+          }
           const waiting = snapshot.workers.find(
             (worker) => worker.pendingInteraction !== undefined,
           );
@@ -1445,22 +1624,26 @@ export function EditorScreen() {
       if (textOverride === undefined) setPrompt("");
       startTransition(async () => {
         try {
+          const requestId = crypto.randomUUID();
           const result = await api<{ routed: string; candidates?: string[] }>(
             `/api/tasks/${activeTaskId}/steer`,
             {
               method: "POST",
               body: JSON.stringify({
                 prompt: text,
+                requestId,
                 ...(frameName !== undefined ? { frameName } : {}),
               }),
             },
           );
           if (result.routed === "clarify") {
-            setClarify({ message: text, candidates: result.candidates ?? [] });
-            log("Which frame is this about?");
-          } else {
-            log(`Steering queued (${result.routed})`);
+            setClarify({
+              message: text,
+              candidates: result.candidates ?? [],
+              requestId,
+            });
           }
+          noteFollowUp(text, steerOutcome(result.routed, { frameName, requestId }));
         } catch (reason) {
           const message = reason instanceof Error ? reason.message : "Steering failed.";
           setError(message);
@@ -1473,6 +1656,16 @@ export function EditorScreen() {
     // Reference images belong to a fresh manual message, never to a queued
     // follow-up that arrives while a run is live.
     const staged = withAttachments ? attachments.items : [];
+    const snapshotEarlier = earlierTurns;
+    const snapshotRows = rows;
+    const snapshotPrompt = runPrompt;
+    if (snapshotPrompt.trim().length > 0 || snapshotRows.length > 0) {
+      const snapshotId = displayedRunIdRef.current ?? `turn-${crypto.randomUUID()}`;
+      setEarlierTurns((current) => [
+        ...current.filter((turn) => turn.id !== snapshotId),
+        { id: snapshotId, prompt: snapshotPrompt, rows: snapshotRows },
+      ]);
+    }
     // Urgent updates: the console and the composer react before any await.
     setError(null);
     setMessage("");
@@ -1526,7 +1719,11 @@ export function EditorScreen() {
           listen(started.runId, frameId);
         }
       } catch (reason) {
-        // Nothing was lost: the prompt comes back for a retry.
+        // Nothing was lost: the prompt comes back for a retry, and the
+        // previous turn goes back to being the live one.
+        setEarlierTurns(snapshotEarlier);
+        setRows(snapshotRows);
+        setRunPrompt(snapshotPrompt);
         if (textOverride === undefined) setPrompt(text);
         const message = reason instanceof Error ? reason.message : "Generation failed.";
         setError(message);
@@ -1561,24 +1758,78 @@ export function EditorScreen() {
 
   function sendQueuedNow() {
     const pending = queueRef.current;
-    if (pending.length === 0 || runId === null || steering) return;
+    // A drawing run's id in the composer is the task id. Steering that id
+    // through the single-run endpoint answers "that run is not available",
+    // because the task row is not a generation run.
+    const taskTarget = activeTaskId;
+    if (pending.length === 0 || steering) return;
+    if (taskTarget === null && runId === null) return;
     const ids = new Set(pending.map((item) => item.id));
+    const anchored =
+      frameContextOn && taskTarget !== null
+        ? frames.find((frame) => frame.id === frameId)?.name
+        : undefined;
     startTransition(async () => {
-      // The dock empties immediately; a failure restores the items because
-      // the base queue only changes on success.
+      // The dock empties immediately; a failure restores the items the
+      // agent has not accepted yet.
       setOptimisticQueue(ids);
+      const sent = new Set<string>();
       try {
-        await api(`/api/runs/${runId}/steer`, {
-          method: "POST",
-          body: JSON.stringify({
-            // One message per entry: the runtime applies them one per turn,
-            // FIFO, and the item id dedupes a retried batch.
-            messages: pending.map((item) => ({ text: item.text, requestId: item.id })),
-          }),
-        });
+        if (taskTarget !== null) {
+          for (const item of pending) {
+            const result = await api<{ routed: string; candidates?: string[] }>(
+              `/api/tasks/${taskTarget}/steer`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  prompt: item.text,
+                  requestId: item.id,
+                  ...(anchored !== undefined ? { frameName: anchored } : {}),
+                }),
+              },
+            );
+            if (result.routed === "clarify") {
+              // Not delivered. The card owns this one; earlier items already landed.
+              const owned = new Set(sent);
+              owned.add(item.id);
+              setQueue((current) => removeQueuedRuns(current, owned));
+              setClarify({
+                message: item.text,
+                candidates: result.candidates ?? [],
+                requestId: item.id,
+              });
+              noteFollowUp(
+                item.text,
+                steerOutcome("clarify", { frameName: anchored, requestId: item.id }),
+              );
+              return;
+            }
+            sent.add(item.id);
+            noteFollowUp(
+              item.text,
+              steerOutcome(result.routed, { frameName: anchored, requestId: item.id }),
+            );
+          }
+        } else if (runId !== null) {
+          await api(`/api/runs/${runId}/steer`, {
+            method: "POST",
+            body: JSON.stringify({
+              // One message per entry: the runtime applies them one per turn,
+              // FIFO, and the item id dedupes a retried batch.
+              messages: pending.map((item) => ({ text: item.text, requestId: item.id })),
+            }),
+          });
+          for (const item of pending) {
+            noteFollowUp(item.text, {
+              routed: "supervisor",
+              delivery: "queued",
+              requestId: item.id,
+            });
+          }
+        }
         setQueue((current) => removeQueuedRuns(current, ids));
-        log(`Follow-up${pending.length === 1 ? "" : "s"} sent to the running agent`);
       } catch (reason) {
+        if (sent.size > 0) setQueue((current) => removeQueuedRuns(current, sent));
         notify({
           title: "The follow-up was not accepted",
           description: reason instanceof Error ? reason.message : "Unknown error",
@@ -1693,7 +1944,8 @@ export function EditorScreen() {
   const attachmentIssue =
     attachments.items.length > 0 &&
     selectedModel !== undefined &&
-    selectedModel.vision !== true
+    selectedModel.vision !== true &&
+    selectedModel.userImages !== true
       ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
       : undefined;
   const runModelMap = useMemo(() => new Map(Object.entries(runModels)), [runModels]);
@@ -1866,7 +2118,7 @@ export function EditorScreen() {
       id="content"
       className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-paper"
     >
-      <header className="flex min-h-12 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3">
+      <header className="flex min-h-16 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3">
         <Link to="/projects" className="shrink-0">
           <Wordmark hideLabelOnNarrow />
         </Link>
@@ -1903,14 +2155,14 @@ export function EditorScreen() {
           >
             ◨
           </IconButton>
-          <IconButton
+          <Button
             tone="danger"
-            label="Delete asset"
+            className="px-2.5 py-1.5 text-pixel-label"
             disabled={!asset.data || running}
             onClick={() => setDeleteOpen(true)}
           >
-            <Trash width={14} height={14} />
-          </IconButton>
+            Delete
+          </Button>
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-pixel-label"
@@ -1927,12 +2179,12 @@ export function EditorScreen() {
 
       <div className="grid min-h-0 min-w-0 grid-rows-[1fr]">
         <div className="grid min-h-0 min-w-0 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)_minmax(240px,300px)]">
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r-2 border-line bg-panel p-3 lg:flex">
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-y-auto border-r-2 border-line bg-panel px-3 pt-2 pb-3 lg:flex">
             {leftPanels}
           </aside>
 
           <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
-            <div className="order-2 min-w-0 border-t-2 border-line bg-panel sm:order-1 sm:border-t-0 sm:border-b-2">
+            <div className="order-2 min-w-0 border-t-2 border-line bg-panel px-2 pt-2 pb-1.5 sm:order-1 sm:border-t-0 sm:border-b-2">
               <Toolbar
                 tool={tool}
                 brushSize={brushSize}
@@ -2127,16 +2379,39 @@ export function EditorScreen() {
                           className="pixel-corners-sm border-2 border-line px-2 py-1 text-pixel-mono text-ink transition-colors duration-150 hover:border-accent hover:text-accent"
                           onClick={() => {
                             const message = clarify.message;
+                            const requestId = clarify.requestId ?? crypto.randomUUID();
+                            const candidates = clarify.candidates;
                             setClarify(null);
                             startTransition(async () => {
                               if (activeTaskId === null) return;
-                              await api(`/api/tasks/${activeTaskId}/steer`, {
-                                method: "POST",
-                                body: JSON.stringify({
-                                  prompt: message,
-                                  frameName: name,
-                                }),
-                              }).catch((reason: unknown) => {
+                              try {
+                                const result = await api<{
+                                  routed: string;
+                                  candidates?: string[];
+                                }>(`/api/tasks/${activeTaskId}/steer`, {
+                                  method: "POST",
+                                  body: JSON.stringify({
+                                    prompt: message,
+                                    frameName: name,
+                                    requestId,
+                                  }),
+                                });
+                                if (result.routed === "clarify") {
+                                  setClarify({
+                                    message,
+                                    candidates: result.candidates ?? candidates,
+                                    requestId,
+                                  });
+                                }
+                                noteFollowUp(
+                                  message,
+                                  steerOutcome(result.routed, {
+                                    frameName: name,
+                                    requestId,
+                                  }),
+                                );
+                              } catch (reason) {
+                                setClarify({ message, candidates, requestId });
                                 const text =
                                   reason instanceof Error
                                     ? reason.message
@@ -2146,7 +2421,7 @@ export function EditorScreen() {
                                   title: "Could not steer the task",
                                   description: text,
                                 });
-                              });
+                              }
                             });
                           }}
                         >
@@ -2156,7 +2431,46 @@ export function EditorScreen() {
                       <button
                         type="button"
                         className="pixel-corners-sm border-2 border-line px-2 py-1 text-pixel-mono text-muted transition-colors duration-150 hover:text-ink"
-                        onClick={() => setClarify(null)}
+                        onClick={() => {
+                          const message = clarify.message;
+                          const requestId = clarify.requestId ?? crypto.randomUUID();
+                          const candidates = clarify.candidates;
+                          setClarify(null);
+                          startTransition(async () => {
+                            if (activeTaskId === null) return;
+                            try {
+                              const result = await api<{
+                                routed: string;
+                                candidates?: string[];
+                              }>(`/api/tasks/${activeTaskId}/steer`, {
+                                method: "POST",
+                                body: JSON.stringify({ prompt: message, requestId }),
+                              });
+                              if (result.routed === "clarify") {
+                                setClarify({
+                                  message,
+                                  candidates: result.candidates ?? candidates,
+                                  requestId,
+                                });
+                              }
+                              noteFollowUp(
+                                message,
+                                steerOutcome(result.routed, { requestId }),
+                              );
+                            } catch (reason) {
+                              setClarify({ message, candidates, requestId });
+                              const text =
+                                reason instanceof Error
+                                  ? reason.message
+                                  : "Steering failed.";
+                              setError(text);
+                              notify({
+                                title: "Could not steer the task",
+                                description: text,
+                              });
+                            }
+                          });
+                        }}
                       >
                         whole asset
                       </button>
@@ -2189,6 +2503,12 @@ export function EditorScreen() {
                         : undefined
                     }
                     rows={rows}
+                    turns={[
+                      ...earlierTurns.filter((turn) => turn.id !== (taskId ?? "live")),
+                      ...(runPrompt.trim().length > 0 || rows.length > 0
+                        ? [{ id: taskId ?? "live", prompt: runPrompt, rows }]
+                        : []),
+                    ]}
                     running={running || optimisticStart !== null}
                     open={consoleOpen}
                     onOpen={setConsoleOpen}

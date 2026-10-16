@@ -31,7 +31,12 @@ export type { GuardrailAction, GuardrailReport } from "./guardrails.js";
 export { askJev, JevNotConfiguredError } from "./jev.js";
 export type { JevAnswer, JevEnv, JevQuestion, JevUsage } from "./jev.js";
 export { askInstructions, pixelInstructions } from "./instructions.js";
-export { openCodeGoHeaders, parseModelSpecRow, selectRunTarget } from "./models.js";
+export {
+  openCodeGoHeaders,
+  parseModelSpecRow,
+  seesUserImages,
+  selectRunTarget,
+} from "./models.js";
 export type { ModelSpec, RunTarget } from "./models.js";
 export {
   searchImagesFor,
@@ -89,6 +94,8 @@ export {
   buildPlanPrompt,
   createAssetDrawTask,
   parsePlanOutput,
+  promptText,
+  userRequestFromPrompt,
 } from "./tasks/asset-draw.js";
 export { WORKER_ATTEMPTS, workerAttemptTask } from "./tasks/worker-attempt.js";
 export type {

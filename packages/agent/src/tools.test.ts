@@ -165,6 +165,9 @@ describe("worker frame ownership", () => {
       tool("read_frame").call({ frameId: "frame-2" }, { operationId: "run-1" }),
     ).resolves.toBeDefined();
     await expect(
+      tool("read_frame").call({ frameId: "hop" }, { operationId: "run-1" }),
+    ).resolves.toMatchObject({ frameId: "frame-2", name: "hop" });
+    await expect(
       tool("paint_stroke").call(
         {
           frameId: "frame-2",
@@ -414,7 +417,7 @@ describe("read tools", () => {
     boundRun();
     await expect(
       tool("read_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    ).rejects.toThrow('No frame named or identified by "frame-9".');
     releaseRun("run-1");
   });
 
@@ -598,7 +601,7 @@ describe("drawing tools", () => {
         },
         { operationId: "run-1" },
       ),
-    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    ).rejects.toThrow('No frame named or identified by "frame-9".');
     releaseRun("run-1");
   });
 
@@ -664,7 +667,7 @@ describe("frame tools", () => {
     boundFrameRun();
     await expect(
       tool("use_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    ).rejects.toThrow('No frame named or identified by "frame-9".');
     releaseRun("run-1");
   });
 
@@ -837,7 +840,7 @@ describe("frame tools", () => {
     boundFrameRun();
     await expect(
       tool("delete_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    ).rejects.toThrow('No frame named or identified by "frame-9".');
     releaseRun("run-1");
   });
 
@@ -1386,6 +1389,37 @@ describe("workspace tools", () => {
     releaseRun("run-1");
   });
 
+  it("lets a worker list projects on an asset run that carries the owner callbacks", async () => {
+    boundRun(undefined, undefined, { role: "worker" });
+    const run = getRun("run-1");
+    if (!run) throw new Error("missing run");
+    run.userId = "user-3";
+    run.onListProjects = async () => [
+      {
+        id: "project-1",
+        name: "Hutan Ksatria",
+        summary: "",
+        updatedAt: "2026-10-15T00:00:00.000Z",
+        assetCount: 1,
+      },
+    ];
+    await expect(
+      tool("list_projects").call({}, { operationId: "run-1" }),
+    ).resolves.toEqual([
+      {
+        id: "project-1",
+        name: "Hutan Ksatria",
+        summary: "",
+        updatedAt: "2026-10-15T00:00:00.000Z",
+        assetCount: 1,
+      },
+    ]);
+    await expect(
+      tool("critique_frame").call({}, { operationId: "run-1" }),
+    ).rejects.toThrow("The worker role cannot call critique_frame.");
+    releaseRun("run-1");
+  });
+
   it("workspace tools fail closed on a run without callbacks", async () => {
     unboundRun();
     await expect(
@@ -1430,6 +1464,7 @@ describe("drawing approval", () => {
       ["flood_fill", { frameId: "frame-3" }],
       ["fill_region", { frameId: "frame-3" }],
       ["clear_region", { frameId: "frame-3" }],
+      ["set_palette", { frameId: "frame-3" }],
       ["apply_outline", { frameId: "frame-3" }],
       ["dither_rect", { frameId: "frame-3" }],
       ["mirror_frame", { frameId: "frame-3" }],
@@ -1442,14 +1477,13 @@ describe("drawing approval", () => {
         expect(await requirement({} as never, {} as never)).toBe(false);
       }
     }
-    // Recolour still asks outside the approved scope. Clearing a rectangle does not.
+    // Recolour still asks outside the approved scope. A palette change does not.
     expect(await approval("replace_color", { frameId: "frame-2", from: 1, to: 0 })).toBe(
       false,
     );
     expect(await approval("replace_color", { frameId: "frame-3", from: 1, to: 0 })).toBe(
       true,
     );
-    expect(await approval("set_palette", { frameId: "frame-2" })).toBe(false);
     releaseRun("run-1");
   });
 
@@ -1594,7 +1628,7 @@ describe("check_animation", () => {
     boundRun();
     await expect(
       tool("check_animation").call({ frameIds: ["frame-9"] }, { operationId: "run-1" }),
-    ).rejects.toThrow("Frame frame-9 is not part of this asset.");
+    ).rejects.toThrow('No frame named or identified by "frame-9".');
     releaseRun("run-1");
   });
 });
@@ -1741,12 +1775,13 @@ describe("layer references by name", () => {
 });
 
 describe("web search and reference images", () => {
-  it("registers web_search with a key and view_image only with vision too", () => {
+  it("registers web_search and view_image whenever search is configured", () => {
     const names = (tools: ReturnType<typeof createPixelTools>) =>
       tools.map((item) => item.name);
     expect(names(createPixelTools())).not.toContain("web_search");
+    expect(names(createPixelTools())).not.toContain("view_image");
     expect(names(createPixelTools({ webSearch: true }))).toContain("web_search");
-    expect(names(createPixelTools({ webSearch: true }))).not.toContain("view_image");
+    expect(names(createPixelTools({ webSearch: true }))).toContain("view_image");
     expect(names(createPixelTools({ vision: true }))).not.toContain("view_image");
     expect(names(createPixelTools({ vision: true, webSearch: true }))).toContain(
       "view_image",
@@ -1844,6 +1879,51 @@ describe("web search and reference images", () => {
     // The Anvia message schema must accept the rich output, or the run fails
     // at tool-result serialization instead of the model seeing the image.
     expect(normalizeToolResultOutput(output).type).toBe("content");
+    releaseRun("run-1");
+  });
+
+  it("describes a searched image when the drawing model cannot see", async () => {
+    boundRun();
+    const run = getRun("run-1");
+    if (!run) throw new Error("missing run");
+    run.searchImages = new Set(["https://cdn.example.com/slime.png"]);
+    run.onDescribeImage = async (image) => `gold cub, ${image.mediaType}`;
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      url: "https://cdn.example.com/slime.png",
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: async () => png,
+    }));
+    const output = await tool("view_image", { webSearch: true }).call(
+      { url: "https://cdn.example.com/slime.png" },
+      { operationId: "run-1" },
+    );
+    expect(output).toContain("seen by the vision model");
+    expect(output).toContain("gold cub, image/png");
+    releaseRun("run-1");
+  });
+
+  it("names a missing vision model instead of pretending to see", async () => {
+    boundRun();
+    const run = getRun("run-1");
+    if (!run) throw new Error("missing run");
+    run.searchImages = new Set(["https://cdn.example.com/slime.png"]);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      url: "https://cdn.example.com/slime.png",
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: async () => png,
+    }));
+    await expect(
+      tool("view_image", { webSearch: true }).call(
+        { url: "https://cdn.example.com/slime.png" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("no vision model is configured");
     releaseRun("run-1");
   });
 

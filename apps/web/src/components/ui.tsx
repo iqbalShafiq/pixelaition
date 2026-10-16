@@ -554,7 +554,7 @@ export function Menu({
     <BaseMenu.Root>
       <BaseMenu.Trigger
         aria-label={label}
-        className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
+        className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink"
       >
         ⋯
       </BaseMenu.Trigger>

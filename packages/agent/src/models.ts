@@ -2,7 +2,18 @@ export type ModelSpec = {
   id: string;
   api: "chat" | "responses";
   efforts: string[];
+  /**
+   * Images inside tool results: a `view_image` preview, a frame handed to a
+   * look. The pinned chat adapter flattens those file parts to
+   * `[file:image/png]` text, so only the responses shape can deliver them.
+   */
   vision: boolean;
+  /**
+   * Images a person attached to the message: composer references and the
+   * reference images of earlier turns. The chat adapter delivers user-message
+   * images as `image_url` parts, so either shape can take them.
+   */
+  userImages: boolean;
   /**
    * Jobs the catalog assigns to this model (`summary-vision`, `summary-text`).
    * Selecting a summary model by capability and position once picked a test
@@ -13,6 +24,15 @@ export type ModelSpec = {
 export type RunTarget = { modelId: string; effort: string };
 
 /**
+ * Whether the model receives images a person attached, on either shape. This
+ * is the attachments gate (composer references, prior turns' images); images
+ * inside tool results stay behind the stronger `vision` capability.
+ */
+export function seesUserImages(spec: { vision: boolean; userImages: boolean }): boolean {
+  return spec.vision === true || spec.userImages === true;
+}
+
+/**
  * Validates one `models` row. A malformed row is a configuration error and
  * must fail loud; it never silently becomes a different endpoint family.
  */
@@ -21,6 +41,7 @@ export function parseModelSpecRow(row: {
   api: unknown;
   efforts: unknown;
   vision: unknown;
+  userImages: unknown;
   roles: unknown;
 }): ModelSpec {
   if (row.api !== "chat" && row.api !== "responses") {
@@ -38,6 +59,11 @@ export function parseModelSpecRow(row: {
   if (typeof row.vision !== "boolean") {
     throw new Error(`Model ${row.id} declares invalid vision: ${String(row.vision)}`);
   }
+  if (typeof row.userImages !== "boolean") {
+    throw new Error(
+      `Model ${row.id} declares invalid userImages: ${String(row.userImages)}`,
+    );
+  }
   if (
     !Array.isArray(row.roles) ||
     row.roles.some((role) => typeof role !== "string" || role.length === 0)
@@ -48,7 +74,9 @@ export function parseModelSpecRow(row: {
   }
   // The pinned OpenAI chat adapter flattens tool-result file parts to
   // `[file:image/png]` text, so a chat model cannot actually see a preview.
-  // Only the responses adapter maps them to provider image input.
+  // Only the responses adapter maps them to provider image input. Images a
+  // person attached ride `userImages` instead — the chat adapter delivers
+  // those as `image_url`, and this flag stays tool-result-only.
   if (row.vision === true && row.api !== "responses") {
     throw new Error(
       `Model ${row.id} declares vision with api ${row.api}, which cannot deliver tool-result images.`,
@@ -59,6 +87,7 @@ export function parseModelSpecRow(row: {
     api: row.api,
     efforts: [...(row.efforts as string[])],
     vision: row.vision,
+    userImages: row.userImages,
     roles: [...(row.roles as string[])],
   };
 }

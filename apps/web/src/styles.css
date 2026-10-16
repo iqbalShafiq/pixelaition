@@ -212,14 +212,6 @@
   background-size: 16px 16px;
 }
 
-/* The auth slide. Same 16px squares, darker than the page utility so they read. */
-@utility pixel-grid-slide {
-  background-image:
-    linear-gradient(to right, rgba(148, 176, 194, 0.22) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148, 176, 194, 0.22) 1px, transparent 1px);
-  background-size: 16px 16px;
-}
-
 /* Coarser grid for large empty areas, so the texture reads at a distance. */
 @utility pixel-grid-lg {
   background-image:
@@ -424,6 +416,41 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='36'%3E%3Cg fill='%23a7f070'%3E%3Crect x='5' y='0' width='2' height='2'/%3E%3Crect x='8' y='2' width='2' height='2'/%3E%3Crect x='10' y='5' width='2' height='2'/%3E%3Crect x='8' y='8' width='2' height='2'/%3E%3Crect x='5' y='10' width='2' height='2'/%3E%3Crect x='2' y='8' width='2' height='2'/%3E%3Crect x='0' y='5' width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='4' y='13' width='4' height='4'/%3E%3Crect x='7' y='16' width='3' height='3'/%3E%3Crect x='5' y='19' width='2' height='2'/%3E%3Crect x='2' y='21' width='4' height='4'/%3E%3Crect x='0' y='30' width='12' height='2'/%3E%3Crect x='0' y='34' width='12' height='2'/%3E%3Crect x='3' y='32' width='6' height='2'/%3E%3C/g%3E%3C/svg%3E");
   background-repeat: no-repeat;
   animation: pixel-loader 600ms steps(3, end) infinite;
+}
+
+/* The selected tab is accent. The accent spinner vanishes on it, so that tab uses navy. */
+.pixel-loader.pixel-loader-navy {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='36'%3E%3Cg fill='%231a1c2c'%3E%3Crect x='5' y='0' width='2' height='2'/%3E%3Crect x='8' y='2' width='2' height='2'/%3E%3Crect x='10' y='5' width='2' height='2'/%3E%3Crect x='8' y='8' width='2' height='2'/%3E%3Crect x='5' y='10' width='2' height='2'/%3E%3Crect x='2' y='8' width='2' height='2'/%3E%3Crect x='0' y='5' width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='4' y='13' width='4' height='4'/%3E%3Crect x='7' y='16' width='3' height='3'/%3E%3Crect x='5' y='19' width='2' height='2'/%3E%3Crect x='2' y='21' width='4' height='4'/%3E%3Crect x='0' y='30' width='12' height='2'/%3E%3Crect x='0' y='34' width='12' height='2'/%3E%3Crect x='3' y='32' width='6' height='2'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+.console-markdown p,
+.console-markdown ul,
+.console-markdown ol,
+.console-markdown pre,
+.console-markdown blockquote {
+  margin: 0.35em 0;
+}
+
+.console-markdown > :first-child {
+  margin-top: 0;
+}
+
+.console-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.console-markdown ul,
+.console-markdown ol {
+  padding-left: 1.2em;
+}
+
+.console-markdown code {
+  color: var(--color-ink);
+}
+
+.console-markdown pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 @keyframes pixel-loader {

@@ -120,6 +120,34 @@
       "when": 1791860038215,
       "tag": "0016_run_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791930576000,
+      "tag": "0017_deepseek_responses_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791930768000,
+      "tag": "0018_model_api_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791956840000,
+      "tag": "0019_deepseek_chat_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792116454000,
+      "tag": "0020_model_user_images",
+      "breakpoints": true
     }
   ]
 }

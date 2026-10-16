@@ -30,9 +30,11 @@ import {
   LangfuseTelemetry,
   parseModelSpecRow,
   screenInput,
+  seesUserImages,
   stagedOverrideSchema,
   WORKER_ATTEMPTS,
   traceIdFor,
+  userRequestFromPrompt,
   type DecisionContext,
   type DrawDecision,
   type GuardrailReport,
@@ -110,32 +112,42 @@ function fail(res: Response, status: number, code: string, message: string) {
   res.status(status).json({ code, message });
 }
 
-/**
- * The line a person typed. Worker prompts start with `Request:`; the plan
- * prompt starts with the request itself. Later correction prompts do not.
- */
-function requestFromChildPrompt(
-  role: string | null,
-  prompt: string | null,
-): string | null {
-  if (prompt === null || prompt.length === 0) return null;
-  const requestLine = prompt.split("\n").find((line) => line.startsWith("Request: "));
-  if (requestLine !== undefined) {
-    const text = requestLine.slice("Request: ".length).trim();
-    if (text.length > 0) return text.slice(0, 4000);
-  }
-  if (role === "plan") {
-    const first = prompt.split("\n")[0]?.trim() ?? "";
-    if (
-      first.length > 0 &&
-      !first.startsWith("The user ") &&
-      !first.startsWith("Limits:") &&
-      !first.startsWith("Answer with")
-    ) {
-      return first.slice(0, 4000);
-    }
-  }
-  return null;
+/** One task's user line and the children the console rebuilds. */
+async function taskLog(taskId: string, plan: unknown) {
+  const children = await db
+    .select({
+      id: generationRuns.id,
+      role: generationRuns.role,
+      workerKey: generationRuns.workerKey,
+      status: generationRuns.status,
+      answer: generationRuns.answer,
+      prompt: generationRuns.prompt,
+      createdAt: generationRuns.createdAt,
+      events: generationRuns.events,
+    })
+    .from(generationRuns)
+    .where(eq(generationRuns.taskId, taskId))
+    .orderBy(asc(generationRuns.createdAt));
+  const prompt =
+    children
+      .map((child) => userRequestFromPrompt(child.role, child.prompt))
+      .find((text) => text !== null) ?? null;
+  return {
+    id: taskId,
+    prompt,
+    plan: plan ?? null,
+    runs: children
+      .filter((child) => !(child.workerKey ?? "").startsWith("slot-"))
+      .map((child) => ({
+        id: child.id,
+        role: child.role,
+        workerKey: child.workerKey,
+        status: child.status,
+        answer: child.answer,
+        createdAt: child.createdAt.toISOString(),
+        events: Array.isArray(child.events) ? child.events : [],
+      })),
+  };
 }
 
 async function actor(req: Request): Promise<string | undefined> {
@@ -251,7 +263,7 @@ async function modelPairFor(
     fail(res, 422, "MODEL_NOT_AVAILABLE", "Pick a model and effort from the catalog.");
     return undefined;
   }
-  if (attachmentCount > 0 && pair.vision !== true) {
+  if (attachmentCount > 0 && !seesUserImages(pair)) {
     fail(
       res,
       422,
@@ -419,18 +431,19 @@ async function startRunViaWorker(
       .where(eq(generationRuns.id, runId));
   }
   // The home opens the editor from this response, so the bound target rides
-  // along: without it the plan card stayed unreachable until a refresh.
-  const bound = await db
-    .select({ assetId: runTasks.assetId })
+  // along: without the asset and its project the plan card stayed on the
+  // home, behind a refresh, until the user opened the new asset by hand.
+  const [bound] = await db
+    .select({ assetId: runTasks.assetId, projectId: assets.projectId })
     .from(runTasks)
+    .leftJoin(assets, eq(assets.id, runTasks.assetId))
     .where(eq(runTasks.id, runId))
     .limit(1);
-  const boundAssetId = bound[0]?.assetId ?? null;
   res.status(202).json({
     runId,
     streamId: runId,
     kind: input.mode === "draw" ? "task" : "run",
-    ...(boundAssetId === null ? {} : { assetId: boundAssetId }),
+    ...(bound?.assetId ? { assetId: bound.assetId, projectId: bound.projectId } : {}),
   });
 }
 
@@ -1629,43 +1642,27 @@ export function createApp() {
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     const snapshot = await taskSnapshot(db, asset.id);
     if (snapshot === undefined) return res.json({ task: null, prompt: null, runs: [] });
-    const children = await db
+    const tasks = await db
       .select({
-        id: generationRuns.id,
-        role: generationRuns.role,
-        workerKey: generationRuns.workerKey,
-        status: generationRuns.status,
-        answer: generationRuns.answer,
-        prompt: generationRuns.prompt,
-        createdAt: generationRuns.createdAt,
-        events: generationRuns.events,
+        id: runTasks.id,
+        plan: runTasks.plan,
+        createdAt: runTasks.createdAt,
       })
-      .from(generationRuns)
-      .where(eq(generationRuns.taskId, snapshot.task.id))
-      .orderBy(asc(generationRuns.createdAt));
-    const prompt =
-      children
-        .map((child) => requestFromChildPrompt(child.role, child.prompt))
-        .find((text) => text !== null) ?? null;
+      .from(runTasks)
+      .where(eq(runTasks.assetId, asset.id))
+      .orderBy(asc(runTasks.createdAt));
+    const logged = await Promise.all(tasks.map((task) => taskLog(task.id, task.plan)));
+    const latest = logged.find((item) => item.id === snapshot.task.id) ?? logged.at(-1);
     res.json({
       task: {
         id: snapshot.task.id,
         status: snapshot.task.status,
         phase: snapshot.task.phase,
       },
-      prompt,
+      prompt: latest?.prompt ?? null,
       plan: snapshot.task.plan ?? null,
-      runs: children
-        .filter((child) => !(child.workerKey ?? "").startsWith("slot-"))
-        .map((child) => ({
-          id: child.id,
-          role: child.role,
-          workerKey: child.workerKey,
-          status: child.status,
-          answer: child.answer,
-          createdAt: child.createdAt.toISOString(),
-          events: Array.isArray(child.events) ? child.events : [],
-        })),
+      runs: latest?.runs ?? [],
+      earlier: logged.filter((item) => item.id !== snapshot.task.id),
     });
   });
 
@@ -1720,6 +1717,8 @@ export function createApp() {
       .object({
         prompt: z.string().min(1).max(4000),
         frameName: z.string().min(1).max(40).optional(),
+        // The queue item id. A retried Send now must not deliver twice.
+        requestId: z.string().min(1).max(120).optional(),
       })
       .safeParse(req.body);
     if (!body.success)
@@ -1804,7 +1803,7 @@ export function createApp() {
             : {}),
           ...(frames !== undefined ? { frames } : {}),
           ...(target !== undefined ? { target } : {}),
-          requestId: randomUUID(),
+          requestId: body.data.requestId ?? randomUUID(),
         }),
       },
     );

@@ -28,7 +28,12 @@ import {
   type IconProps,
 } from "./pixel-icons.js";
 import { agentLabel } from "../lib/agent-label.js";
-import { consoleTabs, formatDuration, type RunRow } from "../lib/run-activity.js";
+import {
+  consoleTabs,
+  formatDuration,
+  type ConsoleTurn,
+  type RunRow,
+} from "../lib/run-activity.js";
 import {
   InteractionCard,
   type InteractionResponse,
@@ -82,6 +87,23 @@ function formatTokens(count: number): string {
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
 }
 
+/** Where a follow-up sits, under the user's own words. */
+function followUpStatus(row: Extract<RunRow, { kind: "steering" }>): string {
+  const frame = row.frameName ? ` · ${row.frameName}` : "";
+  if (row.delivery === "record") return "";
+  if (row.delivery === "clarify") return `not sent yet · pick a frame${frame}`;
+  if (row.delivery === "queued") return `queued for the next turn${frame}`;
+  if (row.delivery === "applied") return `applied on the next turn${frame}`;
+  if (row.relayed === true || row.delivery === "relayed") {
+    const who =
+      row.routed === "supervisor" || row.routed === "plan"
+        ? "Supervisor"
+        : agentLabel(row.routed);
+    return `sent to ${who}${frame}`;
+  }
+  return `with the supervisor${frame}`;
+}
+
 /** One earlier run, kept small: what was asked and what came back. */
 export type HistoryRun = {
   id: string;
@@ -103,6 +125,7 @@ export function RunConsole({
   onOpen,
   message,
   prompt = "",
+  turns,
   history = [],
   restoredMs = null,
   interaction,
@@ -120,6 +143,12 @@ export function RunConsole({
   onOpen: (next: boolean) => void;
   message: string;
   prompt?: string;
+  /**
+   * One section per user request. While a section is on screen its prompt and
+   * its own tabs stay pinned; the next request's header replaces them.
+   * Omitted, the console is a single turn of `prompt` and `rows`.
+   */
+  turns?: ConsoleTurn[];
   history?: HistoryRun[];
   restoredMs?: number | null;
   interaction: PendingInteraction | null;
@@ -138,7 +167,7 @@ export function RunConsole({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
-  const [tabId, setTabId] = useState("all");
+  const [tabByTurn, setTabByTurn] = useState<Record<string, string>>({});
   const startedAt = useRef<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [lastRunMs, setLastRunMs] = useState<number | null>(null);
@@ -160,30 +189,44 @@ export function RunConsole({
     };
   }, [running]);
   const settled = !running;
-  const tabs = consoleTabs(rows, settled);
-  const tab = tabs.find((item) => item.id === tabId) ?? tabs[0];
+  const sections: ConsoleTurn[] =
+    turns !== undefined && turns.length > 0 ? turns : [{ id: "current", prompt, rows }];
+  const lastTurn = sections.at(-1);
+  const lastTurnId = lastTurn?.id ?? "";
+  const lastTurnIdRef = useRef(lastTurnId);
+  lastTurnIdRef.current = lastTurnId;
+  const allRows = sections.flatMap((turn) => turn.rows);
+  useEffect(() => {
+    setFollow(true);
+  }, [lastTurnId, lastTurn?.prompt]);
   useEffect(() => {
     if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [rows, follow, message, tab?.id]);
+  }, [lastTurn?.rows, follow, message, tabByTurn, lastTurnId]);
   // Review starts after a long worker log. Bring that pass to the bottom,
-  // where follow already keeps the latest line.
+  // where follow already keeps the latest line. Only the live turn's tab moves.
   useEffect(() => {
     if (taskProgress?.phase !== "review") return;
-    setTabId("all");
+    const id = lastTurnIdRef.current;
+    if (id.length > 0) setTabByTurn((current) => ({ ...current, [id]: "all" }));
     setFollow(true);
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [taskProgress?.phase]);
 
-  const steps = rows.length;
-  const lastStatus = [...rows].reverse().find((row) => row.kind === "status");
+  const steps = allRows.length;
+  const lastStatus = [...allRows].reverse().find((row) => row.kind === "status");
   const stateLabel = lastStatus?.kind === "status" ? lastStatus.label : "finished";
-  const usage = [...rows].reverse().find((row) => row.kind === "usage");
+  const usage = [...allRows].reverse().find((row) => row.kind === "usage");
   const durationMs = running ? elapsed : (lastRunMs ?? restoredMs);
-  const empty = !running && rows.length === 0 && !message && history.length === 0;
+  const empty =
+    !running &&
+    allRows.length === 0 &&
+    !message &&
+    history.length === 0 &&
+    sections.every((turn) => turn.prompt.trim().length === 0);
   // The asset a workspace run created; its row carries the editor link. The
   // action appears once the run is terminal — mid-run the editor could not
   // write to the asset and would not rejoin a workspace run's stream.
-  const asset = [...rows].reverse().find((row) => row.kind === "asset");
+  const asset = [...allRows].reverse().find((row) => row.kind === "asset");
   const summary = interaction
     ? "waiting for your answer"
     : running
@@ -262,10 +305,18 @@ export function RunConsole({
     return null;
   };
 
-  const tabMark = (status: "running" | "done" | "failed") => {
-    if (status === "running") return <PixelLoader size={12} />;
-    if (status === "failed") return <Close width={12} height={12} />;
-    return <Check width={12} height={12} />;
+  const tabMark = (status: "running" | "done" | "failed", selected: boolean) => {
+    if (status === "running") {
+      return <PixelLoader size={12} tone={selected ? "navy" : "accent"} />;
+    }
+    if (status === "failed") {
+      return (
+        <Close width={12} height={12} className={selected ? "text-navy" : "text-erase"} />
+      );
+    }
+    return (
+      <Check width={12} height={12} className={selected ? "text-navy" : "text-accent"} />
+    );
   };
 
   return (
@@ -301,135 +352,194 @@ export function RunConsole({
           className="max-h-80 overflow-auto border-t-2 border-line"
           aria-live="polite"
         >
-          {prompt || tabs.length > 1 ? (
-            <div className="sticky top-0 z-10 border-b-2 border-line bg-panel px-2 pt-2">
-              {prompt ? (
-                <div className="pb-2">
-                  <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
-                    you
-                  </p>
-                  <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
-                    {prompt}
-                  </p>
-                </div>
-              ) : null}
-              {tabs.length > 1 ? (
-                <div
-                  role="tablist"
-                  aria-label="Agent steps"
-                  className="flex gap-1 overflow-x-auto pb-2"
-                >
-                  {tabs.map((item) => {
-                    const selected = item.id === tab?.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={selected}
-                        onClick={() => {
-                          setTabId(item.id);
-                          setFollow(true);
-                        }}
-                        className={`flex shrink-0 items-center gap-1 border-2 px-1.5 py-1 text-pixel-mono tracking-[0.12em] uppercase ${
-                          selected
-                            ? "border-accent bg-accent text-navy"
-                            : "border-line bg-panel text-muted hover:text-ink"
-                        }`}
+          {sections.map((turn, index) => {
+            const isLast = index === sections.length - 1;
+            const turnTabs = consoleTabs(turn.rows, settled || !isLast);
+            const selectedId = tabByTurn[turn.id] ?? "all";
+            const tab = turnTabs.find((item) => item.id === selectedId) ?? turnTabs[0];
+            const liveNoteId =
+              running && isLast
+                ? [...(tab?.rows ?? [])]
+                    .reverse()
+                    .find((row) => row.kind === "supervisor")?.id
+                : undefined;
+            return (
+              <section key={turn.id}>
+                {turn.prompt || turnTabs.length > 1 ? (
+                  <div className="sticky top-0 z-10 border-b-2 border-line bg-panel px-2 pt-2">
+                    {turn.prompt ? (
+                      <div className="pb-2">
+                        <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
+                          you
+                        </p>
+                        <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
+                          {turn.prompt}
+                        </p>
+                      </div>
+                    ) : null}
+                    {turnTabs.length > 1 ? (
+                      <div
+                        role="tablist"
+                        aria-label="Agent steps"
+                        className="flex gap-1 overflow-x-auto pb-2"
                       >
-                        <span className="grid h-3 w-3 place-items-center">
-                          {tabMark(item.status)}
+                        {turnTabs.map((item) => {
+                          const selected = item.id === tab?.id;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={selected}
+                              onClick={() => {
+                                setTabByTurn((current) => ({
+                                  ...current,
+                                  [turn.id]: item.id,
+                                }));
+                                if (isLast) setFollow(true);
+                              }}
+                              className={`flex shrink-0 items-center gap-1 border-2 px-1.5 py-1 text-pixel-mono tracking-[0.12em] uppercase ${
+                                selected
+                                  ? "border-accent bg-accent text-navy"
+                                  : "border-line bg-panel text-muted hover:text-ink"
+                              }`}
+                            >
+                              <span className="grid h-3 w-3 place-items-center">
+                                {tabMark(item.status, selected)}
+                              </span>
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <ul className="grid gap-1.5 px-2 py-2">
+                  {(tab?.rows ?? []).map((row) => {
+                    const owner = tab?.id === "all" ? rowAgent(row) : null;
+                    return (
+                      <li
+                        key={row.id}
+                        className="flex items-start gap-1.5 text-pixel-mono text-muted"
+                      >
+                        <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
+                          {rowIcon(row)}
                         </span>
-                        {item.label}
-                      </button>
+                        <div
+                          className={`min-w-0 flex-1 break-words ${
+                            row.kind === "supervisor" ? "" : "whitespace-pre-wrap"
+                          }`}
+                        >
+                          {owner && row.kind !== "steering" ? (
+                            <span className="text-accent">{owner} · </span>
+                          ) : null}
+                          {row.kind === "phase" ? (
+                            <span className={row.state === "running" ? "text-ink" : ""}>
+                              {row.label}
+                              {row.state === "running" ? "…" : ""}
+                            </span>
+                          ) : row.kind === "asset" ? (
+                            <span className="text-ink">asset · {row.name}</span>
+                          ) : row.kind === "usage" ? (
+                            <span
+                              className="text-ink"
+                              title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
+                            >
+                              usage · {formatCost(row.cost)}
+                              {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
+                              {row.cached > 0
+                                ? ` · ${formatTokens(row.cached)} cached`
+                                : ""}
+                            </span>
+                          ) : row.kind === "tool" ? (
+                            <span
+                              className={
+                                row.state === "error" ? "text-erase" : "text-ink"
+                              }
+                            >
+                              {row.name}
+                              {row.summary ? ` · ${row.summary}` : ""}
+                              {row.detail ? ` — ${row.detail}` : ""}
+                            </span>
+                          ) : row.kind === "worker" ? (
+                            <span
+                              className={
+                                row.status === "failed" ? "text-erase" : "text-ink"
+                              }
+                            >
+                              {row.status}
+                              {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
+                            </span>
+                          ) : row.kind === "task-phase" ? (
+                            <span className="text-muted">
+                              {row.phase} · {row.status}
+                            </span>
+                          ) : row.kind === "supervisor" ? (
+                            <div
+                              className={
+                                row.channel === "thinking" ? "text-muted" : "text-ink"
+                              }
+                            >
+                              {row.channel === "thinking" ||
+                              row.to !== undefined ||
+                              row.held === true ? (
+                                <p className="text-pixel-mono text-muted">
+                                  {row.channel === "thinking"
+                                    ? "thinking"
+                                    : row.to !== undefined
+                                      ? `to ${agentLabel(row.to)}`
+                                      : "noted for review"}
+                                </p>
+                              ) : null}
+                              <StreamMarkdown
+                                className="console-markdown mt-1"
+                                content={row.message}
+                                live={row.id === liveNoteId}
+                              />
+                            </div>
+                          ) : row.kind === "steering" ? (
+                            <div>
+                              <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
+                                you
+                              </p>
+                              {row.message ? (
+                                <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
+                                  {row.message}
+                                </p>
+                              ) : null}
+                              {followUpStatus(row) ? (
+                                <p
+                                  className={`mt-1 text-pixel-mono ${
+                                    row.delivery === "clarify"
+                                      ? "text-accent"
+                                      : "text-muted"
+                                  }`}
+                                >
+                                  {followUpStatus(row)}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : row.kind === "question" ? (
+                            <span className="text-accent">needs you</span>
+                          ) : (
+                            <span
+                              className={
+                                row.state === "failed" ? "text-erase" : "text-ink"
+                              }
+                            >
+                              {row.label}
+                              {row.detail ? ` — ${row.detail}` : ""}
+                            </span>
+                          )}
+                        </div>
+                      </li>
                     );
                   })}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <ul className="grid gap-1.5 px-2 py-2">
-            {(tab?.rows ?? []).map((row) => {
-              const owner = tab?.id === "all" ? rowAgent(row) : null;
-              return (
-                <li
-                  key={row.id}
-                  className="flex items-start gap-1.5 text-pixel-mono text-muted"
-                >
-                  <span className="grid h-3.5 w-3.5 shrink-0 place-items-center">
-                    {rowIcon(row)}
-                  </span>
-                  <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
-                    {owner ? <span className="text-accent">{owner} · </span> : null}
-                    {row.kind === "phase" ? (
-                      <span className={row.state === "running" ? "text-ink" : ""}>
-                        {row.label}
-                        {row.state === "running" ? "…" : ""}
-                      </span>
-                    ) : row.kind === "asset" ? (
-                      <span className="text-ink">asset · {row.name}</span>
-                    ) : row.kind === "usage" ? (
-                      <span
-                        className="text-ink"
-                        title={`model ${formatCost(row.modelCost)} (${row.modelCalls} calls) · Jev ${formatCost(row.jevCost)} (${row.jevCalls} calls)`}
-                      >
-                        usage · {formatCost(row.cost)}
-                        {row.total > 0 ? ` · ${formatTokens(row.total)} tok` : ""}
-                        {row.cached > 0 ? ` · ${formatTokens(row.cached)} cached` : ""}
-                      </span>
-                    ) : row.kind === "tool" ? (
-                      <span className={row.state === "error" ? "text-erase" : "text-ink"}>
-                        {row.name}
-                        {row.summary ? ` · ${row.summary}` : ""}
-                        {row.detail ? ` — ${row.detail}` : ""}
-                      </span>
-                    ) : row.kind === "worker" ? (
-                      <span
-                        className={row.status === "failed" ? "text-erase" : "text-ink"}
-                      >
-                        {row.status}
-                        {row.frames.length > 0 ? ` · ${row.frames.join(", ")}` : ""}
-                      </span>
-                    ) : row.kind === "task-phase" ? (
-                      <span className="text-muted">
-                        {row.phase} · {row.status}
-                      </span>
-                    ) : row.kind === "supervisor" ? (
-                      <span
-                        className={row.channel === "thinking" ? "text-muted" : "text-ink"}
-                      >
-                        {row.channel === "thinking"
-                          ? "thinking · "
-                          : row.to !== undefined
-                            ? `to ${agentLabel(row.to)} · `
-                            : row.held === true
-                              ? "noted for review · "
-                              : ""}
-                        {row.message}
-                      </span>
-                    ) : row.kind === "steering" ? (
-                      <span className="text-accent">
-                        {row.relayed === true
-                          ? `relayed to ${agentLabel(row.routed)}`
-                          : "kept by the supervisor"}
-                        {row.frameName ? ` (${row.frameName})` : ""}
-                        {row.message ? ` · ${row.message}` : ""}
-                      </span>
-                    ) : row.kind === "question" ? (
-                      <span className="text-accent">needs you</span>
-                    ) : (
-                      <span
-                        className={row.state === "failed" ? "text-erase" : "text-ink"}
-                      >
-                        {row.label}
-                        {row.detail ? ` — ${row.detail}` : ""}
-                      </span>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+                </ul>
+              </section>
+            );
+          })}
           {asset && !running ? (
             <div className="mx-2 mt-2 border-t-2 border-line pt-2">
               <Link

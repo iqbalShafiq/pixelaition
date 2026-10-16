@@ -396,4 +396,36 @@ describe.skipIf(!db)("home runs route", () => {
     expect(lastWorkerBody?.usage).toMatchObject({ jevCalls: 2, jevCost: 0.00005 });
     expect(lastWorkerBody?.mode).toBe("draw");
   });
+
+  it("returns the new asset and its project so the home can open the editor", async () => {
+    const row = await insertProposal(live, {
+      userId,
+      prompt: "gambar slime lompat",
+      intent: "draw",
+      project: { id: projectId, confidence: 0.8 },
+      guardrail: { action: "pass" },
+      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    stubProviders();
+    const res = await request(app)
+      .post("/api/home/runs")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        ...homeBody,
+        proposalId: row.id,
+        confirm: {
+          projectId,
+          assetId: "new",
+          assetName: "slime-lompat",
+          mode: "generate",
+        },
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    expect(res.body.kind).toBe("task");
+    expect(res.body.projectId).toBe(projectId);
+    expect(typeof res.body.assetId).toBe("string");
+    expect(res.body.assetId).not.toBe(assetId);
+    expect(lastWorkerBody?.prompt).toContain("Asset name to use: slime-lompat");
+  });
 });

@@ -15,7 +15,7 @@ import { workerAttemptTask } from "./worker-attempt.js";
  * One durable task per drawing request. Task code — never the model — decides
  * what spawns: a plan child (the supervisor), one worker child per assignment
  * continuing the plan's conversation, and a review child that reads every
- * frame and may order at most two fixes in at most two rounds.
+ * frame and may order at most two fixes per review, across at most six rounds.
  */
 
 export const assetDrawInputSchema = z.object({
@@ -39,8 +39,25 @@ export const assetDrawInputSchema = z.object({
   review: z.boolean(),
   maxFrames: z.number().int().min(1).max(12),
   maxPalette: z.number().int().min(0).max(32),
+  /**
+   * The public run_tasks id. Prior-turn loading uses it to skip this request.
+   * Older tasks omit it; the loader then skips the newest live row instead.
+   */
+  taskId: z.string().min(1).optional(),
+  /**
+   * Whether the chosen model can view images. Prior-turn loading drops the
+   * earlier reference images and says so when this is false; omitted keeps
+   * them, which is the right answer for older tasks and vision targets.
+   */
+  modelVision: z.boolean().optional(),
 });
 export type AssetDrawInput = z.infer<typeof assetDrawInputSchema>;
+
+/**
+ * Review, then fix, then review again. The last round is a final read: it
+ * does not order another fix. Six is the cap (review-1 through review-6).
+ */
+const REVIEW_ROUNDS = 6;
 
 /** Bookkeeping that must survive a restart: bounded retries per child role. */
 const PHASE_EXTRAS = {
@@ -76,7 +93,7 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     phase: z.literal("review"),
     plan: drawPlanSchema,
     planKey: z.string(),
-    round: z.number().int().min(1).max(2),
+    round: z.number().int().min(1).max(REVIEW_ROUNDS),
     reviewKey: z.string().optional(),
     fixIds: z.array(z.string()),
   }),
@@ -105,7 +122,7 @@ function withRetry(
 export const assetDrawOutputSchema = z.object({
   assetId: z.string(),
   frames: z.array(z.string()),
-  rounds: z.number().int().min(0).max(2),
+  rounds: z.number().int().min(0).max(REVIEW_ROUNDS),
   workers: z.number().int().min(1).max(4),
 });
 export type AssetDrawOutput = z.infer<typeof assetDrawOutputSchema>;
@@ -130,6 +147,70 @@ export function withAttachments(
       })),
     ],
   };
+}
+
+/** What promptText returns when a prompt held only image parts. */
+export const PROMPT_PLACEHOLDER = "(prompt with reference images)";
+
+/** The words of a prompt, without its image parts. */
+export function promptText(prompt: unknown): string {
+  if (typeof prompt === "string") return prompt;
+  if (prompt !== null && typeof prompt === "object" && "content" in prompt) {
+    const content = (prompt as { content?: unknown }).content;
+    if (Array.isArray(content)) {
+      const text = content
+        .flatMap((part) => {
+          if (part === null || typeof part !== "object") return [];
+          const record = part as { type?: unknown; text?: unknown };
+          return record.type === "text" && typeof record.text === "string"
+            ? [record.text]
+            : [];
+        })
+        .join("\n")
+        .trim();
+      if (text.length > 0) return text;
+    }
+  }
+  return PROMPT_PLACEHOLDER;
+}
+
+/** The line the worker's earlier-turns block always closes with. */
+const PRIOR_BLOCK_END = "This message continues that work.";
+
+/**
+ * The line a person typed, from a stored child prompt. Worker prompts start
+ * with `Request:`; a plan prompt starts with the request itself — unless an
+ * earlier-turns block precedes it, in which case the request follows the
+ * block's closing line.
+ */
+export function userRequestFromPrompt(
+  role: string | null,
+  prompt: string | null,
+): string | null {
+  if (prompt === null) return null;
+  const trimmed = prompt.trim();
+  if (trimmed.length === 0 || trimmed === PROMPT_PLACEHOLDER) return null;
+  const lines = trimmed.split("\n");
+  for (const line of lines) {
+    if (!line.startsWith("Request: ")) continue;
+    const text = line.slice("Request: ".length).trim();
+    if (text.length > 0) return text.slice(0, 4000);
+  }
+  if (role !== "plan") return null;
+  const end = lines.findIndex((line) => line.trim() === PRIOR_BLOCK_END);
+  const first = lines
+    .slice(end + 1)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (first === undefined || first === PROMPT_PLACEHOLDER) return null;
+  if (
+    first.startsWith("The user ") ||
+    first.startsWith("Limits:") ||
+    first.startsWith("Answer with")
+  ) {
+    return null;
+  }
+  return first.slice(0, 4000);
 }
 
 /**
@@ -223,6 +304,22 @@ function deliveredSteers(ctx: Ctx): string {
   return messages.length > 0 ? `User steering to honour: ${messages.join(" ")}` : "";
 }
 
+/**
+ * A brand-new plan child has no conversation yet, so earlier turns are
+ * prepended here. continueFrom children inherit that conversation instead.
+ */
+async function openingPrompt(
+  ctx: Ctx,
+  deps: AssetDrawDeps,
+  instructions: string,
+): Promise<AgentPrompt> {
+  const prior = deps.loadPriorContext
+    ? await deps.loadPriorContext(ctx.input)
+    : { text: "", attachments: [] as AssetDrawInput["attachments"] };
+  const text = prior.text.length > 0 ? `${prior.text}\n\n${instructions}` : instructions;
+  return withAttachments(text, [...prior.attachments, ...ctx.input.attachments]);
+}
+
 async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "plan" }>;
   if (checkpoint.planKey === undefined) {
@@ -231,9 +328,10 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
       const key = checkpoint.attempt === 0 ? "plan" : `plan-${checkpoint.attempt}`;
       const id = ctx.spawnAgent(key, {
         agentId: ctx.input.agentId,
-        prompt: withAttachments(
+        prompt: await openingPrompt(
+          ctx,
+          deps,
           `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
-          ctx.input.attachments,
         ),
       });
       return {
@@ -260,7 +358,7 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
       const childKey = `plan-retry-${attempt}`;
       const id = ctx.spawnAgent(childKey, {
         agentId: ctx.input.agentId,
-        prompt: buildPlanPrompt(ctx.input),
+        prompt: await openingPrompt(ctx, deps, buildPlanPrompt(ctx.input)),
       });
       return {
         status: "waiting",
@@ -618,8 +716,8 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
     })();
   }
   if (checkpoint.fixIds.length > 0) {
-    // The fixes finished; either start the second review round or stop.
-    if (checkpoint.round >= 2) return finish(checkpoint.round);
+    // The fixes finished; either start the next review or stop at the cap.
+    if (checkpoint.round >= REVIEW_ROUNDS) return finish(checkpoint.round);
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
       const id = ctx.spawnAgent(`review-${checkpoint.round + 1}`, {
@@ -685,7 +783,8 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
   } catch {
     return { status: "failed", error: "The review answered with invalid JSON." };
   }
-  if (verdict.ok === true || checkpoint.round >= 2) return finish(checkpoint.round);
+  if (verdict.ok === true || checkpoint.round >= REVIEW_ROUNDS)
+    return finish(checkpoint.round);
   const fixes = (verdict.fixes ?? [])
     .slice(0, 2)
     .filter((fix) => checkpoint.plan.frames.some((frame) => frame.name === fix.frame));
@@ -711,6 +810,13 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
   };
 }
 
+export type PriorContext = {
+  /** Transcript of every earlier user request and the agents' steps. */
+  text: string;
+  /** Reference images from those turns, oldest first. */
+  attachments: AssetDrawInput["attachments"];
+};
+
 export type PlanContext = {
   projectName: string;
   assetName: string;
@@ -725,6 +831,13 @@ export type WorkerContext = {
 };
 export type AssetDrawDeps = {
   loadPlanContext(input: AssetDrawInput): Promise<PlanContext>;
+  /**
+   * Every earlier drawing turn on this asset: user text, reference images,
+   * and compact agent steps. Omitted in tests, which then plan from this
+   * request alone. A fresh plan child (including a failed-child retry) reads
+   * it. A continueFrom correction already has the conversation.
+   */
+  loadPriorContext?(input: AssetDrawInput): Promise<PriorContext>;
   /**
    * A fresh asset ships with one empty default frame. When the plan names its
    * own frames, that frame is renamed to the plan's first name so the asset

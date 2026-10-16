@@ -2,10 +2,14 @@ import type { TaskContext, TaskTransition } from "@anvia/durable";
 import { describe, expect, it } from "vitest";
 import type { DrawPlan } from "./plan.js";
 import {
+  assetDrawInputSchema,
   buildPlanPrompt,
   createAssetDrawTask,
   minFramesFor,
   parsePlanOutput,
+  promptText,
+  userRequestFromPrompt,
+  withAttachments,
   type AssetDrawCheckpoint,
   type AssetDrawDeps,
   type AssetDrawInput,
@@ -140,6 +144,53 @@ async function run(
   return task.run(ctx);
 }
 
+describe("asset-draw input", () => {
+  it("keeps the model's vision capability on the parsed input", () => {
+    // Without the schema field the durable layer strips it and the loader
+    // would hand image parts to a model that cannot view them.
+    const parsed = assetDrawInputSchema.parse({ ...input, modelVision: false });
+    expect(parsed.modelVision).toBe(false);
+  });
+});
+
+describe("user request from prompt", () => {
+  it("reads the request from a plan prompt and a worker Request line", () => {
+    expect(
+      userRequestFromPrompt("plan", "please make the sweet face\nLimits: at most 4"),
+    ).toBe("please make the sweet face");
+    expect(userRequestFromPrompt("plan", "(prompt with reference images)")).toBeNull();
+    expect(userRequestFromPrompt("worker", "Request: fix the blush\nPaint only")).toBe(
+      "fix the blush",
+    );
+  });
+
+  it("reads past an earlier-turns block to the request that follows", () => {
+    const prompt = [
+      "Earlier drawing turns on this asset, oldest first. Honour them.",
+      "",
+      "Turn 1. User: please make the sweet face",
+      "Supervisor · read_project — ok",
+      "",
+      "This message continues that work.",
+      "",
+      "i think the asset is not the same with s.coups?",
+      "Limits: at most 4 frames",
+    ].join("\n");
+    expect(userRequestFromPrompt("plan", prompt)).toBe(
+      "i think the asset is not the same with s.coups?",
+    );
+  });
+
+  it("has nothing to read when the turns block closes the prompt", () => {
+    const prompt = [
+      "Earlier drawing turns on this asset, oldest first. Honour them.",
+      "",
+      "This message continues that work.",
+    ].join("\n");
+    expect(userRequestFromPrompt("plan", prompt)).toBeNull();
+  });
+});
+
 describe("asset-draw plan phase", () => {
   it("carries the user's attachment images into the plan child's prompt", async () => {
     const withImages = createAssetDrawTask(deps);
@@ -152,6 +203,76 @@ describe("asset-draw plan phase", () => {
     const prompt = spawns[0]?.prompt as { content?: Array<{ type: string }> };
     expect(Array.isArray(prompt?.content)).toBe(true);
     expect(prompt.content?.some((part) => part.type === "image")).toBe(true);
+  });
+
+  it("puts every earlier turn, then this request, on a fresh plan child", async () => {
+    const task = createAssetDrawTask({
+      ...deps,
+      loadPriorContext: async () => ({
+        text: "Earlier drawing turns on this asset\nTurn 1. User: please make the sweet face",
+        attachments: [{ mediaType: "image/jpeg", data: "b".repeat(16) }],
+      }),
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0 },
+      children: [],
+      attachments: [{ mediaType: "image/png", data: "a".repeat(16) }],
+    });
+    await task.run(ctx);
+    const prompt = spawns[0]?.prompt as {
+      content?: Array<{ type: string; text?: string; image?: { data: string } }>;
+    };
+    expect(prompt.content?.[0]?.text).toContain("please make the sweet face");
+    expect(prompt.content?.[0]?.text).toContain(input.request);
+    expect(
+      prompt.content
+        ?.filter((part) => part.type === "image")
+        .map((part) => part.image?.data[0]),
+    ).toEqual(["b", "a"]);
+  });
+
+  it("reloads earlier turns when the plan child is spawned again after a failure", async () => {
+    let calls = 0;
+    const task = createAssetDrawTask({
+      ...deps,
+      loadPriorContext: async () => {
+        calls += 1;
+        return { text: "Turn 1. User: the first pose", attachments: [] };
+      },
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [{ id: "child-plan", key: "plan", outcome: { status: "failed" } }],
+    });
+    await task.run(ctx);
+    expect(calls).toBe(1);
+    expect(String(spawns[0]?.prompt)).toContain("the first pose");
+    expect(spawns[0]?.continueFrom).toBeUndefined();
+  });
+
+  it("leaves an approved-plan correction on the same conversation", async () => {
+    let calls = 0;
+    const task = createAssetDrawTask({
+      ...deps,
+      loadPriorContext: async () => {
+        calls += 1;
+        return { text: "EARLIER", attachments: [] };
+      },
+    });
+    const bad = JSON.stringify({
+      ...JSON.parse(planJson),
+      workers: [{ key: "w1", frames: ["idle"] }],
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        { id: "child-plan", key: "plan", outcome: { status: "completed", output: bad } },
+      ],
+    });
+    await task.run(ctx);
+    expect(calls).toBe(0);
+    expect(spawns[0]?.continueFrom).toBe("plan");
+    expect(String(spawns[0]?.prompt)).not.toContain("EARLIER");
   });
 
   it("spawns the plan child on the first transition", async () => {
@@ -419,6 +540,67 @@ describe("asset-draw review phase", () => {
       status: "waiting",
       wait: { type: "children", ids: ["child-fix-1-1"] },
     });
+  });
+
+  it("keeps reviewing after a fix until the sixth review, which does not order another fix", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const afterFifth = fakeCtx({
+      checkpoint: {
+        phase: "review",
+        plan,
+        planKey: "plan",
+        round: 5,
+        reviewKey: "review-5",
+        fixIds: ["child-fix-5-1"],
+      },
+      children: [
+        {
+          id: "child-fix-5-1",
+          key: "fix-5-1",
+          outcome: { status: "completed", output: "fixed" },
+        },
+      ],
+    });
+    const next = await run(task, afterFifth.ctx);
+    expect(afterFifth.spawns.map((spawn) => spawn.key)).toEqual(["review-6"]);
+    expect(next).toMatchObject({ status: "waiting" });
+
+    const sixth = fakeCtx({
+      checkpoint: {
+        phase: "review",
+        plan,
+        planKey: "plan",
+        round: 6,
+        reviewKey: "review-6",
+        fixIds: [],
+      },
+      children: [
+        {
+          id: "child-review-6",
+          key: "review-6",
+          outcome: {
+            status: "completed",
+            output: '{"ok":false,"fixes":[{"frame":"walk","note":"still off"}]}',
+          },
+        },
+      ],
+    });
+    const done = await run(task, sixth.ctx);
+    expect(sixth.spawns).toEqual([]);
+    expect(done).toMatchObject({ status: "completed", output: { rounds: 6 } });
+  });
+});
+
+describe("promptText", () => {
+  it("keeps the words of a prompt that also carries reference images", () => {
+    expect(
+      promptText(
+        withAttachments("i think the asset is not the same with s.coups?", [
+          { mediaType: "image/jpeg", data: "a".repeat(16) },
+        ]),
+      ),
+    ).toBe("i think the asset is not the same with s.coups?");
   });
 });
 

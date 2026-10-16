@@ -46,7 +46,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
   }
   lines.push(
     "The palette already carries every colour you need; do not add palette colours.",
-    "Every frame you own must end with a clean critique and matching outlines across the frames you paint.",
+    "Paint the frames you own, then stop. Do not call critique_frame or check_animation, and do not shift or redraw finished pixels. The reviewer checks the work. End with one sentence.",
   );
   if (input.attachments > 0) {
     lines.push(

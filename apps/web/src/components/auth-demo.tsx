@@ -11,6 +11,103 @@ import { Wordmark } from "./ui.js";
 
 const tickMs = 36;
 const cellsPerTick = 2;
+const gridCell = 16;
+
+// 4×4 Bayer. A smooth falloff posterized through this matrix becomes a pixel
+// texture instead of a diagonal band or a hard ring.
+const bayer4 = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+] as const;
+
+/**
+ * A broad pool of light sits in the bottom-right and breathes. The falloff is
+ * round, then cut into four levels with ordered dither, which is how pixel
+ * art hides banding. Borders stay put.
+ */
+function AuthGrid() {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const parent = canvas?.parentElement;
+    if (!canvas || !parent) return;
+
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+
+    const draw = (time: number) => {
+      const width = parent.clientWidth;
+      const height = parent.clientHeight;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const pixelWidth = Math.max(1, Math.floor(width * dpr));
+      const pixelHeight = Math.max(1, Math.floor(height * dpr));
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      const cols = Math.max(1, Math.ceil(width / gridCell));
+      const rows = Math.max(1, Math.ceil(height / gridCell));
+      const reach = Math.hypot(cols, rows);
+      const breath = reduce
+        ? 0.62
+        : 0.38 + 0.62 * (0.5 - 0.5 * Math.cos((time / 2400) * Math.PI * 2));
+      for (let y = 0; y < rows; y += 1) {
+        const row = bayer4[y & 3]!;
+        for (let x = 0; x < cols; x += 1) {
+          const dist = Math.hypot(x + 0.5 - cols * 0.82, y + 0.5 - rows * 0.78) / reach;
+          const light = Math.max(0, breath * (1 - dist * 1.35));
+          const threshold = (row[x & 3]! + 0.5) / 16;
+          const stepped = Math.min(
+            3,
+            Math.max(0, Math.floor((light + (threshold - 0.5) * 0.28) * 4)),
+          );
+          const level = stepped / 3;
+          const px = x * gridCell;
+          const py = y * gridCell;
+          ctx.fillStyle = `rgba(148, 176, 194, ${0.04 + level * 0.42})`;
+          ctx.fillRect(px + 1, py + 1, gridCell - 1, gridCell - 1);
+          ctx.fillStyle = "rgba(148, 176, 194, 0.42)";
+          ctx.fillRect(px, py, gridCell, 1);
+          ctx.fillRect(px, py, 1, gridCell);
+          if (x === cols - 1) ctx.fillRect(px + gridCell - 1, py, 1, gridCell);
+          if (y === rows - 1) ctx.fillRect(px, py + gridCell - 1, gridCell, 1);
+        }
+      }
+    };
+
+    const loop = (time: number) => {
+      draw(time);
+      raf = requestAnimationFrame(loop);
+    };
+
+    if (reduce) draw(0);
+    else raf = requestAnimationFrame(loop);
+
+    const observer = new ResizeObserver(() => {
+      if (reduce) draw(0);
+    });
+    observer.observe(parent);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={ref}
+      aria-hidden
+      className="pointer-events-none absolute inset-0 size-full"
+    />
+  );
+}
 
 /**
  * Sky sits high, the cast stands on the ground. Positions are the picture,
@@ -307,9 +404,10 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
         <div className="relative mt-2 h-60">
           <div
             aria-hidden
-            className="pixel-grid-slide pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)]"
-            style={{ backgroundSize: "12px 12px" }}
-          />
+            className="pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_top_left,black_0%,black_42%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top_left,black_0%,black_42%,transparent_100%)]"
+          >
+            <AuthGrid />
+          </div>
           <Scene cursor={cursor} scale={0.5} />
         </div>
       </aside>
@@ -323,9 +421,10 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
     >
       <div
         aria-hidden
-        className="pixel-grid-slide pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_left,black_0%,black_30%,transparent_52%)] [-webkit-mask-image:linear-gradient(to_left,black_0%,black_30%,transparent_52%)]"
-        style={{ backgroundSize: "12px 12px" }}
-      />
+        className="pointer-events-none absolute inset-0 [mask-image:linear-gradient(to_top_left,black_0%,black_22%,transparent_68%)] [-webkit-mask-image:linear-gradient(to_top_left,black_0%,black_22%,transparent_68%)]"
+      >
+        <AuthGrid />
+      </div>
       <div className="relative flex h-full flex-col px-8 py-8">
         <Wordmark size="display" />
         <div className="mt-10 max-w-md">

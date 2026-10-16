@@ -98,7 +98,12 @@ export function ProjectsScreen() {
     queryKey: ["models"],
     queryFn: () =>
       api<{
-        models: Array<{ id: string; efforts: string[]; vision: boolean }>;
+        models: Array<{
+          id: string;
+          efforts: string[];
+          vision: boolean;
+          userImages: boolean;
+        }>;
         modelReady: boolean;
       }>("/api/models"),
   });
@@ -151,6 +156,9 @@ export function ProjectsScreen() {
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
     null,
   );
+  // A task stream's card belongs to a child run. Responding to the task id
+  // itself is a 404; this is the child the event named.
+  const [pendingRunId, setPendingRunId] = useState<string | null>(null);
   // The ids this session already answered, so a replayed interaction event
   // cannot bring an answered card back before its resolved marker arrives.
   const answeredIdsRef = useRef<Set<string>>(new Set());
@@ -346,9 +354,17 @@ export function ProjectsScreen() {
     setRunPrompt(candidate.prompt ?? "");
     setConsoleOpen(true);
     setPendingInteraction(candidate.interaction ?? null);
+    setPendingRunId(candidate.id);
     log(`Rejoined run ${candidate.id.slice(0, 8)}`);
     listen(candidate.id);
-  }, [recent.data, runId, listen, log]);
+    // The asset already exists: the plan card lives on the editor, and a
+    // refresh must not leave it behind an idle home.
+    if (candidate.assetId && candidate.projectId) {
+      const projectId = candidate.projectId;
+      const assetId = candidate.assetId;
+      window.setTimeout(() => navigateToEditor(projectId, assetId), 0);
+    }
+  }, [recent.data, runId, listen, log, navigateToEditor]);
 
   const list = projects.data?.projects ?? [];
   useEffect(() => {
@@ -444,7 +460,8 @@ export function ProjectsScreen() {
   const attachmentIssue =
     attachments.items.length > 0 &&
     selectedModel !== undefined &&
-    selectedModel.vision !== true
+    selectedModel.vision !== true &&
+    selectedModel.userImages !== true
       ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
       : undefined;
   // The card needs a target before a run exists; an empty library is fine
@@ -515,104 +532,104 @@ export function ProjectsScreen() {
     startTransition(async () => {
       try {
         const payload = buildConfirmPayload(proposal.proposalId, choice);
-        const started = await api<{ runId: string; kind?: "task" | "run" }>(
-          "/api/home/runs",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              prompt: runPrompt,
-              modelId,
-              reasoningEffort: effort,
-              ...(staged.length > 0
-                ? {
-                    attachments: staged.map(({ mediaType, data }) => ({
-                      mediaType,
-                      data,
-                    })),
-                  }
-                : {}),
-              ...payload,
-            }),
-          },
-        );
+        const started = await api<{
+          runId: string;
+          kind?: "task" | "run";
+          assetId?: string | null;
+          projectId?: string | null;
+        }>("/api/home/runs", {
+          method: "POST",
+          body: JSON.stringify({
+            prompt: runPrompt,
+            modelId,
+            reasoningEffort: effort,
+            ...(staged.length > 0
+              ? {
+                  attachments: staged.map(({ mediaType, data }) => ({
+                    mediaType,
+                    data,
+                  })),
+                }
+              : {}),
+            ...payload,
+          }),
+        });
         if (staged.length > 0) attachments.clear();
         setProposal(null);
         setRunId(started.runId);
         // A new run needs the plan card in view and its asset known: keep the
-        // console open and poll alongside the stream events.
+        // console open and follow the stream until the editor can take over.
         setConsoleOpen(true);
-        const bornAsset = (started as { assetId?: string | null }).assetId;
+        void queryClient.invalidateQueries({ queryKey: ["assets"] });
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        let heading = false;
+        const openEditor = (projectId: string, assetId: string) => {
+          if (heading || projectId.length === 0 || assetId.length === 0) return;
+          heading = true;
+          pendingAutoNavRef.current = false;
+          // After the state updates above, so a view transition is not aborted
+          // by the same turn that started the run.
+          window.setTimeout(() => navigateToEditor(projectId, assetId), 0);
+        };
+        const responseAsset = typeof started.assetId === "string" ? started.assetId : "";
+        const responseProject =
+          typeof started.projectId === "string" ? started.projectId : "";
         const knownProject =
-          choice.projectId === undefined || choice.projectId === "new"
-            ? ""
-            : choice.projectId;
-        if (
-          typeof bornAsset === "string" &&
-          bornAsset.length > 0 &&
-          knownProject.length > 0
-        ) {
-          navigateToEditor(knownProject, bornAsset);
-        } else if (choice.assetName !== undefined) {
-          // The named asset is created with the confirmation, so its row is a
-          // moment away in the list: watch for it and open the editor at once.
+          responseProject.length > 0
+            ? responseProject
+            : choice.projectId !== "new"
+              ? choice.projectId
+              : "";
+        if (responseAsset.length > 0) openEditor(knownProject, responseAsset);
+        if (!heading && choice.assetName !== undefined && choice.assetName.length > 0) {
+          // The named asset is created with the confirmation. Read the list
+          // itself; the render's copy never sees the row this call just made.
           const bornName = choice.assetName;
           const bornPoll = window.setInterval(() => {
-            void queryClient.invalidateQueries({ queryKey: ["assets"] });
-            const list =
-              (
-                assets.data as
-                  | { assets?: Array<{ id: string; name: string; projectId: string }> }
-                  | undefined
-              )?.assets ?? [];
-            const born = list.find((item) => item.name === bornName);
-            if (born !== undefined) {
-              window.clearInterval(bornPoll);
-              navigateToEditor(born.projectId ?? choice.projectId ?? "", born.id);
-            }
+            void queryClient
+              .fetchQuery({
+                queryKey: ["assets"],
+                queryFn: () =>
+                  api<{
+                    assets: Array<{ id: string; name: string; projectId: string }>;
+                  }>("/api/assets"),
+              })
+              .then((result) => {
+                const born = result.assets.find((item) => item.name === bornName);
+                if (born === undefined) return;
+                window.clearInterval(bornPoll);
+                openEditor(born.projectId, born.id);
+              })
+              .catch(() => undefined);
           }, 1500);
           window.setTimeout(() => window.clearInterval(bornPoll), 5 * 60 * 1000);
         }
-        // A run that binds its asset mid-flight must not strand the user here:
-        // keep an eye on the recent list as a fallback for a missed event.
-        const bound = window.setInterval(() => {
-          void recent.refetch().then((result) => {
-            const rows: unknown = result.data;
-            const list = Array.isArray(rows)
-              ? rows
-              : typeof rows === "object" && rows !== null && "runs" in rows
-                ? (rows as { runs?: unknown }).runs
-                : undefined;
-            if (!Array.isArray(list)) return;
-            const row = list.find(
-              (
-                item,
-              ): item is {
-                id?: string;
-                runId?: string;
-                asset?: { id?: string; projectId?: string };
-              } =>
-                typeof item === "object" &&
-                item !== null &&
-                ((item as { id?: unknown }).id === started.runId ||
-                  (item as { runId?: unknown }).runId === started.runId),
-            );
-            // A recent row carries the run's bound asset as an object.
-            const boundAsset = row?.asset?.id;
-            if (typeof boundAsset === "string" && boundAsset.length > 0) {
-              window.clearInterval(bound);
-              navigateToEditor(
-                row?.asset?.projectId ?? choice.projectId ?? "",
-                boundAsset,
-              );
-            }
-          });
-        }, 2500);
-        window.setTimeout(() => window.clearInterval(bound), 10 * 60 * 1000);
         log(`Run ${started.runId.slice(0, 8)} started`);
+        const pinnedAsset =
+          choice.mode === "generate" &&
+          choice.assetId !== undefined &&
+          choice.assetId !== null &&
+          choice.assetId !== "new"
+            ? choice.assetId
+            : undefined;
+        if (pinnedAsset !== undefined) {
+          const asset = (assets.data?.assets ?? []).find(
+            (item) => item.id === pinnedAsset,
+          );
+          const projectForAsset = asset?.projectId ?? knownProject;
+          setRows((current) =>
+            applyRunEvent(current, Date.now(), "asset-created", {
+              assetId: pinnedAsset,
+              projectId: projectForAsset,
+              name: asset?.name ?? "asset",
+            }),
+          );
+          openEditor(projectForAsset, pinnedAsset);
+        }
+        if (!heading) pendingAutoNavRef.current = true;
         if (started.kind === "task") {
-          // The task stream carries the tree; the home's console renders it.
-          // A dropped stream is not a stopped task: rejoin with a small cap so
-          // a flaky connection cannot strand the plan card behind a refresh.
+          // The task stream carries the tree, the plan card, and the asset
+          // the supervisor binds. A dropped stream is not a stopped task.
           let finished = false;
           let rejoins = 0;
           const openTaskStream = () => {
@@ -621,11 +638,51 @@ export function ProjectsScreen() {
                 setRows((current) =>
                   applyRunEvent(current, body.sequence, body.type, body.data),
                 );
+                if (body.type === "interaction") {
+                  const data = body.data as PendingInteraction & { runId?: string };
+                  if (
+                    typeof data.id === "string" &&
+                    !answeredIdsRef.current.has(data.id)
+                  ) {
+                    setPendingInteraction(data);
+                    if (typeof data.runId === "string") setPendingRunId(data.runId);
+                    setConsoleOpen(true);
+                  }
+                  return;
+                }
+                if (body.type === "interaction-resolved") {
+                  const data = body.data as { id?: string };
+                  if (typeof data.id === "string") {
+                    answeredIdsRef.current.add(data.id);
+                    setPendingInteraction((current) =>
+                      current?.id === data.id ? null : current,
+                    );
+                  }
+                  return;
+                }
+                if (body.type === "asset-created" || body.type === "asset-bound") {
+                  const data = body.data as { assetId?: string; projectId?: string };
+                  void queryClient.invalidateQueries({ queryKey: ["assets"] });
+                  void queryClient.invalidateQueries({ queryKey: ["projects"] });
+                  if (
+                    pendingAutoNavRef.current &&
+                    typeof data.assetId === "string" &&
+                    typeof data.projectId === "string"
+                  ) {
+                    openEditor(data.projectId, data.assetId);
+                  }
+                  return;
+                }
                 if (body.type === "task-complete" || body.type === "done")
                   finished = true;
                 if (body.type === "task-complete") {
                   taskStream.close();
+                  setRunId(null);
+                  setPendingInteraction(null);
+                  setPendingRunId(null);
                   void queryClient.invalidateQueries({ queryKey: ["recent-runs"] });
+                  void queryClient.invalidateQueries({ queryKey: ["assets"] });
+                  void queryClient.invalidateQueries({ queryKey: ["projects"] });
                 }
               },
               onDrop: () => {
@@ -643,30 +700,7 @@ export function ProjectsScreen() {
           openTaskStream();
         } else {
           listen(started.runId);
-        }
-        const pinnedAsset =
-          choice.mode === "generate" &&
-          choice.assetId !== undefined &&
-          choice.assetId !== null &&
-          choice.assetId !== "new"
-            ? choice.assetId
-            : undefined;
-        if (pinnedAsset !== undefined) {
-          // Show the binding as the console's last row, then assemble.
-          const asset = (assets.data?.assets ?? []).find(
-            (item) => item.id === pinnedAsset,
-          );
-          setRows((current) =>
-            applyRunEvent(current, Date.now(), "asset-created", {
-              assetId: pinnedAsset,
-              projectId: asset?.projectId ?? choice.projectId,
-              name: asset?.name ?? "asset",
-            }),
-          );
-          navigateToEditor(asset?.projectId ?? choice.projectId, pinnedAsset);
-        } else {
-          // The agent binds mid-run; the asset-created event navigates.
-          pendingAutoNavRef.current = true;
+          setPendingRunId(started.runId);
         }
       } catch (reason) {
         const message =
@@ -710,10 +744,11 @@ export function ProjectsScreen() {
     response: InteractionResponse,
     stagedFrames?: StagedPlanFrame[],
   ) {
-    if (!runId || !pendingInteraction) return;
+    const owner = pendingRunId ?? runId;
+    if (!owner || !pendingInteraction) return;
     try {
       if (stagedFrames) {
-        await api(`/api/runs/${runId}/stage-override`, {
+        await api(`/api/runs/${owner}/stage-override`, {
           method: "POST",
           body: JSON.stringify({
             interactionId: pendingInteraction.id,
@@ -721,12 +756,13 @@ export function ProjectsScreen() {
           }),
         });
       }
-      await api(`/api/runs/${runId}/respond`, {
+      await api(`/api/runs/${owner}/respond`, {
         method: "POST",
         body: JSON.stringify({ interactionId: pendingInteraction.id, response }),
       });
       answeredIdsRef.current.add(pendingInteraction.id);
       setPendingInteraction(null);
+      setPendingRunId(null);
       setConsoleOpen(true);
     } catch (reason) {
       notify({
