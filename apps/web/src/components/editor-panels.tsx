@@ -352,6 +352,19 @@ function FrameRow({
   );
 }
 
+/* ------------------------------------------------------------------ frames */
+
+/**
+ * Five frame rows stay visible before the list scrolls on its own: each row
+ * is a 36px thumbnail plus py-1.5 and a 2px border (52px), and the grid gap
+ * is 4. Local scroll keeps the panel header and the layer list in place; the
+ * whole left column must not scroll to reach a frame.
+ */
+const FRAME_LIST_VISIBLE = 5;
+const FRAME_ROW_HEIGHT = 52;
+const FRAME_LIST_MAX_HEIGHT =
+  FRAME_ROW_HEIGHT * FRAME_LIST_VISIBLE + 4 * (FRAME_LIST_VISIBLE - 1);
+
 export function FramePanel({
   frames,
   palette,
@@ -483,8 +496,13 @@ export function FramePanel({
           body="A frame holds the pixels for one state of this asset."
         />
       ) : (
-        <div ref={listRef} className="pr-0.5">
-          {/* Four rows fit; a longer list scrolls inside its own frame. */}
+        <div
+          ref={listRef}
+          className="overflow-y-auto overscroll-contain pr-0.5"
+          style={{ maxHeight: FRAME_LIST_MAX_HEIGHT }}
+        >
+          {/* Up to five rows are visible; a longer list scrolls locally so the
+              layer list below never moves. */}
           <Reorder.Group
             axis="y"
             values={list}
