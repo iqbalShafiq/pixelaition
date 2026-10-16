@@ -9,6 +9,7 @@ import { motion, type HTMLMotionProps } from "motion/react";
 import { ChevronDown, Close, Eye, EyeOff } from "./pixel-icons.js";
 import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
+import { toastPayload, type ToastInput } from "../lib/toast.js";
 
 /** DESIGN.md: 140-200ms, ease-out, transform and opacity only. */
 export const motionToken = { duration: 0.16, ease: "easeOut" as const };
@@ -811,15 +812,19 @@ function ToastList() {
 
 export function useToast() {
   const manager = BaseToast.useToastManager();
-  return useCallback(
-    (input: { title: string; description?: string }) =>
-      manager.add({
-        title: input.title,
-        description: input.description,
-        timeout: input.description?.toLowerCase().includes("failed") ? 8000 : 4000,
-      }),
-    [manager],
-  );
+  // `manager` is memoized on the toast list, so its identity changes with
+  // every toast that appears or expires; `add` is the store's stable method.
+  // Callers hold this callback in effect dependencies, and one that re-armed
+  // on each toast fed a save-failure into its own retry loop.
+  const add = manager.add;
+  return useCallback((input: ToastInput) => add(toastPayload(input)), [add]);
+}
+
+/** Close one keyed toast, or every toast when called with no id. */
+export function useToastCloser() {
+  const manager = BaseToast.useToastManager();
+  const close = manager.close;
+  return useCallback((id?: string) => close(id), [close]);
 }
 
 /* ------------------------------------------------------------------- brand */

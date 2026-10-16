@@ -245,6 +245,15 @@ function animationSummary(pairs: number, flags: number): string {
 }
 
 /**
+ * A note the editor logs locally, such as "The task finished". It describes
+ * something that already happened, so it settles as completed and never reads
+ * as a spinner stuck on a task that is not running.
+ */
+export function noteRow(id: string, text: string): Extract<RunRow, { kind: "status" }> {
+  return { id, kind: "status", label: text, state: "completed" };
+}
+
+/**
  * Folds one worker stream event into the console rows. Unknown events are
  * ignored on purpose: the console shows what the run really did, never a guess.
  * Reasoning text is rendered only when an event carries it; Muse sends

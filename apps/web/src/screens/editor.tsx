@@ -37,6 +37,7 @@ import {
 } from "../components/interaction-card.js";
 import {
   applyRunEvent,
+  noteRow,
   recordFollowUp,
   turnsFromAssetLog,
   type AssetLogTask,
@@ -86,6 +87,7 @@ import {
   Sheet,
   Wordmark,
   useToast,
+  useToastCloser,
 } from "../components/ui.js";
 import { api } from "../lib/api.js";
 import { useAttachments } from "../lib/use-attachments.js";
@@ -167,6 +169,7 @@ export function EditorScreen() {
   const navigate = useNavigate();
   const client = useQueryClient();
   const notify = useToast();
+  const closeToast = useToastCloser();
 
   const asset = useQuery({
     queryKey: ["asset", assetId],
@@ -527,6 +530,7 @@ export function EditorScreen() {
       batch.map(([id, buffer]) =>
         mutate.current({ frameId: id, buffer }).catch((reason: unknown) =>
           notify({
+            id: "frame-save",
             title: "A frame did not save",
             description: reason instanceof Error ? reason.message : "Unknown error",
           }),
@@ -555,6 +559,12 @@ export function EditorScreen() {
     }, 500);
     return () => undefined;
   }, [present, frameId, flush, running]);
+
+  // Once a run owns the asset again, a save failure from an earlier moment is
+  // stale: the agent's own persistence supersedes it, so the notice goes.
+  useEffect(() => {
+    if (running) closeToast("frame-save");
+  }, [running, closeToast]);
 
   useEffect(
     () => () => {
@@ -627,10 +637,7 @@ export function EditorScreen() {
   }, [playing, frames]);
 
   const log = useCallback((text: string) => {
-    setRows((current) => [
-      ...current.slice(-120),
-      { id: crypto.randomUUID(), kind: "status", label: text, state: "running" },
-    ]);
+    setRows((current) => [...current.slice(-120), noteRow(crypto.randomUUID(), text)]);
   }, []);
 
   // The follow-up is a chat line in the agent steps the moment the API
@@ -777,8 +784,11 @@ export function EditorScreen() {
         onDrop: () => {
           taskListenRef.current = null;
           // A dropped task stream is not a stopped task: the snapshot decides.
-          void api<{ task: { status?: string } | null }>(`/api/assets/${assetId}/task`)
-            .catch(() => ({ task: null }))
+          // A snapshot that cannot be read (a worker restart, an API blip)
+          // proves nothing — treating it as "closed" marked the editor idle
+          // while the agent still owned the asset, and the autosave then hit
+          // the run guard with a toast every time. Unreachable retries instead.
+          void api<{ task: TaskSnapshot["task"] }>(`/api/assets/${assetId}/task`)
             .then((result) => {
               const status = result.task?.status;
               if (
@@ -794,6 +804,11 @@ export function EditorScreen() {
               setRunId(null);
               setRunFrameId(null);
               log("The task stream closed");
+            })
+            .catch(() => {
+              const firstDrop = paceRejoin(() => listenTask(id, ""));
+              if (firstDrop)
+                log("The task stream dropped; the server is unreachable — retrying");
             });
         },
       });
@@ -911,8 +926,9 @@ export function EditorScreen() {
           // answer carries the pending card too, so a waiting run restores it
           // even when the replayed stream no longer retains the interaction.
           // Rejoins are paced: an unreachable worker must not spin the console.
+          // A fetch that fails proves nothing, so the session stays live and
+          // the paced rejoin retries instead of clearing the run.
           void api<ActiveRunResponse>(`/api/assets/${assetId}/active-run`)
-            .catch(() => ({ run: null, interaction: null }))
             .then((result) => {
               if (result.run) {
                 setRunId(result.run.id);
@@ -928,6 +944,13 @@ export function EditorScreen() {
               setRunFrameId(null);
               setPendingInteraction(null);
               log("The activity stream closed");
+            })
+            .catch(() => {
+              const runId = runIdRef.current;
+              if (runId === null) return;
+              const firstDrop = paceRejoin(() => listen(runId, "", 0));
+              if (firstDrop)
+                log("The stream dropped; the server is unreachable — retrying");
             });
         },
       });

@@ -4,6 +4,7 @@ import {
   consoleTabs,
   formatDuration,
   groupRowsByWorker,
+  noteRow,
   recordFollowUp,
   turnsFromAssetLog,
   rowsFromTaskLog,
@@ -22,6 +23,17 @@ const toolStarted = (operationId: string, toolName: string, input: unknown) => (
 });
 
 describe("run activity rows", () => {
+  it("renders a local note as a settled row, never a spinner", () => {
+    // The editor logs its own lines ("The task finished"); a spinner on one of
+    // them reads as a still-running task that is not running.
+    expect(noteRow("note-1", "The task finished")).toEqual({
+      id: "note-1",
+      kind: "status",
+      label: "The task finished",
+      state: "completed",
+    });
+  });
+
   it("pairs a tool call with its result", () => {
     let rows: RunRow[] = [];
     rows = applyRunEvent(
