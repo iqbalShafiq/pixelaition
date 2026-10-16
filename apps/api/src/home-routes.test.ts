@@ -82,7 +82,6 @@ describe.skipIf(!db)("home runs route", () => {
         style: {
           notes: "",
           outline: "#1a1c2c",
-          maxColors: 8,
           defaultWidth: 32,
           defaultHeight: 32,
           shadowDirection: "down",
@@ -97,7 +96,6 @@ describe.skipIf(!db)("home runs route", () => {
         style: {
           notes: "",
           outline: "#1a1c2c",
-          maxColors: 8,
           defaultWidth: 32,
           defaultHeight: 32,
           shadowDirection: "down",
