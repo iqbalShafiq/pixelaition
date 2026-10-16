@@ -2320,6 +2320,7 @@ export function createApp() {
           .limit(16)
       )
         .flatMap((row) => {
+          if (row.role !== null && row.role !== "plan") return [];
           const request =
             row.role === "plan"
               ? userRequestFromPrompt(row.role, row.prompt)
