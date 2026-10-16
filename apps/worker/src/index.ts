@@ -38,6 +38,7 @@ import {
   getRun,
   LangfuseTelemetry,
   openCodeGoHeaders,
+  paletteCapacity,
   parseModelSpecRow,
   releaseRun,
   screenOutput,
@@ -69,6 +70,7 @@ import {
   runTasks,
 } from "@pixelaition/db";
 import {
+  MAX_COLORS,
   bufferToFrame,
   createAsset,
   defaultStyle,
@@ -1722,8 +1724,7 @@ app.post("/internal/runs", async (req, res) => {
           agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
           maxWorkers: shape.workers,
           review: shape.review,
-          maxFrames: 12,
-          maxPalette: 8,
+          maxPalette: asset ? paletteCapacity(asset.palette.length) : MAX_COLORS,
         },
       });
     } catch (reason) {

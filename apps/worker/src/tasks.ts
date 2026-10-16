@@ -103,6 +103,21 @@ export async function loadPriorContextFor(
  * The DB-backed context the asset-draw task injects. The task itself stays
  * pure and testable; every read of the live asset happens here.
  */
+/**
+ * The style line the run prompts carry: the StyleGuide fields only, so a
+ * stale `maxColors` key from an older row never reaches a prompt.
+ */
+export function styleLine(style: unknown): string {
+  const value = (style as StyleGuide | undefined) ?? defaultStyle;
+  return JSON.stringify({
+    defaultWidth: value.defaultWidth,
+    defaultHeight: value.defaultHeight,
+    outline: value.outline,
+    shadowDirection: value.shadowDirection,
+    notes: value.notes,
+  });
+}
+
 export function buildTaskDeps(
   db: Database,
   readDurable?: (durableId: string) => DurableDrawRecord | undefined,
@@ -118,7 +133,7 @@ export function buildTaskDeps(
   }
 
   function styleLines(style: unknown): string[] {
-    return [JSON.stringify((style as StyleGuide | undefined) ?? defaultStyle)];
+    return [styleLine(style)];
   }
 
   return {
