@@ -1,4 +1,4 @@
-import { composite, usedColorCount } from "./buffer.js";
+import { composite } from "./buffer.js";
 import { indexOf, normalizeHex } from "./pixels.js";
 import type { CritiqueIssue, FrameBuffer, StyleGuide } from "./types.js";
 
@@ -12,20 +12,13 @@ const orthogonal = [
 
 export function critiqueFrame(
   buffer: FrameBuffer,
-  style: Pick<StyleGuide, "maxColors" | "outline">,
+  style: Pick<StyleGuide, "outline">,
 ): CritiqueIssue[] {
   const issues: CritiqueIssue[] = [];
   const composited = composite(buffer);
   const opaque = composited.some((color) => color !== 0);
   if (!opaque) {
     issues.push({ code: "EMPTY", message: "The frame has no painted pixels." });
-  }
-  const colors = usedColorCount(buffer);
-  if (colors > style.maxColors) {
-    issues.push({
-      code: "TOO_MANY_COLORS",
-      message: `The frame uses ${colors} colors and the style guide allows ${style.maxColors}.`,
-    });
   }
   for (const layer of buffer.layers) {
     for (const color of layer.pixels) {

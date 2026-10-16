@@ -116,9 +116,7 @@ describe("pixel commands", () => {
     });
     expect(painted.ok).toBe(true);
     if (!painted.ok) return;
-    expect(critiqueFrame(painted.buffer, { maxColors: 8, outline: "#1a1c2c" })).toEqual(
-      [],
-    );
+    expect(critiqueFrame(painted.buffer, { outline: "#1a1c2c" })).toEqual([]);
   });
 
   it("zooms toward the cursor", () => {
@@ -568,7 +566,7 @@ describe("pixel commands", () => {
 });
 
 describe("pixel critique", () => {
-  const style = { maxColors: 8, outline: "#1a1c2c" };
+  const style = { outline: "#1a1c2c" };
 
   function critiqueBuffer(): FrameBuffer {
     return createBuffer({
@@ -602,6 +600,24 @@ describe("pixel critique", () => {
     }
     return points;
   }
+
+  it("does not flag a colour count without a style ceiling", () => {
+    const palette = [
+      "#00000000",
+      ...Array.from(
+        { length: 10 },
+        (_, index) => `#${(index + 1).toString(16).padStart(6, "0")}`,
+      ),
+    ];
+    const buffer = createBuffer({ width: 8, height: 8, palette });
+    const points = Array.from({ length: 9 }, (_, index) => ({
+      x: 3 + (index % 3),
+      y: 3 + Math.floor(index / 3),
+      color: index + 2,
+    }));
+    const painted = paintPoints(buffer, points);
+    expect(codes(painted)).not.toContain("TOO_MANY_COLORS");
+  });
 
   it("flags an isolated opaque pixel as stray until a neighbor appears", () => {
     const dot = paintPoints(critiqueBuffer(), [{ x: 3, y: 3, color: 2 }]);

@@ -17,7 +17,6 @@ import {
 export const defaultStyle = {
   defaultWidth: 32,
   defaultHeight: 32,
-  maxColors: 8,
   outline: "#1a1c2c",
   shadowDirection: "down",
   notes: "",

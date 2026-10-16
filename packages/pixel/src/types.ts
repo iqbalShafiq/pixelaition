@@ -10,7 +10,6 @@ export type ShadowDirection = (typeof shadowDirections)[number];
 export type StyleGuide = {
   defaultWidth: number;
   defaultHeight: number;
-  maxColors: number;
   outline: string;
   shadowDirection: ShadowDirection;
   notes: string;
