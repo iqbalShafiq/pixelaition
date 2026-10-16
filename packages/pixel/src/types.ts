@@ -1,7 +1,7 @@
 export const MIN_SIZE = 8;
 export const MAX_SIZE = 128;
 export const MAX_LAYERS = 4;
-export const MAX_COLORS = 32;
+export const MAX_COLORS = 255;
 export const TRANSPARENT = 0;
 export const MAX_HISTORY = 100;
 

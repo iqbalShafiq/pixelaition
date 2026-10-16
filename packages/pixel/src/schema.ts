@@ -31,7 +31,7 @@ export const assetSchema = z.object({
   name: z.string().min(1).max(80),
   width: z.number().int().min(MIN_SIZE).max(MAX_SIZE),
   height: z.number().int().min(MIN_SIZE).max(MAX_SIZE),
-  palette: z.array(hex).min(2).max(33),
+  palette: z.array(hex).min(2).max(256),
   frames: z.array(frameSchema).min(1),
 });
 

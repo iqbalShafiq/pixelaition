@@ -281,6 +281,27 @@ describe("pixel commands", () => {
     ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
   });
 
+  it("accepts a 256-entry palette and refuses one longer", () => {
+    const buffer = createBuffer({ width: 8, height: 8 });
+    const palette = [
+      "#00000000",
+      ...Array.from(
+        { length: 255 },
+        (_, index) => `#${(index + 1).toString(16).padStart(6, "0")}`,
+      ),
+    ];
+    const result = applyCommand(buffer, { type: "setPalette", palette });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.buffer.palette).toHaveLength(256);
+
+    const tooLong = applyCommand(buffer, {
+      type: "setPalette",
+      palette: [...palette, "#ffffff"],
+    });
+    expect(tooLong).toMatchObject({ ok: false, code: "PALETTE_SIZE" });
+  });
+
   it("replaces only the matching color and validates palette and layer", () => {
     const { buffer, layerId } = paint();
     const painted = applyCommand(buffer, {

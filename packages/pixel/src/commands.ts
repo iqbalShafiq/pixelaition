@@ -302,7 +302,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
         return fail(
           "PALETTE_SIZE",
-          "A palette needs a transparent color and at most 32 others.",
+          "A palette needs a transparent color and at most 255 others.",
         );
       }
       const palette: string[] = [];
