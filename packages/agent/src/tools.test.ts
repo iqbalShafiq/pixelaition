@@ -622,6 +622,15 @@ describe("drawing tools", () => {
     releaseRun("run-1");
   });
 
+  it("read_project drops a stale maxColors key from the style", async () => {
+    boundRun();
+    const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
+      style: Record<string, unknown>;
+    };
+    expect(project.style).not.toHaveProperty("maxColors");
+    releaseRun("run-1");
+  });
+
   it("keeps the read_project palette legend in step with set_palette", async () => {
     boundRun();
     // The palette belongs to the asset: every frame adopts it (frame-2 uses

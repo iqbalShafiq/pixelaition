@@ -355,7 +355,13 @@ export function createPixelTools(
           name: layer.name,
           visible: layer.visible,
         })),
-        style: run.style,
+        style: {
+          defaultWidth: run.style.defaultWidth,
+          defaultHeight: run.style.defaultHeight,
+          outline: run.style.outline,
+          shadowDirection: run.style.shadowDirection,
+          notes: run.style.notes,
+        },
       };
     },
   });
@@ -791,7 +797,7 @@ export function createPixelTools(
   const addLayerTool = createTool({
     name: "add_layer",
     description:
-      "Add a layer to the current frame (a frame holds at most four). It starts blank and visible; paint on it by its layer id or the name you gave.",
+      "Add a layer to the current frame (layers have no limit). It starts blank and visible; paint on it by its layer id or the name you gave.",
     inputSchema: z.object({
       name: z.string().min(1).max(40).optional(),
     }),

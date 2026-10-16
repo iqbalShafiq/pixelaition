@@ -606,7 +606,7 @@ export function createApp() {
         name: z.string().min(1).max(80).optional(),
         width: z.number().int().optional(),
         height: z.number().int().optional(),
-        palette: z.array(z.string()).min(2).max(33).optional(),
+        palette: z.array(z.string()).min(2).max(256).optional(),
       })
       .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {

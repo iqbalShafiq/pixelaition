@@ -1,5 +1,22 @@
+import { defaultStyle, type StyleGuide } from "@pixelaition/pixel";
+
 /** One finished run, reduced to what the history block carries. */
 export type RecentRun = { prompt: string | null; answer: string | null };
+
+/**
+ * The style line the run prompts carry: the StyleGuide fields only, so a
+ * stale `maxColors` key from an older row never reaches a prompt.
+ */
+export function styleLine(style: unknown): string {
+  const value = (style as StyleGuide | undefined) ?? defaultStyle;
+  return JSON.stringify({
+    defaultWidth: value.defaultWidth,
+    defaultHeight: value.defaultHeight,
+    outline: value.outline,
+    shadowDirection: value.shadowDirection,
+    notes: value.notes,
+  });
+}
 
 /** Each side of a history line is capped so old runs cannot crowd the prompt. */
 const HISTORY_SIDE_LIMIT = 200;
@@ -25,7 +42,7 @@ export function buildRunPrompt(input: {
   frameSummary?: string;
   recent: RecentRun[];
 }): string {
-  const lines = [input.prompt, `Style: ${JSON.stringify(input.style)}`];
+  const lines = [input.prompt, `Style: ${styleLine(input.style)}`];
   if (input.frameName !== undefined) lines.push(`Frame: ${input.frameName}`);
   if (input.projectSummary !== undefined && input.projectSummary.length > 0) {
     lines.push(`Project: ${input.projectSummary}`);

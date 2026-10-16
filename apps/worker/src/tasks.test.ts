@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { referencesForWorker, styleLine } from "./tasks.js";
+import { referencesForWorker } from "./tasks.js";
 
 describe("referencesForWorker", () => {
   const plan = {
@@ -30,12 +30,5 @@ describe("referencesForWorker", () => {
       "https://x.test/idle.png",
     ]);
     expect(referencesForWorker(plan, "w9")).toEqual([]);
-  });
-});
-
-describe("styleLine", () => {
-  it("drops a stale maxColors key from the style line", () => {
-    expect(styleLine({ outline: "#1a1c2c", maxColors: 8 })).not.toContain("maxColors");
-    expect(styleLine(undefined)).toContain("defaultWidth");
   });
 });

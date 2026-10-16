@@ -590,11 +590,7 @@ export function LayerPanel({
       className="min-h-0 flex-1"
       title="Layers"
       action={
-        <IconButton
-          label="Add layer"
-          disabled={locked || layers.length >= 4}
-          onClick={onAdd}
-        >
+        <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
           <Plus />
         </IconButton>
       }
@@ -904,7 +900,7 @@ export function PalettePanel({
             />
             <Button
               tone="solid"
-              disabled={!valid || exists || palette.length >= 33}
+              disabled={!valid || exists}
               onClick={() => onAdd(draft.toLowerCase())}
             >
               {exists ? "In palette" : "Add color"}

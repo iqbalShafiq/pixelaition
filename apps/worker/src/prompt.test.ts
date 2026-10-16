@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRunPrompt } from "./prompt.js";
+import { buildRunPrompt, styleLine } from "./prompt.js";
 
 describe("buildRunPrompt", () => {
   it("appends the finished runs as a history block", () => {
@@ -15,6 +15,16 @@ describe("buildRunPrompt", () => {
     expect(prompt).toBe(
       'make it walk\nStyle: {"outline":"#1a1c2c"}\nFrame: walk-1\nRecent runs:\ndraw a knight → Drew a 32 by 32 knight.\nadd a helmet → ',
     );
+  });
+
+  it("drops a stale maxColors key from the style line", () => {
+    const prompt = buildRunPrompt({
+      prompt: "again",
+      style: { outline: "#1a1c2c", maxColors: 8 },
+      frameName: "idle",
+      recent: [],
+    });
+    expect(prompt).not.toContain("maxColors");
   });
 
   it("omits the block when no run has finished", () => {
@@ -93,5 +103,12 @@ describe("buildRunPrompt", () => {
     expect(prompt).not.toContain("Project:");
     expect(prompt).not.toContain("Asset:");
     expect(prompt).not.toContain("Frame summary:");
+  });
+});
+
+describe("styleLine", () => {
+  it("serializes the style fields and drops a stale maxColors key", () => {
+    expect(styleLine({ outline: "#1a1c2c", maxColors: 8 })).not.toContain("maxColors");
+    expect(styleLine(undefined)).toContain("defaultWidth");
   });
 });
