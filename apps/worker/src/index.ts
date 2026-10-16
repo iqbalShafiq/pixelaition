@@ -41,6 +41,7 @@ import {
   paletteCapacity,
   parseModelSpecRow,
   releaseRun,
+  runIdFromOperation,
   screenOutput,
   seesUserImages,
   selectRunTarget,
@@ -48,7 +49,6 @@ import {
   traceIdFor,
   type AssetSummary,
   type CreateAssetInput,
-  type FrameChange,
   type JevGateCheck,
   type JevUsage,
   type ModelSpec,
@@ -56,7 +56,6 @@ import {
   type RunAsset,
   type RunTarget,
   type StagedPlanOverride,
-  type Stroke,
 } from "@pixelaition/agent";
 import {
   createDatabase,
@@ -74,16 +73,15 @@ import {
   bufferToFrame,
   createAsset,
   defaultStyle,
-  encodePixels,
   frameToBuffer,
   type Frame,
-  type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { ne, asc, and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { ne, asc, and, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
 import { outcomeTextFrom, sanitizeEvent } from "./events.js";
+import { frameWrites } from "./frame-writes.js";
 import {
   buildFrameSummaryPrompt,
   clampSummary,
@@ -566,7 +564,10 @@ const agents = completions.flatMap(({ spec, model }) => {
       ...questionTool,
       call: async (args: never, context?: { operationId?: string }) => {
         const operationId = context?.operationId;
-        const run = operationId === undefined ? undefined : getRun(operationId);
+        // The durable runtime passes "<runId>/<operationKey>", so the role
+        // check must resolve the run through the shared prefix.
+        const run =
+          operationId === undefined ? undefined : getRun(runIdFromOperation(operationId));
         if (run !== undefined) assertRoleAllowsTool(run, questionTool.name);
         return questionTool.call(args, context as never);
       },
@@ -2547,244 +2548,10 @@ async function loadProject(projectId: string) {
   return { style: row.style as StyleGuide, summary: row.summary, name: row.name };
 }
 
-/** Asset-scoped version snapshot: the metadata plus the frames that existed. */
-function assetVersionSnapshot(asset: LoadedAsset) {
-  return {
-    name: asset.name,
-    width: asset.width,
-    height: asset.height,
-    palette: asset.palette,
-    frameIds: asset.frames.map((frame) => frame.id),
-  };
-}
-
 /** A durable error message that fits one log line. */
 function boundedReason(reason: unknown): string {
   const text = reason instanceof Error ? reason.message : String(reason);
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-}
-
-/**
- * The persistence callbacks for one asset's frames, shared by asset runs and
- * workspace runs once they have bound an asset. `onStroke` streams the live
- * frame and writes the frame row; `onFrameChange` writes frame CRUD and its
- * version rows. Frame CRUD tools await onFrameChange before committing their
- * in-memory change, so a row exists before any later stroke targets it; a
- * failed save is logged and rethrown as a bounded cause, so the tool call
- * fails and the binding stays put instead of diverging from the database.
- */
-function frameWrites(options: {
-  durableRunId: string;
-  publicRunId: string;
-  assetId: string;
-  frames: Array<{ id: string; name: string; index: number }>;
-}) {
-  const { durableRunId, publicRunId, assetId } = options;
-  const framesById = new Map(
-    options.frames.map((item) => [
-      item.id,
-      { id: item.id, name: item.name, index: item.index },
-    ]),
-  );
-
-  /** Insert one frames row, exactly like store.ts's addFrameRecord does. */
-  const insertFrameRow = async (frame: {
-    id: string;
-    name: string;
-    index: number;
-    buffer: FrameBuffer;
-  }) => {
-    await db.insert(frames).values({
-      id: frame.id,
-      assetId,
-      name: frame.name,
-      index: frame.index,
-      layers: bufferToFrame(frame.buffer, frame).layers,
-    });
-    framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
-  };
-
-  const onStroke = (stroke: Stroke, buffer: FrameBuffer, editedFrameId: string): void => {
-    publish(publicRunId, "canvas-stroke", {
-      assetId,
-      frameId: editedFrameId,
-      // The palette rides along: a set_palette repaint must reach every open
-      // editor, and the palette is the asset's, not this frame's.
-      palette: [...buffer.palette],
-      layers: buffer.layers.map((layer) => ({
-        ...layer,
-        pixels: encodePixels(layer.pixels),
-      })),
-      // Paint order for the editor's cursor. Empty for fills; the client then
-      // walks the changed cells in scan order. Capped so a huge stroke stays
-      // a frame event, not a transcript.
-      ...(stroke.points.length > 0 && stroke.points.length <= 2048
-        ? { points: stroke.points.map((point) => ({ x: point.x, y: point.y })) }
-        : {}),
-    });
-    // A stroke always targets a frame the binding knows: a frame from the
-    // loaded asset, or one a frame tool inserted and registered below.
-    const edited = framesById.get(editedFrameId);
-    if (!edited) {
-      console.error(`[onStroke] no frame row for ${editedFrameId}`);
-      return;
-    }
-    // Drizzle query promises are lazy: without awaiting or then-ing, the
-    // update never executes. Persist explicitly and surface any failure.
-    void (async () => {
-      try {
-        await db
-          .update(frames)
-          .set({ layers: bufferToFrame(buffer, edited).layers, updatedAt: new Date() })
-          .where(eq(frames.id, editedFrameId));
-      } catch (error) {
-        console.error("[onStroke] frame persist failed", error);
-      }
-    })();
-  };
-
-  const onFrameChange = async (change: FrameChange): Promise<void> => {
-    try {
-      if (change.type === "add") {
-        await insertFrameRow(change.frame);
-        await createVersion(db, {
-          assetId,
-          frameId: change.frame.id,
-          scope: "frame",
-          kind: "frame-add",
-          author: "agent",
-          runId: publicRunId,
-          snapshot: {
-            name: change.frame.name,
-            layers: bufferToFrame(change.frame.buffer, change.frame).layers,
-          },
-        });
-      } else if (change.type === "delete") {
-        await db
-          .delete(frames)
-          .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
-        framesById.delete(change.frameId);
-        // The tool replaced the last frame; the row must go before the
-        // replacement takes the same (asset, index) slot.
-        if (change.replacement) await insertFrameRow(change.replacement);
-        // The run row's frame_id pins the asset for the API's active-run
-        // guard. When the deleted frame was that pin, it must follow to a
-        // frame that still exists — the replacement under the last-frame
-        // rule, otherwise the first remaining frame — or the asset would
-        // silently unlock mid-run. A pin on another frame is left alone.
-        const remaining = [...framesById.values()].sort(
-          (left, right) => left.index - right.index,
-        );
-        const nextPin = change.replacement?.id ?? remaining[0]?.id ?? null;
-        await db
-          .update(generationRuns)
-          .set({ frameId: nextPin })
-          .where(
-            and(
-              eq(generationRuns.id, publicRunId),
-              eq(generationRuns.frameId, change.frameId),
-            ),
-          );
-        const after = await loadAsset(assetId);
-        if (!after)
-          throw new Error("The asset could not be read after the frame change.");
-        await createVersion(db, {
-          assetId,
-          scope: "asset",
-          kind: "frame-delete",
-          author: "agent",
-          runId: publicRunId,
-          snapshot: assetVersionSnapshot(after),
-        });
-      } else if (change.type === "palette") {
-        // The palette belongs to the asset; persisting it here is what keeps
-        // the run's painted pixels readable after the run (their indices
-        // would otherwise point at a palette that no longer exists).
-        await db
-          .update(assets)
-          .set({ palette: change.palette, updatedAt: new Date() })
-          .where(eq(assets.id, assetId));
-        const after = await loadAsset(assetId);
-        if (!after) {
-          throw new Error("The asset could not be read after the palette change.");
-        }
-        await createVersion(db, {
-          assetId,
-          scope: "asset",
-          kind: "palette",
-          author: "agent",
-          runId: publicRunId,
-          snapshot: assetVersionSnapshot(after),
-        });
-      } else if (change.type === "rename") {
-        const live = getRun(durableRunId)?.frames.get(change.frameId);
-        if (!live) throw new Error("The frame change could not be saved.");
-        await db
-          .update(frames)
-          .set({ name: change.name, updatedAt: new Date() })
-          .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
-        const row = framesById.get(change.frameId);
-        if (row) row.name = change.name;
-        await createVersion(db, {
-          assetId,
-          frameId: change.frameId,
-          scope: "frame",
-          kind: "rename",
-          author: "agent",
-          runId: publicRunId,
-          snapshot: {
-            name: change.name,
-            layers: bufferToFrame(live.buffer, {
-              id: change.frameId,
-              name: change.name,
-              index: live.index,
-            }).layers,
-          },
-        });
-      } else {
-        await db.transaction(async (tx) => {
-          // A unique index guards (asset, index), so a direct renumber might
-          // collide with a row that has not moved yet. Park every frame far
-          // above the final range first, then write the dense order — the
-          // same rule store.ts uses for the editor's reorder.
-          await tx
-            .update(frames)
-            .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
-            .where(eq(frames.assetId, assetId));
-          for (const item of change.order) {
-            await tx
-              .update(frames)
-              .set({ index: item.index, updatedAt: new Date() })
-              .where(and(eq(frames.id, item.id), eq(frames.assetId, assetId)));
-          }
-        });
-        for (const item of change.order) {
-          const row = framesById.get(item.id);
-          if (row) row.index = item.index;
-        }
-        const after = await loadAsset(assetId);
-        if (!after)
-          throw new Error("The asset could not be read after the frame change.");
-        await createVersion(db, {
-          assetId,
-          scope: "asset",
-          kind: "frame-move",
-          author: "agent",
-          runId: publicRunId,
-          snapshot: assetVersionSnapshot(after),
-        });
-      }
-      await db
-        .update(assets)
-        .set({ updatedAt: new Date() })
-        .where(eq(assets.id, assetId));
-    } catch (error) {
-      console.error("[onFrameChange] frame persist failed", error);
-      throw new Error("The frame change could not be saved.");
-    }
-  };
-
-  return { onStroke, onFrameChange };
 }
 
 /** Projects the run owner can see. Asset runs and workspace runs share this. */
@@ -2922,12 +2689,15 @@ function bindAssetRun(options: {
   planApproved?: boolean;
 }): void {
   const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
-  const writes = frameWrites({
-    durableRunId,
-    publicRunId,
-    assetId,
-    frames: asset.frames,
-  });
+  const writes = frameWrites(
+    {
+      durableRunId,
+      publicRunId,
+      assetId,
+      frames: asset.frames,
+    },
+    { db, publish, loadAsset },
+  );
   bindRun(durableRunId, {
     assetId,
     assetName: asset.name,
@@ -3000,12 +2770,15 @@ function bindWorkspaceRun(options: {
     );
     const origin = framesByIndex[0];
     if (!origin) throw new Error("That asset has no frames.");
-    writes = frameWrites({
-      durableRunId,
-      publicRunId,
-      assetId: asset.id,
-      frames: asset.frames,
-    });
+    writes = frameWrites(
+      {
+        durableRunId,
+        publicRunId,
+        assetId: asset.id,
+        frames: asset.frames,
+      },
+      { db, publish, loadAsset },
+    );
     await db
       .update(generationRuns)
       .set({ frameId: origin.id })
