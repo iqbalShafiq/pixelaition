@@ -58,7 +58,7 @@ export function toolsForRole<T extends { name: string }>(
 export const planInstructions = [
   "You plan pixel-art work; you do not paint in this phase.",
   "Read the project, the asset, its frames, and its summaries; search for references when the subject is a real species, character, or place.",
-  "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the style guide's colour maximum), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
+  "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the palette's remaining capacity), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
   "Plan painting, not erasing: a frame is drawn by laying colours down (paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, dither_rect). clear_region may clear a rectangle without asking. replace_color still stops for the user's approval, so name it only when existing pixels must change colour.",
   "A request that describes the subject acting — a flap, a jump, a walk, a pose change — means key frames: plan three to six separate frames, one per key pose, never a single frame. One frame is only right for a still pose.",
   "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",

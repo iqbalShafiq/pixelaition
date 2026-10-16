@@ -1,6 +1,7 @@
 import type { AgentPrompt } from "@anvia/core/agent";
 import { defineTask, type TaskContext, type TaskTransition } from "@anvia/durable";
 import { z } from "zod";
+import { MAX_COLORS } from "@pixelaition/pixel";
 import { drawPlanSchema, validatePlan, type DrawPlan } from "./plan.js";
 import {
   fixInstructions,
@@ -37,8 +38,7 @@ export const assetDrawInputSchema = z.object({
   agentId: z.string().min(1),
   maxWorkers: z.number().int().min(1).max(4),
   review: z.boolean(),
-  maxFrames: z.number().int().min(1).max(12),
-  maxPalette: z.number().int().min(0).max(32),
+  maxPalette: z.number().int().min(0).max(255),
   /**
    * The public run_tasks id. Prior-turn loading uses it to skip this request.
    * Older tasks omit it; the loader then skips the newest live row instead.
@@ -240,7 +240,9 @@ export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): str
   return [
     input.request,
     planInstructions,
-    `Limits: at most ${input.maxWorkers} workers, at most ${input.maxFrames} frames, at most ${input.maxPalette} new palette colours.` +
+    `Limits: at most ${input.maxWorkers} workers. The palette holds up to ${
+      MAX_COLORS + 1
+    } entries including transparent; ${input.maxPalette} more can be added.` +
       (minFramesFor(input.request) > 1
         ? ` This request describes movement: plan at least ${minFramesFor(input.request)} key frames, one per key pose.`
         : ""),

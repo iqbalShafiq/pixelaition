@@ -26,8 +26,7 @@ const input: AssetDrawInput = {
   agentId: "pixel-draw:muse:medium",
   maxWorkers: 4,
   review: true,
-  maxFrames: 12,
-  maxPalette: 8,
+  maxPalette: 24,
 };
 
 const deps: AssetDrawDeps = {
@@ -150,6 +149,13 @@ describe("asset-draw input", () => {
     // would hand image parts to a model that cannot view them.
     const parsed = assetDrawInputSchema.parse({ ...input, modelVision: false });
     expect(parsed.modelVision).toBe(false);
+  });
+
+  it("parses without a frames cap and strips a legacy one", () => {
+    const legacy = { ...input, maxFrames: 12 } as unknown as Record<string, unknown>;
+    const parsed = assetDrawInputSchema.parse(legacy);
+    expect("maxFrames" in parsed).toBe(false);
+    expect(parsed.maxPalette).toBe(24);
   });
 });
 
@@ -712,8 +718,10 @@ describe("buildPlanPrompt", () => {
   it("states the limits so the first plan already fits them", () => {
     const prompt = buildPlanPrompt(input);
     expect(prompt).toContain("at most 4 workers");
-    expect(prompt).toContain("at most 12 frames");
-    expect(prompt).toContain("at most 8 new palette colours");
+    expect(prompt).toContain(
+      "The palette holds up to 256 entries including transparent; 24 more can be added.",
+    );
+    expect(prompt).not.toContain("at most 12 frames");
   });
 });
 
