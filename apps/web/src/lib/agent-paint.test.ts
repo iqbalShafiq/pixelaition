@@ -3,6 +3,7 @@ import { bytesToBase64 } from "./types.js";
 import {
   AgentPaintSession,
   decodeStroke,
+  foldFrameUpdate,
   orderChangedCells,
   REPLAY_STROKES,
   SLOW_STEP_MS,
@@ -227,5 +228,77 @@ describe("AgentPaintSession", () => {
     expect(painted(done[0])).toEqual([1, 0, 0, 0]);
     expect(done[0]?.cursor).toBeNull();
     expect(session.tick(SLOW_STEP_MS)).toEqual([]);
+  });
+});
+
+describe("canvas size changes", () => {
+  it("decodeStroke reads the canvas size the event carries", () => {
+    const decoded = decodeStroke(
+      {
+        frameId: "f",
+        width: 8,
+        height: 8,
+        layers: [{ id: "l", pixels: bytesToBase64(new Uint8Array(64)) }],
+      },
+      "",
+    );
+    expect(decoded).toMatchObject({ width: 8, height: 8 });
+    const sizeless = decodeStroke(
+      { frameId: "f", layers: [{ id: "l", pixels: bytesToBase64(new Uint8Array(16)) }] },
+      "",
+    );
+    expect(sizeless?.width).toBeUndefined();
+  });
+
+  it("snaps a resized frame and reports its new size", () => {
+    const session = new AgentPaintSession();
+    const before = frame(new Array(16).fill(0), 4);
+    const resized: IncomingStroke = {
+      ...stroke("frame-1", new Array(64).fill(1), [], 8),
+      width: 8,
+      height: 8,
+    };
+    session.push(resized);
+    const updates = session.flush(0, () => before, false);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      frameId: "frame-1",
+      cursor: null,
+      width: 8,
+      height: 8,
+    });
+    expect(painted(updates[0])).toHaveLength(64);
+  });
+
+  it("walks later strokes against the frame's new size", () => {
+    const session = new AgentPaintSession();
+    const resized: IncomingStroke = {
+      ...stroke("frame-1", new Array(64).fill(0), [], 8),
+      width: 8,
+      height: 8,
+    };
+    session.push(resized);
+    const first = session.flush(0, () => frame(new Array(16).fill(0), 4), false);
+    const view: FrameView = {
+      width: 8,
+      height: 8,
+      layers: first[0]?.layers ?? [],
+    };
+    const dot = new Array(64).fill(0);
+    dot[33] = 2;
+    session.push(stroke("frame-1", dot, [{ x: 1, y: 4 }], 8));
+    const updates = session.flush(SLOW_STEP_MS + 1, () => view, false);
+    const cursor = updates.find((update) => update.cursor)?.cursor;
+    expect(cursor).toEqual({ x: 1, y: 4 });
+  });
+
+  it("folds a size change into the on-screen view, keeping the size otherwise", () => {
+    const layers = frame(new Array(64).fill(1), 8).layers;
+    expect(foldFrameUpdate({ frameId: "frame-1", width: 8, height: 8, layers })).toEqual({
+      width: 8,
+      height: 8,
+      layers,
+    });
+    expect(foldFrameUpdate({ frameId: "frame-1" })).toEqual({});
   });
 });

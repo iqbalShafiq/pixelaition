@@ -22,6 +22,9 @@ export type IncomingStroke = {
   layers: DecodedLayer[];
   points: Point[];
   palette?: string[];
+  /** The canvas size the event reports; absent on strokes from older payloads. */
+  width?: number;
+  height?: number;
 };
 
 export type FrameUpdate = {
@@ -30,7 +33,26 @@ export type FrameUpdate = {
   /** Present when the agent cell moves. Null lifts the border. */
   cursor?: Point | null;
   palette?: string[];
+  /** The frame's canvas size after this update, when the event carries it. */
+  width?: number;
+  height?: number;
 };
+
+/**
+ * The view fields an update replaces. A paint stroke replaces only layers; a
+ * resize stroke also carries the new canvas size — folding it in is what
+ * resizes the editor's canvas instead of drawing 48-wide pixels on a 32-wide
+ * stride.
+ */
+export function foldFrameUpdate(
+  update: FrameUpdate,
+): Partial<Pick<FrameView, "width" | "height" | "layers">> {
+  return {
+    ...(update.layers !== undefined ? { layers: update.layers } : {}),
+    ...(update.width !== undefined ? { width: update.width } : {}),
+    ...(update.height !== undefined ? { height: update.height } : {}),
+  };
+}
 
 /** One phase (hover, then ink). A cell spends two phases on screen. */
 export const SLOW_STEP_MS = 36;
@@ -136,10 +158,14 @@ export class AgentPaintSession {
       const latest = queued[queued.length - 1];
       const layers = latest?.layers ?? job?.target;
       if (!layers) continue;
+      const width = latest?.width ?? job?.width;
+      const height = latest?.height ?? job?.height;
       updates.push({
         frameId,
         layers,
         cursor: null,
+        ...(width !== undefined ? { width } : {}),
+        ...(height !== undefined ? { height } : {}),
         ...(latest?.palette || job?.palette
           ? { palette: latest?.palette ?? job?.palette }
           : {}),
@@ -197,6 +223,8 @@ export class AgentPaintSession {
           frameId,
           layers: last.layers,
           cursor: null,
+          ...(last.width !== undefined ? { width: last.width } : {}),
+          ...(last.height !== undefined ? { height: last.height } : {}),
           ...(last.palette ? { palette: last.palette } : {}),
         },
       ];
@@ -240,14 +268,20 @@ export class AgentPaintSession {
     now: number,
     reducedMotion: boolean,
   ): FrameUpdate[] {
+    // A resize stroke reports the canvas it resized to; every cell change is
+    // computed against that size.
+    const width = stroke.width ?? view.width;
+    const height = stroke.height ?? view.height;
     const palette = stroke.palette;
-    if (reducedMotion || !compatible(view, stroke.layers)) {
+    if (reducedMotion || !compatible({ ...view, width, height }, stroke.layers)) {
       this.jobs.delete(frameId);
       return [
         {
           frameId,
           layers: stroke.layers,
           cursor: null,
+          width,
+          height,
           ...(palette ? { palette } : {}),
         },
       ];
@@ -255,7 +289,7 @@ export class AgentPaintSession {
     const before = compositeIndexes(view);
     const after = compositeIndexes({ ...view, layers: stroke.layers });
     const pending = this.pendingCells(frameId);
-    const ordered = orderChangedCells(view.width, view.height, before, after, [
+    const ordered = orderChangedCells(width, height, before, after, [
       ...pending,
       ...stroke.points,
     ]);
@@ -267,6 +301,8 @@ export class AgentPaintSession {
           frameId,
           layers: stroke.layers,
           cursor: null,
+          width,
+          height,
           ...(palette ? { palette } : {}),
         },
       ];
@@ -274,11 +310,11 @@ export class AgentPaintSession {
     // Every changed cell walks, including a fill. Pace scales with the count
     // so a large rect still shows the border without holding the canvas for a minute.
     const walked = ordered;
-    const shown = holdBack(view.layers, stroke.layers, view.width, walked);
+    const shown = holdBack(view.layers, stroke.layers, width, walked);
     const step = stepMs(walked.length);
     const job: Job = {
-      width: view.width,
-      height: view.height,
+      width,
+      height,
       shown,
       target: stroke.layers,
       cells: walked,
@@ -294,6 +330,8 @@ export class AgentPaintSession {
       {
         frameId,
         layers: shown,
+        width,
+        height,
         ...(first ? { cursor: first } : {}),
         ...(palette ? { palette } : {}),
       },
@@ -338,6 +376,8 @@ export class AgentPaintSession {
       frameId,
       layers: job.target,
       cursor: null,
+      width: job.width,
+      height: job.height,
       ...(job.palette ? { palette: job.palette } : {}),
     };
   }
@@ -407,11 +447,14 @@ export function decodeStroke(
   const palette = Array.isArray(raw.palette)
     ? raw.palette.filter((color): color is string => typeof color === "string")
     : undefined;
+  const width = typeof raw.width === "number" ? raw.width : undefined;
+  const height = typeof raw.height === "number" ? raw.height : undefined;
   return {
     frameId,
     layers,
     points,
     ...(palette && palette.length > 0 ? { palette } : {}),
+    ...(width !== undefined && height !== undefined ? { width, height } : {}),
   };
 }
 

@@ -11,6 +11,7 @@ import {
 import {
   AgentPaintSession,
   decodeStroke,
+  foldFrameUpdate,
   type FrameUpdate,
   type Point,
 } from "./agent-paint.js";
@@ -50,11 +51,17 @@ export function useAgentPaint(
         for (const update of updates) {
           if (!update.layers) continue;
           const entry = next[update.frameId];
-          if (!entry || sameLayers(entry.present.layers, update.layers)) continue;
+          if (!entry) continue;
+          // A resize stroke keeps the same layer count but changes the canvas
+          // size; the size must land even when the pixels compare equal.
+          const sizeChange =
+            (update.width !== undefined && update.width !== entry.present.width) ||
+            (update.height !== undefined && update.height !== entry.present.height);
+          if (!sizeChange && sameLayers(entry.present.layers, update.layers)) continue;
           if (next === current) next = { ...current };
           next[update.frameId] = {
             ...entry,
-            present: { ...entry.present, layers: update.layers },
+            present: { ...entry.present, ...foldFrameUpdate(update) },
           };
         }
         return next;
