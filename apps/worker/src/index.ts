@@ -80,18 +80,7 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import {
-  ne,
-  asc,
-  and,
-  count,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  notInArray,
-  sql,
-} from "drizzle-orm";
+import { ne, asc, and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import express from "express";
 import { z } from "zod";
 import { outcomeTextFrom, sanitizeEvent } from "./events.js";
@@ -105,7 +94,12 @@ import {
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
 import { parseDurableRecord } from "./prior-context.js";
 import { askSessionId } from "./sessions.js";
-import { buildTaskDeps, loadPriorContextFor, referencesForWorker } from "./tasks.js";
+import {
+  buildTaskDeps,
+  loadPriorContextFor,
+  recentRuns,
+  referencesForWorker,
+} from "./tasks.js";
 
 type PublicEvent = {
   sequence: number;
@@ -1596,7 +1590,7 @@ app.post("/internal/runs", async (req, res) => {
     // The prompt names the confirmed project so the agent never re-asks it.
     projectSummary =
       project.summary.length > 0 ? `${project.name} — ${project.summary}` : project.name;
-    recent = await recentRuns({ projectId });
+    recent = await recentRuns(db, { projectId });
   } else {
     const assetId = body.assetId;
     const frameId = body.frameId;
@@ -1611,7 +1605,7 @@ app.post("/internal/runs", async (req, res) => {
     originFrameId = originFrame.id;
     frameName = originFrame.name;
     style = asset.style;
-    recent = await recentRuns({ assetId });
+    recent = await recentRuns(db, { assetId });
   }
 
   const promptText = buildRunPrompt({
@@ -2551,27 +2545,6 @@ async function loadProject(projectId: string) {
     .where(eq(projects.id, projectId));
   if (!row) return undefined;
   return { style: row.style as StyleGuide, summary: row.summary, name: row.name };
-}
-
-/**
- * A follow-up should build on what already happened, so the prompt carries the
- * last finished runs in the same scope. A run still queued, running, or waiting
- * has no answer to show; only finished rows count.
- */
-async function recentRuns(scope: { assetId: string } | { projectId: string }) {
-  const inScope =
-    "assetId" in scope
-      ? eq(generationThreads.assetId, scope.assetId)
-      : eq(generationThreads.projectId, scope.projectId);
-  return db
-    .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
-    .from(generationRuns)
-    .innerJoin(generationThreads, eq(generationThreads.id, generationRuns.threadId))
-    .where(
-      and(inScope, notInArray(generationRuns.status, ["queued", "running", "waiting"])),
-    )
-    .orderBy(desc(generationRuns.createdAt))
-    .limit(3);
 }
 
 /** Asset-scoped version snapshot: the metadata plus the frames that existed. */

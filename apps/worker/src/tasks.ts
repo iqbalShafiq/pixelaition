@@ -3,6 +3,7 @@ import {
   type AssetDrawInput,
   type DrawPlan,
   userRequestFromPrompt,
+  userTurnsFromRuns,
   type WorkerPromptInput,
 } from "@pixelaition/agent";
 import {
@@ -10,10 +11,11 @@ import {
   type Database,
   frames,
   generationRuns,
+  generationThreads,
   projects,
   runTasks,
 } from "@pixelaition/db";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, notInArray, or } from "drizzle-orm";
 import {
   formatPriorContext,
   stepsFromRuns,
@@ -248,4 +250,41 @@ export function referencesForWorker(plan: DrawPlan, workerKey: string): string[]
         reference.appliesTo.some((name) => worker.frames.includes(name)),
     )
     .map((reference) => reference.url);
+}
+
+/**
+ * The turns a run prompt's recent-runs block carries: the user's own messages
+ * and the requests a plan run embeds, oldest first — never the machinery of
+ * an earlier drawing task. A run still queued, running, or waiting has no
+ * answer to show; only finished rows count.
+ */
+export async function recentRuns(
+  db: Database,
+  scope: { assetId: string } | { projectId: string },
+): Promise<Array<{ prompt: string | null; answer: string | null }>> {
+  const inScope =
+    "assetId" in scope
+      ? eq(generationThreads.assetId, scope.assetId)
+      : eq(generationThreads.projectId, scope.projectId);
+  const rows = await db
+    .select({
+      role: generationRuns.role,
+      prompt: generationRuns.prompt,
+      answer: generationRuns.answer,
+    })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationThreads.id, generationRuns.threadId))
+    .where(
+      and(
+        inScope,
+        notInArray(generationRuns.status, ["queued", "running", "waiting"]),
+        or(isNull(generationRuns.role), eq(generationRuns.role, "plan")),
+      ),
+    )
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(12);
+  return userTurnsFromRuns(rows, 3).map((turn) => ({
+    prompt: turn.prompt,
+    answer: turn.answer ?? null,
+  }));
 }
