@@ -722,7 +722,7 @@ export function createPixelTools(
       height: z.number().int(),
     }),
     requiresApproval: gatedApproval("resize_canvas", frameNeedsApproval),
-    execute: (input, context) => {
+    execute: async (input, context) => {
       const refused = gateRefusal(context.operationId, "resize_canvas");
       if (refused) return { refused: refused.reason };
       const run = requireRun(context.operationId);
@@ -738,6 +738,16 @@ export function createPixelTools(
         });
         if (!result.ok) throw new Error(result.message);
         return { id, buffer: result.buffer };
+      });
+      // The asset row carries the canvas size a reload decodes the frames
+      // against; persist it before the frames commit, so a failed save leaves
+      // the run untouched instead of diverging from the database. Without it
+      // the frames were 48×48 while the asset row still said 32×32, and the
+      // editor failed to load them.
+      await run.onFrameChange?.({
+        type: "resize",
+        width: input.width,
+        height: input.height,
       });
       run.width = input.width;
       run.height = input.height;
@@ -1420,7 +1430,11 @@ export function createPixelTools(
     ...entry,
     call: async (args: never, context?: { operationId?: string }) => {
       const operationId = context?.operationId;
-      const run = operationId === undefined ? undefined : getRun(operationId);
+      // Durable child runs call tools with "<runId>/<operationKey>" as the
+      // operation id; resolving through the shared prefix keeps the role gate
+      // from silently missing its binding.
+      const run =
+        operationId === undefined ? undefined : getRun(runIdFromOperation(operationId));
       if (run !== undefined) assertRoleAllowsTool(run, entry.name);
       return entry.call(args, context as never);
     },

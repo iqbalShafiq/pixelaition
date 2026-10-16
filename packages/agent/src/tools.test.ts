@@ -155,6 +155,21 @@ describe("worker frame ownership", () => {
     ).rejects.toThrow("The review role cannot call paint_stroke.");
     releaseRun("run-1");
   });
+  it("refuses a structural tool when the operation id carries the durable run prefix", async () => {
+    boundRun(undefined, undefined, {
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+    });
+    // Durable child runs receive "<runId>/<operationKey>" as the operation id;
+    // a raw lookup misses the binding and would let the call through.
+    await expect(
+      tool("resize_canvas").call(
+        { width: 8, height: 8 },
+        { operationId: "run-1/0:tool:4:call-1" },
+      ),
+    ).rejects.toThrow("The worker role cannot call resize_canvas.");
+    releaseRun("run-1");
+  });
   it("lets a worker read a sibling frame but not write it", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
@@ -1602,6 +1617,34 @@ describe("drawing approval", () => {
     expect(await approval("resize_canvas", { width: 4, height: 4 })).toBe(false);
     stubJev(0.97);
     expect(await approval("resize_canvas", { width: 8, height: 8 })).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("reports the resize as an asset change so the canvas size is persisted", async () => {
+    const changes: FrameChange[] = [];
+    const strokes: string[] = [];
+    boundRun(
+      (stroke) => {
+        strokes.push(stroke.label);
+      },
+      (change) => {
+        changes.push(change);
+      },
+    );
+    const result = await tool("resize_canvas").call(
+      { width: 8, height: 8 },
+      { operationId: "run-1" },
+    );
+    expect(result).toEqual({ width: 8, height: 8, frames: 2 });
+    expect(strokes).toEqual(["resize", "resize"]);
+    // The frames were replaced at the new size; the asset row needs the same
+    // size, or a reload decodes 8×8 pixels against a 4×4 asset.
+    expect(changes).toEqual([{ type: "resize", width: 8, height: 8 }]);
+    const run = getRun("run-1");
+    expect(run?.width).toBe(8);
+    expect(
+      [...(run?.frames.values() ?? [])].every((frame) => frame.buffer.width === 8),
+    ).toBe(true);
     releaseRun("run-1");
   });
 });

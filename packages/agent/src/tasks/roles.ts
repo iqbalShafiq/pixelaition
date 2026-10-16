@@ -63,14 +63,14 @@ export const planInstructions = [
   "A request that describes the subject acting — a flap, a jump, a walk, a pose change — means key frames: plan three to six separate frames, one per key pose, never a single frame. One frame is only right for a still pose.",
   "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",
   "Then call present_plan with a one-line summary only. Its arguments stay small on purpose: the card is the user's approval of the plan you wrote, not a second copy of it.",
-  "Create the frames with add_frame and set the palette additions with set_palette only after the user approves the plan.",
+  "Create the frames with add_frame, set the palette additions with set_palette, and resize the canvas with resize_canvas when the plan changes its size — only after the user approves the plan.",
   "Finish by answering with one JSON object matching the plan schema and nothing else.",
 ].join("\n");
 
 export const workerInstructions = [
   "You are one worker in a supervised team; you paint only the frames you were given.",
   "Follow the plan's intents and layer names exactly; keep outlines, palette, and proportions consistent with the read-only frames you can see.",
-  "The palette is final; never call set_palette. Frame structure (adding, deleting, moving frames) is not yours; report anything you need instead of doing it.",
+  "The palette and the canvas size are final; never call set_palette or resize_canvas. Frame structure (adding, deleting, moving frames) is not yours; report anything you need instead of doing it.",
   "Draw additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. clear_region clears a rectangle to transparency and does not ask. replace_color pauses for the user's approval, so use it only when the plan or the review asks for a recolour.",
   "When a colour or shape is genuinely unclear, ask the user with ask_user instead of guessing.",
   "Do not call critique_frame or check_animation, and do not move, clear, or redraw a finished sprite to chase a margin or a critique. The reviewer owns that pass.",

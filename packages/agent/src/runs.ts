@@ -49,10 +49,11 @@ export type RunFrame = {
 };
 
 /**
- * A frame-level change the tools made. The worker persists it exactly like the
- * editor's routes do: `add` inserts a row, `rename` updates one, `move` writes
- * the dense renumbering, and `delete` removes a row (inserting `replacement`
- * when the last frame had to be replaced).
+ * A change the tools made. The worker persists it exactly like the editor's
+ * routes do: `add` inserts a row, `rename` updates one, `move` writes the
+ * dense renumbering, `delete` removes a row (inserting `replacement` when the
+ * last frame had to be replaced), and `resize` updates the asset's width and
+ * height — the frames it resized are persisted through `onStroke`.
  */
 export type FrameChange =
   | {
@@ -62,6 +63,7 @@ export type FrameChange =
   | { type: "rename"; frameId: string; name: string }
   | { type: "move"; order: Array<{ id: string; index: number }> }
   | { type: "palette"; palette: string[] }
+  | { type: "resize"; width: number; height: number }
   | {
       type: "delete";
       frameId: string;
