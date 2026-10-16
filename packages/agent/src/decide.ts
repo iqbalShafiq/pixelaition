@@ -62,6 +62,15 @@ const jevQuestions: Record<string, JevQuestion> = {
       "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists; a short noun phrase naming a new state or action is variant, not ask. Prefer ask when the message is a question or a remark that wants an answer, not a drawing. A message that asks for a drawing of attached reference images is still draw or edit, not ask.",
     criteria: intentOptions,
   },
+  acts_on_art: {
+    type: "noul",
+    instructions:
+      "Does the message ask this agent to change the artwork itself — repaint, resize, recolor, fix the likeness, add detail, or produce another state — even when it is phrased as a question, a suggestion, or a short comment? Answer false when the message only wants information, an opinion, a description, or a reply.",
+    criteria: {
+      true: "The message asks for a change to the artwork, however softly it is phrased.",
+      false: "The message only wants an answer, not a change to the artwork.",
+    },
+  },
   // Two speculative specificity questions run in parallel; code picks the one
   // that matters for the chosen intent (the docs' fan-out pattern). A drawing
   // must describe itself; an edit or a variant must say what to change.
@@ -108,9 +117,20 @@ const jevQuestions: Record<string, JevQuestion> = {
 };
 
 /**
+ * Below this, Jev's ask choice is a toss-up between replying and acting
+ * (observed between 0.29 and 0.57 on messages it was torn about), so a clear
+ * action signal decides instead.
+ */
+const ASK_ACTION_FLOOR = 0.6;
+/** The action signal a low-confidence ask needs before it runs. */
+const ASK_ACTION_CONFIDENCE = 0.9;
+
+/**
  * Jev returns typed answers, never prose. The chosen intent is only trusted
  * when its own specificity question agrees: a drawing needs `drawable`, an
- * edit or variant needs `actionable`, and an ask needs neither.
+ * edit or variant needs `actionable`, and an ask needs the action check —
+ * below `ASK_ACTION_FLOOR` a decisive `acts_on_art` turns the ask into an
+ * edit, so a request phrased as a question is still acted on.
  */
 export function toDecision(answers: {
   intent: JevAnswer;
@@ -118,6 +138,7 @@ export function toDecision(answers: {
   actionable: JevAnswer;
   workers?: JevAnswer;
   review?: JevAnswer;
+  actsOnArt?: JevAnswer;
 }): DrawDecision {
   const shapeFrom = (): {
     workers: number;
@@ -134,7 +155,17 @@ export function toDecision(answers: {
   const intent =
     chosen === undefined || !(chosen in intentOptions) ? "ask" : (chosen as DrawIntent);
   if (intent === "ask") {
-    return { intent, confidence: answers.intent.confidence ?? 0.5, source: "jev" };
+    const confidence = answers.intent.confidence ?? 0.5;
+    // A low-confidence ask is Jev torn between replying and acting. When the
+    // message plainly asks for a change to the artwork, run it as an edit
+    // rather than answering "I cannot do that from here".
+    if (
+      confidence < ASK_ACTION_FLOOR &&
+      (answers.actsOnArt?.noul ?? 0) >= ASK_ACTION_CONFIDENCE
+    ) {
+      return { intent: "edit", confidence, source: "jev", shape: shapeFrom() };
+    }
+    return { intent, confidence, source: "jev" };
   }
   const drawable = answers.drawable.noul ?? 0;
   const actionable = answers.actionable.noul ?? 0;
@@ -186,5 +217,6 @@ export async function decidePrompt(
     actionable: answers.actionable ?? {},
     workers: answers.workers ?? {},
     review: answers.review ?? {},
+    actsOnArt: answers.acts_on_art ?? {},
   });
 }

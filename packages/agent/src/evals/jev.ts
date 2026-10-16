@@ -65,6 +65,49 @@ type Suite = {
 
 const exact = (expected: string) => (actual: string) => actual === expected;
 
+/**
+ * The scoups thread's shape when those requests came in: one frame, and two
+ * earlier user turns — the second carrying the reference photo, which does
+ * not ride on the new message, so the decision has to read the history.
+ */
+const scoupsContext: DecisionContext = {
+  asset: {
+    name: "scoups",
+    width: 32,
+    height: 32,
+    palette: [
+      "#00000000",
+      "#1a1c2c",
+      "#f4efe4",
+      "#c65a4e",
+      "#f6cba6",
+      "#d79a74",
+      "#3a2830",
+      "#f2a3ae",
+      "#232329",
+    ],
+    summary:
+      "A smiling cartoon face with a 9-color palette on a 32×32 canvas, featuring black hair, peach skin, black eyes and a red mouth. Its only frame is sweet-face.",
+  },
+  frames: ["sweet-face"],
+  frameName: "sweet-face",
+  frameSummary:
+    "A smiling cartoon face with black hair, peach skin, black eyes and red mouth.",
+  history: [
+    {
+      prompt: "please make the sweet face of scoups of seventeen",
+      answer:
+        "Created sweet-face: 32×32 bust of S.Coups with dark hair and a soft smile.",
+    },
+    {
+      prompt:
+        "i think the asset is not the same with s.coups? i have attached it please try to fix and improve it!",
+      answer:
+        "Fixed the likeness to the attached reference: side-swept black hair, thick straight brows, dark eyes, fuller lips.",
+    },
+  ],
+};
+
 const decisionSuite: Suite = {
   name: "decisions (intent)",
   jev: async (sample) =>
@@ -163,6 +206,21 @@ const decisionSuite: Suite = {
       expected: "ask",
       ok: exact("ask"),
       context: { attachments: 1 },
+    },
+    {
+      label: "indonesian resize request as a question",
+      input:
+        "boy, bisa nggak semisal canvas nya kamu resize jadi lebih besar sehingga wajahnya jadi lebih detail seperti foto yang saya kasih tadi?",
+      expected: "edit",
+      ok: exact("edit"),
+      context: scoupsContext,
+    },
+    {
+      label: "indonesian likeness note",
+      input: "kayak masih belum mirip nih boy dengan wajah aslinya",
+      expected: "edit",
+      ok: exact("edit"),
+      context: scoupsContext,
     },
   ],
 };
