@@ -43,7 +43,6 @@ function bindFrames(
     style: {
       defaultWidth: first.buffer.width,
       defaultHeight: first.buffer.height,
-      maxColors: first.buffer.palette.length,
       outline: "#1a1c2c",
       shadowDirection: "down",
       notes: "",
@@ -84,7 +83,6 @@ describe("generation decisions and tools", () => {
       style: {
         defaultWidth: 8,
         defaultHeight: 8,
-        maxColors: 8,
         outline: "#1a1c2c",
         shadowDirection: "down",
         notes: "",

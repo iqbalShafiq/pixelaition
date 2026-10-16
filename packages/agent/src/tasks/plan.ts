@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_COLORS } from "@pixelaition/pixel";
 
 /**
  * The plan a supervisor produces for one drawing request, before a single
@@ -9,7 +10,7 @@ import { z } from "zod";
 export const drawPlanFrameSchema = z.object({
   name: z.string().min(1).max(40),
   intent: z.string().min(1).max(320),
-  layers: z.array(z.string().min(1).max(40)).max(4),
+  layers: z.array(z.string().min(1).max(40)),
 });
 export const paletteAdditionSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -26,8 +27,8 @@ export const planWorkerSchema = z.object({
 });
 export const drawPlanSchema = z.object({
   assetId: z.string().min(1),
-  frames: z.array(drawPlanFrameSchema).min(1).max(12),
-  palette: z.array(paletteAdditionSchema).max(8),
+  frames: z.array(drawPlanFrameSchema).min(1),
+  palette: z.array(paletteAdditionSchema),
   references: z.array(planReferenceSchema).max(8),
   workers: z.array(planWorkerSchema).min(1).max(4),
   review: z.boolean(),
@@ -37,11 +38,15 @@ export type DrawPlanFrame = z.infer<typeof drawPlanFrameSchema>;
 
 export type PlanLimits = {
   maxWorkers: number;
-  maxFrames: number;
   maxPalette: number;
   /** Key frames a motion request needs; 1 leaves a still pose free to pass. */
   minFrames?: number;
 };
+
+/** How many colours the palette can still take: 256 entries less what it holds. */
+export function paletteCapacity(currentLength: number): number {
+  return Math.max(0, MAX_COLORS + 1 - currentLength);
+}
 
 /** Every rejection names what the supervisor must fix in its next attempt. */
 export function validatePlan(
@@ -54,12 +59,6 @@ export function validatePlan(
       return { ok: false, error: `The plan names frame "${frame.name}" twice.` };
     }
     seen.add(frame.name);
-  }
-  if (plan.frames.length > limits.maxFrames) {
-    return {
-      ok: false,
-      error: `The plan draws ${plan.frames.length} frames; the cap is ${limits.maxFrames}.`,
-    };
   }
   const minFrames = limits.minFrames ?? 1;
   if (plan.frames.length < minFrames) {
@@ -105,7 +104,7 @@ export function validatePlan(
   if (plan.palette.length > limits.maxPalette) {
     return {
       ok: false,
-      error: `The plan adds ${plan.palette.length} colour${plan.palette.length === 1 ? "" : "s"}; the style guide allows ${limits.maxPalette} more.`,
+      error: `The plan adds ${plan.palette.length} colour${plan.palette.length === 1 ? "" : "s"}; the palette has room for ${limits.maxPalette} more.`,
     };
   }
   for (const reference of plan.references) {

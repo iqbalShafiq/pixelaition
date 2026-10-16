@@ -380,7 +380,6 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   let checked: { ok: true } | { ok: false; error: string } = parsed.ok
     ? validatePlan(parsed.plan, {
         maxWorkers: ctx.input.maxWorkers,
-        maxFrames: ctx.input.maxFrames,
         maxPalette: ctx.input.maxPalette,
         minFrames: minFramesFor(ctx.input.request),
       })
@@ -391,7 +390,6 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     // failing the run over a still pose helps nobody.
     const lenient = validatePlan(parsed.plan, {
       maxWorkers: ctx.input.maxWorkers,
-      maxFrames: ctx.input.maxFrames,
       maxPalette: ctx.input.maxPalette,
     });
     if (lenient.ok) checked = lenient;

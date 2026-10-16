@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawPlanSchema, validatePlan, type DrawPlan } from "./plan.js";
+import { drawPlanSchema, paletteCapacity, validatePlan, type DrawPlan } from "./plan.js";
 
 const base: DrawPlan = {
   assetId: "a1",
@@ -26,7 +26,7 @@ describe("drawPlanSchema", () => {
 });
 
 describe("validatePlan", () => {
-  const limits = { maxWorkers: 4, maxFrames: 12, maxPalette: 16 };
+  const limits = { maxWorkers: 4, maxPalette: 16 };
   it("accepts the base plan", () => {
     expect(validatePlan(base, limits)).toEqual({ ok: true });
   });
@@ -85,8 +85,41 @@ describe("validatePlan", () => {
     const palette = { ...base, palette: [{ color: "#000000", name: "x" }] };
     expect(validatePlan(palette, { ...limits, maxPalette: 0 })).toEqual({
       ok: false,
-      error: "The plan adds 1 colour; the style guide allows 0 more.",
+      error: "The plan adds 1 colour; the palette has room for 0 more.",
     });
+  });
+  it("accepts plans past the old frame and layer caps", () => {
+    const frames = Array.from({ length: 20 }, (_, index) => ({
+      name: `pose-${index + 1}`,
+      intent: "a key pose",
+      layers: [
+        "body",
+        "face",
+        "hair",
+        "shadow",
+        "glow",
+        "eyes",
+        "mouth",
+        "outline",
+        "highlight",
+        "props",
+      ],
+    }));
+    const parsed = drawPlanSchema.safeParse({
+      ...base,
+      frames,
+      workers: [{ key: "w1", frames: frames.map((frame) => frame.name) }],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(validatePlan(parsed.data, { maxWorkers: 4, maxPalette: 16 })).toEqual({
+      ok: true,
+    });
+  });
+  it("computes the remaining palette room", () => {
+    expect(paletteCapacity(4)).toBe(252);
+    expect(paletteCapacity(256)).toBe(0);
+    expect(paletteCapacity(300)).toBe(0);
   });
   it("refuses a non-https reference", () => {
     const plan = {

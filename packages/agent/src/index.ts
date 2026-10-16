@@ -72,7 +72,7 @@ export type {
   TraceContext,
 } from "./telemetry.js";
 export { activeLayerId, createPixelTools } from "./tools.js";
-export { drawPlanSchema, validatePlan } from "./tasks/plan.js";
+export { drawPlanSchema, paletteCapacity, validatePlan } from "./tasks/plan.js";
 export type { DrawPlan, DrawPlanFrame, PlanLimits } from "./tasks/plan.js";
 export { assertRoleAllowsTool } from "./runs.js";
 export { buildWorkerPrompt } from "./tasks/worker-prompt.js";
