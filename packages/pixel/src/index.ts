@@ -29,7 +29,6 @@ export { assetSchema, pixelProjectSchema, styleGuideSchema } from "./schema.js";
 export {
   MAX_COLORS,
   MAX_HISTORY,
-  MAX_LAYERS,
   MAX_SIZE,
   MIN_SIZE,
   TRANSPARENT,

@@ -23,7 +23,7 @@ export const frameSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
   index: z.number().int().nonnegative(),
-  layers: z.array(layerSchema).min(1).max(4),
+  layers: z.array(layerSchema).min(1),
 });
 
 export const assetSchema = z.object({

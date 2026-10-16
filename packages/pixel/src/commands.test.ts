@@ -281,6 +281,22 @@ describe("pixel commands", () => {
     ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
   });
 
+  it("adds layers past four", () => {
+    const { buffer } = paint();
+    let next = buffer;
+    for (let index = 2; index <= 6; index += 1) {
+      const added = applyCommand(next, {
+        type: "addLayer",
+        id: `layer-${index}`,
+        name: `layer ${index}`,
+      });
+      expect(added.ok).toBe(true);
+      if (!added.ok) return;
+      next = added.buffer;
+    }
+    expect(next.layers).toHaveLength(6);
+  });
+
   it("accepts a 256-entry palette and refuses one longer", () => {
     const buffer = createBuffer({ width: 8, height: 8 });
     const palette = [

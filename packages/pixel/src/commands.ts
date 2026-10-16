@@ -9,7 +9,6 @@ import {
 } from "./pixels.js";
 import {
   MAX_COLORS,
-  MAX_LAYERS,
   type Command,
   type CommandResult,
   type DitherPattern,
@@ -354,9 +353,6 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       };
     }
     case "addLayer": {
-      if (buffer.layers.length >= MAX_LAYERS) {
-        return fail("LAYER_LIMIT", "A frame can hold four layers.");
-      }
       const name = command.name.trim();
       if (!name) return fail("LAYER_NAME", "A layer needs a name.");
       return {
