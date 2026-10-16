@@ -605,6 +605,23 @@ describe("drawing tools", () => {
     releaseRun("run-1");
   });
 
+  it("set_palette accepts a 256-entry palette", async () => {
+    boundRun();
+    const palette = [
+      "#00000000",
+      ...Array.from(
+        { length: 255 },
+        (_, index) => `#${(index + 1).toString(16).padStart(6, "0")}`,
+      ),
+    ];
+    const result = (await tool("set_palette").call(
+      { palette },
+      { operationId: "run-1" },
+    )) as { palette: string[] };
+    expect(result.palette).toHaveLength(256);
+    releaseRun("run-1");
+  });
+
   it("keeps the read_project palette legend in step with set_palette", async () => {
     boundRun();
     // The palette belongs to the asset: every frame adopts it (frame-2 uses
@@ -959,14 +976,13 @@ describe("layer tools", () => {
     releaseRun("run-1");
   });
 
-  it("add_layer refuses a fifth layer", async () => {
+  it("add_layer keeps adding layers past four", async () => {
     boundRun();
     await tool("add_layer").call({}, { operationId: "run-1" });
     await tool("add_layer").call({}, { operationId: "run-1" });
-    await expect(tool("add_layer").call({}, { operationId: "run-1" })).rejects.toThrow(
-      "A frame can hold four layers.",
-    );
-    expect(getRun("run-1")!.frames.get("frame-1")!.buffer.layers).toHaveLength(4);
+    await tool("add_layer").call({}, { operationId: "run-1" });
+    await tool("add_layer").call({}, { operationId: "run-1" });
+    expect(getRun("run-1")!.frames.get("frame-1")!.buffer.layers).toHaveLength(6);
     releaseRun("run-1");
   });
 

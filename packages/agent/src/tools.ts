@@ -751,7 +751,7 @@ export function createPixelTools(
     description: setPaletteDescription,
     inputSchema: z.object({
       frameId: z.string().optional(),
-      palette: z.array(z.string()).min(2).max(33),
+      palette: z.array(z.string()).min(2).max(256),
     }),
     // Choosing colours is part of drawing. It does not pause for Jev or a
     // clarification card; index 0 and the hex rules still refuse a bad palette.
@@ -970,7 +970,7 @@ export function createPixelTools(
       name: z.string().min(1).max(80),
       width: z.number().int().min(8).max(128),
       height: z.number().int().min(8).max(128),
-      palette: z.array(z.string()).min(2).max(33).optional(),
+      palette: z.array(z.string()).min(2).max(256).optional(),
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
