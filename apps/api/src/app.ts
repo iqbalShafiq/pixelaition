@@ -14,7 +14,7 @@ import {
   zipFiles,
 } from "@pixelaition/export";
 import { toNodeHandler } from "better-auth/node";
-import { and, asc, count, desc, eq, inArray, notInArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -35,6 +35,7 @@ import {
   WORKER_ATTEMPTS,
   traceIdFor,
   userRequestFromPrompt,
+  userTurnsFromRuns,
   type DecisionContext,
   type DrawDecision,
   type GuardrailReport,
@@ -1023,25 +1024,27 @@ export function createApp() {
         `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
       );
     }
-    // The decision reads the thread's recent exchanges (a follow-up like
-    // "it's not blue though" only reads as an edit against them), plus what
-    // the run draws on: asset, frames, and the current frame.
+    // The decision reads the thread's recent exchanges — the turns a person
+    // typed, never a drawing task's supervisor/worker/review/fix prompts.
+    // Those once crowded the window and turned an edit request into an ask,
+    // so the query keeps only role-null runs and plan requests; its window is
+    // wide enough to net four user turns after plan continuations are skipped.
     const historyRows = await db
-      .select({ prompt: generationRuns.prompt, answer: generationRuns.answer })
+      .select({
+        role: generationRuns.role,
+        prompt: generationRuns.prompt,
+        answer: generationRuns.answer,
+      })
       .from(generationRuns)
-      .where(eq(generationRuns.threadId, thread.id))
+      .where(
+        and(
+          eq(generationRuns.threadId, thread.id),
+          or(isNull(generationRuns.role), eq(generationRuns.role, "plan")),
+        ),
+      )
       .orderBy(desc(generationRuns.createdAt))
-      .limit(4);
-    const history = historyRows.reverse().flatMap((row) =>
-      row.prompt
-        ? [
-            {
-              prompt: row.prompt,
-              ...(row.answer ? { answer: row.answer } : {}),
-            },
-          ]
-        : [],
-    );
+      .limit(16);
+    const history = userTurnsFromRuns(historyRows, 4);
     const decisionStarted = Date.now();
     let decided: DrawDecision;
     let decisionUsage: Record<string, number> | undefined;
@@ -2290,20 +2293,51 @@ export function createApp() {
         .where(finishedScope)
         .orderBy(desc(generationRuns.createdAt))
         .limit(1);
-      historyRows = await db
-        .select({
-          id: generationRuns.id,
-          status: generationRuns.status,
-          prompt: generationRuns.prompt,
-          answer: generationRuns.answer,
-          usage: generationRuns.usage,
-          createdAt: generationRuns.createdAt,
-          finishedAt: generationRuns.finishedAt,
+      // The console's earlier-runs list carries the turns a person typed; a
+      // drawing task's supervisor/worker/review/fix prompts are machinery and
+      // must never read as "you said". A plan run's prompt embeds the user
+      // request, so it is recovered the way the decision recovers it.
+      historyRows = (
+        await db
+          .select({
+            id: generationRuns.id,
+            role: generationRuns.role,
+            status: generationRuns.status,
+            prompt: generationRuns.prompt,
+            answer: generationRuns.answer,
+            usage: generationRuns.usage,
+            createdAt: generationRuns.createdAt,
+            finishedAt: generationRuns.finishedAt,
+          })
+          .from(generationRuns)
+          .where(
+            and(
+              finishedScope,
+              or(isNull(generationRuns.role), eq(generationRuns.role, "plan")),
+            ),
+          )
+          .orderBy(desc(generationRuns.createdAt))
+          .limit(16)
+      )
+        .flatMap((row) => {
+          const request =
+            row.role === "plan"
+              ? userRequestFromPrompt(row.role, row.prompt)
+              : (row.prompt?.trim() ?? null);
+          if (request === null || request.length === 0) return [];
+          return [
+            {
+              id: row.id,
+              status: row.status,
+              prompt: request,
+              answer: row.answer,
+              usage: row.usage,
+              createdAt: row.createdAt,
+              finishedAt: row.finishedAt,
+            },
+          ];
         })
-        .from(generationRuns)
-        .where(finishedScope)
-        .orderBy(desc(generationRuns.createdAt))
-        .limit(10);
+        .slice(0, 10);
     }
     const events = (lastRow?.events as StoredEvent[] | null) ?? [];
     const text =
