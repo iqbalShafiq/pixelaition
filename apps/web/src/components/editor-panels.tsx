@@ -29,7 +29,6 @@ import {
   MenuItem,
   Panel,
   Popover,
-  ProgressCells,
   TextInput,
 } from "./ui.js";
 import { hexToRgba } from "../lib/color.js";
@@ -726,7 +725,7 @@ export function LayerPanel({
         </ul>
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-pixel-mono text-muted">{layers.length} of 4 layers</span>
+        <span className="text-pixel-mono text-muted">{layers.length} layers</span>
       </div>
 
       <ConfirmDialog
@@ -755,20 +754,17 @@ export function PalettePanel({
   palette,
   color,
   usedColors,
-  maxColors,
   onPick,
   onAdd,
 }: {
   palette: string[];
   color: number;
   usedColors: number;
-  maxColors: number;
   onPick: (index: number) => void;
   onAdd: (hex: string) => void;
 }) {
   const [draft, setDraft] = useState("#a7f070");
   const [hsv, setHsv] = useState(() => hexToHsv("#a7f070"));
-  const over = usedColors > maxColors;
   const valid = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(draft);
   const exists = palette.includes(draft.toLowerCase());
 
@@ -811,10 +807,7 @@ export function PalettePanel({
       title="Palette"
       action={
         <span className="flex min-w-0 items-center gap-2">
-          <ProgressCells value={usedColors} total={maxColors} />
-          <span className={`text-pixel-mono ${over ? "text-erase" : "text-muted"}`}>
-            {usedColors}/{maxColors}
-          </span>
+          <span className="text-pixel-mono text-muted">{usedColors} colors used</span>
         </span>
       }
     >
@@ -943,10 +936,6 @@ export function StylePanel({
   return (
     <Panel title="Style guide">
       <dl className="grid gap-1 text-pixel-mono">
-        <div className="flex items-baseline justify-between gap-2">
-          <dt className="text-muted">max colors</dt>
-          <dd className="text-ink">{style.maxColors}</dd>
-        </div>
         <div className="flex items-baseline justify-between gap-2">
           <dt className="text-muted">outline</dt>
           <dd className="flex items-center gap-1.5 text-ink">

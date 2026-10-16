@@ -114,7 +114,6 @@ const toolByKey = new Map<string, Tool>([
 const fallbackStyle: StyleGuide = {
   defaultWidth: 32,
   defaultHeight: 32,
-  maxColors: 8,
   outline: "#1a1c2c",
   shadowDirection: "down",
   notes: "",
@@ -2070,7 +2069,6 @@ export function EditorScreen() {
         palette={buffer?.palette ?? []}
         color={color}
         usedColors={usedColors}
-        maxColors={style.maxColors}
         onPick={setColor}
         onAdd={(hex) => {
           if (!buffer) return;

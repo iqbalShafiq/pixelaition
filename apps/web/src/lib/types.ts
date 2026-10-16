@@ -14,7 +14,6 @@ export type AssetDto = {
   style: {
     defaultWidth: number;
     defaultHeight: number;
-    maxColors: number;
     outline: string;
     shadowDirection: string;
     notes: string;
