@@ -13,6 +13,7 @@ export function Composer({
   onPrompt,
   modelId,
   models,
+  modelLabels,
   onModel,
   effort,
   efforts,
@@ -37,6 +38,8 @@ export function Composer({
   onPrompt: (value: string) => void;
   modelId: string;
   models: string[];
+  /** Display names by catalog id; a missing name shows the id itself. */
+  modelLabels?: Record<string, string>;
   onModel: (value: string) => void;
   effort: string;
   efforts: string[];
@@ -78,7 +81,10 @@ export function Composer({
 
   const blocked = Boolean(blockedReason);
   const noCatalog = models.length === 0 || efforts.length === 0;
-  const modelOptions = models.length > 0 ? models : ["no models"];
+  const modelOptions =
+    models.length > 0
+      ? models.map((id) => ({ value: id, label: modelLabels?.[id] ?? id }))
+      : [{ value: "no models", label: "no models" }];
   const hasText = prompt.trim().length > 0;
   const canQueue =
     running && hasText && onQueue !== undefined && modelReady && !noCatalog && !blocked;
@@ -242,7 +248,7 @@ export function Composer({
         />
         <SelectControl
           label="Model"
-          value={models.includes(modelId) ? modelId : (modelOptions[0] ?? "")}
+          value={models.includes(modelId) ? modelId : (modelOptions[0]?.value ?? "")}
           options={modelOptions}
           onChange={onModel}
           className="max-w-[16rem]"

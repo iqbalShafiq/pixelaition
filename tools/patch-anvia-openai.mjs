@@ -4,7 +4,7 @@
 //   1. keep the provider's tool-call id per delta index, and
 //   2. not hand an empty callId to the core when later deltas omit the id,
 //   3. forward the model's reasoning_content, which thinking models stream
-//      alongside tool calls (deepseek-v4.1-flash does).
+//      alongside tool calls (deepseek/deepseek-v4.1-flash-1017 does).
 // Without 2 and 3 the core's stream accumulator rejects every tool call whose
 // arguments arrive in more than one delta with `invalid-tool-call`.
 import { readFileSync, writeFileSync } from "node:fs";

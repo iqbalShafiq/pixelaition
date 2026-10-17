@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   applyRunEvent,
   consoleTabs,
-  formatDuration,
   groupRowsByWorker,
   noteRow,
   recordFollowUp,
@@ -357,13 +356,47 @@ describe("asset log", () => {
     ).toBe(true);
     expect(turns[1]?.id).toBe("latest");
   });
+
+  it("attaches each turn's usage, model, and timing", () => {
+    const turns = turnsFromAssetLog({
+      id: "latest",
+      prompt: "fix the face",
+      usage: { input: 4, cached: 6, output: 2, cost: 0.01, context: null },
+      modelId: "muse-spark-1.3-contributor",
+      effort: "high",
+      createdAt: "2026-10-16T00:00:00.000Z",
+      finishedAt: "2026-10-16T00:01:00.000Z",
+      runs: [],
+    });
+    expect(turns[0]?.meta).toEqual({
+      usage: { input: 4, cached: 6, output: 2, cost: 0.01 },
+      modelId: "muse-spark-1.3-contributor",
+      effort: "high",
+      startedAt: "2026-10-16T00:00:00.000Z",
+      durationMs: 60_000,
+    });
+  });
 });
 
-describe("formatting", () => {
-  it("formats durations the way the summary bar reads", () => {
-    expect(formatDuration(900)).toBe("0.9s");
-    expect(formatDuration(12_000)).toBe("12s");
-    expect(formatDuration(121_000)).toBe("2m 01s");
+describe("usage rows", () => {
+  it("carries the newest context state, and null for a malformed one", () => {
+    const context = {
+      model: {
+        modelId: "muse-spark-1.3-contributor",
+        context: { contextWindow: 1048576 },
+      },
+      usedTokens: 1000,
+      remainingTokens: 1047576,
+      usedPercent: 0.1,
+      remainingPercent: 99.9,
+    };
+    let rows = applyRunEvent([], 1, "usage", { input: 4, context });
+    expect(rows[0]).toMatchObject({ kind: "usage", input: 4, context });
+    rows = applyRunEvent(rows, 2, "usage", {
+      input: 5,
+      context: { model: { modelId: "m" }, usedTokens: "many" },
+    });
+    expect(rows[0]).toMatchObject({ kind: "usage", input: 5, context: null });
   });
 });
 

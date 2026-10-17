@@ -5,6 +5,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useMemo,
   useOptimistic,
   useRef,
   useState,
@@ -100,13 +101,21 @@ export function ProjectsScreen() {
       api<{
         models: Array<{
           id: string;
+          displayName: string;
           efforts: string[];
           vision: boolean;
           userImages: boolean;
+          contextWindow: number | null;
         }>;
         modelReady: boolean;
       }>("/api/models"),
   });
+  // The catalog's readable names; the composer and header print these.
+  const modelNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const item of catalog.data?.models ?? []) names[item.id] = item.displayName;
+    return names;
+  }, [catalog.data]);
   const preferences = useQuery({
     queryKey: ["preferences"],
     queryFn: () =>
@@ -955,6 +964,16 @@ export function ProjectsScreen() {
               onOpen={setConsoleOpen}
               message={message || (error ?? "")}
               prompt={runPrompt}
+              model={
+                selectedModel !== undefined
+                  ? {
+                      id: selectedModel.id,
+                      displayName: selectedModel.displayName,
+                      contextWindow: selectedModel.contextWindow ?? null,
+                    }
+                  : null
+              }
+              modelNames={modelNames}
               interaction={pendingInteraction}
               frames={[]}
               palette={[]}
@@ -976,6 +995,7 @@ export function ProjectsScreen() {
             onPrompt={setPrompt}
             modelId={modelId}
             models={models}
+            modelLabels={modelNames}
             onModel={setModelId}
             effort={effort}
             efforts={efforts}

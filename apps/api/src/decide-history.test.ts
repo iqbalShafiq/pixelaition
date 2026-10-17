@@ -245,6 +245,7 @@ describe.skipIf(!db)("decision history", () => {
       .insert(models)
       .values({
         id: "history-test-model",
+        displayName: "History Test Model",
         api: "responses",
         efforts: ["low"],
         position: 0,
@@ -253,7 +254,13 @@ describe.skipIf(!db)("decision history", () => {
       })
       .onConflictDoUpdate({
         target: models.id,
-        set: { api: "responses", efforts: ["low"], enabled: true, vision: true },
+        set: {
+          displayName: "History Test Model",
+          api: "responses",
+          efforts: ["low"],
+          enabled: true,
+          vision: true,
+        },
       });
     token = (await createApiKey(live, userId, "decide-history-test")).token;
     process.env.AGENT_API_KEY = "test-agent-key";

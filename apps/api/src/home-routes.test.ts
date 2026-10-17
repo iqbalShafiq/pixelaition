@@ -112,6 +112,7 @@ describe.skipIf(!db)("home runs route", () => {
       .insert(models)
       .values({
         id: "home-test-model",
+        displayName: "Home Test Model",
         api: "responses",
         efforts: ["low"],
         position: 0,
@@ -120,7 +121,13 @@ describe.skipIf(!db)("home runs route", () => {
       })
       .onConflictDoUpdate({
         target: models.id,
-        set: { api: "responses", efforts: ["low"], enabled: true, vision: true },
+        set: {
+          displayName: "Home Test Model",
+          api: "responses",
+          efforts: ["low"],
+          enabled: true,
+          vision: true,
+        },
       });
     token = (await createApiKey(live, userId, "home-route-test")).token;
     process.env.AGENT_API_KEY = "test-agent-key";

@@ -60,6 +60,38 @@ describe("sanitizeEvent", () => {
     expect(sanitizeEvent("interaction", interaction)).toBe(interaction);
     expect(sanitizeEvent("interaction-resolved", { id: "i-1" })).toEqual({ id: "i-1" });
   });
+
+  it("keeps a well-formed context state on the usage event", () => {
+    const context = {
+      model: {
+        modelId: "muse-spark-1.3-contributor",
+        context: { contextWindow: 1048576 },
+      },
+      usedTokens: 120_000,
+      remainingTokens: 928_576,
+      usedPercent: 11.4,
+      remainingPercent: 88.6,
+    };
+    const sanitized = sanitizeEvent("usage", { input: 4, cached: 6, context }) as {
+      usage: Record<string, unknown>;
+    };
+    expect(sanitized.usage.context).toEqual(context);
+    // The persisted second pass meets its own output and must keep it.
+    expect(sanitizeEvent("usage", sanitized)).toEqual(sanitized);
+  });
+
+  it("turns a malformed context into an explicit null, never a guess", () => {
+    const sanitized = sanitizeEvent("usage", {
+      input: 1,
+      context: { model: { modelId: "m" }, usedTokens: "many" },
+    }) as { usage: Record<string, unknown> };
+    expect(sanitized.usage.context).toBeNull();
+    expect(sanitizeEvent("usage", sanitized)).toEqual(sanitized);
+    const absent = sanitizeEvent("usage", { input: 1 }) as {
+      usage: Record<string, unknown>;
+    };
+    expect(absent.usage.context).toBeNull();
+  });
 });
 
 describe("outcomeTextFrom", () => {

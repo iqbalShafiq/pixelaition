@@ -30,6 +30,7 @@ import {
 import { Composer } from "../components/composer.js";
 import { PixelLoader } from "../components/pixel-loader.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
+import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
 import {
   type InteractionResponse,
   type PendingInteraction,
@@ -131,18 +132,31 @@ const fallbackBuffer: FrameBuffer = {
 };
 
 type ActiveRunResponse = {
-  run: { id: string; status: string; modelId?: string; prompt: string | null } | null;
+  run: {
+    id: string;
+    status: string;
+    modelId?: string;
+    reasoningEffort?: string;
+    prompt: string | null;
+    createdAt?: string;
+  } | null;
   /** The pending card of a waiting run; null when the run is not waiting. */
   interaction: PendingInteraction | null;
   lastRun: {
     id: string;
     status: string;
     prompt: string | null;
+    modelId?: string;
+    reasoningEffort?: string;
+    createdAt?: string;
     events: Array<{ sequence: number; type: string; data: unknown }>;
     text: string;
+    usage?: unknown;
     durationMs: number | null;
   } | null;
   history: HistoryRun[];
+  /** The settled session totals; the live turn is composed on the client. */
+  session?: unknown;
 };
 
 /** The task steer answer, shaped for the console's "you" line. */
@@ -188,13 +202,23 @@ export function EditorScreen() {
       api<{
         models: Array<{
           id: string;
+          displayName: string;
           efforts: string[];
           vision: boolean;
           userImages: boolean;
+          contextWindow: number | null;
         }>;
         modelReady: boolean;
       }>("/api/models"),
   });
+
+  // The catalog's display names: the composer, the header, the turn metas, and
+  // the history badges read these, never the provider slug.
+  const modelNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const item of catalog.data?.models ?? []) names[item.id] = item.displayName;
+    return names;
+  }, [catalog.data]);
 
   const [frameId, setFrameId] = useState<string | null>(null);
   const viewedFrameRef = useRef(frameId);
@@ -311,6 +335,22 @@ export function EditorScreen() {
   // cannot bring an answered card back before its resolved marker arrives.
   const answeredIdsRef = useRef<Set<string>>(new Set());
   const [restoredMs, setRestoredMs] = useState<number | null>(null);
+  // The live turn the header adds on top of the settled session totals, plus
+  // the same turn's per-chat meta. `settling` holds the live contribution
+  // until the session aggregate has folded the just-finished turn in, so the
+  // header's totals never dip when a run lands.
+  const [liveStartedAt, setLiveStartedAt] = useState<number | null>(null);
+  const [liveRunInfo, setLiveRunInfo] = useState<{
+    modelId: string | null;
+    effort: string | null;
+  } | null>(null);
+  const [settledAt, setSettledAt] = useState<number | null>(null);
+  const [settling, setSettling] = useState(false);
+  const settleBaseRef = useRef<{ cost: number; elapsedMs: number } | null>(null);
+  const wasRunningRef = useRef(false);
+  // The meta of a transcript restored from the server: the turn is not live
+  // in this session, but its usage/model/timing came with the log.
+  const [restoredMeta, setRestoredMeta] = useState<TurnMeta | null>(null);
   const [runPrompt, setRunPrompt] = useState("");
   // Finished requests stay above the live one. Each turn keeps its own prompt
   // so the console can pin that prompt with that turn's tabs.
@@ -331,11 +371,38 @@ export function EditorScreen() {
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const taskStream = useTaskStream();
   const task = useTaskSnapshot(assetId, true);
-  const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
-  const fitted = useRef<string | null>(null);
+  // The asset conversation's settled spend. It refreshes on focus and when a
+  // turn settles; the live turn rides on the client's own stream.
+  const session = useQuery({
+    queryKey: ["asset-session", assetId],
+    queryFn: () => api<{ session: unknown }>(`/api/assets/${assetId}/session`),
+    select: (data) => sessionTotalsFrom(data.session),
+  });
   // Follow-ups typed while a run works; persisted per asset, drained one by
   // one as runs finish, and steerable into the live run on demand.
   const [queue, setQueue] = useState<QueuedRun[]>(() => readQueue(assetId));
+  // Optimistic overlays: the UI reacts the moment the user acts, and each
+  // overlay reverts by itself when the action fails (the base state is only
+  // updated on success).
+  const [optimisticStart, setOptimisticStart] = useOptimistic<string | null>(null);
+  const [optimisticStopping, setOptimisticStopping] = useOptimistic(false);
+  const [optimisticQueue, setOptimisticQueue] = useOptimistic(
+    queue,
+    (current: QueuedRun[], sentIds: ReadonlySet<string>) =>
+      current.filter((item) => !sentIds.has(item.id)),
+  );
+  const steering = optimisticQueue !== queue;
+  const taskActive =
+    task.data?.task !== null &&
+    task.data?.task !== undefined &&
+    ["queued", "running", "waiting"].includes(task.data.task.status);
+  // A reload may have rejoined through a child run; the snapshot's own task
+  // id keeps questions, badges, and frame-context steering wired either way.
+  const activeTaskId = taskId ?? (taskActive ? (task.data?.task?.id ?? null) : null);
+  const running = runId !== null || taskActive;
+  const consoleRunning = running || optimisticStart !== null;
+  const { pace: paceRejoin, reset: resetRejoin, cancel: cancelRejoin } = useRejoinPacer();
+  const fitted = useRef<string | null>(null);
   const queueRef = useRef(queue);
   const queueAssetRef = useRef(assetId);
   useEffect(() => {
@@ -348,17 +415,145 @@ export function EditorScreen() {
     setQueue(readQueue(assetId));
   }, [assetId, queue]);
   queueRef.current = queue;
-  // Optimistic overlays: the UI reacts the moment the user acts, and each
-  // overlay reverts by itself when the action fails (the base state is only
-  // updated on success).
-  const [optimisticStart, setOptimisticStart] = useOptimistic<string | null>(null);
-  const [optimisticStopping, setOptimisticStopping] = useOptimistic(false);
-  const [optimisticQueue, setOptimisticQueue] = useOptimistic(
-    queue,
-    (current: QueuedRun[], sentIds: ReadonlySet<string>) =>
-      current.filter((item) => !sentIds.has(item.id)),
+
+  // Switching assets must not carry the previous conversation's live turn.
+  useEffect(() => {
+    setLiveStartedAt(null);
+    setLiveRunInfo(null);
+    setSettledAt(null);
+    setSettling(false);
+    settleBaseRef.current = null;
+    wasRunningRef.current = false;
+    setRestoredMeta(null);
+  }, [assetId]);
+
+  // The live task's own start and model: the snapshot carries them, so a
+  // reload's elapsed and meta restart from the server's start, not from zero.
+  useEffect(() => {
+    const record = task.data?.task;
+    if (record === null || record === undefined) return;
+    if (!["queued", "running", "waiting"].includes(record.status)) return;
+    const started =
+      record.createdAt === undefined ? Number.NaN : Date.parse(record.createdAt);
+    if (!Number.isNaN(started)) setLiveStartedAt(started);
+    if (record.modelId != null || record.effort != null) {
+      const modelId = record.modelId ?? null;
+      const effort = record.effort ?? null;
+      setLiveRunInfo({ modelId, effort });
+    }
+  }, [
+    task.data?.task?.id,
+    task.data?.task?.status,
+    task.data?.task?.createdAt,
+    task.data?.task?.modelId,
+    task.data?.task?.effort,
+  ]);
+
+  // A turn settling must not make the header's totals dip: the live
+  // contribution holds until the session aggregate has grown past the
+  // snapshot taken when the turn landed.
+  useEffect(() => {
+    if (consoleRunning) {
+      wasRunningRef.current = true;
+      if (settling) setSettling(false);
+      settleBaseRef.current = null;
+      return;
+    }
+    if (!wasRunningRef.current) return;
+    wasRunningRef.current = false;
+    if (liveStartedAt === null) return;
+    settleBaseRef.current = session.data
+      ? { cost: session.data.cost, elapsedMs: session.data.elapsedMs }
+      : null;
+    setSettledAt(Date.now());
+    setSettling(true);
+    void session.refetch();
+  }, [consoleRunning, settling, liveStartedAt, session]);
+  useEffect(() => {
+    if (!settling) return;
+    const base = settleBaseRef.current;
+    const current = session.data;
+    const grew =
+      current != null &&
+      (base === null || current.cost > base.cost || current.elapsedMs > base.elapsedMs);
+    if (grew) setSettling(false);
+  }, [settling, session.data]);
+  // Settling has a bounded life: a fetch that raced the settle returns stale
+  // data, so one retry runs, and a deadline keeps the live contribution from
+  // holding forever.
+  useEffect(() => {
+    if (!settling) return;
+    const retry = window.setTimeout(() => {
+      void session.refetch();
+    }, 1200);
+    const deadline = window.setTimeout(() => setSettling(false), 6000);
+    return () => {
+      window.clearTimeout(retry);
+      window.clearTimeout(deadline);
+    };
+  }, [settling, session.refetch]);
+
+  // The turn on screen: its usage comes from the streamed usage row, its
+  // model and effort from the task snapshot or the send, and its start from
+  // the server's own run/task timestamp.
+  const usageRow = useMemo(
+    () => [...rows].reverse().find((row) => row.kind === "usage"),
+    [rows],
   );
-  const steering = optimisticQueue !== queue;
+  const liveTurnMeta = useMemo<TurnMeta | null>(() => {
+    if (liveStartedAt === null && usageRow === undefined) return null;
+    // The turn's own run wins: an ask run has no task snapshot, so the
+    // asset's last task would otherwise label this turn with the wrong model.
+    const modelId =
+      liveRunInfo?.modelId ??
+      task.data?.task?.modelId ??
+      usageRow?.context?.model.modelId ??
+      null;
+    const effort = liveRunInfo?.effort ?? task.data?.task?.effort ?? null;
+    return {
+      usage: usageRow
+        ? {
+            input: usageRow.input,
+            cached: usageRow.cached,
+            output: usageRow.output,
+            cost: usageRow.cost,
+          }
+        : null,
+      modelId,
+      effort,
+      startedAt: liveStartedAt === null ? null : new Date(liveStartedAt).toISOString(),
+      durationMs:
+        settledAt !== null && liveStartedAt !== null
+          ? settledAt - liveStartedAt
+          : consoleRunning
+            ? null
+            : (restoredMs ?? null),
+    };
+  }, [
+    liveStartedAt,
+    usageRow,
+    task.data?.task?.modelId,
+    task.data?.task?.effort,
+    liveRunInfo,
+    settledAt,
+    consoleRunning,
+    restoredMs,
+  ]);
+  // A transcript restored from the log carries its own exact meta; the live
+  // turn outranks it as soon as this session watched the turn happen.
+  const currentTurnMeta =
+    liveStartedAt !== null ? liveTurnMeta : (restoredMeta ?? liveTurnMeta);
+  const liveContribution: LiveTurn | null =
+    consoleRunning || settling
+      ? {
+          startedAtMs: liveStartedAt,
+          cost: usageRow?.cost ?? 0,
+          input: usageRow?.input ?? 0,
+          cached: usageRow?.cached ?? 0,
+          output: usageRow?.output ?? 0,
+          context: usageRow?.context ?? null,
+        }
+      : null;
 
   const frames = asset.data?.frames ?? [];
   const liveFrames = useMemo(() => {
@@ -375,14 +570,6 @@ export function EditorScreen() {
     buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
       ? activeLayerId
       : (buffer?.layers[0]?.id ?? "");
-  const taskActive =
-    task.data?.task !== null &&
-    task.data?.task !== undefined &&
-    ["queued", "running", "waiting"].includes(task.data.task.status);
-  // A reload may have rejoined through a child run; the snapshot's own task
-  // id keeps questions, badges, and frame-context steering wired either way.
-  const activeTaskId = taskId ?? (taskActive ? (task.data?.task?.id ?? null) : null);
-  const running = runId !== null || taskActive;
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // A live run can touch every frame of the asset, so the editor locks all of
   // them; runFrameId still marks the frame the agent is painting on.
@@ -1224,6 +1411,16 @@ export function EditorScreen() {
         // A waiting run restores its card straight from the row's stored
         // events; the stream alone cannot be trusted to retain it.
         setPendingInteraction(result.interaction);
+        setRestoredMeta(null);
+        const started =
+          result.run.createdAt === undefined
+            ? Number.NaN
+            : Date.parse(result.run.createdAt);
+        if (!Number.isNaN(started)) setLiveStartedAt(started);
+        setLiveRunInfo({
+          modelId: result.run.modelId ?? null,
+          effort: result.run.reasoningEffort ?? null,
+        });
         if (displayedRunIdRef.current !== liveId) {
           // The console still shows an earlier turn. The live run takes it
           // over, and the row's prompt names the turn from the first paint.
@@ -1274,13 +1471,30 @@ export function EditorScreen() {
       prompt: string | null;
       plan?: unknown;
       runs: TaskLogRun[];
+      usage?: unknown;
+      modelId?: string | null;
+      effort?: string | null;
+      createdAt?: string | null;
+      finishedAt?: string | null;
       earlier?: AssetLogTask[];
     }>(`/api/assets/${assetId}/task/log`)
       .catch(() => null)
       .then((result) => {
         if (cancelled || result === null) return;
+        // The newest task carries the same meta as its earlier siblings; the
+        // log's top-level fields are what its turn's lines print.
         const turns = turnsFromAssetLog(
-          { id, prompt: result.prompt, plan: result.plan, runs: result.runs },
+          {
+            id,
+            prompt: result.prompt,
+            plan: result.plan,
+            runs: result.runs,
+            usage: result.usage ?? null,
+            modelId: result.modelId ?? null,
+            effort: result.effort ?? null,
+            createdAt: result.createdAt ?? null,
+            finishedAt: result.finishedAt ?? null,
+          },
           result.earlier ?? [],
         );
         if (replaceTranscript) {
@@ -1293,6 +1507,12 @@ export function EditorScreen() {
           setRunPrompt(last?.prompt ?? "");
           setMessage("");
           setRunHistory([]);
+          // The transcript is not live in this session; its exact meta came
+          // with the log.
+          setRestoredMeta(last?.meta ?? null);
+          setLiveStartedAt(null);
+          setLiveRunInfo(null);
+          setSettledAt(null);
           displayedRunIdRef.current = `task:${id}`;
           return;
         }
@@ -1334,6 +1554,15 @@ export function EditorScreen() {
       setMessage(latest?.text ?? "");
       setRestoredMs(latest?.durationMs ?? null);
       setRunPrompt(latest?.prompt ?? "");
+      setRestoredMeta(null);
+      const started =
+        latest?.createdAt === undefined ? Number.NaN : Date.parse(latest.createdAt);
+      setLiveStartedAt(Number.isNaN(started) ? null : started);
+      setLiveRunInfo({
+        modelId: latest?.modelId ?? null,
+        effort: latest?.reasoningEffort ?? null,
+      });
+      setSettledAt(null);
       displayedRunIdRef.current = latest?.id ?? null;
     })();
     return () => {
@@ -1681,11 +1910,17 @@ export function EditorScreen() {
     const snapshotEarlier = earlierTurns;
     const snapshotRows = rows;
     const snapshotPrompt = runPrompt;
+    const snapshotMeta = currentTurnMeta;
     if (snapshotPrompt.trim().length > 0 || snapshotRows.length > 0) {
       const snapshotId = displayedRunIdRef.current ?? `turn-${crypto.randomUUID()}`;
       setEarlierTurns((current) => [
         ...current.filter((turn) => turn.id !== snapshotId),
-        { id: snapshotId, prompt: snapshotPrompt, rows: snapshotRows },
+        {
+          id: snapshotId,
+          prompt: snapshotPrompt,
+          rows: snapshotRows,
+          ...(snapshotMeta !== null ? { meta: snapshotMeta } : {}),
+        },
       ]);
     }
     // Urgent updates: the console and the composer react before any await.
@@ -1696,6 +1931,10 @@ export function EditorScreen() {
     setRestoredMs(null);
     setRunPrompt(text);
     setRunHistory([]);
+    setRestoredMeta(null);
+    setLiveStartedAt(Date.now());
+    setLiveRunInfo({ modelId, effort });
+    setSettledAt(null);
     // A history preview must not sit over the strokes the agent is about to draw.
     setPreview(null);
     if (textOverride === undefined) setPrompt("");
@@ -1968,9 +2207,19 @@ export function EditorScreen() {
     selectedModel !== undefined &&
     selectedModel.vision !== true &&
     selectedModel.userImages !== true
-      ? `${selectedModel.id} cannot read attached images — pick a vision model or remove them.`
+      ? `${selectedModel.displayName} cannot read attached images — pick a vision model or remove them.`
       : undefined;
-  const runModelMap = useMemo(() => new Map(Object.entries(runModels)), [runModels]);
+  // History badges read the catalog name for the run's model, never its slug.
+  const runModelMap = useMemo(
+    () =>
+      new Map(
+        Object.entries(runModels).map(([runId, modelId]) => [
+          runId,
+          modelNames[modelId] ?? modelId,
+        ]),
+      ),
+    [runModels, modelNames],
+  );
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
 
   const leftPanels = (
@@ -2511,7 +2760,7 @@ export function EditorScreen() {
                 <div className="w-full shrink-0 [view-transition-name:console-flight]">
                   <RunConsole
                     taskProgress={
-                      task.data?.task !== null && task.data?.task !== undefined
+                      taskActive && task.data?.task
                         ? {
                             phase: task.data.task.phase,
                             done: (task.data.workers ?? []).filter(
@@ -2527,10 +2776,31 @@ export function EditorScreen() {
                     turns={[
                       ...earlierTurns.filter((turn) => turn.id !== (taskId ?? "live")),
                       ...(runPrompt.trim().length > 0 || rows.length > 0
-                        ? [{ id: taskId ?? "live", prompt: runPrompt, rows }]
+                        ? [
+                            {
+                              id: taskId ?? "live",
+                              prompt: runPrompt,
+                              rows,
+                              ...(currentTurnMeta !== null
+                                ? { meta: currentTurnMeta }
+                                : {}),
+                            },
+                          ]
                         : []),
                     ]}
-                    running={running || optimisticStart !== null}
+                    running={consoleRunning}
+                    session={session.data ?? null}
+                    live={liveContribution}
+                    model={
+                      selectedModel !== undefined
+                        ? {
+                            id: selectedModel.id,
+                            displayName: selectedModel.displayName,
+                            contextWindow: selectedModel.contextWindow ?? null,
+                          }
+                        : null
+                    }
+                    modelNames={modelNames}
                     open={consoleOpen}
                     onOpen={setConsoleOpen}
                     message={message || (error ?? "")}
@@ -2581,6 +2851,7 @@ export function EditorScreen() {
                     onPrompt={setPrompt}
                     modelId={modelId}
                     models={models}
+                    modelLabels={modelNames}
                     onModel={setModelId}
                     effort={effort}
                     efforts={efforts}

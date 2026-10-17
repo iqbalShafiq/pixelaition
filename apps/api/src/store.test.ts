@@ -7,6 +7,7 @@ import {
   generationRuns,
   generationThreads,
   projects,
+  runTasks,
   user,
   versions,
   type Database,
@@ -14,7 +15,12 @@ import {
 import { createAsset, defaultStyle, encodePixels } from "@pixelaition/pixel";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ensureThread, restoreVersion, assetHasActiveRun } from "./store.js";
+import {
+  ensureThread,
+  restoreVersion,
+  assetHasActiveRun,
+  sessionUsageForThread,
+} from "./store.js";
 
 /**
  * restoreVersion needs a live database; when DATABASE_URL is absent or the
@@ -395,5 +401,179 @@ describe.skipIf(!threadsDb)("ensureThread", () => {
     await expect(
       live.insert(generationThreads).values({ id: randomUUID(), userId }),
     ).rejects.toThrow();
+  });
+});
+
+const sessionDb = await probe(process.env.DATABASE_URL);
+
+describe.skipIf(!sessionDb)("sessionUsageForThread", () => {
+  const userId = randomUUID();
+  const projectId = randomUUID();
+  let live: Database;
+
+  const context = (modelId: string, usedTokens: number) => ({
+    model: { modelId, context: { contextWindow: 1048576 } },
+    usedTokens,
+    remainingTokens: 1048576 - usedTokens,
+    usedPercent: (usedTokens / 1048576) * 100,
+    remainingPercent: 100 - (usedTokens / 1048576) * 100,
+  });
+
+  beforeAll(async () => {
+    if (!sessionDb) throw new Error("database probe did not resolve");
+    live = sessionDb;
+    await live.insert(user).values({
+      id: userId,
+      name: "Session Test",
+      email: `session-${userId}@test.local`,
+    });
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "session",
+      style: defaultStyle,
+    });
+  });
+
+  afterAll(async () => {
+    if (!live) return;
+    // Threads, tasks, and runs all cascade from the user.
+    await live.delete(user).where(eq(user.id, userId));
+    await live.$client.end({ timeout: 5 });
+  });
+
+  it("sums settled tasks and parentless runs, never their children twice", async () => {
+    const threadId = randomUUID();
+    const taskId = randomUUID();
+    await live.insert(generationThreads).values({ id: threadId, projectId, userId });
+    // A finished task: its usage already rolled up its child, so the child's
+    // own row must not be counted again. Its context is the older one.
+    await live.insert(runTasks).values({
+      id: taskId,
+      threadId,
+      status: "completed",
+      phase: "review",
+      createdAt: new Date("2026-10-17T10:00:00Z"),
+      finishedAt: new Date("2026-10-17T10:01:00Z"),
+      usage: {
+        input: 100,
+        cached: 20,
+        output: 10,
+        total: 130,
+        cost: 0.5,
+        context: context("muse-spark-1.3-contributor", 120_000),
+      },
+    });
+    await live.insert(generationRuns).values({
+      id: randomUUID(),
+      threadId,
+      taskId,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "muse-spark-1.3-contributor",
+      reasoningEffort: "high",
+      createdAt: new Date("2026-10-17T10:00:05Z"),
+      finishedAt: new Date("2026-10-17T10:00:55Z"),
+      usage: { input: 90, output: 5, total: 95, cost: 0.4 },
+    });
+    // A parentless ask run finishes later; its context state is the newest.
+    await live.insert(generationRuns).values({
+      id: randomUUID(),
+      threadId,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      createdAt: new Date("2026-10-17T10:02:00Z"),
+      finishedAt: new Date("2026-10-17T10:02:30Z"),
+      usage: {
+        input: 5,
+        cached: 1,
+        output: 2,
+        total: 7,
+        cost: 0.25,
+        context: context("deepseek-v4.1-flash", 500_000),
+      },
+    });
+    // Live rows are not settled spend.
+    await live.insert(generationRuns).values({
+      id: randomUUID(),
+      threadId,
+      requestId: randomUUID(),
+      status: "running",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      usage: { cost: 9 },
+    });
+    await live.insert(runTasks).values({
+      id: randomUUID(),
+      threadId,
+      status: "running",
+      phase: "execute",
+    });
+
+    const session = await sessionUsageForThread(live, threadId);
+    expect(session).toEqual({
+      input: 105,
+      cached: 21,
+      output: 12,
+      total: 137,
+      cost: 0.75,
+      elapsedMs: 90_000,
+      context: context("deepseek-v4.1-flash", 500_000),
+      // The newest run (still running) names the last model; the fixture's
+      // unprefixed id is not in the catalog, so its window is unknown.
+      modelId: "deepseek-v4.1-flash",
+      contextWindow: null,
+    });
+
+    await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+  });
+
+  it("takes the newest settled context state even when it sits on a task", async () => {
+    const threadId = randomUUID();
+    await live.insert(generationThreads).values({ id: threadId, projectId, userId });
+    await live.insert(generationRuns).values({
+      id: randomUUID(),
+      threadId,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      createdAt: new Date("2026-10-17T11:00:00Z"),
+      finishedAt: new Date("2026-10-17T11:00:20Z"),
+      usage: { context: context("deepseek-v4.1-flash", 100_000) },
+    });
+    await live.insert(runTasks).values({
+      id: randomUUID(),
+      threadId,
+      status: "completed",
+      phase: "review",
+      createdAt: new Date("2026-10-17T11:01:00Z"),
+      finishedAt: new Date("2026-10-17T11:02:00Z"),
+      usage: { context: context("muse-spark-1.3-contributor", 700_000) },
+    });
+
+    const session = await sessionUsageForThread(live, threadId);
+    expect(session.context).toEqual(context("muse-spark-1.3-contributor", 700_000));
+    await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
+  });
+
+  it("reports zeros and no context for a thread with no settled spend", async () => {
+    const threadId = randomUUID();
+    await live.insert(generationThreads).values({ id: threadId, projectId, userId });
+    const session = await sessionUsageForThread(live, threadId);
+    expect(session).toEqual({
+      input: 0,
+      cached: 0,
+      output: 0,
+      total: 0,
+      cost: 0,
+      elapsedMs: 0,
+      context: null,
+      modelId: null,
+      contextWindow: null,
+    });
+    await live.delete(generationThreads).where(eq(generationThreads.id, threadId));
   });
 });

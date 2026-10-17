@@ -11,6 +11,7 @@ describe("model specs", () => {
     expect(
       parseModelSpecRow({
         id: "m",
+        displayName: "Model M",
         api: "chat",
         efforts: ["low", "high"],
         vision: false,
@@ -19,12 +20,36 @@ describe("model specs", () => {
       }),
     ).toEqual({
       id: "m",
+      displayName: "Model M",
       api: "chat",
       efforts: ["low", "high"],
       vision: false,
       userImages: false,
       roles: ["summary-text"],
     });
+    // A row without a display name reads by its slug, and a blank one is not
+    // a name either.
+    expect(
+      parseModelSpecRow({
+        id: "m",
+        api: "chat",
+        efforts: ["low"],
+        vision: false,
+        userImages: false,
+        roles: [],
+      }).displayName,
+    ).toBe("m");
+    expect(
+      parseModelSpecRow({
+        id: "m",
+        displayName: "  ",
+        api: "chat",
+        efforts: ["low"],
+        vision: false,
+        userImages: false,
+        roles: [],
+      }).displayName,
+    ).toBe("m");
     expect(
       parseModelSpecRow({
         id: "m",
@@ -135,10 +160,45 @@ describe("model specs", () => {
       ).toThrow(/roles/);
     }
   });
+  it("carries a declared context window and leaves an undeclared one out", () => {
+    const row = {
+      id: "m",
+      api: "chat" as const,
+      efforts: ["low"],
+      vision: false,
+      userImages: false,
+      roles: [],
+    };
+    expect(parseModelSpecRow({ ...row, contextWindow: 1048576 }).contextWindow).toBe(
+      1048576,
+    );
+    // A null window means "not declared": the spec omits it so the console
+    // shows no context line instead of guessing one.
+    expect("contextWindow" in parseModelSpecRow({ ...row, contextWindow: null })).toBe(
+      false,
+    );
+    expect("contextWindow" in parseModelSpecRow(row)).toBe(false);
+  });
+  it("refuses a malformed context window", () => {
+    const row = {
+      id: "bad",
+      api: "chat" as const,
+      efforts: ["low"],
+      vision: false,
+      userImages: false,
+      roles: [],
+    };
+    for (const bad of [0, -1, 1.5, "1048576"]) {
+      expect(() => parseModelSpecRow({ ...row, contextWindow: bad })).toThrow(
+        /contextWindow/,
+      );
+    }
+  });
   it("selects only exact model and effort pairs", () => {
     const specs: ModelSpec[] = [
       {
         id: "deepseek-v4.1-flash",
+        displayName: "Deepseek v4.1 Flash",
         api: "chat",
         efforts: ["low", "high", "max"],
         vision: false,

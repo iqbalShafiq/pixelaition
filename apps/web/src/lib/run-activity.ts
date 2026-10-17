@@ -1,4 +1,10 @@
 import { agentLabel } from "./agent-label.js";
+import {
+  contextFromUsage,
+  turnMetaFromTask,
+  type ContextUsage,
+  type TurnMeta,
+} from "./run-usage.js";
 
 export type RunRow =
   | { id: string; kind: "phase"; label: string; state: "running" | "done" }
@@ -86,6 +92,8 @@ export type RunRow =
       modelCost: number;
       jevCalls: number;
       jevCost: number;
+      /** The newest generation's context state; null when none is known. */
+      context: ContextUsage | null;
     };
 
 const TERMINAL: Record<string, "completed" | "failed" | "cancelled"> = {
@@ -563,6 +571,7 @@ export function applyRunEvent(
         modelCost: number("modelCost"),
         jevCalls: number("jevCalls"),
         jevCost: number("jevCost"),
+        context: contextFromUsage(data["context"]),
       },
     ];
   }
@@ -621,14 +630,6 @@ export function applyRunEvent(
     ];
   }
   return rows;
-}
-
-export function formatDuration(ms: number): string {
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
 export type TaskLogRun = {
@@ -709,6 +710,12 @@ export type AssetLogTask = {
   prompt: string | null;
   plan?: unknown;
   runs: TaskLogRun[];
+  /** The task's rolled-up usage/model/timing, for the turn's meta lines. */
+  usage?: unknown;
+  modelId?: string | null;
+  effort?: string | null;
+  createdAt?: string | null;
+  finishedAt?: string | null;
 };
 
 /** One user request and the agent steps that belong to it. */
@@ -716,24 +723,37 @@ export type ConsoleTurn = {
   id: string;
   prompt: string;
   rows: RunRow[];
+  /** The usage/model/timing lines this turn prints when it settles. */
+  meta?: TurnMeta;
 };
 
 /**
  * Each task is its own turn, oldest first. The prompt stays on the turn so
- * the sticky header can pair it with that turn's tabs.
+ * the sticky header can pair it with that turn's tabs, and the meta rides
+ * along so a settled turn can print its own usage, model, and timing.
  */
 export function turnsFromAssetLog(
   latest: AssetLogTask,
   earlier: AssetLogTask[] = [],
 ): ConsoleTurn[] {
-  return [...earlier, latest].map((task) => ({
-    id: task.id,
-    prompt: task.prompt?.trim() ?? "",
-    rows: rowsFromTaskLog(task.runs, task.plan).map((row) => ({
-      ...row,
-      id: `${task.id}:${row.id}`,
-    })),
-  }));
+  return [...earlier, latest].map((task) => {
+    const meta = turnMetaFromTask({
+      usage: task.usage ?? null,
+      modelId: task.modelId ?? null,
+      effort: task.effort ?? null,
+      createdAt: task.createdAt ?? null,
+      finishedAt: task.finishedAt ?? null,
+    });
+    return {
+      id: task.id,
+      prompt: task.prompt?.trim() ?? "",
+      ...(meta !== null ? { meta } : {}),
+      rows: rowsFromTaskLog(task.runs, task.plan).map((row) => ({
+        ...row,
+        id: `${task.id}:${row.id}`,
+      })),
+    };
+  });
 }
 
 /** The flat transcript, oldest turn first. Prompts stay on the turns. */

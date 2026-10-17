@@ -275,6 +275,11 @@ export const runTasks = pgTable("run_tasks", {
 
 export const models = pgTable("models", {
   id: text("id").primaryKey(),
+  /**
+   * The name a person reads in the composer, the console header, and a turn's
+   * meta. The `id` stays the provider slug the request is sent with.
+   */
+  displayName: text("display_name").notNull(),
   api: text("api").notNull(),
   efforts: jsonb("efforts").notNull(),
   position: integer("position").notNull(),
@@ -282,6 +287,14 @@ export const models = pgTable("models", {
   vision: boolean("vision").notNull().default(false),
   userImages: boolean("user_images").notNull().default(false),
   roles: jsonb("roles").notNull().default([]),
+  /**
+   * The model's context window, seeded by migrations. The worker feeds it to
+   * Anvia as `contextLimits`, which is what attaches `contextUsage`
+   * (used/remaining tokens and percent) to every completion response. Null
+   * means the window is not declared: the console shows no context line
+   * rather than guessing one.
+   */
+  contextWindow: integer("context_window"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -6,6 +6,8 @@
  * so the sanitizer accepts its own output: `check_animation`'s counts survive
  * the second pass instead of being stripped as "not an array".
  */
+import { contextFromResponse } from "./usage.js";
+
 export function sanitizeEvent(type: string, raw: unknown): unknown {
   // Interaction payloads were already reduced to the console's fields when
   // they were published; the resolved marker is just `{ id }`. Nothing to
@@ -91,7 +93,9 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
     };
   }
   // Usage totals stream to the console as the run spends. The persisted
-  // second pass meets its own `{ usage }` shape and must keep it.
+  // second pass meets its own `{ usage }` shape and must keep it. The context
+  // state is validated: a malformed one becomes an explicit null, and the
+  // console shows no context line rather than a guess.
   if (type === "usage") {
     const data = ((raw as { usage?: Record<string, unknown> } | undefined)?.usage ??
       raw) as Record<string, unknown> | undefined;
@@ -108,6 +112,7 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
         modelCost: number("modelCost"),
         jevCalls: number("jevCalls"),
         jevCost: number("jevCost"),
+        context: contextFromResponse(data?.context) ?? null,
       },
     };
   }

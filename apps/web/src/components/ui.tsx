@@ -599,23 +599,35 @@ export function Popover({
   label,
   children,
   align = "end",
+  triggerClassName = "border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent",
+  popupClassName = "w-64",
+  openOnHover = false,
 }: {
   trigger: ReactNode;
   label: string;
   children: ReactNode;
   align?: "start" | "end";
+  /** Replaces the default bordered trigger styling. */
+  triggerClassName?: string;
+  /** Width (and any extra styling) for the popup itself. */
+  popupClassName?: string;
+  /** Open on hover as well: a detail read, while click and keyboard still work. */
+  openOnHover?: boolean;
 }) {
   return (
     <BasePopover.Root>
       <BasePopover.Trigger
         aria-label={label}
-        className="border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent"
+        {...(openOnHover ? { openOnHover: true, delay: 120, closeDelay: 80 } : {})}
+        className={triggerClassName}
       >
         {trigger}
       </BasePopover.Trigger>
       <BasePopover.Portal>
         <BasePopover.Positioner sideOffset={6} align={align} className="z-40">
-          <BasePopover.Popup className="w-64 bg-raised pixel-window p-2 text-[13px]">
+          <BasePopover.Popup
+            className={`${popupClassName} bg-raised pixel-window p-2 text-[13px]`}
+          >
             {children}
           </BasePopover.Popup>
         </BasePopover.Positioner>

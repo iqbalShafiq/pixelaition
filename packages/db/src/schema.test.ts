@@ -13,6 +13,9 @@ describe("schema", () => {
     expect(models.efforts.name).toBe("efforts");
     expect(models.position.name).toBe("position");
     expect(models.enabled.name).toBe("enabled");
+    // The context window seeds the model's `contextLimits`, which is what makes
+    // Anvia attach `contextUsage` to every response.
+    expect(models.contextWindow.name).toBe("context_window");
   });
 
   it("keeps the task columns the worker selects", () => {

@@ -6,6 +6,7 @@ import {
   frames,
   generationRuns,
   generationThreads,
+  models,
   projects,
   runProposals,
   runTasks,
@@ -29,7 +30,18 @@ import {
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, count, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -976,6 +988,8 @@ export async function taskSnapshot(db: Database, assetId: string) {
       workerKey: generationRuns.workerKey,
       frameIds: generationRuns.frameIds,
       durableRunId: generationRuns.durableRunId,
+      modelId: generationRuns.modelId,
+      reasoningEffort: generationRuns.reasoningEffort,
     })
     .from(generationRuns)
     .where(eq(generationRuns.taskId, task.id))
@@ -985,6 +999,165 @@ export async function taskSnapshot(db: Database, assetId: string) {
     .from(frames)
     .where(eq(frames.assetId, assetId));
   return { task, children, frameRows };
+}
+
+/** The newest generation's context window state, as the worker persisted it. */
+export type SessionContext = {
+  model: { modelId: string; context: { contextWindow: number } };
+  usedTokens: number;
+  remainingTokens: number;
+  usedPercent: number;
+  remainingPercent: number;
+};
+
+export type SessionUsage = {
+  input: number;
+  cached: number;
+  output: number;
+  total: number;
+  cost: number;
+  /** Agent wall time across every settled turn, in milliseconds. */
+  elapsedMs: number;
+  /** The latest generation's context state; null when none is known. */
+  context: SessionContext | null;
+  /** The model the newest generation used; null before the first model call. */
+  modelId: string | null;
+  /**
+   * That model's catalog window, when the catalog declares one. The console's
+   * empty context line prints `0 / 1M` from it before the first snapshot.
+   */
+  contextWindow: number | null;
+};
+
+type UsagePart = {
+  input?: unknown;
+  cached?: unknown;
+  output?: unknown;
+  total?: unknown;
+  cost?: unknown;
+  context?: unknown;
+};
+
+function sumNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Reads the context state off a persisted usage blob. The worker writes it in
+ * Anvia's `ContextUsage` shape; a malformed one reads as "no context", never
+ * as a guess.
+ */
+function contextFromUsage(usage: UsagePart): SessionContext | null {
+  const candidate = usage.context as
+    | {
+        model?: { modelId?: unknown; context?: { contextWindow?: unknown } };
+        usedTokens?: unknown;
+        remainingTokens?: unknown;
+        usedPercent?: unknown;
+        remainingPercent?: unknown;
+      }
+    | null
+    | undefined;
+  const modelId = candidate?.model?.modelId;
+  const contextWindow = candidate?.model?.context?.contextWindow;
+  if (typeof modelId !== "string" || modelId.length === 0) return null;
+  if (!isFiniteNumber(contextWindow) || contextWindow <= 0) return null;
+  if (
+    !isFiniteNumber(candidate?.usedTokens) ||
+    !isFiniteNumber(candidate?.remainingTokens) ||
+    !isFiniteNumber(candidate?.usedPercent) ||
+    !isFiniteNumber(candidate?.remainingPercent)
+  ) {
+    return null;
+  }
+  return {
+    model: { modelId, context: { contextWindow } },
+    usedTokens: candidate.usedTokens,
+    remainingTokens: candidate.remainingTokens,
+    usedPercent: candidate.usedPercent,
+    remainingPercent: candidate.remainingPercent,
+  };
+}
+
+/**
+ * The whole asset conversation's settled spend: every finished task (its usage
+ * already rolled up its children) plus every finished parentless run, the
+ * summed agent wall time, and the newest context window state. Live rows stay
+ * out — the console composes those from the run's own stream.
+ */
+export async function sessionUsageForThread(
+  db: Database,
+  threadId: string,
+): Promise<SessionUsage> {
+  const taskRows = await db
+    .select({
+      usage: runTasks.usage,
+      createdAt: runTasks.createdAt,
+      finishedAt: runTasks.finishedAt,
+    })
+    .from(runTasks)
+    .where(and(eq(runTasks.threadId, threadId), isNotNull(runTasks.finishedAt)));
+  const runRows = await db
+    .select({
+      usage: generationRuns.usage,
+      createdAt: generationRuns.createdAt,
+      finishedAt: generationRuns.finishedAt,
+    })
+    .from(generationRuns)
+    .where(
+      and(
+        eq(generationRuns.threadId, threadId),
+        // A task's children are already inside the task's rollup.
+        isNull(generationRuns.taskId),
+        isNotNull(generationRuns.finishedAt),
+      ),
+    );
+  // The newest generation names the model the conversation last used. Its
+  // catalog window lets the header print `0 / 1M` before a snapshot exists.
+  const [newestRun] = await db
+    .select({
+      modelId: generationRuns.modelId,
+      contextWindow: models.contextWindow,
+    })
+    .from(generationRuns)
+    .leftJoin(models, eq(models.id, generationRuns.modelId))
+    .where(eq(generationRuns.threadId, threadId))
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(1);
+  const totals: SessionUsage = {
+    input: 0,
+    cached: 0,
+    output: 0,
+    total: 0,
+    cost: 0,
+    elapsedMs: 0,
+    context: null,
+    modelId: newestRun?.modelId ?? null,
+    contextWindow: newestRun?.contextWindow ?? null,
+  };
+  // Settled rows in finish order: the last context state is the newest one.
+  const settled = [...taskRows, ...runRows].sort(
+    (left, right) =>
+      (left.finishedAt?.getTime() ?? 0) - (right.finishedAt?.getTime() ?? 0),
+  );
+  for (const row of settled) {
+    const usage = (row.usage ?? {}) as UsagePart;
+    totals.input += sumNumber(usage.input);
+    totals.cached += sumNumber(usage.cached);
+    totals.output += sumNumber(usage.output);
+    totals.total += sumNumber(usage.total);
+    totals.cost += sumNumber(usage.cost);
+    if (row.finishedAt && row.createdAt) {
+      totals.elapsedMs += Math.max(0, row.finishedAt.getTime() - row.createdAt.getTime());
+    }
+    const context = contextFromUsage(usage);
+    if (context !== null) totals.context = context;
+  }
+  return totals;
 }
 
 export type ProposalRow = typeof runProposals.$inferSelect;

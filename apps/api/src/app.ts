@@ -85,6 +85,7 @@ import {
   runBelongsTo,
   saveFrame,
   savePreferences,
+  sessionUsageForThread,
   updateAssetRecord,
   updateVersionLabel,
   userIdForToken,
@@ -114,7 +115,18 @@ function fail(res: Response, status: number, code: string, message: string) {
 }
 
 /** One task's user line and the children the console rebuilds. */
-async function taskLog(taskId: string, plan: unknown) {
+/**
+ * One task's console transcript, plus the meta the console header reads: the
+ * task's rolled-up usage, its model and effort (every child shares them), and
+ * its wall-clock bounds. The newest task doubles as the console's live turn.
+ */
+async function taskLog(task: {
+  id: string;
+  plan: unknown;
+  usage: unknown;
+  createdAt: Date;
+  finishedAt: Date | null;
+}) {
   const children = await db
     .select({
       id: generationRuns.id,
@@ -123,20 +135,30 @@ async function taskLog(taskId: string, plan: unknown) {
       status: generationRuns.status,
       answer: generationRuns.answer,
       prompt: generationRuns.prompt,
+      modelId: generationRuns.modelId,
+      reasoningEffort: generationRuns.reasoningEffort,
       createdAt: generationRuns.createdAt,
       events: generationRuns.events,
     })
     .from(generationRuns)
-    .where(eq(generationRuns.taskId, taskId))
+    .where(eq(generationRuns.taskId, task.id))
     .orderBy(asc(generationRuns.createdAt));
   const prompt =
     children
       .map((child) => userRequestFromPrompt(child.role, child.prompt))
       .find((text) => text !== null) ?? null;
+  // A task's children all run the model the request selected; the first child
+  // that names one is that model.
+  const model = children.find((child) => child.modelId.length > 0) ?? null;
   return {
-    id: taskId,
+    id: task.id,
     prompt,
-    plan: plan ?? null,
+    plan: task.plan ?? null,
+    usage: task.usage ?? null,
+    createdAt: task.createdAt.toISOString(),
+    finishedAt: task.finishedAt?.toISOString() ?? null,
+    modelId: model?.modelId ?? null,
+    effort: model?.reasoningEffort ?? null,
     runs: children
       .filter((child) => !(child.workerKey ?? "").startsWith("slot-"))
       .map((child) => ({
@@ -1630,6 +1652,15 @@ export function createApp() {
         status: snapshot.task.status,
         plan: snapshot.task.plan,
         usage: snapshot.task.usage,
+        // The console computes the live turn's elapsed from the task's own
+        // start, not from when this tab first rendered it. Its model and
+        // effort are the ones its children run.
+        createdAt: snapshot.task.createdAt,
+        modelId:
+          snapshot.children.find((child) => child.modelId.length > 0)?.modelId ?? null,
+        effort:
+          snapshot.children.find((child) => child.reasoningEffort.length > 0)
+            ?.reasoningEffort ?? null,
       },
       workers,
       pendingQuestions,
@@ -1649,12 +1680,14 @@ export function createApp() {
       .select({
         id: runTasks.id,
         plan: runTasks.plan,
+        usage: runTasks.usage,
         createdAt: runTasks.createdAt,
+        finishedAt: runTasks.finishedAt,
       })
       .from(runTasks)
       .where(eq(runTasks.assetId, asset.id))
       .orderBy(asc(runTasks.createdAt));
-    const logged = await Promise.all(tasks.map((task) => taskLog(task.id, task.plan)));
+    const logged = await Promise.all(tasks.map((task) => taskLog(task)));
     const latest = logged.find((item) => item.id === snapshot.task.id) ?? logged.at(-1);
     res.json({
       task: {
@@ -1665,6 +1698,11 @@ export function createApp() {
       prompt: latest?.prompt ?? null,
       plan: snapshot.task.plan ?? null,
       runs: latest?.runs ?? [],
+      usage: latest?.usage ?? null,
+      createdAt: latest?.createdAt ?? null,
+      finishedAt: latest?.finishedAt ?? null,
+      modelId: latest?.modelId ?? null,
+      effort: latest?.effort ?? null,
       earlier: logged.filter((item) => item.id !== snapshot.task.id),
     });
   });
@@ -2223,6 +2261,21 @@ export function createApp() {
     res.status(204).end();
   });
 
+  app.get("/api/assets/:id/session", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const thread = await ensureThread(db, res.locals.userId as string, {
+      assetId: asset.id,
+    });
+    // The whole asset conversation's settled spend, for the console header's
+    // session totals. The live turn travels on the client's own stream.
+    res.json({ session: await sessionUsageForThread(db, thread.id) });
+  });
+
   app.get("/api/assets/:id/active-run", async (req, res) => {
     const asset = await getAssetRecord(
       db,
@@ -2282,6 +2335,8 @@ export function createApp() {
       status: string;
       prompt: string | null;
       answer: string | null;
+      modelId: string;
+      reasoningEffort: string;
       usage: unknown;
       createdAt: Date;
       finishedAt: Date | null;
@@ -2305,6 +2360,8 @@ export function createApp() {
             status: generationRuns.status,
             prompt: generationRuns.prompt,
             answer: generationRuns.answer,
+            modelId: generationRuns.modelId,
+            reasoningEffort: generationRuns.reasoningEffort,
             usage: generationRuns.usage,
             createdAt: generationRuns.createdAt,
             finishedAt: generationRuns.finishedAt,
@@ -2332,6 +2389,8 @@ export function createApp() {
               status: row.status,
               prompt: request,
               answer: row.answer,
+              modelId: row.modelId,
+              reasoningEffort: row.reasoningEffort,
               usage: row.usage,
               createdAt: row.createdAt,
               finishedAt: row.finishedAt,
@@ -2362,6 +2421,9 @@ export function createApp() {
             id: lastRow.id,
             status: lastRow.status,
             prompt: lastRow.prompt,
+            modelId: lastRow.modelId,
+            reasoningEffort: lastRow.reasoningEffort,
+            createdAt: lastRow.createdAt.toISOString(),
             events,
             text,
             usage: lastRow.usage,
@@ -2376,11 +2438,17 @@ export function createApp() {
         status: row.status,
         prompt: row.prompt,
         answer: row.answer,
+        modelId: row.modelId,
+        reasoningEffort: row.reasoningEffort,
+        createdAt: row.createdAt.toISOString(),
         usage: row.usage,
         durationMs: row.finishedAt
           ? new Date(row.finishedAt).getTime() - new Date(row.createdAt).getTime()
           : null,
       })),
+      // The whole asset conversation's settled spend: the console header's
+      // session totals, composed with the live run's own stream on the client.
+      session: await sessionUsageForThread(db, thread.id),
     });
   });
 

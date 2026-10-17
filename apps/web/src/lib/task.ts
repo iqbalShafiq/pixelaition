@@ -38,7 +38,12 @@ export type TaskSnapshot = {
     phase: string;
     status: string;
     plan: unknown;
-    usage?: Record<string, number>;
+    usage?: Record<string, unknown> | null;
+    /** The task's server start, for a reload-proof live elapsed. */
+    createdAt?: string;
+    /** The model and effort its children run, once a child row exists. */
+    modelId?: string | null;
+    effort?: string | null;
   } | null;
   workers: TaskWorkerState[];
   pendingQuestions: number;

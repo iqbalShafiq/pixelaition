@@ -83,6 +83,15 @@ import { z } from "zod";
 import { outcomeTextFrom, sanitizeEvent } from "./events.js";
 import { frameWrites } from "./frame-writes.js";
 import {
+  applyJevUsage,
+  applyModelUsage,
+  contextFromResponse,
+  emptyUsage,
+  mergeUsage,
+  type ModelUsageLike,
+  type RunUsage,
+} from "./usage.js";
+import {
   buildFrameSummaryPrompt,
   clampSummary,
   createSummarizer,
@@ -235,48 +244,10 @@ function clearSteerQueue(durableRunId: string): void {
   steerInFlight.delete(durableRunId);
 }
 
-/** The provider's normalized usage, as the agent observer reports it. */
-type ModelUsageLike = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cachedInputTokens?: number;
-};
-
-/**
- * Per-run usage, independent of Langfuse: every model generation and every
- * Jev call adds to the run's totals, which stream to the console live and
- * persist on the run row so the user can see what a run costs.
- */
-type RunUsage = {
-  input: number;
-  output: number;
-  total: number;
-  cached: number;
-  cost: number;
-  modelCalls: number;
-  modelCost: number;
-  jevCalls: number;
-  jevCost: number;
-};
-
-const usageByRun = new Map<string, RunUsage>();
 /** Durable run id → public run id, so usage events reach the right console. */
 const publicIdByDurable = new Map<string, string>();
 
-function emptyUsage(): RunUsage {
-  return {
-    input: 0,
-    output: 0,
-    total: 0,
-    cached: 0,
-    cost: 0,
-    modelCalls: 0,
-    modelCost: 0,
-    jevCalls: 0,
-    jevCost: 0,
-  };
-}
+const usageByRun = new Map<string, RunUsage>();
 
 function usageFor(durableRunId: string): RunUsage {
   const existing = usageByRun.get(durableRunId);
@@ -295,14 +266,7 @@ function publishUsage(durableRunId: string): void {
 /** The API's decision and guardrail calls already spent before the run began. */
 function seedUsage(durableRunId: string, usage: Partial<RunUsage> | undefined): void {
   if (!usage) return;
-  const totals = usageFor(durableRunId);
-  totals.input += usage.input ?? 0;
-  totals.output += usage.output ?? 0;
-  totals.total += usage.total ?? 0;
-  totals.cached += usage.cached ?? 0;
-  totals.cost += usage.cost ?? 0;
-  totals.jevCalls += usage.jevCalls ?? 0;
-  totals.jevCost += usage.jevCost ?? 0;
+  mergeUsage(usageFor(durableRunId), usage);
   publishUsage(durableRunId);
 }
 
@@ -310,39 +274,25 @@ function recordModelUsage(
   durableRunId: string,
   usage: ModelUsageLike | undefined,
   cost: number | undefined,
+  context: ReturnType<typeof contextFromResponse>,
 ): void {
   if (!usage) return;
-  const totals = usageFor(durableRunId);
-  const cached =
-    typeof usage.cachedInputTokens === "number" ? usage.cachedInputTokens : 0;
-  totals.input += Math.max(0, usage.inputTokens - cached);
-  totals.output += usage.outputTokens;
-  totals.total += usage.totalTokens;
-  totals.cached += cached;
-  totals.modelCalls += 1;
-  if (typeof cost === "number") {
-    totals.cost += cost;
-    totals.modelCost += cost;
-  }
+  applyModelUsage(usageFor(durableRunId), usage, cost, context);
   publishUsage(durableRunId);
 }
 
 function recordJevUsage(durableRunId: string, usage: JevUsage | undefined): void {
   if (!usage) return;
-  const totals = usageFor(durableRunId);
-  totals.input += usage.input ?? 0;
-  totals.output += usage.output ?? 0;
-  totals.total += usage.total ?? 0;
-  totals.cost += usage.cost ?? 0;
-  totals.jevCost += usage.cost ?? 0;
-  totals.jevCalls += 1;
+  applyJevUsage(usageFor(durableRunId), usage);
   publishUsage(durableRunId);
 }
 
 /**
  * Wraps the telemetry observer with per-run usage accounting. Model cost comes
  * from the provider's raw response (`usage.cost`), which the normalized usage
- * drops; Jev reports its own cost through the request-check hook.
+ * drops; Jev reports its own cost through the request-check hook. The context
+ * state is Anvia's own `contextUsage`, attached to the response because the
+ * model is built with `contextLimits`; the newest one wins.
  */
 function usageObserver(base: AgentObserver | undefined): AgentObserver {
   return {
@@ -357,6 +307,7 @@ function usageObserver(base: AgentObserver | undefined): AgentObserver {
               void gen?.end?.(end);
               const response = end.response as {
                 usage?: ModelUsageLike;
+                contextUsage?: unknown;
                 rawResponse?: { usage?: { cost?: number } };
               };
               const cost = response.rawResponse?.usage?.cost;
@@ -364,6 +315,7 @@ function usageObserver(base: AgentObserver | undefined): AgentObserver {
                 args.runId,
                 response.usage,
                 typeof cost === "number" ? cost : undefined,
+                contextFromResponse(response.contextUsage),
               );
             },
           };
@@ -471,9 +423,10 @@ async function screenAnswer(durableRunId: string, text: unknown): Promise<string
 
 const apiKey = process.env.AGENT_API_KEY?.trim() ?? "";
 const baseUrl = process.env.AGENT_BASE_URL?.trim();
-// The agent provider asks every client to identify itself and keep a stable
-// session so it can route one conversation to the same upstream and keep its
-// prompt cache warm; requests without the session header may start failing.
+// Pointed at OpenCode Go, that provider asks every client to identify itself
+// and keep a stable session so it can route one conversation to the same
+// upstream and keep its prompt cache warm. Any other provider, such as
+// OpenRouter, gets no extra headers.
 const headers = openCodeGoHeaders(baseUrl, randomUUID());
 const openai = apiKey
   ? new OpenAIClient({
@@ -504,13 +457,17 @@ const specs: ModelSpec[] = modelRows.map((row) => parseModelSpecRow(row));
 
 // The control is declared explicitly so the options survive model ids Anvia
 // does not know, such as an OpenRouter slug. The adapter maps it to the
-// provider field.
+// provider field. A cataloged context window rides along as `contextLimits`,
+// which is what makes the adapter attach `contextUsage` to every response.
 const completions = openai
   ? specs.map((spec) => ({
       spec,
       model: openai.completionModel({
         modelId: spec.id,
         api: spec.api,
+        ...(spec.contextWindow !== undefined
+          ? { contextLimits: { contextWindow: spec.contextWindow } }
+          : {}),
         controls: defineCompletionModelControls({
           [REASONING_EFFORT_CONTROL_ID]: {
             type: "select",
@@ -1165,7 +1122,10 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
   const children = await db
     .select({ durableRunId: generationRuns.durableRunId })
     .from(generationRuns)
-    .where(eq(generationRuns.taskId, taskRowId));
+    .where(eq(generationRuns.taskId, taskRowId))
+    // Creation order: the newest phase's child (review, then fix) merges last,
+    // so the task keeps the newest generation's context state.
+    .orderBy(asc(generationRuns.createdAt));
   const seeded = usageFor(durableTaskId);
   const totals = { ...seeded };
   for (const child of children) {
@@ -1177,16 +1137,8 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
       .from(generationRuns)
       .where(eq(generationRuns.durableRunId, child.durableRunId));
     const usage =
-      (row?.usage as Partial<typeof totals> | null) ?? usageFor(child.durableRunId);
-    totals.input += usage.input ?? 0;
-    totals.output += usage.output ?? 0;
-    totals.total += usage.total ?? 0;
-    totals.cached += usage.cached ?? 0;
-    totals.cost += usage.cost ?? 0;
-    totals.modelCalls += usage.modelCalls ?? 0;
-    totals.modelCost += usage.modelCost ?? 0;
-    totals.jevCalls += usage.jevCalls ?? 0;
-    totals.jevCost += usage.jevCost ?? 0;
+      (row?.usage as Partial<RunUsage> | null) ?? usageFor(child.durableRunId);
+    mergeUsage(totals, usage);
   }
   await db.update(runTasks).set({ usage: totals }).where(eq(runTasks.id, taskRowId));
   publish(durableTaskId, "usage", { ...totals });

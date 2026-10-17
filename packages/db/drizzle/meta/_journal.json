@@ -148,6 +148,34 @@
       "when": 1792116454000,
       "tag": "0020_model_user_images",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792207827341,
+      "tag": "0021_model_context_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792232172000,
+      "tag": "0022_openrouter_agent_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792235419000,
+      "tag": "0023_rename_model_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792238779000,
+      "tag": "0024_model_display_name",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import {
   generationRuns,
   generationThreads,
   projects,
+  runTasks,
   user,
   type Database,
 } from "@pixelaition/db";
@@ -14,7 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApiKey } from "./store.js";
+import { createApiKey, ensureThread } from "./store.js";
 
 /**
  * The runs route needs a live database and a real auth secret; when either is
@@ -495,6 +496,245 @@ describe.skipIf(!db)("API routes", () => {
     } finally {
       // Deleting the second user cascades their project, thread, and run.
       await live.delete(user).where(eq(user.id, otherUserId));
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  const contextFor = (modelId: string, usedTokens: number) => ({
+    model: { modelId, context: { contextWindow: 1048576 } },
+    usedTokens,
+    remainingTokens: 1048576 - usedTokens,
+    usedPercent: (usedTokens / 1048576) * 100,
+    remainingPercent: 100 - (usedTokens / 1048576) * 100,
+  });
+
+  it("serves the asset conversation's session totals on their own route", async () => {
+    const projectId = randomUUID();
+    const asset = createAsset({ name: "session-endpoint", width: 8, height: 8 });
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "session-route",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    const thread = await ensureThread(live, userId, { assetId: asset.id });
+    await live.insert(generationRuns).values({
+      id: randomUUID(),
+      threadId: thread.id,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      createdAt: new Date("2026-10-17T10:00:00Z"),
+      finishedAt: new Date("2026-10-17T10:00:20Z"),
+      usage: { cost: 0.25, context: contextFor("deepseek-v4.1-flash", 500_000) },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/assets/${asset.id}/session`)
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.session).toMatchObject({ cost: 0.25, elapsedMs: 20_000 });
+      expect(res.body.session.context).toEqual(
+        contextFor("deepseek-v4.1-flash", 500_000),
+      );
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  it("returns the asset conversation's session totals with the active run", async () => {
+    const projectId = randomUUID();
+    const asset = createAsset({ name: "session-run", width: 8, height: 8 });
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "session",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    const thread = await ensureThread(live, userId, { assetId: asset.id });
+    // A settled drawing task, then a newer settled ask run: the header's
+    // session totals cover both, and the newest context state is the run's.
+    await live.insert(runTasks).values({
+      id: randomUUID(),
+      threadId: thread.id,
+      assetId: asset.id,
+      status: "completed",
+      phase: "review",
+      createdAt: new Date("2026-10-17T10:00:00Z"),
+      finishedAt: new Date("2026-10-17T10:01:00Z"),
+      usage: {
+        input: 100,
+        cached: 20,
+        output: 10,
+        total: 130,
+        cost: 0.5,
+        context: contextFor("muse-spark-1.3-contributor", 120_000),
+      },
+    });
+    const runId = randomUUID();
+    await live.insert(generationRuns).values({
+      id: runId,
+      threadId: thread.id,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      prompt: "make it glow",
+      answer: "done",
+      createdAt: new Date("2026-10-17T10:02:00Z"),
+      finishedAt: new Date("2026-10-17T10:02:30Z"),
+      usage: {
+        input: 5,
+        cached: 1,
+        output: 2,
+        total: 7,
+        cost: 0.25,
+        context: contextFor("deepseek-v4.1-flash", 500_000),
+      },
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/assets/${asset.id}/active-run`)
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.run).toBeNull();
+      expect(res.body.lastRun).toMatchObject({
+        id: runId,
+        status: "succeeded",
+        modelId: "deepseek-v4.1-flash",
+        reasoningEffort: "low",
+        prompt: "make it glow",
+        durationMs: 30_000,
+      });
+      expect(res.body.lastRun.usage.cost).toBe(0.25);
+      expect(res.body.lastRun.createdAt).toBe("2026-10-17T10:02:00.000Z");
+      expect(res.body.history[0]).toMatchObject({
+        id: runId,
+        modelId: "deepseek-v4.1-flash",
+        reasoningEffort: "low",
+      });
+      expect(res.body.session).toMatchObject({
+        cost: 0.75,
+        input: 105,
+        cached: 21,
+        output: 12,
+        total: 137,
+        elapsedMs: 90_000,
+      });
+      expect(res.body.session.context.model.modelId).toBe("deepseek-v4.1-flash");
+    } finally {
+      // Deleting the project cascades its asset, thread, runs, and tasks.
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  it("carries each task's usage, model, and timing into the task log", async () => {
+    const projectId = randomUUID();
+    const asset = createAsset({ name: "log-meta", width: 8, height: 8 });
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "log",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    const thread = await ensureThread(live, userId, { assetId: asset.id });
+    const makeTask = async (
+      request: string,
+      modelId: string,
+      effort: string,
+      startedAt: string,
+      cost: number,
+    ) => {
+      const taskId = randomUUID();
+      const started = new Date(startedAt);
+      const finished = new Date(started.getTime() + 60_000);
+      await live.insert(runTasks).values({
+        id: taskId,
+        threadId: thread.id,
+        assetId: asset.id,
+        status: "completed",
+        phase: "review",
+        createdAt: started,
+        finishedAt: finished,
+        usage: { cost, context: contextFor(modelId, 200_000) },
+      });
+      await live.insert(generationRuns).values({
+        id: randomUUID(),
+        threadId: thread.id,
+        taskId,
+        requestId: randomUUID(),
+        role: "worker",
+        workerKey: "w1",
+        status: "succeeded",
+        modelId,
+        reasoningEffort: effort,
+        prompt: `Request: ${request}\nPaint only`,
+        createdAt: started,
+        finishedAt: new Date(started.getTime() + 30_000),
+      });
+      return { taskId, finished };
+    };
+    const first = await makeTask(
+      "draw a slime",
+      "muse-spark-1.3-contributor",
+      "high",
+      "2026-10-17T09:00:00Z",
+      0.4,
+    );
+    const second = await makeTask(
+      "add a glow",
+      "deepseek-v4.1-flash",
+      "low",
+      "2026-10-17T10:00:00Z",
+      0.6,
+    );
+    try {
+      const res = await request(app)
+        .get(`/api/assets/${asset.id}/task/log`)
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.task.id).toBe(second.taskId);
+      expect(res.body.prompt).toBe("add a glow");
+      expect(res.body.modelId).toBe("deepseek-v4.1-flash");
+      expect(res.body.effort).toBe("low");
+      expect(res.body.usage.cost).toBe(0.6);
+      expect(res.body.createdAt).toBe("2026-10-17T10:00:00.000Z");
+      expect(res.body.finishedAt).toBe(second.finished.toISOString());
+      expect(res.body.runs[0]).toMatchObject({ status: "succeeded" });
+      expect(res.body.earlier).toHaveLength(1);
+      expect(res.body.earlier[0]).toMatchObject({
+        id: first.taskId,
+        prompt: "draw a slime",
+        modelId: "muse-spark-1.3-contributor",
+        effort: "high",
+        usage: { cost: 0.4 },
+      });
+    } finally {
       await live.delete(projects).where(eq(projects.id, projectId));
     }
   });
