@@ -182,7 +182,7 @@ export function ProjectsScreen() {
     const timer = window.setTimeout(() => setAuthFlight(false), RETURN_MARK_MS);
     return () => window.clearTimeout(timer);
   }, [authFlight]);
-  const wordmarkRef = useRef<HTMLSpanElement | null>(null);
+  const barRef = useRef<HTMLElement | null>(null);
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const returnCardRef = useRef<HTMLAnchorElement | null>(null);
   // The name lives only as long as the flight: two elements with the same
@@ -885,18 +885,18 @@ export function ProjectsScreen() {
   };
 
   /**
-   * Signing out leaves the way signing in arrived: the brand flies back to the
-   * signed-out panel and the library drops away. The names go on before the
-   * transition snapshots the page, and the navigation is in-app — a full reload
-   * would throw the flight away.
+   * Signing out leaves the way signing in arrived: the bar and the library
+   * drop away as the signed-out page arrives. The names go on before the
+   * transition snapshots the page, and the navigation is in-app — a full
+   * reload would throw the move away.
    */
   const signOut = useCallback(async () => {
-    markFlight([wordmarkRef.current], true, "wordmark");
+    markFlight([barRef.current], true, "bar");
     markFlight([libraryRef.current], true, "library");
     try {
       await authClient.signOut();
     } catch (reason) {
-      markFlight([wordmarkRef.current, libraryRef.current], false);
+      markFlight([barRef.current, libraryRef.current], false);
       notify({
         title: "Could not sign out",
         description: reason instanceof Error ? reason.message : "Unknown error",
@@ -908,7 +908,7 @@ export function ProjectsScreen() {
       FLIGHT_SIGN_OUT_TYPE,
       () => navigate({ to: "/login" }),
     ).finally(() => {
-      markFlight([wordmarkRef.current, libraryRef.current], false);
+      markFlight([barRef.current, libraryRef.current], false);
       // The next session starts from an empty cache, not the last one's.
       queryClient.clear();
     });
@@ -916,14 +916,12 @@ export function ProjectsScreen() {
 
   return (
     <main id="content" className="min-h-dvh bg-paper">
-      <header className="flex items-center justify-between gap-3 border-b-2 border-line bg-panel px-4 py-2.5">
-        <span
-          ref={wordmarkRef}
-          className="inline-flex shrink-0"
-          {...(authFlight ? { "data-flight": "wordmark" } : {})}
-        >
-          <Wordmark />
-        </span>
+      <header
+        ref={barRef}
+        className="flex items-center justify-between gap-3 border-b-2 border-line bg-panel px-4 py-2.5"
+        {...(authFlight ? { "data-flight": "bar" } : {})}
+      >
+        <Wordmark />
         <Button
           tone="ghost"
           className="px-3 py-1.5 text-pixel-label"

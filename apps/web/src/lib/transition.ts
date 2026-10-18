@@ -79,7 +79,7 @@ export function viewTransitionOption(
   return { types: [type] };
 }
 
-export type FlightName = "composer" | "console" | "asset" | "wordmark" | "library";
+export type FlightName = "composer" | "console" | "asset" | "bar" | "library" | "brand";
 
 /** Marks (or clears) the elements CSS names during the morph. */
 export function markFlight(

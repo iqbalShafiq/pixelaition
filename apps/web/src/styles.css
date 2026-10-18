@@ -552,61 +552,78 @@
   animation: assemble-fade 260ms ease-out 170ms both;
 }
 
-/* Signing in and out moves the brand: the display-size mark on the signed-out
-   panel and the title-size one in the home's bar are the same name, so the
-   logo travels and settles instead of two pages swapping. */
-[data-flight="wordmark"] {
-  view-transition-name: wordmark-flight;
+/* Signing in and out never scales a glyph: the pieces that travel are the
+   home's bar and library, translated as whole blocks from their own rendered
+   size. The branding is therefore correct at every frame — it rises with the
+   bar at its final size instead of being resampled from another page's. */
+[data-flight="bar"] {
+  view-transition-name: bar-flight;
 }
 
-/* The library is the home's body, and it rises under the arriving brand. */
+/* The signed-out brand is its own piece, not part of the page snapshot: it
+   leaves before the home's bar arrives, so two wordmarks are never on screen
+   together at different sizes. */
+[data-flight="brand"] {
+  view-transition-name: brand-flight;
+}
+
 [data-flight="library"] {
   view-transition-name: library-flight;
 }
 
-::view-transition-group(wordmark-flight) {
-  animation-duration: 460ms;
+::view-transition-group(bar-flight) {
+  animation-duration: 340ms;
   animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
 }
 
-/* One logo moving, not two ghosting: the old mark stays for the whole flight
-   and the new one only appears once the two sizes have met. */
-::view-transition-old(wordmark-flight) {
-  animation: none;
+::view-transition-group(library-flight) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
 }
 
-::view-transition-new(wordmark-flight) {
-  animation: wordmark-arrive 160ms ease-out 280ms both;
+::view-transition-group(brand-flight) {
+  animation-duration: 220ms;
+  animation-timing-function: ease-out;
 }
 
-@keyframes wordmark-arrive {
-  from {
-    opacity: 0;
-  }
-}
-
-/* Auth → home: the signed-out panel dissolves, the brand settles into the bar,
-   and the library follows it up. Nothing snaps. */
+/* Auth → home: the signed-out panel dissolves, then the bar settles and the
+   library follows it up. */
 :active-view-transition-type(auth-in)::view-transition-old(root) {
-  animation: auth-leave 200ms ease-out both;
+  animation: auth-leave 220ms ease-out both;
 }
 
 :active-view-transition-type(auth-in)::view-transition-new(root) {
-  animation: auth-arrive 280ms ease-out 60ms both;
+  animation: auth-arrive 240ms ease-out 60ms both;
+}
+
+:active-view-transition-type(auth-in)::view-transition-old(brand-flight) {
+  animation: brand-leave 140ms ease-in both;
+}
+
+:active-view-transition-type(auth-in)::view-transition-new(bar-flight) {
+  animation: bar-rise 300ms cubic-bezier(0.2, 0.9, 0.15, 1) 140ms both;
 }
 
 :active-view-transition-type(auth-in)::view-transition-new(library-flight) {
-  animation: library-rise 340ms cubic-bezier(0.2, 0.9, 0.15, 1) 100ms both;
+  animation: library-rise 320ms cubic-bezier(0.2, 0.9, 0.15, 1) 170ms both;
 }
 
-/* Signing out is the same move backwards: the library drops away first, then
-   the brand returns to the panel as the signed-out page arrives. */
+/* Signing out is the same move backwards: the library drops first, the bar
+   follows, and the signed-out page arrives underneath. */
 :active-view-transition-type(auth-out)::view-transition-old(root) {
-  animation: auth-leave 220ms ease-in both;
+  animation: auth-leave 260ms ease-in both;
 }
 
 :active-view-transition-type(auth-out)::view-transition-new(root) {
   animation: auth-arrive 300ms ease-out 80ms both;
+}
+
+:active-view-transition-type(auth-out)::view-transition-old(bar-flight) {
+  animation: bar-drop 220ms ease-in both;
+}
+
+:active-view-transition-type(auth-out)::view-transition-new(brand-flight) {
+  animation: brand-arrive 200ms ease-out 130ms both;
 }
 
 :active-view-transition-type(auth-out)::view-transition-old(library-flight) {
@@ -622,6 +639,34 @@
 @keyframes auth-arrive {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes brand-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes brand-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes bar-rise {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes bar-drop {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
   }
 }
 
@@ -701,12 +746,17 @@
     animation: none;
   }
 
-  ::view-transition-group(wordmark-flight),
-  ::view-transition-group(library-flight) {
+  ::view-transition-group(bar-flight),
+  ::view-transition-group(library-flight),
+  ::view-transition-group(brand-flight) {
     animation: none;
   }
 
+  :active-view-transition-type(auth-in)::view-transition-old(brand-flight),
+  :active-view-transition-type(auth-in)::view-transition-new(bar-flight),
   :active-view-transition-type(auth-in)::view-transition-new(library-flight),
+  :active-view-transition-type(auth-out)::view-transition-new(brand-flight),
+  :active-view-transition-type(auth-out)::view-transition-old(bar-flight),
   :active-view-transition-type(auth-out)::view-transition-old(library-flight) {
     animation: none;
   }

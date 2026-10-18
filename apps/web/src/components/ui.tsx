@@ -853,13 +853,13 @@ export function Wordmark({
   size?: "title" | "display";
   /** Keep the mark and drop the name when the bar has no room, such as the editor. */
   hideLabelOnNarrow?: boolean;
-  /** The brand is the flying element of the auth move. */
+  /** Signed-out brand: it leaves before the home's bar arrives, and vice versa. */
   flight?: boolean;
 }) {
   return (
     <span
       className="inline-flex items-center gap-2 text-ink"
-      {...(flight ? { "data-flight": "wordmark" } : {})}
+      {...(flight ? { "data-flight": "brand" } : {})}
     >
       <PixelMark />
       <span
