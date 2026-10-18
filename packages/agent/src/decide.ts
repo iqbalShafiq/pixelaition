@@ -1,3 +1,4 @@
+import { examples } from "./examples.js";
 import {
   askJev,
   JevNotConfiguredError,
@@ -22,11 +23,17 @@ export type DrawDecision = {
 /** The decision path keeps its own name for the shared configuration error. */
 export { JevNotConfiguredError as DecisionNotConfiguredError };
 
+/**
+ * The options describe what the next turn does with the artwork, not what
+ * kind of sentence the user typed. Asking "is this a question?" made every
+ * complaint a question; asking "which pixels change?" does not.
+ */
 const intentOptions = {
-  draw: "Draw a new sprite, item, or tile from scratch.",
-  edit: "Change pixels or colors that already exist, including a follow-up that corrects the previous result.",
-  variant: "Produce another state, direction, or action of an existing frame.",
-  ask: "The user is asking a question, chatting about the work, or the message needs a reply instead of a drawing.",
+  draw: "Paint a new asset from scratch: the request names a subject and asks for it to be made.",
+  edit: "Pixels that already exist end up different: fixed, completed, recoloured, made consistent, or extended, including a short reply ('ya perbaiki dong', 'iya, samakan aja') that answers or refers back to what the agent just said about the art.",
+  variant:
+    "An existing frame gains another key state, direction, or action of the subject that the user wants painted now — idle/walk/jump, facing left, attack. A request for an idea or a suggestion of what could come next is ask, not variant.",
+  ask: "No pixel changes: the user wants information, an explanation of why the art looks as it does, an opinion, a suggestion of what to do next, a plan, or conversation.",
 } as const;
 /** One earlier exchange, oldest first, so a follow-up reads in context. */
 export type DecisionHistoryEntry = {
@@ -59,7 +66,7 @@ const jevQuestions: Record<string, JevQuestion> = {
   intent: {
     type: "choice",
     instructions:
-      "Classify what the user is asking for. Prefer variant when the request names a direction, an action, or another state of a frame that already exists; a short noun phrase naming a new state or action is variant, not ask. Prefer ask when the message is a question or a remark that wants an answer, not a drawing. A message that asks for a drawing of attached reference images is still draw or edit, not ask.",
+      "Decide what the next turn does with the artwork: which pixels, if any, end up different. Read `prompt` with `history` (the thread's recent requests and the agent's replies, oldest first). A reply that agrees with, or pushes back on, what the agent just said about the art — a complaint, a correction, or a yes — asks for that art to be changed. A question that asks why something looks the way it does, or which option the user should pick, is ask: the agent explains and no pixel changes. A message that asks for a drawing of attached reference images is draw or edit. `examples` map everyday wording onto the choice.",
     criteria: intentOptions,
   },
   acts_on_art: {
@@ -77,11 +84,11 @@ const jevQuestions: Record<string, JevQuestion> = {
   drawable: {
     type: "noul",
     instructions:
-      "If the request asks for something new to be drawn, does it name a concrete subject? A subject with a size or a couple of qualities is enough detail; it does not need a full description. When the message carries attached reference images, the subject is already concrete: answer yes. For a request that only changes or extends existing art, answer yes.",
+      "If this turn paints a new asset, does it say what that asset is? A concrete subject is enough — a name plus a size or a couple of qualities — and it does not need a full description. An attachment in `attachments` is already the subject. 'draw something', 'make an animation', or 'bikin gambar' name no subject: no. A turn that only edits or extends existing art, or asks a question, is not painting a new asset: yes.",
     criteria: {
-      true: "A new drawing names a concrete subject, optionally with a size or a few qualities, or the message carries attached reference images.",
+      true: "The new asset to paint is named concretely, or the message carries attached reference images, or the turn does not paint a new asset.",
       false:
-        "It asks for a new drawing but names no subject at all, or only a placeholder like 'something'.",
+        "The turn paints something new but names no subject at all, or only a placeholder like 'something', 'a thing', or 'gambar'.",
     },
   },
   workers: {
@@ -107,11 +114,11 @@ const jevQuestions: Record<string, JevQuestion> = {
   actionable: {
     type: "noul",
     instructions:
-      "If the request asks to change or extend existing art, does it say what to change? A short follow-up may refer to `history` (the thread's recent requests and results, newest last) — for example, 'it's not blue though' says what to change. A variant that names the state, direction, or action to add — even as a short noun phrase — says what to change. Use `history`, `project`, `asset`, `frames`, and `frame` whenever they are present; attached reference images count as saying what to change. For a request that draws something new, answer yes.",
+      "If this turn changes or extends existing art, does it say what should change? Read `prompt` with `history` (the thread's recent requests and the agent's replies, oldest first): a short reply that agrees with, or points back at, a flaw the agent already named does say what to change — 'ya perbaiki dong', 'iya, samakan aja', or 'kok antar frame nggak konsisten?' are enough. Naming the state, direction, or action to add — even as a short noun phrase — is enough for a variant. An attachment in `attachments` says what to change. A turn that paints something new, or only asks, is not changing existing art: yes.",
     criteria: {
-      true: "An edit or variant says what to change, directly, by naming the state or action to add, by referring to `history`, or with attached reference images, or the request does not edit existing art.",
+      true: "The change is clear: stated directly, named as the state or action to add, carried by the flaw the thread already named, or given as attached reference images; or the turn does not change existing art.",
       false:
-        "It asks to change existing art but does not say what to change, even with `history` as context.",
+        "The turn changes existing art but names nothing to change, even with `history` as context — only 'fix it again' with no flaw named earlier.",
     },
   },
 };
@@ -207,6 +214,9 @@ export async function decidePrompt(
       ...(context.attachments !== undefined && context.attachments > 0
         ? { attachments: context.attachments }
         : {}),
+      // Worked examples from everyday phrasing. TypeSafe's state is where
+      // examples belong, and a short reply only reads as an edit next to one.
+      examples,
     },
     jevQuestions,
     env,

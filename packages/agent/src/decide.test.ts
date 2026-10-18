@@ -187,5 +187,9 @@ describe("jev decisions", () => {
         frame: { name: "idle" },
       },
     });
+    // A short reply only reads as a change request beside worked examples.
+    const state = (sent as { state: { examples?: Array<{ choice: string }> } }).state;
+    expect(state.examples?.length).toBeGreaterThan(0);
+    expect(state.examples?.map((example) => example.choice)).toContain("edit");
   });
 });

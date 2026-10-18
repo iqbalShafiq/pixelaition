@@ -28,6 +28,7 @@
     "docker:up": "docker compose up --build",
     "prepare": "husky",
     "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev",
+    "eval:jev:decisions": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev:decisions",
     "postinstall": "node tools/patch-anvia-openai.mjs"
   },
   "lint-staged": {
