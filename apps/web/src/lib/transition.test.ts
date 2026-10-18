@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  FLIGHT_AUTH_TYPE,
   FLIGHT_BACK_TYPE,
   FLIGHT_CARD_TYPE,
+  FLIGHT_SIGN_OUT_TYPE,
   FLIGHT_TYPE,
   decodeHomeReturn,
   navigateTyped,
@@ -103,6 +105,19 @@ describe("view transitions", () => {
     );
     expect(typed).toHaveLength(1);
     expect(plain).toEqual(["plain"]);
+  });
+
+  it("carries the auth doors as their own types", () => {
+    const visible = {
+      startViewTransition: () => undefined,
+      visibilityState: "visible",
+    } as unknown as Document;
+    expect(viewTransitionOption(visible, FLIGHT_AUTH_TYPE)).toEqual({
+      types: ["auth-in"],
+    });
+    expect(viewTransitionOption(visible, FLIGHT_SIGN_OUT_TYPE)).toEqual({
+      types: ["auth-out"],
+    });
   });
 
   it("reads the return state back instead of trusting it", () => {

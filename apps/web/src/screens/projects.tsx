@@ -21,11 +21,13 @@ import { RecentRunsRail } from "../components/recent-runs-rail.js";
 import { filterLibrary } from "../lib/library.js";
 import {
   FLIGHT_CARD_TYPE,
+  FLIGHT_SIGN_OUT_TYPE,
   FLIGHT_TYPE,
   decodeHomeReturn,
   type Door,
   markCardFlight,
   markFlight,
+  navigateTyped,
   viewTransitionOption,
 } from "../lib/transition.js";
 import {
@@ -167,6 +169,21 @@ export function ProjectsScreen() {
       return decodeHomeReturn(location.state.homeReturn);
     },
   });
+  // Signed in: the brand and the library are the flying elements, so the home
+  // names them in the same render the transition captures.
+  const arrivedFromAuth = useLocation({
+    select: (location) => location.state.door === "auth",
+  });
+  // The names only belong to that one flight: leaving them on would make the
+  // brand and the library animate separately in the next move (the editor).
+  const [authFlight, setAuthFlight] = useState(arrivedFromAuth);
+  useEffect(() => {
+    if (!authFlight) return;
+    const timer = window.setTimeout(() => setAuthFlight(false), RETURN_MARK_MS);
+    return () => window.clearTimeout(timer);
+  }, [authFlight]);
+  const wordmarkRef = useRef<HTMLSpanElement | null>(null);
+  const libraryRef = useRef<HTMLDivElement | null>(null);
   const returnCardRef = useRef<HTMLAnchorElement | null>(null);
   // The name lives only as long as the flight: two elements with the same
   // view-transition-name abort a transition, and the next card click marks
@@ -867,16 +884,50 @@ export function ProjectsScreen() {
     creating: create.isPending,
   };
 
+  /**
+   * Signing out leaves the way signing in arrived: the brand flies back to the
+   * signed-out panel and the library drops away. The names go on before the
+   * transition snapshots the page, and the navigation is in-app — a full reload
+   * would throw the flight away.
+   */
+  const signOut = useCallback(async () => {
+    markFlight([wordmarkRef.current], true, "wordmark");
+    markFlight([libraryRef.current], true, "library");
+    try {
+      await authClient.signOut();
+    } catch (reason) {
+      markFlight([wordmarkRef.current, libraryRef.current], false);
+      notify({
+        title: "Could not sign out",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+      return;
+    }
+    await navigateTyped(
+      (options) => navigate({ to: "/login", ...options }),
+      FLIGHT_SIGN_OUT_TYPE,
+      () => navigate({ to: "/login" }),
+    ).finally(() => {
+      markFlight([wordmarkRef.current, libraryRef.current], false);
+      // The next session starts from an empty cache, not the last one's.
+      queryClient.clear();
+    });
+  }, [navigate, notify, queryClient]);
+
   return (
     <main id="content" className="min-h-dvh bg-paper">
       <header className="flex items-center justify-between gap-3 border-b-2 border-line bg-panel px-4 py-2.5">
-        <Wordmark />
+        <span
+          ref={wordmarkRef}
+          className="inline-flex shrink-0"
+          {...(authFlight ? { "data-flight": "wordmark" } : {})}
+        >
+          <Wordmark />
+        </span>
         <Button
           tone="ghost"
           className="px-3 py-1.5 text-pixel-label"
-          onClick={() => {
-            void authClient.signOut().then(() => window.location.assign("/login"));
-          }}
+          onClick={() => void signOut()}
         >
           Sign out
         </Button>
@@ -887,7 +938,11 @@ export function ProjectsScreen() {
           <ProjectNav {...navProps} layout="rail" />
         </aside>
 
-        <div className="grid min-w-0 flex-1 gap-4">
+        <div
+          ref={libraryRef}
+          className="grid min-w-0 flex-1 gap-4"
+          {...(authFlight ? { "data-flight": "library" } : {})}
+        >
           <div className="lg:hidden">
             <ProjectNav {...navProps} layout="strip" />
           </div>

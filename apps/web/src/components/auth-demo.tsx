@@ -397,7 +397,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
         aria-label="A cast of sprites drawing themselves"
         className="bg-paper px-4 pt-4"
       >
-        <Wordmark />
+        <Wordmark flight />
         <p className="mt-3 max-w-[28ch] text-pixel-body text-muted">
           One palette. A whole cast.
         </p>
@@ -426,7 +426,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
         <AuthGrid />
       </div>
       <div className="relative flex h-full flex-col px-8 py-8">
-        <Wordmark size="display" />
+        <Wordmark size="display" flight />
         <div className="mt-10 max-w-md">
           <p className="text-pixel-mono text-accent">Sprite families</p>
           <p className="mt-3 max-w-[14ch] text-pixel-hero text-balance text-ink">

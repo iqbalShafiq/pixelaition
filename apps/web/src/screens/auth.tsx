@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AuthDemo } from "../components/auth-demo.js";
 import { Button, Field, PasswordInput, TextInput } from "../components/ui.js";
 import { authClient } from "../lib/auth.js";
+import { FLIGHT_AUTH_TYPE, navigateTyped } from "../lib/transition.js";
 import { useMediaQuery } from "../lib/use-media.js";
 
 export function AuthScreen({ mode }: { mode: "login" | "register" }) {
@@ -33,7 +34,13 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
         );
         return;
       }
-      await navigate({ to: "/projects" });
+      // Signing in is a move, not a page swap: the brand flies into the bar
+      // and the library rises under it.
+      await navigateTyped(
+        (options) => navigate({ to: "/projects", state: { door: "auth" }, ...options }),
+        FLIGHT_AUTH_TYPE,
+        () => navigate({ to: "/projects", state: { door: "auth" } }),
+      );
     } catch {
       setError("The server did not answer. Check your connection and try again.");
     } finally {

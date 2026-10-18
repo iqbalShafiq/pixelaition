@@ -10,12 +10,23 @@ export const FLIGHT_TYPE = "editor";
 export const FLIGHT_CARD_TYPE = "editor-card";
 /** Editor → home, the same move played backwards. */
 export const FLIGHT_BACK_TYPE = "editor-back";
+/** Signed out → home: the brand settles into the bar and the library rises. */
+export const FLIGHT_AUTH_TYPE = "auth-in";
+/** Home → signed out: the same move played backwards. */
+export const FLIGHT_SIGN_OUT_TYPE = "auth-out";
 
 export type FlightType =
-  typeof FLIGHT_TYPE | typeof FLIGHT_CARD_TYPE | typeof FLIGHT_BACK_TYPE;
+  | typeof FLIGHT_TYPE
+  | typeof FLIGHT_CARD_TYPE
+  | typeof FLIGHT_BACK_TYPE
+  | typeof FLIGHT_AUTH_TYPE
+  | typeof FLIGHT_SIGN_OUT_TYPE;
 
-/** Which home control the editor visit came from, or "back" on the way home. */
-export type Door = "plan" | "card" | "back";
+/**
+ * Which door a visit came through: the agent's plan card, a library card, the
+ * editor on the way home, or a signed-in session.
+ */
+export type Door = "plan" | "card" | "back" | "auth";
 
 /** What the home remembers about the editor it was left from. */
 export type HomeReturn = {
@@ -68,7 +79,7 @@ export function viewTransitionOption(
   return { types: [type] };
 }
 
-export type FlightName = "composer" | "console" | "asset";
+export type FlightName = "composer" | "console" | "asset" | "wordmark" | "library";
 
 /** Marks (or clears) the elements CSS names during the morph. */
 export function markFlight(
