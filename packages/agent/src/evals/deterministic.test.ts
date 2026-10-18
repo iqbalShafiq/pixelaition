@@ -215,7 +215,11 @@ describe("generation decisions and tools", () => {
     expect(report.pairs).toHaveLength(1);
     expect(report.pairs[0]).toMatchObject({ from: "a", to: "b", changedPixels: 2 });
     expect(report.loop).toMatchObject({ from: "b", to: "a", changedPixels: 2 });
-    expect(report.flags).toEqual([]);
+    // A one-pixel walk shares no mass with the first frame, and the report
+    // says so by name rather than leaving the reader to notice a blank row.
+    expect(report.flags).toEqual([
+      "walk-2 shares no opaque pixels with the reference frame walk-1 — the drawing changed entirely",
+    ]);
     expect(report.frames).toHaveLength(2);
     releaseRun("run-anim");
   });

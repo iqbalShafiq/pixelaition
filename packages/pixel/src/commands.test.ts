@@ -565,7 +565,89 @@ describe("pixel commands", () => {
   });
 });
 
+describe("palette reindex", () => {
+  it("rewrites pixels through the mapping so colours survive a reorder", () => {
+    const { buffer, layerId } = paint();
+    const painted = applyCommand(buffer, {
+      type: "paint",
+      layerId,
+      points: [
+        { x: 1, y: 1, color: 1 },
+        { x: 2, y: 1, color: 2 },
+      ],
+    });
+    expect(painted.ok).toBe(true);
+    if (!painted.ok) return;
+    const reordered = applyCommand(painted.buffer, {
+      type: "reindexPalette",
+      palette: [
+        "#00000000",
+        painted.buffer.palette[2] ?? "#f4efe4",
+        painted.buffer.palette[1] ?? "#1a1c2c",
+      ],
+      mapping: { "1": 2, "2": 1 },
+    });
+    expect(reordered.ok).toBe(true);
+    if (!reordered.ok) return;
+    const pixels = reordered.buffer.layers[0]!.pixels;
+    expect([pixels[9], pixels[10]]).toEqual([2, 1]);
+    expect(reordered.buffer.palette[1]).toBe("#f4efe4");
+  });
+
+  it("refuses a palette that drops a colour without mapping it", () => {
+    const { buffer, layerId } = paint();
+    const painted = applyCommand(buffer, {
+      type: "paint",
+      layerId,
+      points: [{ x: 1, y: 1, color: 2 }],
+    });
+    if (!painted.ok) throw new Error(painted.message);
+    const dropped = applyCommand(painted.buffer, {
+      type: "reindexPalette",
+      palette: ["#00000000", "#1a1c2c"],
+      mapping: { "1": 1 },
+    });
+    expect(dropped.ok ? "ok" : dropped.code).toBe("PALETTE_IN_USE");
+  });
+});
+
 describe("pixel critique", () => {
+  it("treats a diagonally connected wisp as attached, not as a stray pixel", () => {
+    const { buffer, layerId } = paint();
+    const style = { outline: "#1a1c2c" };
+    const base = applyCommand(buffer, {
+      type: "paint",
+      layerId,
+      points: [
+        { x: 3, y: 4, color: 1 },
+        { x: 4, y: 4, color: 1 },
+        { x: 4, y: 3, color: 1 },
+      ],
+    });
+    expect(base.ok).toBe(true);
+    if (!base.ok) return;
+    const diagonal = applyCommand(base.buffer, {
+      type: "paint",
+      layerId,
+      points: [{ x: 5, y: 5, color: 2 }],
+    });
+    expect(diagonal.ok).toBe(true);
+    if (!diagonal.ok) return;
+    expect(
+      critiqueFrame(diagonal.buffer, style).map((issue) => issue.code),
+    ).not.toContain("STRAY_PIXEL");
+    const detached = applyCommand(diagonal.buffer, {
+      type: "paint",
+      layerId,
+      points: [{ x: 0, y: 7, color: 2 }],
+    });
+    expect(detached.ok).toBe(true);
+    if (!detached.ok) return;
+    expect(critiqueFrame(detached.buffer, style).map((issue) => issue.code)).toContain(
+      "STRAY_PIXEL",
+    );
+  });
+
   const style = { outline: "#1a1c2c" };
 
   function critiqueBuffer(): FrameBuffer {

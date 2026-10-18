@@ -109,12 +109,45 @@ export type Command =
       pattern: DitherPattern;
     }
   | { type: "setPalette"; palette: string[] }
+  /**
+   * Replace the palette *and* rewrite every pixel through a colour mapping,
+   * because the new palette orders colours differently (a worker returning
+   * to the project palette, a fix merging a stray colour back in). Without
+   * the remap the pixels would keep indices that now mean other colours.
+   */
+  | { type: "reindexPalette"; palette: string[]; mapping: Record<string, number> }
   | { type: "resize"; width: number; height: number }
   | { type: "addLayer"; id: string; name: string }
   | { type: "renameLayer"; layerId: string; name: string }
   | { type: "setLayerVisible"; layerId: string; visible: boolean }
   | { type: "removeLayer"; layerId: string }
-  | { type: "mirror" };
+  | { type: "mirror" }
+  /**
+   * Stamp an already-resolved block of palette indices at `x`,`y`. The caller
+   * (an agent tool) owns reading the source — another frame, another asset,
+   * the same frame — and mapping its indices into this buffer's palette; the
+   * command only guarantees geometry and palette bounds, so a copy is one
+   * commit instead of a per-pixel round trip.
+   */
+  | {
+      type: "stamp";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      pixels: readonly number[];
+    }
+  /** Flip a rectangle inside its own bounds, leaving the rest of the layer alone. */
+  | {
+      type: "mirrorRegion";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      axis: "horizontal" | "vertical";
+    };
 
 export type CommandFailure = { ok: false; code: string; message: string };
 export type CommandSuccess = { ok: true; buffer: FrameBuffer };

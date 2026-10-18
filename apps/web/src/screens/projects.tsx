@@ -160,6 +160,8 @@ export function ProjectsScreen() {
   const [proposal, setProposal] = useState<{
     proposalId: string;
     proposal: TargetProposal;
+    /** The request this proposal answered, for a suggested new-asset name. */
+    prompt: string;
   } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pendingInteraction, setPendingInteraction] = useState<PendingInteraction | null>(
@@ -522,7 +524,7 @@ export function ProjectsScreen() {
             }),
           },
         );
-        setProposal(proposed);
+        setProposal({ ...proposed, prompt: text });
       } catch (reason) {
         setPrompt(text);
         const message = reason instanceof Error ? reason.message : "Generation failed.";
@@ -944,6 +946,7 @@ export function ProjectsScreen() {
                   void assets.refetch();
                 }}
                 proposal={proposal.proposal}
+                request={proposal.prompt}
                 projects={list.map((project) => ({
                   id: project.id,
                   name: project.name,

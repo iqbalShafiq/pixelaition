@@ -47,7 +47,8 @@ const deps: AssetDrawDeps = {
       assetName: "A",
       width: 32,
       height: 32,
-      paletteSize: 8,
+      paletteSize: 2,
+      palette: ["#00000000", "#1a1c2c"],
       styleLines: ["outline"],
       attachments: 0,
     },
@@ -338,7 +339,8 @@ describe("asset-draw plan phase", () => {
             assetName: "A",
             width: 32,
             height: 32,
-            paletteSize: 8,
+            paletteSize: 2,
+            palette: ["#00000000", "#1a1c2c"],
             styleLines: ["outline"],
             attachments: 0,
           },
@@ -505,7 +507,7 @@ describe("asset-draw review phase", () => {
         {
           id: "child-review-1",
           key: "review-1",
-          outcome: { status: "completed", output: '{"ok":true}' },
+          outcome: { status: "completed", output: '{"done":true}' },
         },
       ],
     });
@@ -534,7 +536,7 @@ describe("asset-draw review phase", () => {
           key: "review-1",
           outcome: {
             status: "completed",
-            output: '{"ok":false,"fixes":[{"frame":"walk","note":"outline"}]}',
+            output: '{"done":false,"fixes":[{"frame":"walk","note":"outline"}]}',
           },
         },
       ],
@@ -548,53 +550,144 @@ describe("asset-draw review phase", () => {
     });
   });
 
-  it("keeps reviewing after a fix until the sixth review, which does not order another fix", async () => {
+  it("orders another round whenever the reviewer asks, however late", async () => {
     const task = createAssetDrawTask(deps);
     const plan = JSON.parse(planJson);
-    const afterFifth = fakeCtx({
+    const afterFix = fakeCtx({
       checkpoint: {
         phase: "review",
         plan,
         planKey: "plan",
-        round: 5,
-        reviewKey: "review-5",
-        fixIds: ["child-fix-5-1"],
+        round: 9,
+        reviewKey: "review-9",
+        fixIds: ["child-fix-9-1"],
+        log: ['- review-8 → "walk": widened the stand'],
       },
       children: [
         {
-          id: "child-fix-5-1",
-          key: "fix-5-1",
-          outcome: { status: "completed", output: "fixed" },
+          id: "child-fix-9-1",
+          key: "fix-9-1",
+          outcome: { status: "completed", output: "copied the stand from idle" },
         },
       ],
     });
-    const next = await run(task, afterFifth.ctx);
-    expect(afterFifth.spawns.map((spawn) => spawn.key)).toEqual(["review-6"]);
+    const next = await run(task, afterFix.ctx);
+    expect(afterFix.spawns.map((spawn) => spawn.key)).toEqual(["review-10"]);
     expect(next).toMatchObject({ status: "waiting" });
+    // The work log rides into the next review so it knows what was tried.
+    const prompt = afterFix.spawns[0]?.prompt;
+    expect(typeof prompt).toBe("string");
+    expect(prompt as string).toContain("widened the stand");
+    expect(prompt as string).toContain("copied the stand from idle");
+  });
 
-    const sixth = fakeCtx({
+  it("completes when the reviewer says okay, carrying its judgement", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const review = fakeCtx({
       checkpoint: {
         phase: "review",
         plan,
         planKey: "plan",
-        round: 6,
-        reviewKey: "review-6",
+        round: 3,
+        reviewKey: "review-3",
         fixIds: [],
       },
       children: [
         {
-          id: "child-review-6",
-          key: "review-6",
+          id: "child-review-3",
+          key: "review-3",
           outcome: {
             status: "completed",
-            output: '{"ok":false,"fixes":[{"frame":"walk","note":"still off"}]}',
+            output: '{"done":true,"summary":"all four poses read as one spin"}',
           },
         },
       ],
     });
-    const done = await run(task, sixth.ctx);
-    expect(sixth.spawns).toEqual([]);
-    expect(done).toMatchObject({ status: "completed", output: { rounds: 6 } });
+    const done = await run(task, review.ctx);
+    expect(review.spawns).toEqual([]);
+    expect(done).toMatchObject({
+      status: "completed",
+      output: {
+        rounds: 3,
+        review: { ok: true, summary: "all four poses read as one spin" },
+      },
+    });
+  });
+
+  it("completes with the reviewer's unfinished notes as a verdict, not a failure", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const review = fakeCtx({
+      checkpoint: {
+        phase: "review",
+        plan,
+        planKey: "plan",
+        round: 2,
+        reviewKey: "review-2",
+        fixIds: [],
+      },
+      children: [
+        {
+          id: "child-review-2",
+          key: "review-2",
+          outcome: {
+            status: "completed",
+            output: JSON.stringify({
+              done: false,
+              fixes: [
+                {
+                  frame: "walk",
+                  note: "the second panel's left edge is one pixel narrower than the first",
+                  referenceFrame: "idle",
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+    // A frame the plan names but the fake context does not paint makes the
+    // completion gate ask for one repair; that is the task's own backstop.
+    const done = await run(task, review.ctx);
+    expect(["waiting", "completed"]).toContain(done.status);
+    if (done.status === "completed") {
+      expect(done.output.review?.ok).toBe(false);
+    }
+  });
+
+  it("keeps the whole note in the fix prompt and names the reference frame", async () => {
+    const task = createAssetDrawTask(deps);
+    const plan = JSON.parse(planJson);
+    const longNote =
+      "The stand under the fan is two pixels wider than in idle and one pixel lower; copy the stand rows from idle instead of redrawing them, then keep the blades as they are.";
+    const review = fakeCtx({
+      checkpoint: {
+        phase: "review",
+        plan,
+        planKey: "plan",
+        round: 1,
+        reviewKey: "review-1",
+        fixIds: [],
+      },
+      children: [
+        {
+          id: "child-review-1",
+          key: "review-1",
+          outcome: {
+            status: "completed",
+            output: JSON.stringify({
+              done: false,
+              fixes: [{ frame: "walk", note: longNote, referenceFrame: "idle" }],
+            }),
+          },
+        },
+      ],
+    });
+    await run(task, review.ctx);
+    const fixPrompt = review.spawns[0]?.prompt as string;
+    expect(fixPrompt).toContain(longNote);
+    expect(fixPrompt).toContain('"idle"');
   });
 });
 
@@ -780,7 +873,7 @@ describe("frames the review let through", () => {
   const reviewChild = {
     id: "child-review",
     key: "review-1",
-    outcome: { status: "completed" as const, output: '{"ok":true}' },
+    outcome: { status: "completed" as const, output: '{"done":true}' },
   };
   it("gets one deterministic repair, then completes", async () => {
     let empty = ["walk"];

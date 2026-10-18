@@ -90,7 +90,7 @@ import {
   useToast,
   useToastCloser,
 } from "../components/ui.js";
-import { api } from "../lib/api.js";
+import { ApiError, api } from "../lib/api.js";
 import { useAttachments } from "../lib/use-attachments.js";
 import { useMediaQuery } from "../lib/use-media.js";
 import { useAgentPaint } from "../lib/use-agent-paint.js";
@@ -699,12 +699,41 @@ export function EditorScreen() {
   });
 
   const present = history?.present;
+  /** Saves the run guard refused ("the agent owns this asset right now"). */
+  const refusedSaves = useRef(new Map<string, FrameBuffer>());
   const pending = useRef(new Map<string, FrameBuffer>());
   const debounce = useRef<number | null>(null);
   // The mutation result is a fresh object every render, so it must not be a
   // dependency of the effects below or they re-arm forever.
   const mutate = useRef(save.mutateAsync);
   mutate.current = save.mutateAsync;
+
+  const persistFrame = useCallback(
+    (frameId: string, buffer: FrameBuffer) =>
+      mutate.current({ frameId, buffer }).then(
+        () => true,
+        (reason: unknown) => {
+          // A live run owns the asset: the API answers RUN_IN_PROGRESS. The
+          // edit is the user's own and the agent will never write it, so the
+          // save waits for the run to release the asset instead of surfacing
+          // "A frame did not save" over a run that is working exactly as told.
+          if (
+            reason instanceof ApiError &&
+            (reason.status === 409 || reason.code === "RUN_IN_PROGRESS")
+          ) {
+            refusedSaves.current.set(frameId, buffer);
+            return false;
+          }
+          notify({
+            id: "frame-save",
+            title: "A frame did not save",
+            description: reason instanceof Error ? reason.message : "Unknown error",
+          });
+          return false;
+        },
+      ),
+    [notify],
+  );
 
   const flush = useCallback(async () => {
     if (debounce.current !== null) {
@@ -713,18 +742,8 @@ export function EditorScreen() {
     }
     const batch = [...pending.current.entries()];
     pending.current.clear();
-    await Promise.all(
-      batch.map(([id, buffer]) =>
-        mutate.current({ frameId: id, buffer }).catch((reason: unknown) =>
-          notify({
-            id: "frame-save",
-            title: "A frame did not save",
-            description: reason instanceof Error ? reason.message : "Unknown error",
-          }),
-        ),
-      ),
-    );
-  }, [notify]);
+    await Promise.all(batch.map(([id, buffer]) => persistFrame(id, buffer)));
+  }, [persistFrame]);
 
   useEffect(() => {
     // The agent owns the frame while a run is live: the editor never writes a
@@ -746,6 +765,15 @@ export function EditorScreen() {
     }, 500);
     return () => undefined;
   }, [present, frameId, flush, running]);
+
+  useEffect(() => {
+    if (running) return;
+    // The task is over: holds nothing, so the edits it refused land now.
+    const held = [...refusedSaves.current.entries()];
+    if (held.length === 0) return;
+    refusedSaves.current.clear();
+    void Promise.all(held.map(([id, buffer]) => persistFrame(id, buffer)));
+  }, [running, persistFrame]);
 
   // Once a run owns the asset again, a save failure from an earlier moment is
   // stale: the agent's own persistence supersedes it, so the notice goes.
@@ -880,6 +908,13 @@ export function EditorScreen() {
     return () => window.clearTimeout(timer);
   }, [agentPulse]);
 
+  /** Follow the frame the agent is working on: the console, the canvas, the focus. */
+  const focusAgentFrame = useCallback((target: string) => {
+    setLastStrokeFrame(target);
+    if (target === viewedFrameRef.current) setAgentPulse(Date.now());
+    setRunFrameId(target);
+  }, []);
+
   const applyStroke = useCallback(
     (raw: Record<string, unknown>, fallbackFrameId: string) => {
       const data = raw as { frameId?: string };
@@ -887,16 +922,12 @@ export function EditorScreen() {
         typeof data.frameId === "string" && data.frameId.length > 0
           ? data.frameId
           : fallbackFrameId;
-      if (target) {
-        setLastStrokeFrame(target);
-        if (target === viewedFrameRef.current) setAgentPulse(Date.now());
-        setRunFrameId(target);
-      }
+      if (target) focusAgentFrame(target);
       // The stroke's pixels arrive whole. The painter reveals them one cell
       // at a time and parks the hover border on the cell the agent is inking.
       receiveStroke(raw, fallbackFrameId);
     },
-    [receiveStroke],
+    [focusAgentFrame, receiveStroke],
   );
 
   /**
@@ -934,6 +965,26 @@ export function EditorScreen() {
       .catch(() => undefined);
   }, [assetId, client]);
 
+  /**
+   * The reviewer's closing judgement as one console line. A finished run whose
+   * reviewer still had notes is a finished run with an opinion — never a failed
+   * save — so the line says what was decided and what remains.
+   */
+  function reviewNote(review: unknown): string | null {
+    if (review === null || typeof review !== "object") return null;
+    const verdict = review as { ok?: unknown; summary?: unknown; notes?: unknown };
+    const summary =
+      typeof verdict.summary === "string" && verdict.summary.length > 0
+        ? ` — ${verdict.summary}`
+        : "";
+    if (verdict.ok === true) return `The reviewer passed the work${summary}`;
+    const notes = Array.isArray(verdict.notes)
+      ? verdict.notes.filter((note) => typeof note === "string")
+      : [];
+    if (notes.length === 0) return `The reviewer stopped with an open verdict${summary}`;
+    return `The reviewer finished with ${notes.length} open note${notes.length === 1 ? "" : "s"}${summary}: ${notes.join("; ")}`;
+  }
+
   /** The task stream drives the console tree; only task-complete ends it. */
   const listenTask = useCallback(
     (id: string, fallbackFrameId: string) => {
@@ -949,12 +1000,24 @@ export function EditorScreen() {
             applyStroke(body.data as Record<string, unknown>, fallbackFrameId);
             return;
           }
+          if (body.type === "frame-focus") {
+            // A fix that moves to another owned frame names it; the console
+            // and the canvas follow that frame instead of the run's first.
+            const data = body.data as { frameId?: unknown };
+            if (typeof data.frameId === "string" && data.frameId.length > 0) {
+              focusAgentFrame(data.frameId);
+            }
+            return;
+          }
           if (body.type !== "canvas-stroke" && body.type !== "usage") {
             // The plan and the workers create frames mid-run; the list must
             // follow them, not wait for the task to end.
             void client.invalidateQueries({ queryKey: ["asset", assetId] });
           }
           if (body.type === "task-complete") {
+            const verdict = (body.data as { review?: unknown }).review;
+            const note = reviewNote(verdict);
+            if (note !== null) log(note);
             stopStroke();
             taskListenRef.current = null;
             setTaskId(null);
@@ -1005,6 +1068,7 @@ export function EditorScreen() {
       applyStroke,
       assetId,
       client,
+      focusAgentFrame,
       log,
       paceRejoin,
       resetRejoin,
@@ -1025,6 +1089,13 @@ export function EditorScreen() {
           );
           if (body.type === "canvas-stroke") {
             applyStroke(body.data as Record<string, unknown>, fallbackFrameId);
+            return;
+          }
+          if (body.type === "frame-focus") {
+            const data = body.data as { frameId?: unknown };
+            if (typeof data.frameId === "string" && data.frameId.length > 0) {
+              focusAgentFrame(data.frameId);
+            }
             return;
           }
           if (body.type === "status") {
@@ -1144,9 +1215,11 @@ export function EditorScreen() {
     },
     [
       adoptFinishedFrames,
+      applyStroke,
       assetId,
       client,
       closeStream,
+      focusAgentFrame,
       log,
       openStream,
       paceRejoin,

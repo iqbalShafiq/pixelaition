@@ -29,6 +29,7 @@ import {
 } from "./pixel-icons.js";
 import { agentLabel } from "../lib/agent-label.js";
 import { consoleTabs, type ConsoleTurn, type RunRow } from "../lib/run-activity.js";
+import { TurnPrompt } from "./turn-prompt.js";
 import {
   contextBarCells,
   contextTone,
@@ -657,13 +658,7 @@ export function RunConsole({
                 {turn.prompt || turnTabs.length > 1 ? (
                   <div className="sticky top-0 z-10 border-b-2 border-line bg-panel px-2 pt-2">
                     {turn.prompt ? (
-                      <div className="pb-2">
-                        <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
-                          you
-                        </p>
-                        <p className="mt-1 text-pixel-body whitespace-pre-wrap text-ink">
-                          {turn.prompt}
-                        </p>
+                      <TurnPrompt prompt={turn.prompt}>
                         {turnMeta !== null &&
                         (metaPrefix.length > 0 || turnMeta.tokens !== null) ? (
                           <p className="mt-1 text-pixel-mono text-muted">
@@ -687,7 +682,7 @@ export function RunConsole({
                             ) : null}
                           </p>
                         ) : null}
-                      </div>
+                      </TurnPrompt>
                     ) : null}
                     {turnTabs.length > 1 ? (
                       <div
@@ -895,8 +890,11 @@ export function RunConsole({
               <ul className="mt-1 grid gap-1.5">
                 {history.map((item) => (
                   <li key={item.id} className="text-pixel-mono">
-                    <p className="truncate text-muted" title={item.prompt ?? ""}>
-                      <span className="text-accent">you</span> {item.prompt ?? "—"}
+                    <p className="text-muted">
+                      <span className="text-accent">you</span>{" "}
+                      <span className="line-clamp-2 whitespace-pre-wrap">
+                        {item.prompt ?? "—"}
+                      </span>
                     </p>
                     <p className="truncate text-ink" title={item.answer ?? ""}>
                       <span className="text-accent">agent</span>{" "}

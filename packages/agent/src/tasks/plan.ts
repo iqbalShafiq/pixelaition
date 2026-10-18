@@ -7,10 +7,20 @@ import { MAX_COLORS } from "@pixelaition/pixel";
  * the model's prose.
  */
 
+/*
+ * Text fields carry no length cap. A cap on prose does not protect the model —
+ * it silently cuts the instructions a later role needs — and the context is
+ * bounded by the runtime's compaction of the conversation, not by truncating
+ * the fields that carry intent. Only fields whose answer is "pick a different
+ * name/size" keep a bound: frame, layer and worker names at 40 characters,
+ * the plan's palette budget, the worker count.
+ */
 export const drawPlanFrameSchema = z.object({
   name: z.string().min(1).max(40),
-  intent: z.string().min(1).max(320),
-  layers: z.array(z.string().min(1).max(40)),
+  intent: z.string().min(1),
+  layers: z
+    .array(z.string().min(1).max(40))
+    .describe("Layers this frame paints on, by the plan's layer names."),
 });
 export const paletteAdditionSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -18,7 +28,7 @@ export const paletteAdditionSchema = z.object({
 });
 export const planReferenceSchema = z.object({
   url: z.string().url(),
-  note: z.string().max(400),
+  note: z.string(),
   appliesTo: z.union([z.literal("all"), z.array(z.string().min(1).max(40)).min(1)]),
 });
 export const planWorkerSchema = z.object({
@@ -35,6 +45,63 @@ export const drawPlanSchema = z.object({
 });
 export type DrawPlan = z.infer<typeof drawPlanSchema>;
 export type DrawPlanFrame = z.infer<typeof drawPlanFrameSchema>;
+
+/**
+ * The review pass's answer: a verdict, not free prose. `done` finishes the
+ * task and is the reviewer's own call; `fixes` orders another round when that
+ * round can plausibly land. `summary` may name what remains even on `done` —
+ * a finished drawing with a small flaw is a decision, not a failure. The note
+ * is what a fix worker receives, so it carries the whole instruction — no
+ * field here is cut.
+ */
+export const reviewFixSchema = z.object({
+  frame: z.string().min(1).describe("The frame to change, by name."),
+  layers: z
+    .array(z.string().min(1))
+    .optional()
+    .describe("Layers to touch; omit for any."),
+  note: z
+    .string()
+    .min(1)
+    .describe("What to change, giving the fix worker everything it needs."),
+  referenceFrame: z
+    .string()
+    .optional()
+    .describe("A frame to copy the matching part from, when one matched better."),
+});
+export const reviewVerdictSchema = z.object({
+  done: z.boolean(),
+  summary: z.string().optional(),
+  fixes: z.array(reviewFixSchema).default([]),
+});
+export type ReviewVerdict = z.infer<typeof reviewVerdictSchema>;
+export type ReviewFix = z.infer<typeof reviewFixSchema>;
+
+/**
+ * Read a review child's answer. An object that validates is used as is; a
+ * string that is exactly one JSON object is parsed; anything else is a system
+ * failure (the reviewer's own contract), never a silent "ok".
+ */
+export function parseReviewVerdict(
+  output: unknown,
+): { ok: true; verdict: ReviewVerdict } | { ok: false; error: string } {
+  const value = typeof output === "string" ? tryJson(output) : output;
+  const parsed = reviewVerdictSchema.safeParse(value);
+  if (parsed.success) return { ok: true, verdict: parsed.data };
+  const issue = parsed.error.issues[0];
+  return {
+    ok: false,
+    error: `The review answer is not a verdict (${issue?.path.join(".") ?? "value"} ${issue?.message ?? "invalid"}).`,
+  };
+}
+
+function tryJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
 
 export type PlanLimits = {
   maxWorkers: number;

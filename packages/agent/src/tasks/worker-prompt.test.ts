@@ -7,8 +7,22 @@ const input = {
   assetName: "ksatria-kecil",
   width: 32,
   height: 32,
-  paletteSize: 10,
+  paletteSize: 4,
+  palette: ["#00000000", "#1a1c2c", "#f4efe4", "#e8ff6a"],
+  assetId: "asset-1",
+  frames: ["idle", "jalan-a", "jalan-b"],
   styleLines: ["one outline color", "no anti-aliasing"],
+  projectAssets: [
+    {
+      id: "asset-2",
+      name: "ksatria-besar",
+      width: 64,
+      height: 64,
+      palette: ["#00000000"],
+      summary: "a knight two sizes up",
+      frames: ["idle"],
+    },
+  ],
   ownedFrames: [
     {
       name: "jalan-a",
@@ -39,6 +53,10 @@ describe("buildWorkerPrompt", () => {
     expect(prompt).toContain("kaki kiri depan");
     expect(prompt).toContain("ksatria, pedang, cahaya");
     expect(prompt).toContain("one outline color");
+    expect(prompt).toContain("This asset's frames: idle, jalan-a, jalan-b");
+    expect(prompt).toContain("Outline colour #1a1c2c is palette index 1");
+    expect(prompt).toContain("asset-2");
+    expect(prompt).toContain("ksatria-besar");
   });
   it("states the ownership rule and the read-only frames", () => {
     const prompt = buildWorkerPrompt(input);

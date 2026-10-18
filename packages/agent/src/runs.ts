@@ -7,7 +7,7 @@ import {
   type FrameBuffer,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { REVIEW_TOOL_NAMES, WORKER_TOOL_NAMES } from "./tasks/roles.js";
+import { toolNamesForRole } from "./tasks/roles.js";
 import { z } from "zod";
 import type { JevUsage } from "./jev.js";
 
@@ -20,7 +20,7 @@ export type Stroke = {
 export const planFrameSchema = z.object({
   frameId: z.string().min(1).optional(),
   name: z.string().min(1).max(40),
-  description: z.string().min(1).max(200),
+  description: z.string().min(1),
 });
 
 export type PlanFrame = z.infer<typeof planFrameSchema>;
@@ -68,7 +68,13 @@ export type FrameChange =
       type: "delete";
       frameId: string;
       replacement?: { id: string; name: string; index: number; buffer: FrameBuffer };
-    };
+    }
+  /**
+   * A frame whose pixels changed without a stroke of its own — the repaint a
+   * palette change makes on every frame. Persisted as a frame update, so a
+   * change on one frame reaches the others on disk, not just in memory.
+   */
+  | { type: "frame-pixels"; frameId: string; buffer: FrameBuffer };
 
 /** One project the workspace tools list, with its asset count. */
 export type ProjectSummary = {
@@ -90,6 +96,26 @@ export type AssetSummary = {
   height: number;
   frameCount: number;
   updatedAt: string;
+};
+
+/**
+ * One asset of the run's project, decoded for reading: the style evidence a
+ * worker, fix or review needs from a sibling asset. Reading never mutates it.
+ */
+export type ProjectAsset = {
+  id: string;
+  name: string;
+  summary: string;
+  width: number;
+  height: number;
+  palette: string[];
+  frames: Array<{
+    id: string;
+    name: string;
+    summary: string;
+    index: number;
+    buffer: FrameBuffer;
+  }>;
 };
 
 export type CreateAssetInput = {
@@ -165,6 +191,22 @@ export type RunBinding = {
   onStroke?: (stroke: Stroke, buffer: FrameBuffer, frameId: string) => void;
   /** Records one Jev request check on the run's trace. */
   onJevCheck?: (check: JevGateCheck) => void;
+  /**
+   * Where this run's project lives, and how to load a sibling asset of it.
+   * Every role reads the whole project; nothing here can write.
+   */
+  projectId?: string;
+  projectName?: string;
+  /** Sibling assets already decoded; more load lazily through the callback. */
+  projectAssets?: ProjectAsset[];
+  onLoadProjectAsset?: (assetId: string) => Promise<ProjectAsset | undefined>;
+  /**
+   * A writer runs with a different home frame per task: `write_frame` moves it,
+   * and every write must land there. Absent for the supervisor and review.
+   */
+  onSelectWriteFrame?: (frameId: string) => Promise<void>;
+  /** Marks a frame saved once its strokes are all committed. */
+  onSaveFrame?: (frameId: string) => Promise<void> | void;
   onFrameChange?: (change: FrameChange) => void | Promise<void>;
   onListProjects?: (userId: string) => Promise<ProjectSummary[]>;
   onListAssets?: (userId: string, projectId: string) => Promise<AssetSummary[]>;
@@ -193,6 +235,12 @@ export type RunBinding = {
   planApproved?: boolean;
   /** Workers carry the frames they own; every write is checked against it. */
   ownedFrameIds?: ReadonlySet<string>;
+  /**
+   * A fix is ordered with the layers it may touch. Layer writes outside the
+   * list are refused with the cause, so a fix that copies a handle cannot
+   * replace the flame beside it. Absent for every other role.
+   */
+  ownedLayerNames?: ReadonlySet<string>;
 };
 
 /**
@@ -208,16 +256,21 @@ export function assertRoleAllowsTool(run: RunBinding, toolName: string): void {
     );
   }
   if (run.role === undefined) return;
-  const allowed =
-    run.role === "plan"
-      ? undefined
-      : run.role === "review"
-        ? REVIEW_TOOL_NAMES
-        : WORKER_TOOL_NAMES;
-  if (allowed !== undefined && !allowed.has(toolName)) {
+  // Each role is registered with its own catalog, so a refusal here means the
+  // run is bound to an agent whose tool list is wrong — a bug, not the model.
+  const allowed = toolNamesForRole(run.role);
+  if (!allowed.has(toolName)) {
     throw new Error(`The ${run.role} role cannot call ${toolName}.`);
   }
 }
+
+/** Pointer to a frame on the run's asset or on any asset of its project. */
+export type FrameRef = {
+  /** Defaults to the run's own asset. */
+  assetId?: string;
+  /** Defaults to the run's write frame. */
+  frameId?: string;
+};
 
 /**
  * A worker may only write its own frames. Plan and review runs carry no set,
@@ -227,6 +280,23 @@ export function assertRoleAllowsTool(run: RunBinding, toolName: string): void {
 export function assertOwnedFrame(run: RunBinding, frameId: string): void {
   if (run.ownedFrameIds !== undefined && !run.ownedFrameIds.has(frameId)) {
     throw new Error("That frame belongs to another worker.");
+  }
+}
+
+/**
+ * A fix may write only the layers its order named; a call without a layer is
+ * checked by the layer-addressing command itself, at the tool layer.
+ */
+export function assertOwnedLayer(run: RunBinding, layerRef: string | undefined): void {
+  if (run.ownedLayerNames === undefined || layerRef === undefined) return;
+  const wanted = layerRef.trim().toLowerCase();
+  const allowed = [...run.ownedLayerNames].some(
+    (name) => name.trim().toLowerCase() === wanted,
+  );
+  if (!allowed) {
+    throw new Error(
+      `The review ordered this fix on ${[...run.ownedLayerNames].join(", ")}; "${layerRef}" is outside it.`,
+    );
   }
 }
 

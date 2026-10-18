@@ -178,6 +178,19 @@ export function frameWrites(
           runId: publicRunId,
           snapshot: assetVersionSnapshot(after),
         });
+      } else if (change.type === "frame-pixels") {
+        // A frame repainted without a stroke: a palette change rewrote its
+        // pixels so the colours stay the ones its layers named. The asset row
+        // was already updated by the palette change that follows.
+        const known = framesById.get(change.frameId);
+        if (!known) throw new Error(`Frame ${change.frameId} is not part of this asset.`);
+        await db
+          .update(frames)
+          .set({
+            layers: bufferToFrame(change.buffer, { ...known, id: change.frameId }).layers,
+            updatedAt: new Date(),
+          })
+          .where(eq(frames.id, change.frameId));
       } else if (change.type === "palette") {
         // The palette belongs to the asset; persisting it here is what keeps
         // the run's painted pixels readable after the run (their indices

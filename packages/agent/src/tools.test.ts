@@ -132,12 +132,6 @@ describe("worker frame ownership", () => {
     await expect(
       tool("add_frame").call({ name: "extra" }, { operationId: "run-1" }),
     ).rejects.toThrow("The worker role cannot call add_frame.");
-    await expect(
-      tool("set_palette").call(
-        { palette: ["#00000000", "#f4f4f4"] },
-        { operationId: "run-1" },
-      ),
-    ).rejects.toThrow("The worker role cannot call set_palette.");
     releaseRun("run-1");
   });
   it("refuses painting to the review pass", async () => {
@@ -432,7 +426,7 @@ describe("read tools", () => {
     boundRun();
     await expect(
       tool("read_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow('No frame named or identified by "frame-9".');
+    ).rejects.toThrow('No frame named or identified by "frame-9"');
     releaseRun("run-1");
   });
 
@@ -503,10 +497,15 @@ describe("read tools", () => {
     };
     expect(project.summary).toBe("a red potion with a cork");
     expect(project.frames[0]?.summary).toBe("a red potion on transparent");
+    // A frame read names its asset and frame; the summary of the run's own
+    // frame rides read_project, which is where a role looks first.
     const frame = (await tool("read_frame").call({}, { operationId: "run-1" })) as {
-      summary?: string;
+      assetName: string;
+      name: string;
+      palette: Array<{ hex: string }>;
     };
-    expect(frame.summary).toBe("a red potion on transparent");
+    expect(frame).toMatchObject({ assetName: "slime", name: "idle" });
+    expect(frame.palette[0]?.hex).toBe("#00000000");
     releaseRun("run-1");
   });
 });
@@ -616,7 +615,7 @@ describe("drawing tools", () => {
         },
         { operationId: "run-1" },
       ),
-    ).rejects.toThrow('No frame named or identified by "frame-9".');
+    ).rejects.toThrow('No frame named or identified by "frame-9"');
     releaseRun("run-1");
   });
 
@@ -708,7 +707,7 @@ describe("frame tools", () => {
     boundFrameRun();
     await expect(
       tool("use_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow('No frame named or identified by "frame-9".');
+    ).rejects.toThrow('No frame named or identified by "frame-9"');
     releaseRun("run-1");
   });
 
@@ -881,7 +880,7 @@ describe("frame tools", () => {
     boundFrameRun();
     await expect(
       tool("delete_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
-    ).rejects.toThrow('No frame named or identified by "frame-9".');
+    ).rejects.toThrow('No frame named or identified by "frame-9"');
     releaseRun("run-1");
   });
 
@@ -1443,20 +1442,18 @@ describe("workspace tools", () => {
         assetCount: 1,
       },
     ];
+    // A worker reads the whole project, but through the catalog a worker
+    // actually carries: the workspace listing and target tools belong to the
+    // supervisor, so the worker is never offered one.
     await expect(
       tool("list_projects").call({}, { operationId: "run-1" }),
-    ).resolves.toEqual([
-      {
-        id: "project-1",
-        name: "Hutan Ksatria",
-        summary: "",
-        updatedAt: "2026-10-15T00:00:00.000Z",
-        assetCount: 1,
-      },
-    ]);
+    ).rejects.toThrow("The worker role cannot call list_projects.");
     await expect(
       tool("critique_frame").call({}, { operationId: "run-1" }),
     ).rejects.toThrow("The worker role cannot call critique_frame.");
+    await expect(
+      tool("list_project_frames").call({}, { operationId: "run-1" }),
+    ).resolves.toMatchObject({ assets: [{ name: "slime" }] });
     releaseRun("run-1");
   });
 
@@ -1670,9 +1667,10 @@ describe("check_animation", () => {
       ["frame-1", "idle", 8],
       ["frame-2", "hop", 1],
     ]);
-    // idle's centroid sits at (1.5, 1.5) and hop's at (0, 3): every pair
-    // moves more than two pixels, so the report flags the centroid.
-    expect(result.flags.some((flag) => flag.includes("centroid"))).toBe(true);
+    // idle's centroid sits at (1.5, 1.5) and hop's at (0, 3): the drawing
+    // slides more than two pixels, and the flag names the frame, not its id.
+    expect(result.flags.some((flag) => flag.includes("slides"))).toBe(true);
+    expect(result.flags.join(" ")).toContain("hop");
     releaseRun("run-1");
   });
 
@@ -1696,7 +1694,7 @@ describe("check_animation", () => {
     boundRun();
     await expect(
       tool("check_animation").call({ frameIds: ["frame-9"] }, { operationId: "run-1" }),
-    ).rejects.toThrow('No frame named or identified by "frame-9".');
+    ).rejects.toThrow('No frame named or identified by "frame-9"');
     releaseRun("run-1");
   });
 });

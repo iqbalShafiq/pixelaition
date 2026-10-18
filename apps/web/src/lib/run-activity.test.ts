@@ -701,6 +701,52 @@ describe("console tabs", () => {
     ]);
   });
 
+  it("orders tabs by when each agent first appears: reviewer 1, fix 1, reviewer 2, fix 2", () => {
+    // The console reads as one story: the pass that ordered a fix comes
+    // before the fix, and the next pass comes after it.
+    const row = (workerKey: string, index: number) =>
+      ({
+        id: `r${index}`,
+        kind: "phase",
+        label: "step",
+        state: "done",
+        workerKey,
+      }) as const;
+    const rows = [
+      row("plan", 0),
+      row("w1", 1),
+      row("w2", 2),
+      row("review-1", 3),
+      row("fix-1-1", 4),
+      row("fix-1-2", 5),
+      row("review-2", 6),
+      row("fix-2-1", 7),
+    ];
+    expect(consoleTabs([...rows], true).map((item) => item.label)).toEqual([
+      "All",
+      "Supervisor",
+      "Agent 1",
+      "Agent 2",
+      "Reviewer 1",
+      "Fix 1",
+      "Fix 1.2",
+      "Reviewer 2",
+      "Fix 2",
+    ]);
+  });
+
+  it("keeps the supervisor first even when a later plan child opens the log", () => {
+    const rows = [
+      { id: "a", kind: "phase", label: "step", state: "done", workerKey: "review-1" },
+      { id: "b", kind: "phase", label: "step", state: "done", workerKey: "plan" },
+    ] as const;
+    expect(consoleTabs([...rows], true).map((item) => item.label)).toEqual([
+      "All",
+      "Supervisor",
+      "Reviewer 1",
+    ]);
+  });
+
   it("spins a tab only while that agent is still working", () => {
     const rows = [
       {

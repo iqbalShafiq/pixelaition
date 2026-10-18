@@ -35,6 +35,7 @@ import {
   refreshCritique,
   replaceFrameBuffer,
   assertOwnedFrame,
+  assertOwnedLayer,
   assertRoleAllowsTool,
   requireAsset,
   requireRun,
@@ -44,11 +45,22 @@ import {
   searchImagesFor,
   stagedOverrideSchema,
   type BoundRunBinding,
+  type FrameChange,
   type RunAsset,
   type RunBinding,
   type RunFrame,
   type Stroke,
 } from "./runs.js";
+import { paletteLegend } from "./tasks/worker-prompt.js";
+import {
+  copyLayers,
+  layerOf,
+  paletteMapping,
+  projectListing,
+  readRegion as readFrameRegion,
+  resolveReadFrame,
+  toFrameBuffer,
+} from "./frames.js";
 import {
   fetchReferenceImage,
   parseHttpsPublicUrl,
@@ -80,25 +92,6 @@ function resolveFrame(
   return { id, name: frame.name, buffer: frame.buffer, frame };
 }
 
-function resolvePixels(
-  buffer: FrameBuffer,
-  view: "composite" | "layer",
-  layerId?: string,
-): { pixels: Uint8Array; layerId?: string } {
-  if (view === "composite") {
-    if (layerId !== undefined) {
-      throw new Error("A layer id cannot be combined with the composite view.");
-    }
-    return { pixels: composite(buffer) };
-  }
-  const layer =
-    layerId === undefined
-      ? (buffer.layers.find((item) => item.visible) ?? buffer.layers[0])
-      : buffer.layers.find((item) => item.id === resolveLayerRef(buffer, layerId));
-  if (!layer) throw new Error("That layer is not on this frame.");
-  return { pixels: layer.pixels, layerId: layer.id };
-}
-
 /** Apply a command to one frame's buffer and write the result back to the run. */
 function editFrame(
   run: BoundRunBinding,
@@ -109,6 +102,8 @@ function editFrame(
   // A worker may write only its own frames; reads stay open so it can look at
   // the neighbours for reference.
   assertOwnedFrame(run, frame.id);
+  const named = (command as { layerId?: unknown }).layerId;
+  if (typeof named === "string") assertOwnedLayer(run, named);
   // Every command that names a layer takes an id or a name; normalize here so
   // no layer tool has to know the difference.
   const ref = (command as { layerId?: unknown }).layerId;
@@ -155,8 +150,226 @@ function colorCounts(
     });
 }
 
+/**
+ * Where each current colour lands in a new palette, matched by hex. A colour
+ * the new palette drops keeps its next new slot when the palette grew (a new
+ * colour appended beside the old ones), and fails otherwise — a palette change
+ * never silently turns a painted pixel into a different colour.
+ */
+function colourMapping(
+  current: readonly string[],
+  next: readonly string[],
+  painted: ReadonlySet<number>,
+): Record<string, number> {
+  const target = next.map((hex) => normalizeHex(hex) ?? hex);
+  const taken = new Set<number>();
+  const mapping: Record<string, number> = {};
+  const pending: number[] = [];
+  current.forEach((hex, index) => {
+    const found = target.indexOf(normalizeHex(hex) ?? hex);
+    if (found >= 0) {
+      mapping[String(index)] = found;
+      taken.add(found);
+    } else if (painted.has(index)) {
+      // Only a colour the canvas actually uses needs a home; an unused slot
+      // the new palette drops is dropped with its (absent) pixels.
+      pending.push(index);
+    }
+  });
+  // Transparency is index 0 in every palette; nothing else may claim it.
+  mapping["0"] = 0;
+  for (const index of pending) {
+    const free = target.findIndex((_, slot) => slot > 0 && !taken.has(slot));
+    if (free === -1) {
+      throw new Error(
+        `This palette drops colour ${current[index]}, which is painted, and has no free slot to keep it in. Add it to the palette or clear the pixels first.`,
+      );
+    }
+    mapping[String(index)] = free;
+    taken.add(free);
+  }
+  return mapping;
+}
+
+/** Every colour index a frame's layers actually use. */
+function paintedIndices(buffer: FrameBuffer): Set<number> {
+  const painted = new Set<number>();
+  for (const layer of buffer.layers) {
+    for (const value of layer.pixels) if (value !== 0) painted.add(value);
+  }
+  return painted;
+}
+
+/** The asset and frame a read should open: `assetId` names a sibling asset of the project. */
+const frameLocator = {
+  assetId: z
+    .string()
+    .optional()
+    .describe(
+      "Frame's asset id; omit for this run's asset. Any asset of the same project.",
+    ),
+  frameId: z
+    .string()
+    .optional()
+    .describe("Frame id or name; omit for the current frame."),
+};
+
+/** The locator plus the mode a second preview frame may carry. */
+const comparedFrameLocator = {
+  ...frameLocator,
+  mode: z.enum(["frame", "strip"]).default("frame"),
+};
+
+/** The rectangle a copy reads or writes, in frame pixels. */
+const regionShape = {
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+};
+
+/** A source colour and the target palette index that replaces it. */
+const paletteMapShape = z
+  .array(
+    z.object({
+      hex: z.string().describe("Source colour, as the source palette legend prints it."),
+      to: z.number().int().nonnegative().describe("Index in the target palette."),
+    }),
+  )
+  .optional()
+  .describe(
+    "Only when the source and target palettes differ: one entry per source colour. Without it the palettes must be identical.",
+  );
+
+function regionOf(input: { x: number; y: number; width: number; height: number }) {
+  return { x: input.x, y: input.y, width: input.width, height: input.height };
+}
+
+/** The RLE rows a copy hands back, decoded into palette indices. */
+function decodeRowsRle(rows: string[], width: number, height: number): Uint8Array {
+  if (rows.length !== height) {
+    throw new Error(
+      `The rows hold ${rows.length} lines but the region is ${height} tall.`,
+    );
+  }
+  const pixels = new Uint8Array(width * height);
+  rows.forEach((row, y) => {
+    let x = 0;
+    for (const run of row
+      .trim()
+      .split(/\s+/)
+      .filter((part) => part.length > 0)) {
+      const [colorText, countText] = run.split("x");
+      const color = Number(colorText);
+      const count = Number(countText);
+      if (!Number.isInteger(color) || !Number.isInteger(count) || count < 1) {
+        throw new Error(`Row ${y} has a run "${run}" that is not <color>x<count>.`);
+      }
+      if (x + count > width) {
+        throw new Error(`Row ${y} is longer than the region's width ${width}.`);
+      }
+      pixels.fill(color, y * width + x, y * width + x + count);
+      x += count;
+    }
+    if (x !== width) {
+      throw new Error(`Row ${y} covers ${x} pixels but the region is ${width} wide.`);
+    }
+  });
+  return pixels;
+}
+
+/** The stamp command for a paste: source indices resolved through the mapping. */
+function stampCommand(
+  input: { layerId: string; x: number; y: number; width: number; height: number },
+  targetPalette: readonly string[],
+  pixels: Uint8Array,
+  mapping: ReturnType<typeof paletteMapping>,
+): Command {
+  if (!mapping.ok) {
+    throw new Error(
+      `These source colours are not in this asset's palette: ${mapping.unmapped.join(", ")}. ` +
+        `Target palette: ${paletteLegend(targetPalette)}. Call again with a map for each source colour, for example ${JSON.stringify(
+          mapping.suggestion,
+        )}.`,
+    );
+  }
+  return {
+    type: "stamp",
+    layerId: input.layerId,
+    x: input.x,
+    y: input.y,
+    width: input.width,
+    height: input.height,
+    pixels: Array.from(pixels, (value) => mapping.indexOf(value)),
+  };
+}
+
+/**
+ * The layer rectangle repeated to the frame's edge in one direction: the
+ * column/row the rectangle came from is tiled across the rest. `tile` walks
+ * the whole frame from the rectangle's corner; the other directions continue
+ * outwards from its outer edge only.
+ */
+function repeatPixels(
+  buffer: FrameBuffer,
+  rect: { x: number; y: number; width: number; height: number },
+  layerId: string,
+  direction: "right" | "left" | "down" | "up" | "tile",
+): { x: number; y: number; width: number; height: number; pixels: number[] } {
+  if (rect.x + rect.width > buffer.width || rect.y + rect.height > buffer.height) {
+    throw new Error("The repeated region reaches outside the canvas.");
+  }
+  const ref = layerId.trim().toLowerCase();
+  const layer =
+    buffer.layers.find((candidate) => candidate.id === layerId) ??
+    buffer.layers.find((candidate) => candidate.name.trim().toLowerCase() === ref);
+  if (!layer) throw new Error(`No layer named or identified by "${layerId}".`);
+  const origin = Array.from({ length: rect.height }, (_, row) =>
+    Array.from(
+      { length: rect.width },
+      (_, column) => layer.pixels[(rect.y + row) * buffer.width + rect.x + column] ?? 0,
+    ),
+  );
+  const target =
+    direction === "tile"
+      ? {
+          x: rect.x,
+          y: rect.y,
+          width: buffer.width - rect.x,
+          height: buffer.height - rect.y,
+        }
+      : direction === "right" || direction === "left"
+        ? {
+            // Mirror the source horizontally when repeating to the left so the
+            // pattern reads continuously from the rectangle's edge.
+            x: direction === "right" ? rect.x : 0,
+            y: rect.y,
+            width: direction === "right" ? buffer.width - rect.x : rect.x + rect.width,
+            height: rect.height,
+          }
+        : {
+            x: rect.x,
+            y: direction === "down" ? rect.y : 0,
+            width: rect.width,
+            height: direction === "down" ? buffer.height - rect.y : rect.y + rect.height,
+          };
+  const pixels: number[] = [];
+  for (let row = 0; row < target.height; row += 1) {
+    for (let column = 0; column < target.width; column += 1) {
+      const offsetX =
+        direction === "left" ? target.width - 1 - column : target.x + column - rect.x;
+      const offsetY =
+        direction === "up" ? target.height - 1 - row : target.y + row - rect.y;
+      const sourceX = ((offsetX % rect.width) + rect.width) % rect.width;
+      const sourceY = ((offsetY % rect.height) + rect.height) % rect.height;
+      pixels.push(origin[sourceY]?.[sourceX] ?? 0);
+    }
+  }
+  return { ...target, pixels };
+}
+
 /** Image payloads over this size are refused rather than silently downscaled. */
-const MAX_PREVIEW_BYTES = 1024 * 1024;
+export const MAX_PREVIEW_BYTES = 1024 * 1024;
 
 /** Contact sheet: every frame's composite, side by side, one synthetic buffer. */
 function composeStrip(buffers: FrameBuffer[]): FrameBuffer {
@@ -369,29 +582,32 @@ export function createPixelTools(
   const readFrame = createTool({
     name: "read_frame",
     description:
-      "Read any frame on the asset as RLE rows (`colorxcount`), including a frame another worker is painting. Defaults to the current frame and to the composite of visible layers. frameId and layerId each accept an id or a name. Zero is transparent.",
+      "Read any frame of this project as RLE rows (`colorxcount`): a frame of this asset (including one another worker is painting) or a frame of any sibling asset in the project. Defaults to the current frame and to the composite of visible layers. frameId and layerId each accept an id or a name. Zero is transparent.",
     inputSchema: z.object({
-      frameId: z.string().optional(),
+      ...frameLocator,
       layerId: z.string().optional(),
       view: readView.optional(),
     }),
-    execute: (input, context) => {
+    execute: async (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
-      const frame = resolveFrame(run, input.frameId);
       const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
-      const read = resolvePixels(frame.buffer, view, input.layerId);
+      const frame = await resolveReadFrame(run, input);
+      const read = layerOf(frame, view === "composite" ? undefined : input.layerId);
+      if (!read) throw new Error(`That layer is not on ${frame.frameName}.`);
       return {
-        frameId: frame.id,
-        name: frame.name,
-        summary: frame.frame.summary ?? "",
+        assetId: frame.assetId,
+        assetName: frame.assetName,
+        frameId: frame.frameId,
+        name: frame.frameName,
         view,
         // Composite reads have no layer; an undefined key is not strict JSON.
-        ...(read.layerId === undefined ? {} : { layerId: read.layerId }),
-        width: frame.buffer.width,
-        height: frame.buffer.height,
-        rows: encodeRowsRle(read.pixels, frame.buffer.width, frame.buffer.height),
-        colors: colorCounts(read.pixels, frame.buffer.palette),
+        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
+        width: frame.width,
+        height: frame.height,
+        palette: frame.palette.map((hex, index) => ({ index, hex })),
+        rows: encodeRowsRle(read.pixels, frame.width, frame.height),
+        colors: colorCounts(read.pixels, frame.palette),
       };
     },
   });
@@ -399,46 +615,230 @@ export function createPixelTools(
   const readRegion = createTool({
     name: "read_region",
     description:
-      "Read a rectangle of a frame as RLE rows (`colorxcount`) and color counts. Coordinates are frame pixels; defaults to the current frame.",
+      "Read a rectangle of a frame as RLE rows (`colorxcount`) and color counts. Coordinates are frame pixels; defaults to the current frame. Pass layerId to read one layer instead of the composite.",
     inputSchema: z.object({
-      frameId: z.string().optional(),
-      x: z.number().int(),
-      y: z.number().int(),
-      width: z.number().int().positive(),
-      height: z.number().int().positive(),
+      ...frameLocator,
+      ...regionShape,
+      layerId: z
+        .string()
+        .optional()
+        .describe("Read one layer (id or name); omit for the composite."),
       view: readView.optional(),
     }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = await resolveReadFrame(run, input);
+      const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
+      if (view === "layer" && input.layerId === undefined) {
+        throw new Error("Reading a layer view needs a layerId.");
+      }
+      const read = layerOf(frame, view === "composite" ? undefined : input.layerId);
+      if (!read) throw new Error(`That layer is not on ${frame.frameName}.`);
+      const pixels = readFrameRegion(
+        frame,
+        regionOf(input),
+        view === "composite" ? undefined : read.layerId,
+      ).pixels;
+      return {
+        assetId: frame.assetId,
+        assetName: frame.assetName,
+        frameId: frame.frameId,
+        name: frame.frameName,
+        view,
+        // Composite reads have no layer; an undefined key is not strict JSON.
+        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
+        ...regionOf(input),
+        rows: encodeRowsRle(pixels, input.width, input.height),
+        colors: colorCounts(pixels, frame.palette),
+      };
+    },
+  });
+
+  // --- moving pixels between frames without redrawing them ------------------
+
+  const copyRegion = createTool({
+    name: "copy_region",
+    description:
+      "Copy a rectangle of any frame in this project (this asset or a sibling asset) and get its palette indices back as RLE rows, ready to pass to paste_region. Use it when a part must match another frame exactly, instead of reading pixels and retyping them.",
+    inputSchema: z.object({
+      ...frameLocator,
+      ...regionShape,
+      layerId: z.string().optional().describe("Copy one layer instead of the composite."),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = await resolveReadFrame(run, input);
+      const copied = readFrameRegion(frame, regionOf(input), input.layerId);
+      return {
+        source: {
+          assetId: frame.assetId,
+          assetName: frame.assetName,
+          frameId: frame.frameId,
+          frameName: frame.frameName,
+          layer: copied.layerName,
+        },
+        ...regionOf(input),
+        palette: frame.palette.map((hex, index) => ({ index, hex })),
+        rows: encodeRowsRle(copied.pixels, input.width, input.height),
+      };
+    },
+  });
+
+  const pasteRegion = createTool({
+    name: "paste_region",
+    description:
+      "Stamp RLE rows (from copy_region or read_region) into a layer of a frame you own, at x,y. This is the paste of a copy: one commit, no per-pixel calls. When the source and target palettes differ, pass map with one entry per source colour.",
+    inputSchema: z.object({
+      frameId: z
+        .string()
+        .optional()
+        .describe("Target frame you own; omit for your current one."),
+      layerId: z.string(),
+      x: z.number().int().nonnegative(),
+      y: z.number().int().nonnegative(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      rows: z
+        .array(z.string())
+        .min(1)
+        .describe("One RLE row per line, as copy_region returned them."),
+      sourcePalette: z
+        .array(z.string())
+        .optional()
+        .describe("The palette the rows were read with; omit when it is this asset's."),
+      map: paletteMapShape,
+    }),
+    requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
-      const buffer = frame.buffer;
-      if (
-        input.x < 0 ||
-        input.y < 0 ||
-        input.x + input.width > buffer.width ||
-        input.y + input.height > buffer.height
-      ) {
-        throw new Error("That region is outside the frame.");
-      }
-      const view = input.view ?? "composite";
-      const read = resolvePixels(buffer, view);
-      const pixels = new Uint8Array(input.width * input.height);
-      for (let row = 0; row < input.height; row += 1) {
-        const start = (input.y + row) * buffer.width + input.x;
-        pixels.set(read.pixels.subarray(start, start + input.width), row * input.width);
-      }
+      const pixels = decodeRowsRle(input.rows, input.width, input.height);
+      // The command maps source indices through the resolved palette and
+      // refuses a colour the target palette cannot hold, naming the legend.
+      const mapping = paletteMapping(
+        input.sourcePalette ?? frame.buffer.palette,
+        frame.buffer.palette,
+        input.map,
+      );
+      const edited = editFrame(
+        run,
+        frame.id,
+        stampCommand(input, frame.buffer.palette, pixels, mapping),
+      );
+      recordStroke(run, { label: "paste_region", points: [] }, edited);
       return {
-        frameId: frame.id,
-        view,
-        // Composite reads have no layer; an undefined key is not strict JSON.
-        ...(read.layerId === undefined ? {} : { layerId: read.layerId }),
-        x: input.x,
-        y: input.y,
-        width: input.width,
-        height: input.height,
-        rows: encodeRowsRle(pixels, input.width, input.height),
-        colors: colorCounts(pixels, buffer.palette),
+        committed: true,
+        frameId: edited.id,
+        name: frame.name,
+        ...regionOf(input),
+      };
+    },
+  });
+
+  const mirrorRegionTool = createTool({
+    name: "mirror_region",
+    description:
+      "Flip a rectangle of a layer you own in place (horizontal or vertical), leaving the rest of the layer alone. Use it for a facing variant or to undo a mirrored paste.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      ...regionShape,
+      axis: z.enum(["horizontal", "vertical"]),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      const edited = editFrame(run, frame.id, {
+        type: "mirrorRegion",
+        layerId: input.layerId,
+        ...regionOf(input),
+        axis: input.axis,
+      });
+      recordStroke(run, { label: "mirror_region", points: [] }, edited);
+      return { committed: true, frameId: edited.id, axis: input.axis };
+    },
+  });
+
+  const repeatRegionTool = createTool({
+    name: "repeat_region",
+    description:
+      "Repeat a rectangle of a layer you own across the frame: row by row, column by column, or tiled. Use it for rails, teeth, scales, brick courses and other repeating parts.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      ...regionShape,
+      direction: z.enum(["right", "left", "down", "up", "tile"]),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      const repeated = repeatPixels(
+        frame.buffer,
+        regionOf(input),
+        input.layerId,
+        input.direction,
+      );
+      const edited = editFrame(run, frame.id, {
+        type: "stamp",
+        layerId: input.layerId,
+        ...repeated,
+      });
+      recordStroke(run, { label: "repeat_region", points: [] }, edited);
+      return {
+        committed: true,
+        frameId: edited.id,
+        direction: input.direction,
+        x: repeated.x,
+        y: repeated.y,
+        width: repeated.width,
+        height: repeated.height,
+      };
+    },
+  });
+
+  const copyLayersTool = createTool({
+    name: "copy_layers",
+    description:
+      "Copy whole layers from a frame of any asset in this project into a frame you own: the 'make this frame's body identical to that one' move. A target layer with the same name receives the pixels; otherwise the layer is added.",
+    inputSchema: z.object({
+      ...frameLocator,
+      frames: z
+        .array(
+          z.object({
+            name: z.string().describe("Layer id or name on the source frame."),
+            map: paletteMapShape,
+          }),
+        )
+        .min(1)
+        .describe("Layers to copy, in paint order."),
+      toFrameId: z
+        .string()
+        .optional()
+        .describe("Target frame you own; omit for your current one."),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const source = await resolveReadFrame(run, input);
+      const target = resolveFrame(run, input.toFrameId);
+      for (const layer of input.frames) assertOwnedLayer(run, layer.name);
+      const buffer = copyLayers(target.buffer, source, input.frames);
+      replaceFrameBuffer(run, target.id, buffer);
+      run.touchedFrames.add(target.id);
+      recordStroke(run, { label: "copy_layer", points: [] }, { id: target.id, buffer });
+      return {
+        committed: true,
+        frameId: target.id,
+        from: { assetName: source.assetName, frameName: source.frameName },
+        layers: buffer.layers.map((layer) => layer.name),
       };
     },
   });
@@ -764,7 +1164,7 @@ export function createPixelTools(
     "Replace the asset's palette; every frame uses it. Index 0 must stay #00000000. Add the colours the request needs before painting with them.";
   const setPalette = createTool({
     name: "set_palette",
-    description: setPaletteDescription,
+    description: `${setPaletteDescription} The pixels follow their colours: a colour that moves to another index is rewritten, and a new colour is simply appended (or given an index and used by the next stroke), so one frame changing the palette never repaints another.`,
     inputSchema: z.object({
       frameId: z.string().optional(),
       palette: z.array(z.string()).min(2).max(256),
@@ -782,8 +1182,13 @@ export function createPixelTools(
       // never outlive the palette they were painted against.
       const adopted = [...run.frames.entries()].map(([id, frame]) => {
         const result = applyCommand(frame.buffer, {
-          type: "setPalette",
+          type: "reindexPalette",
           palette: input.palette,
+          mapping: colourMapping(
+            frame.buffer.palette,
+            input.palette,
+            paintedIndices(frame.buffer),
+          ),
         });
         if (!result.ok) throw new Error(result.message);
         return { id, buffer: result.buffer };
@@ -796,11 +1201,25 @@ export function createPixelTools(
       if (!edited) throw new Error("The palette change did not reach the frame.");
       // read_project's legend must never disagree with the frames it describes.
       run.palette = [...edited.buffer.palette];
-      // The canvas feed repaints with the new palette everywhere, and the
-      // worker persists the asset palette and records its version.
+      // The canvas feed carries the frames this palette move repainted, every
+      // layer, so a change made on one frame shows on all of them. The worker
+      // persists the asset palette once the repaint is done.
       run.onStroke?.({ label: "palette", points: [] }, edited.buffer, current.id);
-      void run.onFrameChange?.({ type: "palette", palette: run.palette });
-      return { palette: run.palette };
+      const frameChanges: FrameChange[] = [
+        ...adopted
+          .filter((item) => item.id !== current.id)
+          .map((item) => ({
+            type: "frame-pixels" as const,
+            frameId: item.id,
+            buffer: item.buffer,
+          })),
+        { type: "palette", palette: run.palette },
+      ];
+      for (const change of frameChanges) void run.onFrameChange?.(change);
+      return {
+        palette: run.palette,
+        repainted: adopted.map((item) => item.id),
+      };
     },
   });
 
@@ -1043,8 +1462,14 @@ export function createPixelTools(
   const checkAnimationTool = createTool({
     name: "check_animation",
     description:
-      "Measure animation continuity across the frames: changed pixels, diff box, centroid shift, and silhouette drift for every consecutive pair and for the loop back to the first frame. Flags mark identical distinct frames, centroid moves over two pixels, and a loop that jumps further than any internal pair. Fix flagged drift before finishing.",
-    inputSchema: z.object({ frameIds: z.array(z.string()).optional() }),
+      "Measure animation continuity. Two questions: did a frame's changed part slide the whole drawing (consecutive pairs and the loop), and does every frame keep the shared body of the reference frame in the same place. A moving flame or arm inside a still body is not a flag; a body redrawn slightly lower in some frames is. Flags name frames by name. Fix flagged drift before finishing.",
+    inputSchema: z.object({
+      frameIds: z.array(z.string()).optional(),
+      referenceFrame: z
+        .string()
+        .optional()
+        .describe("The frame others keep their body from; defaults to the first one."),
+    }),
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
@@ -1059,7 +1484,14 @@ export function createPixelTools(
         if (!frame) throw new Error("Choose or create a frame first.");
         return { id, name: frame.name, buffer: frame.buffer };
       });
-      const report = checkAnimation(frames);
+      const referenceId =
+        input.referenceFrame === undefined
+          ? frames[0]?.id
+          : resolveFrameId(run, input.referenceFrame);
+      const report =
+        referenceId === undefined
+          ? checkAnimation(frames)
+          : checkAnimation(frames, { referenceId });
       return {
         ...report,
         frames: frames.map(({ id, name, buffer }) => ({
@@ -1255,23 +1687,88 @@ export function createPixelTools(
   const preview = createTool({
     name: "preview_frame",
     description:
-      "Render the current frame (or every frame as one strip) to a PNG you can see. Use it to verify your work before finishing.",
+      "Render a frame — or every frame as one strip — to a PNG you can see, and optionally a second frame beside it for comparison. Use it to verify your work, or to look at what another frame looks like before copying from it.",
     inputSchema: z.object({
-      frameId: z.string().optional(),
+      ...frameLocator,
       mode: z.enum(["frame", "strip"]).default("frame"),
+      compareWith: z
+        .object(comparedFrameLocator)
+        .optional()
+        .describe("A second frame to show beside the first."),
       scale: z.number().int().min(1).max(10).default(4),
     }),
-    execute: (input, context) => {
+    execute: async (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
-      const frame = resolveFrame(run, input.frameId);
-      const buffer =
-        input.mode === "strip"
-          ? composeStrip([...run.frames.values()].map((item) => item.buffer))
-          : frame.buffer;
-      const label = input.mode === "strip" ? `${run.frames.size} frames` : frame.name;
-      // rasterize accepts any positive integer scale; the schema bounds it to 1..10.
-      const png = frameToPng(buffer, input.scale as ExportScale);
+      const parts: Array<{ label: string; buffer: FrameBuffer }> = [];
+      const compose = async (
+        locator: { assetId?: string; frameId?: string },
+        mode: "frame" | "strip",
+      ): Promise<{ label: string; buffer: FrameBuffer }> => {
+        const view = await resolveReadFrame(run, locator);
+        const strip = view.assetId === run.assetId && mode === "strip";
+        return {
+          label: strip
+            ? `${view.assetName} · ${run.frames.size} frames`
+            : `${view.assetName} · ${view.frameName}`,
+          buffer: strip
+            ? composeStrip([...run.frames.values()].map((item) => item.buffer))
+            : toFrameBuffer(view),
+        };
+      };
+      parts.push(
+        await compose(
+          {
+            ...(input.assetId !== undefined ? { assetId: input.assetId } : {}),
+            ...(input.frameId !== undefined ? { frameId: input.frameId } : {}),
+          },
+          input.mode,
+        ),
+      );
+      if (input.compareWith !== undefined) {
+        parts.push(await compose(input.compareWith, input.compareWith.mode));
+      }
+      const gap = 1;
+      const width =
+        parts.reduce((total, part) => total + part.buffer.width, 0) +
+        gap * (parts.length - 1);
+      const height = Math.max(...parts.map((part) => part.buffer.height));
+      const canvas = new Uint8Array(width * height);
+      const palette = parts[0]?.buffer.palette ?? run.palette;
+      let offset = 0;
+      for (const part of parts) {
+        for (let y = 0; y < part.buffer.height; y += 1) {
+          for (let x = 0; x < part.buffer.width; x += 1) {
+            canvas[(y + (height - part.buffer.height)) * width + offset + x] =
+              part.buffer.layers.reduce(
+                (color, layer) =>
+                  layer.visible && (layer.pixels[y * part.buffer.width + x] ?? 0) !== 0
+                    ? (layer.pixels[y * part.buffer.width + x] ?? 0)
+                    : color,
+                0,
+              );
+          }
+        }
+        offset += part.buffer.width + gap;
+      }
+      const png = frameToPng(
+        {
+          width,
+          height,
+          palette,
+          layers: [
+            {
+              ...(parts[0]?.buffer.layers[0] ?? {
+                id: "preview",
+                name: "preview",
+                visible: true,
+              }),
+              pixels: canvas,
+            },
+          ],
+        },
+        input.scale as ExportScale,
+      );
       if (png.length > MAX_PREVIEW_BYTES) {
         throw new Error(
           `The preview is ${png.length} bytes, over the ${MAX_PREVIEW_BYTES}-byte image limit. Lower the scale.`,
@@ -1280,7 +1777,7 @@ export function createPixelTools(
       return ToolOutput.content([
         {
           type: "text",
-          text: `${label} — ${buffer.width}×${buffer.height} pixels at ${input.scale}× (${png.length} bytes PNG).`,
+          text: `${parts.map((part) => part.label).join(" | ")} — ${width}×${height} pixels at ${input.scale}× (${png.length} bytes PNG).`,
         },
         {
           type: "file",
@@ -1289,6 +1786,164 @@ export function createPixelTools(
           filename: "preview.png",
         },
       ]);
+    },
+  });
+
+  const compareFrames = createTool({
+    name: "compare_frames",
+    description:
+      "Diff two frames of this project and read the result: changed pixels, where they are, and — when the frames are the same size — a coloured PNG where every changed pixel is highlighted over a dim copy of the first frame. Use it to match a part to a reference frame exactly.",
+    inputSchema: z.object({
+      ...frameLocator,
+      against: z
+        .object(frameLocator)
+        .describe("The second frame, of this asset or a sibling asset."),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const left = await resolveReadFrame(run, input);
+      const right = await resolveReadFrame(run, input.against);
+      const leftPixels = composite(toFrameBuffer(left));
+      const rightPixels = composite(toFrameBuffer(right));
+      const sameSize = left.width === right.width && left.height === right.height;
+      let changed = 0;
+      let minX = left.width;
+      let maxX = -1;
+      let minY = left.height;
+      let maxY = -1;
+      if (sameSize) {
+        for (let index = 0; index < leftPixels.length; index += 1) {
+          if (leftPixels[index] === rightPixels[index]) continue;
+          changed += 1;
+          const x = index % left.width;
+          const y = Math.floor(index / left.width);
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+      const summary = {
+        left: { assetName: left.assetName, frameName: left.frameName },
+        right: { assetName: right.assetName, frameName: right.frameName },
+        sameSize,
+        changedPixels: changed,
+        diffBox:
+          changed > 0
+            ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+            : null,
+        leftColors: colorCounts(leftPixels, left.palette),
+        rightColors: colorCounts(rightPixels, right.palette),
+      };
+      if (!sameSize) return summary;
+      // Changed pixels take the last palette colour, everything else a dimmed copy.
+      const highlight = left.palette.length - 1;
+      const dim = 1;
+      const overlay = new Uint8Array(leftPixels.length);
+      for (let index = 0; index < overlay.length; index += 1) {
+        overlay[index] =
+          leftPixels[index] !== rightPixels[index]
+            ? highlight
+            : leftPixels[index] === 0
+              ? 0
+              : dim;
+      }
+      const png = frameToPng(
+        {
+          width: left.width,
+          height: left.height,
+          palette: left.palette,
+          layers: [{ id: "diff", name: "diff", visible: true, pixels: overlay }],
+        },
+        6 as ExportScale,
+      );
+      return ToolOutput.content([
+        { type: "text", text: JSON.stringify(summary) },
+        {
+          type: "file",
+          data: { type: "data", data: Buffer.from(png).toString("base64") },
+          mediaType: "image/png",
+          filename: "diff.png",
+        },
+      ]);
+    },
+  });
+
+  const readPalette = createTool({
+    name: "read_palette",
+    description:
+      "Read the palette of this asset or of any sibling asset in the project, as index:hex pairs. Use it before copying a region across assets, where indices mean different colours.",
+    inputSchema: z.object({
+      assetId: z
+        .string()
+        .optional()
+        .describe("Another asset of the project; omit for this asset."),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      if (input.assetId === undefined || input.assetId === run.assetId) {
+        return {
+          assetId: run.assetId,
+          assetName: run.assetName,
+          palette: run.palette.map((hex, index) => ({ index, hex })),
+        };
+      }
+      const view = await resolveReadFrame(run, { assetId: input.assetId });
+      return {
+        assetId: view.assetId,
+        assetName: view.assetName,
+        palette: view.palette.map((hex, index) => ({ index, hex })),
+      };
+    },
+  });
+
+  const listProjectFrames = createTool({
+    name: "list_project_frames",
+    description:
+      "List every asset of this project with its size, palette and frames. Each frame's names, summaries and indices — the style evidence across the whole project.",
+    inputSchema: z.object({}),
+    execute: async (_input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      return {
+        projectId: run.projectId ?? null,
+        projectName: run.projectName ?? null,
+        style: run.style,
+        assets: await projectListing(run),
+      };
+    },
+  });
+
+  const writeFrame = createTool({
+    name: "write_frame",
+    description:
+      "Move your write cursor to another frame you own. Without it the writer is pinned to its first frame, so you can never paint a neighbour by accident.",
+    inputSchema: z.object({ frameId: z.string() }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      run.currentFrameId = frame.id;
+      await run.onSelectWriteFrame?.(frame.id);
+      return { currentFrameId: frame.id, name: frame.name };
+    },
+  });
+
+  const saveFrame = createTool({
+    name: "save_frame",
+    description:
+      "Save the frame you have been painting. Strokes commit as they happen; this marks the frame finished at the end of your work.",
+    inputSchema: z.object({ frameId: z.string().optional() }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      await run.onSaveFrame?.(frame.id);
+      return { saved: true, frameId: frame.id, name: frame.name };
     },
   });
 
@@ -1412,6 +2067,16 @@ export function createPixelTools(
     think,
     critique,
     checkAnimationTool,
+    compareFrames,
+    readPalette,
+    listProjectFrames,
+    copyRegion,
+    pasteRegion,
+    mirrorRegionTool,
+    repeatRegionTool,
+    copyLayersTool,
+    writeFrame,
+    saveFrame,
     mirror,
     useFrame,
     addFrameTool,

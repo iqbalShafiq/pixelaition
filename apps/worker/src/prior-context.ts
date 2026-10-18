@@ -5,6 +5,11 @@
  */
 
 const IMAGE_CAP = 8;
+/**
+ * How much room the *step log* gets when it shares a prompt with the live
+ * request. User words are never dropped to fit; only agent step lines are,
+ * oldest turn first, and the omitted count stays visible.
+ */
 const TEXT_CAP = 16_000;
 const MEDIA = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
@@ -170,8 +175,7 @@ export function stepsFromRuns(runs: PriorRun[]): string[] {
           (operationId !== undefined ? names.get(operationId) : undefined) ?? "tool";
         const result = asRecord(data?.result);
         const failed = result?.failed === true;
-        const error =
-          typeof result?.error === "string" ? result.error.trim().slice(0, 160) : "";
+        const error = typeof result?.error === "string" ? result.error.trim() : "";
         lines.push(
           failed
             ? `${label} · ${name} — ${error.length > 0 ? error : "failed"}`
@@ -179,7 +183,7 @@ export function stepsFromRuns(runs: PriorRun[]): string[] {
         );
       }
       if (event.type === "model_note" && data?.channel !== "thinking") {
-        const text = typeof data?.text === "string" ? data.text.trim().slice(0, 400) : "";
+        const text = typeof data?.text === "string" ? data.text.trim() : "";
         if (text.length > 0) lines.push(`${label}: ${text}`);
       }
     }
@@ -188,10 +192,13 @@ export function stepsFromRuns(runs: PriorRun[]): string[] {
 }
 
 /**
- * Every user line stays. Images are capped at eight, dropping the oldest
- * turns' images first. Step lines drop from the oldest turn once the
- * transcript passes the character cap. A model that cannot view images
- * receives no attachment bytes; the per-turn notes say so instead.
+ * Every user line and every follow-up stays in full — they are what the user
+ * asked for, and the durable runtime's compaction is what keeps a long thread
+ * inside the model's window. Images are capped at eight, dropping the oldest
+ * turns' images first (a transport limit, noted in the text). Step lines drop
+ * from the oldest turn once the transcript passes the character cap, and the
+ * count of omitted steps is printed. A model that cannot view images receives
+ * no attachment bytes; the per-turn notes say so instead.
  */
 export function formatPriorContext(
   turns: PriorTurn[],

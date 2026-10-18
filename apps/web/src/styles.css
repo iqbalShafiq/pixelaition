@@ -811,3 +811,23 @@
     animation: none;
   }
 }
+
+/* A turn's user message: four lines at most, the rest scrolls (see TurnPrompt). */
+.turn-prompt {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-faint) transparent;
+}
+
+.turn-prompt::-webkit-scrollbar {
+  width: 6px;
+}
+
+.turn-prompt::-webkit-scrollbar-thumb {
+  background: var(--color-faint);
+}
+
+/* Not at the end: a hairline under the last visible line says there is more. */
+.turn-prompt-more {
+  border-bottom: 2px dotted var(--color-line-strong);
+}

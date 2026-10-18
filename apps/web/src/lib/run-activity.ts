@@ -830,38 +830,42 @@ function tabStatus(rows: RunRow[], settled: boolean): ConsoleTab["status"] {
   return "done";
 }
 
-function tabOrder(label: string): number {
-  if (label === "All") return 0;
-  if (label.startsWith("Supervisor")) return 1;
-  if (label.startsWith("Agent")) return 2;
-  if (label.startsWith("Fix")) return 3;
-  if (label.startsWith("Reviewer")) return 4;
-  return 5;
-}
-
 /**
- * All is the whole transcript in arrival order. The other tabs are one per
- * agent that actually spoke, merged when they share a label (plan and plan-1
- * are both Supervisor).
+ * Tabs read in the order the work happened: the supervisor plans, the agents
+ * paint, then each review pass and the fixes that answer it — Reviewer 1,
+ * Fix 1, Reviewer 2, Fix 2 — never one pile of reviewers beside one pile of
+ * fixes. A tab's place is the first time its agent appears in the transcript,
+ * which is also where the work tree puts it.
  */
 export function consoleTabs(rows: RunRow[], settled = false): ConsoleTab[] {
-  const groups = new Map<string, RunRow[]>();
-  for (const row of rows) {
+  const groups = new Map<string, { rows: RunRow[]; first: number }>();
+  rows.forEach((row, index) => {
     const owner = rowOwner(row);
-    if (!owner) continue;
+    if (!owner) return;
     const label = owner === "supervisor" ? "Supervisor" : agentLabel(owner);
-    groups.set(label, [...(groups.get(label) ?? []), row]);
-  }
+    const group = groups.get(label);
+    if (group) {
+      group.rows.push(row);
+      return;
+    }
+    groups.set(label, { rows: [row], first: index });
+  });
   const rest = [...groups.entries()]
-    .sort(
-      (left, right) =>
-        tabOrder(left[0]) - tabOrder(right[0]) || left[0].localeCompare(right[0]),
-    )
+    .sort(([leftLabel, left], [rightLabel, right]) => {
+      // The supervisor is always first: it opened the work even if a later
+      // plan-* child is what the transcript happens to start with.
+      const rank = (group: { first: number }, label: string) =>
+        label === "Supervisor" ? -1 : group.first;
+      return (
+        rank(left, leftLabel) - rank(right, rightLabel) ||
+        leftLabel.localeCompare(rightLabel)
+      );
+    })
     .map(([label, group]) => ({
       id: label,
       label,
-      status: tabStatus(group, settled),
-      rows: group,
+      status: tabStatus(group.rows, settled),
+      rows: group.rows,
     }));
   return [{ id: "all", label: "All", status: tabStatus(rows, settled), rows }, ...rest];
 }

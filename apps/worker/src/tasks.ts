@@ -4,6 +4,7 @@ import {
   type DrawPlan,
   userRequestFromPrompt,
   userTurnsFromRuns,
+  type WorkerContext,
   type WorkerPromptInput,
 } from "@pixelaition/agent";
 import {
@@ -15,6 +16,7 @@ import {
   projects,
   runTasks,
 } from "@pixelaition/db";
+import { defaultStyle } from "@pixelaition/pixel";
 import { and, asc, desc, eq, isNull, notInArray, or } from "drizzle-orm";
 import {
   formatPriorContext,
@@ -123,6 +125,55 @@ export function buildTaskDeps(
     return [styleLine(style)];
   }
 
+  /**
+   * Sibling assets of one asset, with what a painter reads for style: size,
+   * palette, and each frame's name and summary. Pixels stay out of the prompt —
+   * a role that wants them calls read_frame with the asset id.
+   */
+  async function projectAssetsFor(projectId: string, exceptAssetId: string) {
+    const rows = await db
+      .select({
+        id: assets.id,
+        name: assets.name,
+        width: assets.width,
+        height: assets.height,
+        palette: assets.palette,
+        summary: assets.summary,
+      })
+      .from(assets)
+      .where(eq(assets.projectId, projectId))
+      .orderBy(asc(assets.createdAt));
+    const siblings: Array<{
+      id: string;
+      name: string;
+      width: number;
+      height: number;
+      palette: string[];
+      summary: string;
+      frames: string[];
+    }> = [];
+    for (const sibling of rows) {
+      if (sibling.id === exceptAssetId) continue;
+      const siblingsFrames = await db
+        .select({ name: frames.name, summary: frames.summary })
+        .from(frames)
+        .where(eq(frames.assetId, sibling.id))
+        .orderBy(asc(frames.index));
+      siblings.push({
+        id: sibling.id,
+        name: sibling.name,
+        width: sibling.width,
+        height: sibling.height,
+        palette: sibling.palette as string[],
+        summary: sibling.summary,
+        frames: siblingsFrames.map((frame) =>
+          frame.summary.length > 0 ? `${frame.name} (${frame.summary})` : frame.name,
+        ),
+      });
+    }
+    return siblings;
+  }
+
   return {
     loadPlanContext: async (input: AssetDrawInput) => {
       const row = await loadAsset(input.assetId);
@@ -200,15 +251,21 @@ export function buildTaskDeps(
         width: row?.asset.width ?? 32,
         height: row?.asset.height ?? 32,
         paletteSize: palette.length,
+        palette,
         styleLines: styleLines(row?.project.style),
+        style: (row?.project.style as WorkerContext["style"]) ?? defaultStyle,
         attachments: input.attachments.length,
         ...(ownedSummaries.length > 0 ? { assetSummary: ownedSummaries } : {}),
+        assetId: plan.assetId,
+        frames: frameRows.map((frame) => frame.name),
+        projectAssets: row ? await projectAssetsFor(row.project.id, plan.assetId) : [],
       };
       return { promptData };
     },
     loadPriorContext: (input: AssetDrawInput) =>
       loadPriorContextFor(db, readDurable, input),
-    loadReviewContext: async (_input: AssetDrawInput, plan: DrawPlan) => {
+    loadReviewContext: async (input: AssetDrawInput, plan: DrawPlan) => {
+      const row = await loadAsset(plan.assetId.length > 0 ? plan.assetId : input.assetId);
       const rows = await db
         .select({ name: frames.name, summary: frames.summary })
         .from(frames)
@@ -219,16 +276,23 @@ export function buildTaskDeps(
           row?.summary && row.summary.length > 0 ? row.summary : "(no summary yet)"
         }`;
       });
+      const palette = (row?.asset.palette as string[] | undefined) ?? [];
       return [
-        `Plan: ${JSON.stringify(
-          plan.frames.map((frame) => ({
-            name: frame.name,
-            intent: frame.intent,
-            layers: frame.layers,
-          })),
-        )}`,
+        `Asset: ${row?.asset.name ?? plan.assetId} (${row?.asset.width ?? 32}×${row?.asset.height ?? 32}). Project: ${row?.project.name ?? "project"}.`,
+        `Palette: ${palette.map((hex, index) => `${index}:${hex}`).join(" ")}`,
+        `Style: ${styleLines(row?.project.style).join("; ")}`,
+        `Plan: ${JSON.stringify(plan)}`,
         "Frames to review:",
         ...lines,
+        ...((await projectAssetsFor(row?.project.id ?? "", plan.assetId)).length > 0
+          ? [
+              "Other assets in this project (read-only; read them with their assetId):",
+              ...(await projectAssetsFor(row?.project.id ?? "", plan.assetId)).map(
+                (asset) =>
+                  `- ${asset.name} [${asset.id}] ${asset.width}×${asset.height}: ${asset.frames.join(", ")}`,
+              ),
+            ]
+          : []),
       ].join("\n");
     },
   };

@@ -55,21 +55,22 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
   if (type === "tool_completed") {
     const result = data?.result as
       { failed?: unknown; error?: unknown; output?: unknown } | undefined;
-    const output = result?.output as { pairs?: unknown; flags?: unknown } | undefined;
     // check_animation's report is large; the console row prints only the pair
     // and flag counts, so only those travel through the stream. A second pass
-    // meets the counts themselves and must keep them.
-    const counts =
-      typeof output?.pairs === "number" && typeof output?.flags === "number"
-        ? { pairs: output.pairs, flags: output.flags }
-        : Array.isArray(output?.pairs) && Array.isArray(output?.flags)
-          ? { pairs: output.pairs.length, flags: output.flags.length }
-          : undefined;
+    // meets the counts themselves and must keep them. A refusal that carries
+    // its own message puts it in `error`, below, which the console prints.
+    const output = result?.output;
+    const counts = animationCounts(output);
+    const namedMessage =
+      typeof (output as { message?: unknown } | undefined)?.message === "string"
+        ? (output as { message: string }).message
+        : undefined;
     return {
       operationId,
       result: {
         failed: result?.failed === true,
-        error: typeof result?.error === "string" ? result.error : undefined,
+        error:
+          typeof result?.error === "string" ? result.error : (namedMessage ?? undefined),
         ...(counts ? { output: counts } : {}),
       },
     };
@@ -128,6 +129,29 @@ export function sanitizeEvent(type: string, raw: unknown): unknown {
     };
   }
   return {};
+}
+
+/**
+ * The console's short summary of a `check_animation` result. New runs report
+ * `pairs` and `flags` as lists of objects and strings; older stored runs hold
+ * counts. Both are read, so a replay of an old run shows the same line a new
+ * one does.
+ */
+export function animationCounts(
+  result: unknown,
+): { pairs: number; flags: number } | undefined {
+  const output = result as { pairs?: unknown; flags?: unknown } | undefined;
+  if (output === null || typeof output !== "object") return undefined;
+  const count = (value: unknown): number | undefined => {
+    if (typeof value === "number") return value;
+    if (!Array.isArray(value)) return undefined;
+    // An array of strings is one flag per entry; an array of objects is one per
+    // pair. The caller names which it holds, below.
+    return value.length;
+  };
+  const pairs = count(output.pairs);
+  const flags = count(output.flags);
+  return pairs === undefined || flags === undefined ? undefined : { pairs, flags };
 }
 
 /**

@@ -2,6 +2,24 @@ import { composite } from "./buffer.js";
 import { indexOf, normalizeHex } from "./pixels.js";
 import type { CritiqueIssue, FrameBuffer, StyleGuide } from "./types.js";
 
+/**
+ * The eight neighboring cells, diagonals included. A pencil-thin smoke wisp or
+ * a spark is placed with a diagonal step between cells; it reads as one stroke
+ * to a person and as a stray pixel to an orthogonal-only check, so the check
+ * asks "does this pixel touch the drawing at all" instead of "does it touch
+ * it orthogonally".
+ */
+const around8 = [
+  { x: 1, y: 0 },
+  { x: -1, y: 0 },
+  { x: 0, y: 1 },
+  { x: 0, y: -1 },
+  { x: 1, y: 1 },
+  { x: 1, y: -1 },
+  { x: -1, y: 1 },
+  { x: -1, y: -1 },
+];
+
 /** The orthogonal neighbor offsets every placement check shares. */
 const orthogonal = [
   { x: 1, y: 0 },
@@ -68,7 +86,10 @@ export function critiqueFrame(
       const color = composited[indexOf(buffer.width, x, y)];
       if (color === 0) continue;
       const around = neighbors(x, y);
-      if (!around.some((value) => value !== 0)) stray += 1;
+      const touches = around8.some(
+        (offset) => composited[indexOf(buffer.width, x + offset.x, y + offset.y)] ?? 0,
+      );
+      if (!touches) stray += 1;
       if (
         color === outlineIndex &&
         outlineIndex > 0 &&

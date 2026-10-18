@@ -2,7 +2,13 @@ import type { AgentPrompt } from "@anvia/core/agent";
 import { defineTask, type TaskContext, type TaskTransition } from "@anvia/durable";
 import { z } from "zod";
 import { MAX_COLORS } from "@pixelaition/pixel";
-import { drawPlanSchema, validatePlan, type DrawPlan } from "./plan.js";
+import {
+  drawPlanSchema,
+  parseReviewVerdict,
+  validatePlan,
+  type DrawPlan,
+  type ReviewFix,
+} from "./plan.js";
 import {
   fixInstructions,
   planInstructions,
@@ -13,14 +19,17 @@ import { buildWorkerPrompt, type WorkerPromptInput } from "./worker-prompt.js";
 import { workerAttemptTask } from "./worker-attempt.js";
 
 /**
- * One durable task per drawing request. Task code — never the model — decides
- * what spawns: a plan child (the supervisor), one worker child per assignment
- * continuing the plan's conversation, and a review child that reads every
- * frame and may order at most two fixes per review, across at most six rounds.
+ * One durable task per drawing request. Task code decides what spawns — a plan
+ * child (the supervisor), one worker child per assignment, and a review child
+ * that reads every frame and answers with a verdict — but not how many review
+ * rounds are enough: the reviewer says `ok` when the frames meet the request,
+ * and the conversation carries the history of every round. A round budget in
+ * code would stop the work on a count instead of on judgement.
  */
 
 export const assetDrawInputSchema = z.object({
-  request: z.string().min(1).max(4000),
+  /** The user's own words. Full: a turn is what the user typed, not a summary of it. */
+  request: z.string().min(1),
   projectId: z.string().min(1).nullable(),
   assetId: z.string().min(1).nullable(),
   userId: z.string().min(1),
@@ -52,12 +61,6 @@ export const assetDrawInputSchema = z.object({
   modelVision: z.boolean().optional(),
 });
 export type AssetDrawInput = z.infer<typeof assetDrawInputSchema>;
-
-/**
- * Review, then fix, then review again. The last round is a final read: it
- * does not order another fix. Six is the cap (review-1 through review-6).
- */
-const REVIEW_ROUNDS = 6;
 
 /** Bookkeeping that must survive a restart: bounded retries per child role. */
 const PHASE_EXTRAS = {
@@ -93,12 +96,33 @@ export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
     phase: z.literal("review"),
     plan: drawPlanSchema,
     planKey: z.string(),
-    round: z.number().int().min(1).max(REVIEW_ROUNDS),
+    round: z.number().int().min(1),
     reviewKey: z.string().optional(),
     fixIds: z.array(z.string()),
+    /**
+     * The work log across rounds: what each review ordered and what its fix
+     * children reported. Every round's prompt carries it, so a reviewer sees
+     * that an instruction was already tried and a fixer sees how the last
+     * attempt went — without depending on the model remembering.
+     */
+    log: z.array(z.string()).optional(),
   }),
 ]);
 export type AssetDrawCheckpoint = z.infer<typeof assetDrawCheckpointSchema>;
+
+/**
+ * A fix child's own budget: a frame, its layers, one save, and a sentence.
+ * Without it the child inherits the agent's long painting loop and can grind
+ * past the work it was ordered to do.
+ */
+export const FIX_MODEL_TURNS = 16;
+/**
+ * Creating N frames and the palette takes N+1 model calls at least. The
+ * runtime reports a turn limit as a failed child (it does not hand back the
+ * partial conversation), so the cap carries slack for a re-read or a retry:
+ * a create pass that needs 4 turns was refused by a cap of 4.
+ */
+export const FRAME_CREATION_TURNS = 12;
 
 /** A child that died on a provider hiccup gets a fresh attempt, bounded. */
 const CHILD_RETRIES = 4;
@@ -122,8 +146,20 @@ function withRetry(
 export const assetDrawOutputSchema = z.object({
   assetId: z.string(),
   frames: z.array(z.string()),
-  rounds: z.number().int().min(0).max(REVIEW_ROUNDS),
+  rounds: z.number().int().min(0),
   workers: z.number().int().min(1).max(4),
+  /**
+   * The reviewer's closing judgement. A `false` here is an artistic verdict —
+   * the frames were finished and the reviewer still saw room — and never a
+   * system failure; a run that could not finish fails with an error instead.
+   */
+  review: z
+    .object({
+      ok: z.boolean(),
+      summary: z.string().optional(),
+      notes: z.array(z.string()),
+    })
+    .optional(),
 });
 export type AssetDrawOutput = z.infer<typeof assetDrawOutputSchema>;
 
@@ -194,7 +230,7 @@ export function userRequestFromPrompt(
   for (const line of lines) {
     if (!line.startsWith("Request: ")) continue;
     const text = line.slice("Request: ".length).trim();
-    if (text.length > 0) return text.slice(0, 4000);
+    if (text.length > 0) return text;
   }
   if (role !== "plan") return null;
   const end = lines.findIndex((line) => line.trim() === PRIOR_BLOCK_END);
@@ -210,7 +246,7 @@ export function userRequestFromPrompt(
   ) {
     return null;
   }
-  return first.slice(0, 4000);
+  return first;
 }
 
 /**
@@ -333,7 +369,7 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
         prompt: await openingPrompt(
           ctx,
           deps,
-          `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName}. Palette: ${context.paletteSize} colours.`,
+          `${buildPlanPrompt(ctx.input)}\nProject: ${context.projectName}. Asset: ${context.assetName} [${context.assetId}]. Palette: ${context.paletteSize} colours.`,
         ),
       });
       return {
@@ -442,15 +478,19 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   const missingFrames = planNames.filter((name) => !context.frames.includes(name));
   if (missingFrames.length > 0) {
     if (checkpoint.framesCreateTried !== true) {
+      // This child only adds frames and palette, and it ends the moment it
+      // has done so: given the agent's painting loop it painted the first
+      // frame instead, which made the worker phase look optional.
       const id = ctx.spawnAgent("plan-create", {
         agentId: ctx.input.agentId,
         prompt: [
           `The user approved the plan, but these frames do not exist on the asset yet: ${missingFrames.join(", ")}.`,
           "Create each one now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
           "Do not call present_plan. The plan is already approved.",
-          "Answer with one short sentence.",
+          "Do not paint: painting belongs to the workers. Create the frames and palette, then answer with one short sentence.",
         ].join("\n"),
         continueFrom: checkpoint.planKey,
+        maxModelTurns: FRAME_CREATION_TURNS,
       });
       return {
         status: "waiting",
@@ -496,6 +536,8 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
           workerInstructions,
           buildWorkerPrompt({
             ...context.promptData,
+            ...(context.style !== undefined ? { style: context.style } : {}),
+            ...(plan !== undefined ? { plan } : {}),
             attachments: ctx.input.attachments.length,
             ownedFrames,
             readOnlyFrames: readOnly,
@@ -594,6 +636,7 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
                 workerInstructions,
                 buildWorkerPrompt({
                   ...context.promptData,
+                  ...(context.style !== undefined ? { style: context.style } : {}),
                   attachments: ctx.input.attachments.length,
                   ownedFrames,
                   readOnlyFrames: readOnly,
@@ -629,18 +672,15 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
   }
   return (async () => {
     const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
+    const log =
+      failed.length > 0
+        ? [
+            `Workers that did not finish: ${failed.map((key) => key.replace(/^slot-/, "")).join(", ")}.`,
+          ]
+        : [];
     const id = ctx.spawnAgent("review-1", {
       agentId: ctx.input.agentId,
-      prompt: [
-        reviewInstructions,
-        context,
-        failed.length > 0
-          ? `Workers that did not finish: ${failed.map((key) => key.replace(/^slot-/, "")).join(", ")}.`
-          : "",
-        deliveredSteers(ctx),
-      ]
-        .filter((line) => line.length > 0)
-        .join("\n\n"),
+      prompt: reviewPrompt(ctx, context, { round: 1, log }),
       continueFrom: checkpoint.planKey,
     });
     return {
@@ -652,16 +692,85 @@ function executePhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Tran
         round: 1,
         reviewKey: "review-1",
         fixIds: [],
+        log,
       },
       wait: { type: "children", ids: [id], policy: "allSettled" },
     };
   })();
 }
 
+/** One line per finished fix child: what it was told and what it reported. */
+function fixLines(
+  ctx: Ctx,
+  checkpoint: { fixIds: string[] },
+  fixes: ReviewFix[],
+): string[] {
+  const lines: string[] = [];
+  for (const id of checkpoint.fixIds) {
+    const child = ctx.children().find((record) => record.id === id);
+    if (!child) continue;
+    const fixOrder = Number(child.key.match(/-(\d+)$/)?.[1] ?? 0) - 1;
+    const outcome = child.outcome;
+    const reported =
+      outcome?.status === "completed" && typeof outcome.output === "string"
+        ? outcome.output
+        : `did not finish (${outcome?.status ?? "unknown"}${outcome && "error" in outcome && outcome.error ? `: ${outcome.error}` : ""})`;
+    lines.push(
+      `- ${child.key} → ${child.key.startsWith("fix-unpainted") ? "empty frames" : `"${fixes[fixOrder]?.frame ?? "?"}"`}: ${reported}`,
+    );
+  }
+  return lines;
+}
+
+function reviewPrompt(
+  ctx: Ctx,
+  context: string,
+  checkpoint: { log?: string[]; round: number },
+): string {
+  const workLog = checkpoint.log ?? [];
+  return [
+    reviewInstructions,
+    context,
+    workLog.length > 0
+      ? `Work so far (round ${checkpoint.round}; the frames you are reviewing already contain these fixes):\n${workLog.join("\n")}`
+      : "",
+    deliveredSteers(ctx),
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n\n");
+}
+
+function fixPrompt(
+  fix: ReviewFix,
+  intent: string | undefined,
+  workLog: string[],
+): string {
+  return [
+    fixInstructions,
+    `Frame: "${fix.frame}".${fix.layers && fix.layers.length > 0 ? ` Layers: ${fix.layers.join(", ")}.` : ""}`,
+    fix.referenceFrame !== undefined
+      ? `Match it against "${fix.referenceFrame}" — read that frame and copy the region you need instead of redrawing it.`
+      : "",
+    intent !== undefined ? `Its intent: ${intent}` : "",
+    `The review asks: ${fix.note}`,
+    workLog.length > 0 ? `Earlier work this task:\n${workLog.join("\n")}` : "",
+    fix.layers && fix.layers.length > 0
+      ? `Paint only ${fix.layers.map((layer) => `the ${layer} layer`).join(" and ")} of this frame, then save_frame and stop.`
+      : "Paint only this frame, then save_frame and stop.",
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n\n");
+}
+
 function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Transition {
   const checkpoint = ctx.checkpoint as Extract<AssetDrawCheckpoint, { phase: "review" }>;
-  const finish = async (rounds: number): Promise<Transition> => {
-    const names = checkpoint.plan.frames.map((frame) => frame.name);
+  const names = checkpoint.plan.frames.map((frame) => frame.name);
+  const log = checkpoint.log ?? [];
+
+  const settle = async (
+    verdict: { ok: boolean; summary?: string; notes: string[] },
+    rounds: number,
+  ): Promise<Transition> => {
     const unpainted = await deps.unpaintedFrames(ctx.input, names);
     if (unpainted.length === 0) {
       return {
@@ -671,25 +780,31 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
           frames: names,
           rounds,
           workers: checkpoint.plan.workers.length,
+          review: verdict,
         },
       };
     }
-    // The review reads frames with eyes; this is the deterministic backstop.
-    // One named repair first — a provider hiccup can leave a frame empty while
-    // the reviews pass — and a failure that names the frames after it.
-    if (retriesFor(checkpoint, "unpainted") < 1) {
+    // An unpainted frame is the one thing the reviewer's eyes can miss and the
+    // task can prove: it gets one named repair, then names the failure.
+    if ((checkpoint.retries?.unpainted ?? 0) < 1) {
       const id = ctx.spawnAgent("fix-unpainted", {
         agentId: ctx.input.agentId,
         prompt: [
           fixInstructions,
           `These frames are still empty: ${unpainted.join(", ")}.`,
-          "Paint each of them now with the painting tools, then answer with one short sentence.",
+          "Paint each of them now with the painting tools, save_frame, then answer with one short sentence.",
         ].join("\n\n"),
         continueFrom: checkpoint.planKey,
+        // One repair, one bounded attempt: this backstop exists to catch what
+        // a review missed, not to become a second, unbounded painting loop.
+        maxModelTurns: FIX_MODEL_TURNS,
       });
       return {
         status: "waiting",
-        checkpoint: { ...checkpoint, retries: withRetry(checkpoint, "unpainted") },
+        checkpoint: {
+          ...checkpoint,
+          retries: { ...checkpoint.retries, unpainted: 1 },
+        },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     }
@@ -698,33 +813,40 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
       error: `The reviews passed, but these frames are still unpainted: ${unpainted.join(", ")}.`,
     };
   };
+
   if (checkpoint.reviewKey === undefined) {
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
-      const id = ctx.spawnAgent(`review-${checkpoint.round}`, {
+      const key = `review-${checkpoint.round}`;
+      const id = ctx.spawnAgent(key, {
         agentId: ctx.input.agentId,
-        prompt: [reviewInstructions, context, deliveredSteers(ctx)]
-          .filter((line) => line.length > 0)
-          .join("\n\n"),
+        prompt: reviewPrompt(ctx, context, checkpoint),
         continueFrom: checkpoint.planKey,
       });
       return {
         status: "waiting",
-        checkpoint: { ...checkpoint, reviewKey: `review-${checkpoint.round}` },
+        checkpoint: { ...checkpoint, reviewKey: key },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     })();
   }
+
   if (checkpoint.fixIds.length > 0) {
-    // The fixes finished; either start the next review or stop at the cap.
-    if (checkpoint.round >= REVIEW_ROUNDS) return finish(checkpoint.round);
+    // The fixes finished: log what they reported, then ask the reviewer again.
+    const reviewed = ctx.children().find((record) => record.key === checkpoint.reviewKey);
+    const verdict =
+      reviewed?.outcome?.status === "completed"
+        ? parseReviewVerdict(reviewed.outcome.output)
+        : undefined;
+    const fixes = verdict?.ok === true ? verdict.verdict.fixes : [];
+    const nextLog = [...log, ...fixLines(ctx, checkpoint, fixes)];
     return (async () => {
       const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
-      const id = ctx.spawnAgent(`review-${checkpoint.round + 1}`, {
+      const round = checkpoint.round + 1;
+      const key = `review-${round}`;
+      const id = ctx.spawnAgent(key, {
         agentId: ctx.input.agentId,
-        prompt: [reviewInstructions, context, deliveredSteers(ctx)]
-          .filter((line) => line.length > 0)
-          .join("\n\n"),
+        prompt: reviewPrompt(ctx, context, { round, log: nextLog }),
         continueFrom: checkpoint.planKey,
       });
       return {
@@ -733,14 +855,17 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
           phase: "review",
           plan: checkpoint.plan,
           planKey: checkpoint.planKey,
-          round: checkpoint.round + 1,
-          reviewKey: `review-${checkpoint.round + 1}`,
+          round,
+          reviewKey: key,
           fixIds: [],
+          log: nextLog,
+          ...(checkpoint.retries ? { retries: checkpoint.retries } : {}),
         },
         wait: { type: "children", ids: [id], policy: "allSettled" },
       };
     })();
   }
+
   const outcome = childOutput(ctx, checkpoint.reviewKey);
   if (outcome?.status === "cancelled") {
     return {
@@ -748,17 +873,15 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
       error: "The review child was cancelled; the run stops here.",
     };
   }
-  if (outcome?.status !== "completed" || typeof outcome.output !== "string") {
+  if (outcome?.status !== "completed" || outcome.output === undefined) {
     const key = `review:${checkpoint.round}`;
     if (retriesFor(checkpoint, key) < CHILD_RETRIES) {
       return (async () => {
         const context = await deps.loadReviewContext(ctx.input, checkpoint.plan);
-        const childKey = `review-${checkpoint.round}-retry-${retriesFor(checkpoint, key) + 1}`;
+        const childKey = `${checkpoint.reviewKey}-retry-${retriesFor(checkpoint, key) + 1}`;
         const id = ctx.spawnAgent(childKey, {
           agentId: ctx.input.agentId,
-          prompt: [reviewInstructions, context, deliveredSteers(ctx)]
-            .filter((line) => line.length > 0)
-            .join("\n\n"),
+          prompt: reviewPrompt(ctx, context, checkpoint),
           continueFrom: checkpoint.planKey,
         });
         return {
@@ -777,30 +900,48 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
       error: `The review phase did not complete after ${CHILD_RETRIES} retries: ${outcome?.status ?? "unknown"}.`,
     };
   }
-  let verdict: { ok?: boolean; fixes?: Array<{ frame: string; note: string }> };
-  try {
-    verdict = JSON.parse(outcome.output) as typeof verdict;
-  } catch {
-    return { status: "failed", error: "The review answered with invalid JSON." };
+
+  const parsed = parseReviewVerdict(outcome.output);
+  if (!parsed.ok) {
+    // The verdict is the reviewer's contract; an answer that is not one is a
+    // system fault (wrong agent or broken output), not an artistic judgement.
+    return { status: "failed", error: parsed.error };
   }
-  if (verdict.ok === true || checkpoint.round >= REVIEW_ROUNDS)
-    return finish(checkpoint.round);
-  const fixes = (verdict.fixes ?? [])
-    .slice(0, 2)
-    .filter((fix) => checkpoint.plan.frames.some((frame) => frame.name === fix.frame));
-  if (fixes.length === 0) return finish(checkpoint.round);
-  const fixIds = fixes.map((fix, index) => {
-    const frame = checkpoint.plan.frames.find(
-      (candidate) => candidate.name === fix.frame,
+  const { verdict } = parsed;
+  const notes = verdict.fixes.map((fix) => `${fix.frame}: ${fix.note}`);
+  if (verdict.done) {
+    // The reviewer's judgement is the outcome; the fixes it listed alongside
+    // `ok` are carried into the notes the console shows, not acted on.
+    return settle(
+      {
+        ok: true,
+        ...(verdict.summary !== undefined ? { summary: verdict.summary } : {}),
+        notes,
+      },
+      checkpoint.round,
     );
+  }
+  const frames = new Set(names);
+  const fixes = verdict.fixes.filter((fix) => frames.has(fix.frame));
+  if (fixes.length === 0) {
+    return settle(
+      {
+        ok: false,
+        ...(verdict.summary !== undefined ? { summary: verdict.summary } : {}),
+        notes: verdict.fixes.map((fix) => `${fix.frame}: ${fix.note}`),
+      },
+      checkpoint.round,
+    );
+  }
+  const fixIds = fixes.map((fix, index) => {
+    const intent = checkpoint.plan.frames.find(
+      (frame) => frame.name === fix.frame,
+    )?.intent;
     return ctx.spawnAgent(`fix-${checkpoint.round}-${index + 1}`, {
       agentId: ctx.input.agentId,
-      prompt: [
-        fixInstructions,
-        `Fix "${fix.frame}": ${fix.note}`,
-        `Intent: ${frame?.intent ?? ""}.`,
-      ].join("\n\n"),
+      prompt: fixPrompt(fix, intent, log),
       continueFrom: checkpoint.reviewKey,
+      maxModelTurns: FIX_MODEL_TURNS,
     });
   });
   return {
@@ -808,6 +949,21 @@ function reviewPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> | Trans
     checkpoint: { ...checkpoint, fixIds },
     wait: { type: "children", ids: fixIds, policy: "allSettled" },
   };
+}
+
+/**
+ * plan | worker | review | fix, from a task child's key. Every role has its
+ * own key prefix — `w1`…`w4`, `plan-*`, `review-N`, `fix-*` — and anything
+ * else is unknown: a prefix check on the first letter once read a plan frame
+ * called "putar-1" as a worker, which bound the frame-creation child to the
+ * first frame and sent it down the paint path.
+ */
+export function roleOfKey(key: string): "plan" | "worker" | "review" | "fix" | undefined {
+  if (key === "plan" || key.startsWith("plan-")) return "plan";
+  if (/^w[1-4](-|$)/.test(key)) return "worker";
+  if (key.startsWith("review")) return "review";
+  if (key === "fix" || key.startsWith("fix-")) return "fix";
+  return undefined;
 }
 
 export type PriorContext = {
@@ -826,8 +982,13 @@ export type PlanContext = {
   /** The names the asset's frames carry right now. */
   frames: string[];
 };
+/** The project style a worker prompt prints; absent keeps the format default. */
 export type WorkerContext = {
-  promptData: Omit<WorkerPromptInput, "ownedFrames" | "readOnlyFrames" | "references">;
+  style?: WorkerPromptInput["style"];
+  promptData: Omit<
+    WorkerPromptInput,
+    "ownedFrames" | "readOnlyFrames" | "references" | "style"
+  >;
 };
 export type AssetDrawDeps = {
   loadPlanContext(input: AssetDrawInput): Promise<PlanContext>;

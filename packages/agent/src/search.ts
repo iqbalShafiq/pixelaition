@@ -90,6 +90,8 @@ export async function searchWeb(
     results: (parsed.results ?? []).map((result) => ({
       title: result.title,
       url: result.url,
+      // Snippets are a menu for the next step; keeping them short is a choice
+      // about signal, not a cap on what the user wrote.
       content: (result.content ?? "").slice(0, 400),
     })),
     images,

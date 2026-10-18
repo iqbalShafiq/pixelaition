@@ -2,9 +2,10 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Agent } from "@anvia/core";
+import { Agent, createSummaryMemoryCompactor, estimateMemoryTokens } from "@anvia/core";
 import { createQuestionTool } from "@anvia/core/tool";
 import type { AgentPrompt } from "@anvia/core/agent";
+import type { CompletionModel } from "@anvia/core";
 import type { AgentGenerationEndArgs, AgentObserver } from "@anvia/core/observability";
 import {
   parseAgentInteractionResponse,
@@ -40,6 +41,7 @@ import {
   openCodeGoHeaders,
   paletteCapacity,
   parseModelSpecRow,
+  roleOfKey,
   releaseRun,
   runIdFromOperation,
   screenOutput,
@@ -47,11 +49,14 @@ import {
   selectRunTarget,
   stagedOverrideSchema,
   traceIdFor,
+  PLAN_TOOL_NAMES,
+  WORKER_TOOL_NAMES,
   type AssetSummary,
   type CreateAssetInput,
   type JevGateCheck,
   type JevUsage,
   type ModelSpec,
+  type ProjectAsset,
   type ProjectSummary,
   type RunAsset,
   type RunTarget,
@@ -507,71 +512,124 @@ const observability = {
   errorPolicy: "ignore" as const,
 };
 
+/**
+ * Task children carry one model and effort, and the role decides the tools.
+ * `continueFrom` only continues a child of the same agent, so roles that
+ * continue each other's conversation share one agent: the supervisor (plan →
+ * review → fix) carries the full catalogue, and each worker runs on a painter
+ * agent that carries the painting, transfer and reading tools and nothing
+ * structural — a worker is never offered a tool it may not call.
+ */
+const AGENT_ROLES = ["supervisor", "painter", "ask"] as const;
+export type AgentRoleName = (typeof AGENT_ROLES)[number];
+
+const ROLE_TOOLS: Record<AgentRoleName, ReadonlySet<string>> = {
+  supervisor: PLAN_TOOL_NAMES,
+  painter: WORKER_TOOL_NAMES,
+  ask: ASK_TOOL_NAMES,
+};
+
+/**
+ * A long plan/review/fix conversation must not lose its early decisions when
+ * it grows. The summary compactor reads the transcript when the conversation
+ * approaches the model's window and replaces the oldest part with a summary
+ * the model wrote; the canonical history stays in the durable run.
+ */
+function compactionFor(model: CompletionModel, window: number | undefined) {
+  if (window === undefined) return undefined;
+  return {
+    trigger: { afterTokens: Math.floor(window * 0.8) },
+    retention: { recentTurns: 2, recentToolTurns: 2 },
+    compactor: createSummaryMemoryCompactor({
+      model,
+      instructions:
+        "Summarize this pixel-art task so the supervisor can keep going: the approved plan (frames, intents, layers), every review verdict and fix order, what each fix reported, and what is still open. Keep frame names and numbers exact; drop tool payloads and pixel data.",
+    }),
+    tokenCounter: (messages: readonly unknown[]) =>
+      estimateMemoryTokens(messages as never),
+  };
+}
+
 // Durable submits carry no model controls, so one agent is registered per
-// model, reasoning effort, and mode and the run picks the trio the decision
-// chose. The ask agent shares the model and context but cannot paint; each
-// entry keeps its tool list so the recovery map matches exactly.
+// model, reasoning effort, and role, and a child's spawn picks the trio. Every
+// role's tool list is fixed here, so the model only ever sees what it owns.
 const agents = completions.flatMap(({ spec, model }) => {
   const questionTool = createQuestionTool();
-  const drawingTools = [
-    ...createPixelTools({ vision: spec.vision, webSearch }),
-    // ask_user belongs to the worker and supervisor sets; the review cannot
-    // ask (its role gate refuses it), exactly like the tool contract says.
-    {
-      ...questionTool,
-      call: async (args: never, context?: { operationId?: string }) => {
-        const operationId = context?.operationId;
-        // The durable runtime passes "<runId>/<operationKey>", so the role
-        // check must resolve the run through the shared prefix.
-        const run =
-          operationId === undefined ? undefined : getRun(runIdFromOperation(operationId));
-        if (run !== undefined) assertRoleAllowsTool(run, questionTool.name);
-        return questionTool.call(args, context as never);
-      },
-    },
-  ];
-  const askingTools = drawingTools.filter((tool) => ASK_TOOL_NAMES.has(tool.name));
-  // One draw agent per model and effort serves every task role: `continueFrom`
-  // only continues a child of the same agent, and the role gate in the tool
-  // layer enforces what each child may call. Role instructions ride in each
-  // spawn prompt.
-  return spec.efforts.flatMap((effort) => [
-    {
-      id: `${agentPrefix}:${spec.id}:${effort}`,
-      vision: spec.vision,
-      tools: drawingTools,
-      agent: new Agent({
-        id: `${agentPrefix}:${spec.id}:${effort}`,
-        model,
-        instructions: pixelInstructions,
-        tools: drawingTools,
-        maxTurns: 120,
-        controls: { reasoningEffort: effort },
-        observability,
-      }),
-    },
-    {
-      id: `${agentPrefix}:ask:${spec.id}:${effort}`,
-      vision: spec.vision,
-      tools: askingTools,
-      agent: new Agent({
-        id: `${agentPrefix}:ask:${spec.id}:${effort}`,
-        model,
-        instructions: askInstructions,
-        tools: askingTools,
-        maxTurns: 8,
-        controls: { reasoningEffort: effort },
-        observability,
-      }),
-    },
-  ]);
+  const catalogue = createPixelTools({ vision: spec.vision, webSearch });
+  const tool = (name: string) => {
+    const entry = catalogue.find((candidate) => candidate.name === name);
+    if (entry === undefined) return [];
+    // ask_user is role-gated like every tool: the gate resolves the run from
+    // the "<runId>/<operationKey>" id the durable runtime passes.
+    const call = async (args: never, context?: { operationId?: string }) => {
+      const operationId = context?.operationId;
+      const run =
+        operationId === undefined ? undefined : getRun(runIdFromOperation(operationId));
+      if (run !== undefined) assertRoleAllowsTool(run, name);
+      return entry.call(args, context as never);
+    };
+    return [{ ...entry, call }];
+  };
+  const compaction = compactionFor(model, spec.contextWindow);
+  return spec.efforts.flatMap((effort) =>
+    AGENT_ROLES.map((role) => {
+      // Registration order matters for the ask agent only in that its tool
+      // list is explicit; every role filters the same catalogue.
+      const roleTools = catalogue.filter((entry) =>
+        role === "ask"
+          ? ROLE_TOOLS.ask.has(entry.name)
+          : ROLE_TOOLS[role].has(entry.name),
+      );
+      // `ask_user` belongs to the roles that talk to the user; the review
+      // answers with its verdict and never interrupts.
+      const tools =
+        role === "ask" || role === "painter"
+          ? [...roleTools, ...tool(questionTool.name)]
+          : roleTools;
+      const id = `${agentPrefix}:${role}:${spec.id}:${effort}`;
+      return {
+        id,
+        role,
+        vision: spec.vision,
+        tools,
+        compaction,
+        agent: new Agent({
+          id,
+          model,
+          instructions: role === "ask" ? askInstructions : pixelInstructions,
+          tools,
+          // A painting run needs room for many tool rounds; a question is one
+          // or two turns. Floor and per-run `maxModelTurns` do the bounding.
+          maxTurns: role === "ask" ? 8 : 120,
+          controls: { reasoningEffort: effort },
+          observability,
+        }),
+      };
+    }),
+  );
 });
 
-function agentForTarget(target: RunTarget, mode: "draw" | "ask"): Agent | undefined {
-  const prefix = mode === "ask" ? `${agentPrefix}:ask` : agentPrefix;
-  return agents.find(
-    (entry) => entry.id === `${prefix}:${target.modelId}:${target.effort}`,
-  )?.agent;
+/**
+ * The agent id for one role. Plan, review and fix continue each other's
+ * conversation, so they all live on the supervisor agent.
+ */
+function drawAgentId(role: AgentRoleName, target: RunTarget): string {
+  return `${agentPrefix}:${role}:${target.modelId}:${target.effort}`;
+}
+
+/** The agent a child with this key runs on: workers paint, everyone else supervises. */
+export function agentRoleForKey(key: string): AgentRoleName {
+  return roleOfKey(key) === "worker" ? "painter" : "supervisor";
+}
+
+function agentForTarget(
+  target: RunTarget,
+  mode: "draw" | "ask",
+  role: AgentRoleName = "supervisor",
+): Agent | undefined {
+  if (mode === "ask")
+    return agents.find((entry) => entry.id === drawAgentId("ask", target))?.agent;
+  return agents.find((entry) => entry.id === drawAgentId(role, target))?.agent;
 }
 
 // --- Entity summaries -------------------------------------------------------
@@ -819,15 +877,17 @@ function planAlreadyApproved(key: string): boolean {
   return /^plan-\d+$/.test(key) || key === "plan-create";
 }
 
-/** plan | worker | review | fix, from a task child's key. */
-function roleOfKey(key: string): "plan" | "worker" | "review" | "fix" {
-  return key.startsWith("plan")
-    ? "plan"
-    : key.startsWith("w")
-      ? "worker"
-      : key.startsWith("review")
-        ? "review"
-        : "fix";
+/**
+ * The review verdict the task's own output recorded, for the console. The
+ * durable task record carries the output of a completed task; a failed or
+ * cancelled one has none.
+ */
+function reviewOfTaskRecord(record: unknown): { review?: unknown } | undefined {
+  const outcome = (record as { outcome?: { status?: string; output?: unknown } })
+    ?.outcome;
+  if (outcome?.status !== "completed") return undefined;
+  const output = outcome.output as { review?: unknown } | undefined;
+  return output?.review === undefined ? undefined : { review: output.review };
 }
 
 function modelEffortFromAgentId(agentId: string): { modelId: string; effort: string } {
@@ -962,6 +1022,27 @@ function mirrorChildEvents(
   listeners.set(childPublicId, set);
 }
 
+/**
+ * The agent a child spawns on: the caller's pick when it names one, otherwise
+ * the role's agent (workers paint, plan/review/fix supervise).
+ */
+function agentIdForChild(
+  node: { key: string; input?: unknown },
+  fallback: string,
+): string {
+  const chosen = (node.input as { agentId?: unknown } | undefined)?.agentId;
+  if (typeof chosen === "string" && chosen.length > 0) return chosen;
+  return agentIdForKeyRole(fallback, agentRoleForKey(node.key));
+}
+
+/** Swap the role segment of "<prefix>:<role>:<model>:<effort>". */
+function agentIdForKeyRole(agentId: string, role: AgentRoleName): string {
+  const parts = agentId.split(":");
+  if (parts.length < 4) return agentId;
+  const [prefix, , ...rest] = parts;
+  return [prefix, role, ...rest].join(":");
+}
+
 async function bindTaskChild(
   runtime: DurableRuntime,
   durableTaskId: string,
@@ -972,13 +1053,13 @@ async function bindTaskChild(
 ): Promise<void> {
   const childRunId = node.agentRunId;
   if (childRunId === undefined || boundChildRuns.has(childRunId)) return;
-  const earlyRole: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
-    ? "plan"
-    : node.key.startsWith("w")
-      ? "worker"
-      : node.key.startsWith("review")
-        ? "review"
-        : "fix";
+  const earlyRole = roleOfKey(node.key);
+  if (earlyRole === undefined) {
+    console.error(
+      `[bind] ${node.key}: no task role reads this key; the child stays unbound`,
+    );
+    return;
+  }
   const earlyWorkerKey =
     earlyRole === "worker" || earlyRole === "fix" ? node.key.split("-")[0] : undefined;
   if (plan === null && (earlyRole === "worker" || earlyRole === "fix")) {
@@ -1001,19 +1082,10 @@ async function bindTaskChild(
     .select({ id: generationRuns.id })
     .from(generationRuns)
     .where(eq(generationRuns.durableRunId, childRunId));
-  const role: "plan" | "worker" | "review" | "fix" = node.key.startsWith("plan")
-    ? "plan"
-    : node.key.startsWith("w")
-      ? "worker"
-      : node.key.startsWith("review")
-        ? "review"
-        : "fix";
+  const role = roleOfKey(node.key) ?? earlyRole;
   const workerKey =
     role === "worker" || role === "fix" ? node.key.split("-")[0] : undefined;
-  const agentId =
-    typeof (node.input as { agentId?: unknown } | undefined)?.agentId === "string"
-      ? (node.input as { agentId: string }).agentId
-      : input.agentId;
+  const agentId = agentIdForChild(node, input.agentId);
   const { modelId, effort } = modelEffortFromAgentId(agentId);
   const spawnPrompt = promptText(
     (node.input as { prompt?: unknown } | undefined)?.prompt,
@@ -1036,7 +1108,9 @@ async function bindTaskChild(
       reasoningEffort: effort,
       // The exact prompt the child ran with, on stable metadata: observation
       // inputs are per-event and cannot be used to judge context sufficiency.
-      prompt: spawnPrompt.slice(0, 4000),
+      // The durable run keeps the canonical copy; this one is for reading a
+      // session back, so it travels whole.
+      prompt: spawnPrompt,
     },
   });
 
@@ -1047,6 +1121,13 @@ async function bindTaskChild(
   const assetFrames =
     asset?.frames.map((frame) => ({ id: frame.id, name: frame.name })) ?? [];
   const ownedFrameIds = framesForRole(plan, role, workerKey, assetFrames, spawnPrompt);
+  const fixLayers =
+    role === "fix"
+      ? (/^Layers: (.+?)\.(?:\s|$)/m.exec(spawnPrompt)?.[1] ?? "")
+          .split(",")
+          .map((layer) => layer.trim())
+          .filter((layer) => layer.length > 0)
+      : [];
   if (role === "worker" || role === "fix") {
     const planned =
       plan?.workers.find((worker) => worker.key === workerKey)?.frames ?? [];
@@ -1075,6 +1156,19 @@ async function bindTaskChild(
     });
   }
 
+  if (
+    asset !== undefined &&
+    ownedFrameIds.length === 0 &&
+    (role === "worker" || role === "fix")
+  ) {
+    // A writer with nothing to write is a fault of the task, not a quiet empty
+    // child: it says so here, where the cause is still known.
+    console.error(
+      `[bind] ${node.key}: ${role} owns no frame (plan workers: ${JSON.stringify(
+        plan?.workers.find((worker) => worker.key === workerKey)?.frames ?? [],
+      )})`,
+    );
+  }
   if (asset !== undefined && ownedFrameIds.length > 0) {
     bindAssetRun({
       durableRunId: childRunId,
@@ -1087,10 +1181,22 @@ async function bindTaskChild(
       role,
       ...(workerKey ? { workerKey } : {}),
       ...(role === "worker" || role === "fix" ? { ownedFrameIds } : {}),
+      // A fix is ordered with layers; the prompt names them, and the write
+      // guard makes the list binding rather than advisory.
+      ...(role === "fix" && fixLayers.length > 0
+        ? { ownedLayerNames: new Set(fixLayers) }
+        : {}),
       // plan-1 corrects JSON after approval; plan-create only adds the frames.
       // plan-retry is a child that never reached approval, so it may still ask.
       ...(role === "plan" && planAlreadyApproved(node.key) ? { planApproved: true } : {}),
       userId: input.userId,
+      project: {
+        projectId: asset.projectId,
+        projectName: asset.projectName,
+        projectAssets: await loadProjectSiblings(asset.projectId, asset.id),
+        onLoadProjectAsset: async (assetId: string) =>
+          loadProjectAssetForRead(undefined, asset.projectId, assetId),
+      },
     });
   } else if (role === "plan") {
     // A workspace task starts with no asset; the plan child binds one lazily.
@@ -1195,19 +1301,18 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
             typeof (node.input as { prompt?: unknown } | undefined)?.prompt === "string"
               ? (node.input as { prompt: string }).prompt
               : "";
+          const nodeRole = roleOfKey(node.key);
           const nodeFrames =
-            plan === null
+            plan === null || nodeRole === undefined
               ? []
-              : roleOfKey(node.key) === "worker"
+              : nodeRole === "worker"
                 ? (plan.workers.find((worker) => worker.key === node.key.split("-")[0])
                     ?.frames ?? [])
-                : plan.frames
-                    .filter((frame) =>
-                      roleOfKey(node.key) === "fix"
-                        ? nodePrompt.includes(frame.name)
-                        : true,
-                    )
-                    .map((frame) => frame.name);
+                : nodeRole === "fix"
+                  ? plan.frames
+                      .filter((frame) => nodePrompt.includes(frame.name))
+                      .map((frame) => frame.name)
+                  : plan.frames.map((frame) => frame.name);
           publish(durableTaskId, node.agentRunId ? "worker-status" : "worker-spawned", {
             workerKey: node.key,
             status: node.status,
@@ -1216,7 +1321,12 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
         }
         if (terminal) {
           await rollupTaskUsage(row.id, durableTaskId);
-          publish(durableTaskId, "task-complete", { status: record.status });
+          publish(durableTaskId, "task-complete", {
+            status: record.status,
+            // The reviewer's closing judgement: `ok: false` is an artistic
+            // verdict on a finished run, never a system failure.
+            ...(reviewOfTaskRecord(record) ?? {}),
+          });
           break;
         }
       } catch (reason) {
@@ -1282,6 +1392,8 @@ function readDurableDraw(durableId: string) {
 }
 
 const assetDraw = createAssetDrawTask(buildTaskDeps(db, readDurableDraw));
+/** The runtime once it is open; tools that act on their own run wait for it here. */
+let runtimeReady: DurableRuntime | undefined;
 const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
@@ -1291,6 +1403,7 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
           version: "1",
           stream: true,
           toolRecovery: toolRecovery(entry.tools),
+          ...(entry.compaction ? { compaction: entry.compaction } : {}),
         })),
       }
     : {}),
@@ -1307,6 +1420,7 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
   limits: { maxPayloadBytes: 8 * 1024 * 1024 },
 })
   .then(async (runtime) => {
+    runtimeReady = runtime;
     // Bindings and follow loops come first: resume() starts pending runs
     // immediately, and a run that executes a tool before its binding exists
     // would see an unbound run (every frame "unapproved") and ask the human
@@ -1668,7 +1782,9 @@ app.post("/internal/runs", async (req, res) => {
           attachments: body.attachments ?? [],
           taskId: body.runId,
           modelVision: seesUserImages(targetSpec),
-          agentId: `${agentPrefix}:${target.modelId}:${target.effort}`,
+          // The supervisor's id; the plan child spawns on it and each
+          // worker slot on its painter sibling (see agentIdForChild).
+          agentId: drawAgentId("supervisor", target),
           maxWorkers: shape.workers,
           review: shape.review,
           maxPalette: asset ? paletteCapacity(asset.palette.length) : MAX_COLORS,
@@ -1719,7 +1835,7 @@ app.post("/internal/runs", async (req, res) => {
   let run: Awaited<ReturnType<typeof runtime.submit>>;
   try {
     run = await runtime.submit({
-      agentId: `${agentPrefix}:ask:${target.modelId}:${target.effort}`,
+      agentId: drawAgentId("ask", target),
       // One conversation per model and shape: the runtime continues a
       // session's latest completed run whatever agent produced it, and a
       // chat-shape turn's locally minted reasoning ids are not replayable
@@ -1852,7 +1968,8 @@ app.post("/internal/tasks/:id/steer", async (req, res) => {
   if (!authorized(req)) return res.status(401).end();
   const body = z
     .object({
-      prompt: z.string().min(1).max(4000),
+      // A steering message is the user's own words; it is not summarized.
+      prompt: z.string().min(1),
       frameName: z.string().min(1).max(40).optional(),
       frames: z.array(z.string().min(1).max(40)).max(12).optional(),
       target: z.string().min(1).max(8).optional(),
@@ -2371,7 +2488,26 @@ async function follow(
       if (["completed", "failed", "cancelled"].includes(snapshot.run.status)) {
         const binding = getRun(durableId);
         const stored = consoleEvents(publicId, interactionsFor(publicId));
-        const answer = await screenAnswer(durableId, outcomeTextFrom(stored));
+        // The trail can be slow (a provider hiccup, a queued Jev call). The
+        // run is over either way, so it settles on time and the screened text
+        // lands when it arrives — a slow trail never holds a run "live" for
+        // minutes while its children wait behind it.
+        const raw = outcomeTextFrom(stored);
+        const answer = raw ?? null;
+        const screened = screenAnswer(durableId, raw);
+        void screened
+          .then((text) => {
+            if (typeof text !== "string" || text === raw) return;
+            return db
+              .update(generationRuns)
+              .set({ answer: text })
+              .where(eq(generationRuns.id, publicId));
+          })
+          .catch((reason: unknown) => {
+            console.error(
+              `[follow] closing answer update failed: ${boundedReason(reason)}`,
+            );
+          });
         await db
           .update(generationRuns)
           .set({
@@ -2454,7 +2590,12 @@ async function follow(
 async function loadAsset(assetId: string, userId?: string) {
   const { assets, projects } = await import("@pixelaition/db");
   const [row] = await db
-    .select({ asset: assets, style: projects.style, projectSummary: projects.summary })
+    .select({
+      asset: assets,
+      style: projects.style,
+      projectSummary: projects.summary,
+      projectName: projects.name,
+    })
     .from(assets)
     .innerJoin(projects, eq(assets.projectId, projects.id))
     .where(
@@ -2472,6 +2613,7 @@ async function loadAsset(assetId: string, userId?: string) {
     ...row.asset,
     palette: row.asset.palette as string[],
     style: (row.style as StyleGuide) ?? defaultStyle,
+    projectName: row.projectName,
     projectSummary: row.projectSummary,
     frames: frameRows.map((frame) => ({
       id: frame.id,
@@ -2639,6 +2781,8 @@ function bindAssetRun(options: {
   ownedFrameIds?: string[];
   /** A correction of a plan the user already approved. */
   planApproved?: boolean;
+  /** Where the asset lives, and which sibling assets this run may read. */
+  project?: ProjectAccess;
 }): void {
   const { durableRunId, publicRunId, assetId, asset, originFrameId, request } = options;
   const writes = frameWrites(
@@ -2686,7 +2830,142 @@ function bindAssetRun(options: {
     ...(options.workerKey ? { workerKey: options.workerKey } : {}),
     ...(options.ownedFrameIds ? { ownedFrameIds: new Set(options.ownedFrameIds) } : {}),
     ...(options.planApproved ? { planApproved: true } : {}),
+    ...(options.project ?? {}),
+    onSelectWriteFrame: async (frameId: string) => {
+      // The console follows the frame being written, exactly as it follows a
+      // stroke, so a fix on spin-4 is not shown on spin-1.
+      publish(publicRunId, "frame-focus", { frameId });
+      await db
+        .update(generationRuns)
+        .set({ frameId })
+        .where(eq(generationRuns.id, publicRunId));
+    },
+    onSaveFrame: async (frameId: string) => {
+      // Strokes persist as they happen; saving is the frame's completion mark.
+      // It names the frame the writer finished, so once every frame it owns is
+      // saved the run only finishes children still pointing at the current
+      // frame instead of leaving an earlier one "in progress". A turn-limited
+      // worker that owns two frames can therefore finish once per frame.
+      publish(publicRunId, "frame-focus", { frameId });
+      await db
+        .update(generationRuns)
+        .set({ frameId })
+        .where(eq(generationRuns.id, publicRunId));
+      if (runtimeReady !== undefined) {
+        await finishEarlyIfSaved(
+          runtimeReady,
+          durableRunId,
+          publicRunId,
+          options.ownedFrameIds ?? [],
+        );
+      }
+      summarizer?.queue("frame", frameId);
+    },
   });
+}
+
+/**
+ * A writer that saved every frame it touched has finished its work even if its
+ * turn budget has not run out. The durable run is cancelled and a closing
+ * status is written by hand, so every frame it painted ends on a terminal row
+ * pointing at itself: a turn-limited worker that painted two frames and then
+ * stopped by its budget left the first frame on a run row that pointed at the
+ * second, and the editor kept showing that frame as an unsaved draft.
+ */
+async function finishEarlyIfSaved(
+  runtime: DurableRuntime,
+  durableRunId: string,
+  publicRunId: string,
+  ownedFrameIds: string[],
+): Promise<void> {
+  const painted = [...(getRun(durableRunId)?.touchedFrames ?? [])];
+  if (ownedFrameIds.length === 0 || painted.length === 0) return;
+  if (!ownedFrameIds.every((frameId) => painted.includes(frameId))) return;
+  const handle = await runtime.getRun(durableRunId);
+  const status = await handle.status();
+  if (["completed", "failed", "cancelled"].includes(status.status)) return;
+  await handle.cancel();
+  const text = "Every owned frame was saved.";
+  publish(publicRunId, "status", {
+    status: "completed",
+    outcome: { text },
+  });
+  const stored = consoleEvents(publicRunId, interactionsFor(publicRunId));
+  await db
+    .update(generationRuns)
+    .set({
+      status: "succeeded",
+      finishedAt: new Date(),
+      events: stored,
+      answer: text,
+      usage: { ...usageFor(durableRunId) },
+    })
+    .where(and(eq(generationRuns.id, publicRunId), eq(generationRuns.status, "running")));
+}
+
+/**
+ * The project a task runs in: every asset is readable, but a sibling asset is
+ * decoded only when a tool asks for it.
+ */
+type ProjectAccess = {
+  projectId: string;
+  projectName: string;
+  projectAssets: ProjectAsset[];
+  onLoadProjectAsset: (assetId: string) => Promise<ProjectAsset | undefined>;
+};
+
+/**
+ * Siblings of one asset, with their frames already decoded: the style evidence
+ * a worker or review reads across the project. Reads only.
+ */
+async function loadProjectSiblings(projectId: string, exceptAssetId: string) {
+  const siblings = await db
+    .select({
+      id: assets.id,
+      name: assets.name,
+      width: assets.width,
+      height: assets.height,
+      palette: assets.palette,
+      summary: assets.summary,
+    })
+    .from(assets)
+    .where(and(eq(assets.projectId, projectId), ne(assets.id, exceptAssetId)));
+  const decoded: ProjectAsset[] = [];
+  for (const sibling of siblings) {
+    const asset = await loadProjectAssetForRead(undefined, projectId, sibling.id);
+    if (asset !== undefined) decoded.push(asset);
+  }
+  return decoded;
+}
+
+/** One asset of the run's project, decoded for reading; undefined when it is not. */
+async function loadProjectAssetForRead(
+  userId: string | undefined,
+  projectId: string,
+  assetId: string,
+): Promise<ProjectAsset | undefined> {
+  const loaded = await loadAsset(assetId, userId);
+  if (!loaded || loaded.projectId !== projectId) return undefined;
+  return {
+    id: loaded.id,
+    name: loaded.name,
+    summary: loaded.summary,
+    width: loaded.width,
+    height: loaded.height,
+    palette: loaded.palette,
+    frames: loaded.frames.map((frame) => ({
+      id: frame.id,
+      name: frame.name,
+      summary: frame.summary,
+      index: frame.index,
+      buffer: frameToBuffer(
+        { id: frame.id, name: frame.name, index: frame.index, layers: frame.layers },
+        loaded.width,
+        loaded.height,
+        loaded.palette,
+      ),
+    })),
+  };
 }
 
 /**
@@ -2806,7 +3085,7 @@ function bindWorkspaceRun(options: {
     onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
     onCreateAsset: async (ownerId, input: CreateAssetInput): Promise<RunAsset> => {
       const [project] = await db
-        .select({ style: projects.style, summary: projects.summary })
+        .select({ name: projects.name, style: projects.style, summary: projects.summary })
         .from(projects)
         .where(and(eq(projects.id, input.projectId), eq(projects.userId, ownerId)));
       if (!project) throw new Error("That project is not available.");
@@ -2843,6 +3122,7 @@ function bindWorkspaceRun(options: {
         // A fresh asset has no generated summary yet; the summarizer fills it.
         summary: "",
         summaryAt: null,
+        projectName: project.name,
         projectSummary: project.summary,
         style: project.style as StyleGuide,
         createdAt: new Date(),

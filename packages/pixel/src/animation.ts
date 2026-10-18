@@ -8,8 +8,21 @@ export type PairReport = {
   to: string;
   changedPixels: number;
   diffBox: Rect | null;
+  /** The whole composite's centroid move. */
   centroidShift: number;
+  /** How far the whole composite's bounds moved. */
   silhouetteDrift: number;
+  /**
+   * The bounds of the pixels that are opaque in *both* frames — the stand of a
+   * spinning fan, a character's feet — and how far that shared mass moved.
+   * Whole-composite drift cannot tell "the blades turned" from "the stand slid
+   * sideways"; this can, because turning blades leave the shared mass in place.
+   */
+  staticBounds: Rect | null;
+  staticDrift: {
+    centroid: number;
+    bounds: { left: number; right: number; top: number; bottom: number };
+  } | null;
 };
 
 export type FrameStats = {
@@ -22,6 +35,8 @@ export type AnimationReport = {
   pairs: PairReport[];
   loop: PairReport;
   flags: string[];
+  /** Each frame against the reference: where the unchanged mass sits. */
+  reference: Array<{ from: string; to: string; staticBounds: Rect | null }>;
 };
 
 /** Where the opaque pixels are in one composited frame; null when none are. */
@@ -62,6 +77,15 @@ function centroidOf(opaque: Opaque): Point {
   return { x: opaque.sumX / opaque.count, y: opaque.sumY / opaque.count };
 }
 
+function boundsOf(opaque: Opaque): Rect {
+  return {
+    x: opaque.minX,
+    y: opaque.minY,
+    width: opaque.maxX - opaque.minX + 1,
+    height: opaque.maxY - opaque.minY + 1,
+  };
+}
+
 /** The opaque centroid, pixel count, and bounds of one frame's composite. */
 export function frameStats(buffer: FrameBuffer): FrameStats {
   const opaque = opaqueOf(composite(buffer), buffer.width, buffer.height);
@@ -69,13 +93,47 @@ export function frameStats(buffer: FrameBuffer): FrameStats {
   return {
     opaquePixels: opaque.count,
     centroid: centroidOf(opaque),
-    bounds: {
-      x: opaque.minX,
-      y: opaque.minY,
-      width: opaque.maxX - opaque.minX + 1,
-      height: opaque.maxY - opaque.minY + 1,
-    },
+    bounds: boundsOf(opaque),
   };
+}
+
+/**
+ * The pixels opaque in both composites — a stand under turning blades, a
+ * character's feet. Measured in each frame's own coordinates, this is the mass
+ * a pair agrees on, and how far it sits from where it was.
+ */
+function sharedMass(
+  left: Uint8Array,
+  right: Uint8Array,
+  width: number,
+  height: number,
+): { left: Opaque; right: Opaque } | null {
+  const leftMass = emptyOpaque(width, height);
+  const rightMass = emptyOpaque(width, height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      // A pixel transparent in either frame is not shared mass.
+      if ((left[index] ?? 0) === 0 || (right[index] ?? 0) === 0) continue;
+      grow(leftMass, x, y);
+      grow(rightMass, x, y);
+    }
+  }
+  return leftMass.count > 0 ? { left: leftMass, right: rightMass } : null;
+}
+
+function emptyOpaque(width: number, height: number): Opaque {
+  return { count: 0, sumX: 0, sumY: 0, minX: width, maxX: -1, minY: height, maxY: -1 };
+}
+
+function grow(mass: Opaque, x: number, y: number): void {
+  mass.count += 1;
+  mass.sumX += x;
+  mass.sumY += y;
+  if (x < mass.minX) mass.minX = x;
+  if (x > mass.maxX) mass.maxX = x;
+  if (y < mass.minY) mass.minY = y;
+  if (y > mass.maxY) mass.maxY = y;
 }
 
 /**
@@ -118,6 +176,26 @@ function compareFrames(
   const rightOpaque = opaqueOf(right, width, height);
   let centroidShift = 0;
   let silhouetteDrift = 0;
+  let staticBounds: Rect | null = null;
+  let staticDrift: PairReport["staticDrift"] = null;
+  const shared = sharedMass(left, right, width, height);
+  if (shared) {
+    staticBounds = boundsOf(shared.left);
+    const leftCentroid = centroidOf(shared.left);
+    const rightCentroid = centroidOf(shared.right);
+    staticDrift = {
+      centroid: Math.hypot(
+        rightCentroid.x - leftCentroid.x,
+        rightCentroid.y - leftCentroid.y,
+      ),
+      bounds: {
+        left: shared.right.minX - shared.left.minX,
+        right: shared.right.maxX - shared.left.maxX,
+        top: shared.right.minY - shared.left.minY,
+        bottom: shared.right.maxY - shared.left.maxY,
+      },
+    };
+  }
   if (leftOpaque && rightOpaque) {
     const leftCentroid = centroidOf(leftOpaque);
     const rightCentroid = centroidOf(rightOpaque);
@@ -139,25 +217,55 @@ function compareFrames(
     diffBox,
     centroidShift,
     silhouetteDrift,
+    staticBounds,
+    staticDrift,
   };
 }
 
 /**
- * Deterministic continuity metrics for an animation: every consecutive pair
- * plus the loop from the last frame back to the first. Flags name empty
- * frames, identical distinct frames, centroid moves over two pixels, and a
- * loop that jumps further than every internal pair.
+ * Deterministic continuity metrics for an animation.
+ *
+ * Two questions, measured separately, because they fail differently:
+ *
+ * - **Consecutive motion** (`pairs`, `loop`): did a frame's changed region
+ *   move the whole drawing? This is how a sliding sprite is caught. A moving
+ *   part inside a still frame (flames, a flag, an arm) deliberately reports
+ *   nothing.
+ * - **Where the shared mass sits** (`reference`): every frame against one
+ *   reference frame, named here. Everything the artist means to keep — a body,
+ *   a stand, feet — is opaque in both frames, and if its edges move between
+ *   the reference and a later frame, that part was redrawn instead of
+ *   preserved. This catches the fault consecutive pairs hide: two frames that
+ *   both drifted the same way still differ from the reference.
+ *
+ * A flag names the frame by the caller's label, so a fix order can name it.
  */
+/** The bounds of the reference frame's own drawing, for the report's own row. */
+function referenceFrameBounds(reference: { buffer: FrameBuffer }): Rect | null {
+  const opaque = opaqueOf(
+    composite(reference.buffer),
+    reference.buffer.width,
+    reference.buffer.height,
+  );
+  return opaque ? boundsOf(opaque) : null;
+}
+
 export function checkAnimation(
-  frames: Array<{ id: string; buffer: FrameBuffer }>,
+  frames: Array<{ id: string; buffer: FrameBuffer; name?: string }>,
+  options: { referenceId?: string } = {},
 ): AnimationReport {
   const first = frames[0];
   if (!first) throw new Error("checkAnimation needs at least one frame.");
+  const label = (frame: { id: string; name?: string }): string => frame.name ?? frame.id;
   const pairs = frames
     .slice(0, -1)
     .map((frame, index) => compareFrames(frame, frames[index + 1]!));
   const last = frames[frames.length - 1]!;
   const loop = compareFrames(last, first);
+  const reference =
+    options.referenceId === undefined
+      ? undefined
+      : (frames.find((frame) => frame.id === options.referenceId) ?? first);
   const flags: string[] = [];
   for (const frame of frames) {
     const opaque = opaqueOf(
@@ -167,21 +275,77 @@ export function checkAnimation(
     );
     if (!opaque) flags.push(`Frame ${frame.id} has no opaque pixels.`);
   }
+  // A flag names something a fix can act on. The whole-composite shift counts
+  // only when nothing stayed put to explain it; when a shared mass exists, a
+  // move of that mass is the drift worth naming (turning blades leave it still,
+  // a sliding stand does not).
   for (const pair of [...pairs, loop]) {
     if (pair.from !== pair.to && pair.changedPixels === 0) {
-      flags.push(`${pair.from} → ${pair.to}: identical frames`);
-    }
-    if (pair.centroidShift > 2) {
       flags.push(
-        `${pair.from} → ${pair.to}: centroid moves ${pair.centroidShift.toFixed(1)} px`,
+        `${label(frames.find((f) => f.id === pair.from) ?? first)} → ${label(
+          frames.find((f) => f.id === pair.to) ?? first,
+        )}: identical frames`,
+      );
+    }
+    // Whole-composite drift only when no shared mass explains the motion: a
+    // moving flame changes the composite's centroid without moving anything.
+    if (!pair.staticDrift && pair.centroidShift > 2) {
+      flags.push(
+        `${label(frames.find((f) => f.id === pair.from) ?? first)} → ${label(
+          frames.find((f) => f.id === pair.to) ?? first,
+        )}: the drawing slides ${pair.centroidShift.toFixed(1)} px`,
       );
     }
   }
+  // The loop is flagged only when it jumps by a margin worth a fix.
+  const LOOP_MARGIN_PX = 1;
   const internalMax = pairs.reduce((max, pair) => Math.max(max, pair.centroidShift), 0);
-  if (pairs.length > 0 && loop.from !== loop.to && loop.centroidShift > internalMax) {
+  if (
+    pairs.length > 0 &&
+    loop.from !== loop.to &&
+    loop.centroidShift > internalMax + LOOP_MARGIN_PX
+  ) {
     flags.push(
-      `${loop.from} → ${loop.to}: the loop jumps ${loop.centroidShift.toFixed(1)} px, more than any internal pair`,
+      `${label(last)} → ${label(first)}: the loop jumps ${loop.centroidShift.toFixed(1)} px, more than any internal step`,
     );
   }
-  return { pairs, loop, flags };
+  // Every frame against the reference: the same body must still be in the same
+  // place. A reference frame can repeat forever; a frame with no shared mass
+  // at all is simply not the same drawing, which is a finding of its own.
+  const report: AnimationReport["reference"] = [];
+  const referenceBounds =
+    reference === undefined ? null : referenceFrameBounds(reference);
+  if (reference !== undefined && referenceBounds !== null) {
+    for (const frame of frames) {
+      if (frame.id === reference.id) {
+        report.push({ from: reference.id, to: frame.id, staticBounds: referenceBounds });
+        continue;
+      }
+      const compared = compareFrames(reference, frame);
+      const bounds = compared.staticBounds;
+      report.push({ from: reference.id, to: frame.id, staticBounds: bounds });
+      if (bounds === null) {
+        flags.push(
+          `${label(frame)} shares no opaque pixels with the reference frame ${label(reference)} — the drawing changed entirely`,
+        );
+        continue;
+      }
+      const shift = compared.staticDrift;
+      const moved = shift
+        ? Math.max(
+            Math.abs(shift.bounds.left),
+            Math.abs(shift.bounds.right),
+            Math.abs(shift.bounds.top),
+            Math.abs(shift.bounds.bottom),
+            shift.centroid,
+          )
+        : 0;
+      if (moved > 2) {
+        flags.push(
+          `${label(frame)}: the part it keeps from the reference frame ${label(reference)} sits ${moved.toFixed(1)} px away — it was redrawn instead of copied`,
+        );
+      }
+    }
+  }
+  return { pairs, loop, flags, reference: report };
 }

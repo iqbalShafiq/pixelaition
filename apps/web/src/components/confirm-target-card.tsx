@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { suggestName } from "../lib/target-proposal.js";
 import type { ConfirmChoice, TargetProposal } from "../lib/target-proposal.js";
 import { Brain } from "./pixel-icons.js";
 import { Button, Field, SelectControl, TextInput } from "./ui.js";
@@ -18,6 +19,7 @@ export type ConfirmAsset = {
  */
 export function ConfirmTargetCard({
   proposal,
+  request,
   projects,
   assets,
   busy,
@@ -27,6 +29,8 @@ export function ConfirmTargetCard({
   onRetryLists,
 }: {
   proposal: TargetProposal;
+  /** The user's words; a new asset starts with a name suggested from them. */
+  request?: string;
   projects: ConfirmProject[];
   assets: ConfirmAsset[];
   busy: boolean;
@@ -39,7 +43,11 @@ export function ConfirmTargetCard({
     proposal.asset?.id ?? null,
   );
   const [projectName, setProjectName] = useState("");
-  const [assetName, setAssetName] = useState("");
+  const [assetName, setAssetName] = useState(() =>
+    proposal.asset?.id === "new" || proposal.asset === undefined
+      ? suggestName(request ?? "")
+      : "",
+  );
 
   const projectOptions = [
     ...projects.map((project) => ({ value: project.id, label: project.name })),
@@ -132,7 +140,7 @@ export function ConfirmTargetCard({
               id="confirm-asset-name"
               value={assetName}
               onChange={(event) => setAssetName(event.target.value)}
-              placeholder="hero"
+              placeholder="asset name"
               className="max-w-[12rem]"
             />
           </Field>

@@ -25,9 +25,15 @@ if (!base || !env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) {
 }
 const traceIdFor = (runId) => createHash("sha256").update(runId).digest("hex").slice(0, 32);
 
-const taskId = process.argv[2];
+/**
+ * Which task to check: the one named on the command line. The task's children
+ * are read from the durable store, so a child whose row was written after a
+ * worker restart is still found.
+ */
+const taskArg = process.argv.indexOf("--task");
+const taskId = taskArg === -1 ? process.argv[2] : process.argv[taskArg + 1];
 if (!taskId) {
-  console.error("usage: node tools/trace-check.mjs <durableTaskId>");
+  console.error("usage: node tools/trace-check.mjs [--task] <durableTaskId>");
   process.exit(2);
 }
 
@@ -48,12 +54,23 @@ const traces = [
   ...childRows.map((row) => ({ id: row.runId, role: roleOf(row.key) })),
 ];
 
+/** What each role's first generation must carry, to judge its context. */
 const MARKERS = {
   "draw-task": ["plan", "workers"],
   "draw-plan": ["JSON", "frames"],
-  "draw-worker": ["Paint only these frames", "palette"],
-  "draw-review": ["Frames to review", "Plan:"],
+  "draw-worker": ["Paint only these frames", "Palette (", "Style:"],
+  "draw-review": ["Frames to review", "Plan:", "Palette:"],
+  // A fix prompt names its frame and layers, quotes the review, carries the
+  // work log, and bounds the writer to the ordered layers.
+  "draw-fix": ["Frame:", "The review asks:", "Paint only"],
 };
+/** Tool failures the model sees as `error-*`; every one is a refused call worth naming. */
+const REFUSAL = /"type":"error-(text|json)"/;
+/**
+ * By default the newest task of the asset is checked; `--task <durableTaskId>`
+ * checks a named one (a session whose child rows were written after a
+ * restart, for example).
+ */
 
 let missing = 0;
 let first = true;
@@ -97,8 +114,24 @@ for (const { id, role } of traces) {
   ].join(" ");
   const expected = MARKERS[name] ?? [];
   const found = expected.filter((marker) => texts.includes(marker));
-  const verdict = found.length === expected.length ? "OK" : `MISSING ${expected.filter((m) => !found.includes(m)).join(", ")}`;
+  const refusals = observations.filter(
+    (item) =>
+      item.type === "TOOL" &&
+      (item.level === "ERROR" || REFUSAL.test(JSON.stringify(item.output ?? ""))),
+  );
+  const verdict =
+    found.length === expected.length
+      ? "OK"
+      : `MISSING ${expected.filter((m) => !found.includes(m)).join(", ")}`;
   if (verdict !== "OK") missing += 1;
-  console.log(`${id.slice(0, 8)} → ${name}: ${observations.length} observations · ${verdict}`);
+  const refusalNote =
+    refusals.length === 0
+      ? ""
+      : ` · ${refusals.length} refused call${refusals.length === 1 ? "" : "s"}: ${[
+          ...new Set(refusals.map((item) => item.name)),
+        ].join(", ")}`;
+  console.log(
+    `${id.slice(0, 8)} → ${name}: ${observations.length} observations · ${verdict}${refusalNote}`,
+  );
 }
 process.exit(missing > 0 ? 1 : 0);

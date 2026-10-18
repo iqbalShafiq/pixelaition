@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConfirmPayload } from "./target-proposal.js";
+import { buildConfirmPayload, suggestName } from "./target-proposal.js";
 
 describe("buildConfirmPayload", () => {
   it("sends the confirmed ids and drops unused names", () => {
@@ -51,5 +51,24 @@ describe("buildConfirmPayload", () => {
         mode: "generate",
       }),
     ).toThrow("Give the new asset a name.");
+  });
+});
+
+describe("suggestName", () => {
+  it("takes the words after 'bernama', even inside quotes", () => {
+    expect(
+      suggestName(
+        'Buatkan di project "things" satu asset baru bernama "obor": obor kayu',
+      ),
+    ).toBe("obor");
+  });
+  it("takes the words after 'named'", () => {
+    expect(suggestName("draw a red potion named healing potion please")).toBe(
+      "healing-potion",
+    );
+  });
+  it("falls back to a quoted phrase, and never to a placeholder", () => {
+    expect(suggestName('make the "wooden torch" brighter')).toBe("wooden-torch");
+    expect(suggestName("draw a knight")).toBe("");
   });
 });

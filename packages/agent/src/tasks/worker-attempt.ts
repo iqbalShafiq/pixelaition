@@ -17,6 +17,13 @@ export const workerAttemptInputSchema = z.object({
   agentId: z.string().min(1),
   workerKey: z.string().regex(/^w[1-4]$/),
   prompt: promptSchema,
+  /**
+   * The conversation the worker continues: the supervisor's plan (or the
+   * review that ordered the fix). A painter agent can only continue its own
+   * children, so the parent passes the agent the conversation lives on.
+   */
+  continueFrom: z.string().optional(),
+  continueAgentId: z.string().optional(),
 });
 
 const checkpointSchema = z.object({
@@ -48,11 +55,20 @@ export const workerAttemptTask = defineTask({
   output: outputSchema,
   initial: (): Checkpoint => ({ attempt: 0 }),
   run: async (ctx): Promise<TaskTransition<Checkpoint, Output>> => {
-    const { workerKey, agentId, prompt } = ctx.input;
+    const { workerKey, agentId, prompt, continueFrom, continueAgentId } = ctx.input;
+    // A retry carries the same prompt: a fresh attempt that starts over is
+    // predictable, where "continue" without the conversation is not.
+    const spawnInput = () => ({
+      agentId,
+      prompt,
+      ...(continueFrom !== undefined && continueAgentId === agentId
+        ? { continueFrom }
+        : {}),
+    });
     const checkpoint = ctx.checkpoint;
     if (checkpoint.childKey === undefined) {
       const key = childKey(workerKey, checkpoint.attempt);
-      const id = ctx.spawnAgent(key, { agentId, prompt });
+      const id = ctx.spawnAgent(key, spawnInput());
       return {
         status: "waiting",
         checkpoint: { ...checkpoint, childKey: key },
@@ -77,7 +93,7 @@ export const workerAttemptTask = defineTask({
     const next = checkpoint.attempt + 1;
     if (next < WORKER_ATTEMPTS) {
       const key = childKey(workerKey, next);
-      const id = ctx.spawnAgent(key, { agentId, prompt });
+      const id = ctx.spawnAgent(key, spawnInput());
       return {
         status: "waiting",
         checkpoint: { attempt: next, childKey: key },

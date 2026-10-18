@@ -56,6 +56,8 @@ export {
 export type {
   AssetSummary,
   BoundRunBinding,
+  FrameRef,
+  ProjectAsset,
   CreateAssetInput,
   FrameChange,
   JevGateCheck,
@@ -73,21 +75,37 @@ export type {
   TelemetrySpan,
   TraceContext,
 } from "./telemetry.js";
-export { activeLayerId, createPixelTools } from "./tools.js";
+export { MAX_PREVIEW_BYTES, activeLayerId, createPixelTools } from "./tools.js";
 export { drawPlanSchema, paletteCapacity, validatePlan } from "./tasks/plan.js";
 export type { DrawPlan, DrawPlanFrame, PlanLimits } from "./tasks/plan.js";
-export { assertRoleAllowsTool } from "./runs.js";
-export { buildWorkerPrompt } from "./tasks/worker-prompt.js";
-export type { WorkerPromptInput } from "./tasks/worker-prompt.js";
+export { assertOwnedLayer, assertRoleAllowsTool } from "./runs.js";
+export { buildWorkerPrompt, paletteLegend } from "./tasks/worker-prompt.js";
+export type { ProjectAssetBrief, WorkerPromptInput } from "./tasks/worker-prompt.js";
 export {
   fixInstructions,
   planInstructions,
   reviewInstructions,
-  toolsForRole,
-  workerInstructions,
+  FIX_TOOL_NAMES,
+  PLAN_TOOL_NAMES,
   REVIEW_TOOL_NAMES,
   WORKER_TOOL_NAMES,
+  toolNamesForRole,
+  toolsForRole,
+  workerInstructions,
 } from "./tasks/roles.js";
+export {
+  copyLayers,
+  layerOf,
+  paletteMapping,
+  projectListing,
+  readRegion,
+  resolveReadFrame,
+  stampRegion,
+  toFrameBuffer,
+  viewOfAsset,
+  viewOfRunFrame,
+} from "./frames.js";
+export type { FrameView, MappingResult, PaletteMap, Rect } from "./frames.js";
 export type { AgentRole } from "./tasks/roles.js";
 export {
   assetDrawCheckpointSchema,
@@ -97,6 +115,7 @@ export {
   createAssetDrawTask,
   parsePlanOutput,
   promptText,
+  roleOfKey,
   userRequestFromPrompt,
 } from "./tasks/asset-draw.js";
 export { WORKER_ATTEMPTS, workerAttemptTask } from "./tasks/worker-attempt.js";

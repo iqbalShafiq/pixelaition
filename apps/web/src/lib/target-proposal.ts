@@ -19,6 +19,47 @@ export type ConfirmChoice = {
   mode: "generate" | "agent";
 };
 
+/**
+ * A starting name for a new asset, taken from the request: the words after
+ * "named"/"bernama"/"called" (quoted or not), else the first quoted phrase.
+ * It is a suggestion the user edits, never a decision. The field used to
+ * show "hero" as a placeholder, which read as a filled-in name.
+ */
+const STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "with",
+  "and",
+  "dan",
+  "yang",
+  "please",
+  "tolong",
+  "buat",
+  "in",
+  "di",
+  "to",
+  "untuk",
+  "of",
+  "dari",
+  "pakai",
+  "dengan",
+]);
+
+export function suggestName(request: string, limit = 40): string {
+  const named =
+    /(?:bernama|namanya|named|called|berjudul)\s+["“”']?([^"“”',.;:]+)/i.exec(request) ??
+    /["“”']([^"“”']{2,})["“”']/.exec(request);
+  const raw = (named?.[1] ?? "").trim();
+  const words = raw
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
+    .split(/\s+/)
+    .filter((word) => word.length > 1 && !STOP_WORDS.has(word))
+    .slice(0, 3);
+  return words.join("-").slice(0, limit);
+}
+
 export function buildConfirmPayload(
   proposalId: string,
   choice: ConfirmChoice,
