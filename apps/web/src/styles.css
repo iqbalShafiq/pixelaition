@@ -532,8 +532,79 @@
   }
 }
 
+/* The card's own flight runs a little past the chrome's 420ms. */
+:active-view-transition-type(editor-card)::view-transition-group(asset-flight) {
+  animation-duration: 460ms;
+}
+
 ::view-transition-new(asset-flight) {
   animation: assemble-settle 320ms cubic-bezier(0.2, 0.9, 0.15, 1) both;
+}
+
+/* A library card is the whole arrival. Its chrome waits behind the card's
+   flight, but the editor itself is never withheld, so a browser whose type
+   pseudo-element support is absent still shows the page instead of nothing. */
+:active-view-transition-type(editor-card)::view-transition-old(root) {
+  animation: assemble-fade 200ms ease-out both reverse;
+}
+
+:active-view-transition-type(editor-card)::view-transition-new(root) {
+  animation: assemble-fade 260ms ease-out 170ms both;
+}
+
+/* Return needs no home-side animation: the flight is the gesture. The home is
+   simply there from the first frame, so the card is already in place when the
+   canvas lands on it. */
+
+/* Back to the home: the artwork shrinks into its thumbnail in the grid. A
+   transparent copy of the painted pixels is `asset-flight` on the old side and
+   the returning card's thumbnail canvas carries the same name on the new side,
+   so the browser morphs one box into the other: position and size in one
+   gesture, with no editor panel travelling along.
+   The old side is a transparent copy of the artwork, not the editor's frame,
+   so the sprite floats free; `contain` keeps all of it visible as the box
+   becomes square. The new side only arrives once the two boxes overlap. */
+:active-view-transition-type(editor-back)::view-transition-group(asset-flight) {
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+:active-view-transition-type(editor-back)::view-transition-old(asset-flight) {
+  animation: none;
+  block-size: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+:active-view-transition-type(editor-back)::view-transition-new(asset-flight) {
+  /* It arrives as the last few pixels close, not as a second fade. */
+  animation: asset-arrive 140ms ease-out 380ms both;
+  block-size: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+@keyframes asset-arrive {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The editor's chrome dissolves while the canvas is still flying, and the
+   home is at full strength from the first frame: the grid is already there
+   under the shrinking canvas, never popping in after it. */
+:active-view-transition-type(editor-back)::view-transition-old(root) {
+  animation: back-leave 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+:active-view-transition-type(editor-back)::view-transition-new(root) {
+  animation: none;
+}
+
+@keyframes back-leave {
+  to {
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -541,6 +612,15 @@
   ::view-transition-group(console-flight),
   ::view-transition-group(composer-flight) {
     animation: none;
+  }
+
+  /* The move still happens, without the parts travelling: one plain dissolve. */
+  :active-view-transition-type(editor-back)::view-transition-old(root) {
+    animation: assemble-fade 180ms ease-out both reverse;
+  }
+
+  :active-view-transition-type(editor-back)::view-transition-new(root) {
+    animation: assemble-fade 180ms ease-out both;
   }
 }
 

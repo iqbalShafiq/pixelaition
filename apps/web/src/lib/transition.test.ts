@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  FLIGHT_BACK_TYPE,
+  FLIGHT_CARD_TYPE,
+  FLIGHT_TYPE,
+  decodeHomeReturn,
+  navigateTyped,
+  markCardFlight,
   markFlight,
   supportsViewTransition,
   viewTransitionOption,
@@ -11,6 +17,19 @@ describe("view transitions", () => {
     expect(supportsViewTransition(fake)).toBe(true);
     expect(supportsViewTransition({} as unknown as Document)).toBe(false);
     expect(supportsViewTransition(undefined)).toBe(false);
+  });
+
+  it("names the card door by default and the card's own type on request", () => {
+    const visible = {
+      startViewTransition: () => undefined,
+      visibilityState: "visible",
+    } as unknown as Document;
+    expect(viewTransitionOption(visible)).toEqual({ types: [FLIGHT_TYPE] });
+    expect(viewTransitionOption(visible, FLIGHT_CARD_TYPE)).toEqual({
+      types: ["editor-card"],
+    });
+    // Without the API there is no type to carry, whichever door was used.
+    expect(viewTransitionOption({} as unknown as Document, FLIGHT_CARD_TYPE)).toBe(false);
   });
 
   it("returns the typed option only when the API exists and the tab is visible", () => {
@@ -25,6 +44,73 @@ describe("view transitions", () => {
     } as unknown as Document;
     expect(viewTransitionOption(hidden)).toBe(false);
     expect(viewTransitionOption({} as unknown as Document)).toBe(false);
+  });
+
+  it("names the card door by default and the card's own type on request", () => {
+    const visible = {
+      startViewTransition: () => undefined,
+      visibilityState: "visible",
+    } as unknown as Document;
+    expect(viewTransitionOption(visible)).toEqual({ types: [FLIGHT_TYPE] });
+    expect(viewTransitionOption(visible, FLIGHT_CARD_TYPE)).toEqual({
+      types: ["editor-card"],
+    });
+    // Without the API there is no type to carry, whichever door was used.
+    expect(viewTransitionOption({} as unknown as Document, FLIGHT_CARD_TYPE)).toBe(false);
+  });
+
+  it("marks a card as the flying element", () => {
+    const attributes = new Map<string, string>();
+    const element = {
+      setAttribute: (name: string, value: string) => void attributes.set(name, value),
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+    } as unknown as Element;
+    markCardFlight(element);
+    expect(element.getAttribute("data-flight")).toBe("asset");
+    markCardFlight(null);
+  });
+
+  it("carries the back type, and navigates plainly when a transition aborts", async () => {
+    const visible = {
+      startViewTransition: () => undefined,
+      visibilityState: "visible",
+    } as unknown as Document;
+    expect(viewTransitionOption(visible, FLIGHT_BACK_TYPE)).toEqual({
+      types: ["editor-back"],
+    });
+
+    const aborted = new Error("aborted");
+    const plain: string[] = [];
+    await navigateTyped(
+      () => Promise.reject(aborted),
+      FLIGHT_BACK_TYPE,
+      async () => {
+        plain.push("plain");
+      },
+    );
+    expect(plain).toEqual(["plain"]);
+
+    const typed: string[] = [];
+    await navigateTyped(
+      (options) => {
+        typed.push(JSON.stringify(options.viewTransition));
+        return Promise.resolve();
+      },
+      FLIGHT_CARD_TYPE,
+      async () => {
+        plain.push("never");
+      },
+    );
+    expect(typed).toHaveLength(1);
+    expect(plain).toEqual(["plain"]);
+  });
+
+  it("reads the return state back instead of trusting it", () => {
+    expect(decodeHomeReturn({ cardAssetId: "a1" })).toBe("a1");
+    expect(decodeHomeReturn({})).toBeUndefined();
+    expect(decodeHomeReturn({ cardAssetId: 7 })).toBeUndefined();
+    expect(decodeHomeReturn(null)).toBeUndefined();
+    expect(decodeHomeReturn("card")).toBeUndefined();
   });
 
   it("marks and clears the flight attributes", () => {

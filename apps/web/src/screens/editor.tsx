@@ -96,6 +96,8 @@ import { useAttachments } from "../lib/use-attachments.js";
 import { useMediaQuery } from "../lib/use-media.js";
 import { useAgentPaint } from "../lib/use-agent-paint.js";
 import { bytesToBase64, type AssetDto } from "../lib/types.js";
+import { FLIGHT_BACK_TYPE, navigateTyped } from "../lib/transition.js";
+import { paintedBounds, spriteCanvas } from "../lib/sprite-flight.js";
 
 /** The frame panel's second line. The title stays "4 Frames". */
 function activityLabel(phase: string | undefined): string {
@@ -370,6 +372,7 @@ export function EditorScreen() {
     setRightSheet(false);
   }, [wide]);
   const viewRef = useRef<HTMLDivElement>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const { sourceRef, open: openStream, close: closeStream } = useRunStream();
   const taskStream = useTaskStream();
@@ -910,7 +913,6 @@ export function EditorScreen() {
     const timer = window.setTimeout(() => setAgentPulse(0), 1100);
     return () => window.clearTimeout(timer);
   }, [agentPulse]);
-
   /** Follow the frame the agent is working on: the console, the canvas, the focus. */
   const focusAgentFrame = useCallback((target: string) => {
     setLastStrokeFrame(target);
@@ -2439,13 +2441,89 @@ export function EditorScreen() {
     />
   );
 
+  /**
+   * Back to the home: the artwork itself shrinks into its thumbnail in the
+   * grid. The editor's frame is not part of the flight — a transparent copy of
+   * the painted pixels is laid over it, named `asset-flight`, and the frame's
+   * own name is switched off for this move. So the sprite floats out of the
+   * editor and lands in the card with no panel, checker, or border behind it;
+   * the card's thumbnail canvas carries the same name on the other side.
+   *
+   * The overlay is plain DOM, appended outside React: it has to exist in the
+   * old snapshot, which is taken after this handler returns, and a re-render
+   * between the two would otherwise remove it.
+   */
+  const backToHome = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (event.defaultPrevented) return;
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      const view = viewRef.current;
+      const frame = view;
+      let overlay: HTMLCanvasElement | null = null;
+      if (view !== null) {
+        const doc = buffer ?? fallbackBuffer;
+        // Nothing painted means nothing to fly; the frame keeps the name and
+        // the move falls back to the plain page transition.
+        const painted = paintedBounds(doc) !== null;
+        // The overlay is the document's own box, transparent everywhere the
+        // artwork is not: same aspect as the thumbnail's canvas, so the morph
+        // scales one into the other exactly, with no panel behind it.
+        const sprite = painted
+          ? spriteCanvas(doc, { x: 0, y: 0, width: doc.width, height: doc.height })
+          : null;
+        if (sprite !== null) {
+          // The canvas maps a document pixel to `zoom` CSS pixels from the
+          // snapped camera origin; the same mapping places the overlay exactly
+          // over the artwork on screen.
+          const rect = view.getBoundingClientRect();
+          const cell = camera.zoom;
+          sprite.setAttribute("aria-hidden", "");
+          Object.assign(sprite.style, {
+            position: "fixed",
+            left: `${rect.left + Math.round(camera.x)}px`,
+            top: `${rect.top + Math.round(camera.y)}px`,
+            width: `${doc.width * cell}px`,
+            height: `${doc.height * cell}px`,
+            imageRendering: "pixelated",
+            pointerEvents: "none",
+            zIndex: "60",
+            viewTransitionName: "asset-flight",
+          });
+          document.body.append(sprite);
+          overlay = sprite;
+          // The frame must not keep the name too: two elements with one name
+          // abort the transition.
+          view.style.viewTransitionName = "none";
+        }
+      }
+      const state = {
+        door: "back" as const,
+        homeReturn: { cardAssetId: assetId },
+      };
+      void navigateTyped(
+        (options) => navigate({ to: "/projects", state, resetScroll: false, ...options }),
+        FLIGHT_BACK_TYPE,
+        () => navigate({ to: "/projects", state, resetScroll: false }),
+      ).finally(() => {
+        // The old snapshot is taken when the transition starts, so the overlay
+        // has done its work by the time the navigation commits. Clearing it
+        // here also covers a plain navigation, where nothing would hide it.
+        overlay?.remove();
+        if (frame !== null) frame.style.viewTransitionName = "";
+      });
+    },
+    [assetId, buffer, camera, navigate],
+  );
+
   return (
     <main
       id="content"
       className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-paper"
     >
       <header className="flex min-h-16 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3">
-        <Link to="/projects" className="shrink-0">
+        <Link to="/projects" className="shrink-0" onClick={backToHome}>
           <Wordmark hideLabelOnNarrow />
         </Link>
         <span className="h-4 w-0.5 shrink-0 bg-line" aria-hidden />
@@ -2526,6 +2604,7 @@ export function EditorScreen() {
             <div
               ref={viewRef}
               className="relative order-1 min-h-0 min-w-0 flex-1 [view-transition-name:asset-flight] sm:order-2"
+              data-flight-frame=""
             >
               {asset.isPending ? (
                 <Centered>
@@ -2813,7 +2892,10 @@ export function EditorScreen() {
                     }}
                   />
                 </div>
-                <div className="w-full shrink-0 [view-transition-name:console-flight]">
+                <div
+                  ref={consoleRef}
+                  className="w-full shrink-0 [view-transition-name:console-flight]"
+                >
                   <RunConsole
                     taskProgress={
                       taskActive && task.data?.task

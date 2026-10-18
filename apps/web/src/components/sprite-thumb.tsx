@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { composite, frameToBuffer } from "@pixelaition/pixel";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { api } from "../lib/api.js";
 import { hexToRgba } from "../lib/color.js";
 import type { AssetDto } from "../lib/types.js";
@@ -13,18 +13,25 @@ import type { AssetDto } from "../lib/types.js";
 export function SpriteThumb({
   assetId,
   display = 48,
+  flight = false,
 }: {
   assetId: string;
   display?: number;
+  /** The canvas is flying here: the artwork carries the flight's name. */
+  flight?: boolean;
 }) {
+  // The editor reads the same asset under the same key, so a thumbnail is
+  // already painted when the canvas flies back into it.
   const asset = useQuery({
-    queryKey: ["sprite", assetId],
+    queryKey: ["asset", assetId],
     queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
     staleTime: 60_000,
   });
   const ref = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  // Layout effect, not a passive one: the drawing has to be in the frame the
+  // browser paints, or the return flight lands on an empty thumbnail.
+  useLayoutEffect(() => {
     const canvas = ref.current;
     const data = asset.data;
     if (!canvas || !data) return;
@@ -59,7 +66,12 @@ export function SpriteThumb({
         <canvas
           ref={ref}
           aria-hidden
-          style={{ width: display - 4, height: display - 4, imageRendering: "pixelated" }}
+          style={{
+            width: display - 4,
+            height: display - 4,
+            imageRendering: "pixelated",
+            ...(flight ? { viewTransitionName: "asset-flight" } : {}),
+          }}
         />
       ) : (
         <span className="text-pixel-mono text-muted">{asset.isError ? "—" : "…"}</span>

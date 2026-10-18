@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Close, Search } from "../components/pixel-icons.js";
 import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useOptimistic,
   useRef,
@@ -18,7 +19,15 @@ import { ProjectNav } from "../components/project-nav.js";
 import { PixelLoader } from "../components/pixel-loader.js";
 import { RecentRunsRail } from "../components/recent-runs-rail.js";
 import { filterLibrary } from "../lib/library.js";
-import { markFlight, viewTransitionOption } from "../lib/transition.js";
+import {
+  FLIGHT_CARD_TYPE,
+  FLIGHT_TYPE,
+  decodeHomeReturn,
+  type Door,
+  markCardFlight,
+  markFlight,
+  viewTransitionOption,
+} from "../lib/transition.js";
 import {
   type InteractionResponse,
   type PendingInteraction,
@@ -65,6 +74,9 @@ type RecentRun = {
   /** A waiting run's pending card, restored without the retained stream. */
   interaction?: PendingInteraction;
 };
+
+/** Long enough to outlast the return flight, short enough to free the name. */
+const RETURN_MARK_MS = 700;
 
 export function ProjectsScreen() {
   const queryClient = useQueryClient();
@@ -143,6 +155,38 @@ export function ProjectsScreen() {
       }>("/api/assets"),
   });
 
+  // A visit back from the editor: the asset's thumbnail is where the canvas
+  // lands, so the home names that card's picture well before its first paint
+  // and brings it into view in the same frame. Both have to happen in the
+  // render/commit that the view transition captures — an effect that runs
+  // after the paint would leave the new snapshot without a counterpart, and
+  // the canvas would simply vanish instead of shrinking into the grid.
+  const returnCardAssetId = useLocation({
+    select: (location) => {
+      if (location.state.door !== "back") return undefined;
+      return decodeHomeReturn(location.state.homeReturn);
+    },
+  });
+  const returnCardRef = useRef<HTMLAnchorElement | null>(null);
+  // The name lives only as long as the flight: two elements with the same
+  // view-transition-name abort a transition, and the next card click marks
+  // its own element. `true` on the first render is what the snapshot sees.
+  const [returnMarked, setReturnMarked] = useState(returnCardAssetId !== undefined);
+  useEffect(() => {
+    if (!returnMarked) return;
+    const timer = window.setTimeout(() => setReturnMarked(false), RETURN_MARK_MS);
+    return () => window.clearTimeout(timer);
+  }, [returnMarked]);
+  const holdReturnCard = useCallback((element: HTMLAnchorElement | null) => {
+    returnCardRef.current = element;
+  }, []);
+  useLayoutEffect(() => {
+    if (returnCardAssetId === undefined) return;
+    const card = returnCardRef.current;
+    if (card === null) return;
+    // The home may be scrolled anywhere; the flight has to end on screen.
+    card.scrollIntoView({ block: "center", behavior: "instant" });
+  }, [returnCardAssetId]);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
   const [modelId, setModelId] = useState("");
@@ -220,25 +264,39 @@ export function ProjectsScreen() {
   }, []);
 
   /** The typed view transition: the dock, console, and target card assemble
-   *  into the editor's canvas, console, and composer. */
+   *  into the editor's canvas, console, and composer. A card opened from the
+   *  library sends the card itself instead. */
   const navigateToEditor = useCallback(
-    (projectId: string, assetId: string) => {
-      const marks: Array<[Element | null, "composer" | "console" | "asset"]> = [
-        [composerRef.current, "composer"],
-        [consoleRef.current, "console"],
-        [targetRef.current, "asset"],
-      ];
+    (projectId: string, assetId: string, from: { card?: Element | null } = {}) => {
+      const card = from.card ?? null;
+      const marks: Array<[Element | null, "composer" | "console" | "asset"]> =
+        card !== null
+          ? [[card, "asset"]]
+          : [
+              [composerRef.current, "composer"],
+              [consoleRef.current, "console"],
+              [targetRef.current, "asset"],
+            ];
       for (const [element, name] of marks) markFlight([element], true, name);
+      // The door rides the history state as well, so a plain navigation (a
+      // browser without the API) still tells the editor where the visit began.
+      const door: Door = card !== null ? "card" : "plan";
+      const state = { door };
       void navigate({
         to: "/projects/$projectId/assets/$assetId",
         params: { projectId, assetId },
-        viewTransition: viewTransitionOption(),
+        state,
+        viewTransition: viewTransitionOption(
+          undefined,
+          card !== null ? FLIGHT_CARD_TYPE : FLIGHT_TYPE,
+        ),
       }).catch(() => {
         // A transition the browser aborted (hidden tab, another transition)
         // must not strand the user on the home; navigate plainly.
         void navigate({
           to: "/projects/$projectId/assets/$assetId",
           params: { projectId, assetId },
+          state,
         });
       });
       // Clearing during the transition aborts it; the home unmounts on a
@@ -248,6 +306,15 @@ export function ProjectsScreen() {
       }, 600);
     },
     [navigate],
+  );
+
+  /** A library card: the card itself flies into the canvas. */
+  const openAsset = useCallback(
+    (asset: { id: string; projectId: string }, card: Element | null) => {
+      markCardFlight(card);
+      navigateToEditor(asset.projectId, asset.id, { card });
+    },
+    [navigateToEditor],
   );
 
   const listen = useCallback(
@@ -883,6 +950,10 @@ export function ProjectsScreen() {
               result={library}
               group={group}
               projectNames={projectNames}
+              onOpen={openAsset}
+              {...(returnMarked && returnCardAssetId !== undefined
+                ? { returnCardId: returnCardAssetId, returnCardRef: holdReturnCard }
+                : {})}
               onNewAsset={(id) => newAsset.mutate(id)}
               onDeleteAsset={(asset) =>
                 setPendingDelete({

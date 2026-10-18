@@ -1,8 +1,17 @@
-import { Link } from "@tanstack/react-router";
 import { Close } from "./pixel-icons.js";
 import { Card, EmptyState, IconButton } from "./ui.js";
 import { SpriteThumb } from "./sprite-thumb.js";
 import type { LibraryResult } from "../lib/library.js";
+
+/** The asset a card stands for, as the card shows it. */
+export type LibraryAsset = {
+  id: string;
+  projectId: string;
+  name: string;
+  summary: string;
+  width: number;
+  height: number;
+};
 
 /**
  * The home library: asset-first cards with real sprites, grouped either by
@@ -12,6 +21,9 @@ export function LibraryGrid({
   result,
   group,
   projectNames,
+  onOpen,
+  returnCardId,
+  returnCardRef,
   onNewAsset,
   onDeleteAsset,
   onDeleteProject,
@@ -20,6 +32,12 @@ export function LibraryGrid({
   group: "recent" | "project";
   /** Project id to name, for the chips on asset cards. */
   projectNames: Record<string, string>;
+  /** Opens the asset's editor; the card itself carries the flight. */
+  onOpen?: ((asset: LibraryAsset, card: Element | null) => void) | undefined;
+  /** The asset whose editor was just left: its thumbnail is where the canvas lands. */
+  returnCardId?: string | undefined;
+  /** That card's element, for the home to bring into view before the snapshot. */
+  returnCardRef?: ((element: HTMLAnchorElement | null) => void) | undefined;
   onNewAsset?: ((projectId: string) => void) | undefined;
   onDeleteAsset?: ((asset: { id: string; name: string }) => void) | undefined;
   onDeleteProject?:
@@ -78,6 +96,10 @@ export function LibraryGrid({
                   <AssetCard
                     key={asset.id}
                     asset={asset}
+                    {...(onOpen !== undefined ? { onOpen } : {})}
+                    {...(returnCardId === asset.id && returnCardRef !== undefined
+                      ? { returning: true, cardRef: returnCardRef }
+                      : {})}
                     {...(onDeleteAsset !== undefined
                       ? { onDelete: () => onDeleteAsset(asset) }
                       : {})}
@@ -102,6 +124,10 @@ export function LibraryGrid({
           key={asset.id}
           asset={asset}
           projectName={projectNames[asset.projectId]}
+          {...(onOpen !== undefined ? { onOpen } : {})}
+          {...(returnCardId === asset.id && returnCardRef !== undefined
+            ? { returning: true, cardRef: returnCardRef }
+            : {})}
           {...(onDeleteAsset !== undefined
             ? { onDelete: () => onDeleteAsset(asset) }
             : {})}
@@ -114,28 +140,44 @@ export function LibraryGrid({
 function AssetCard({
   asset,
   projectName,
+  onOpen,
+  cardRef,
+  returning = false,
   onDelete,
 }: {
-  asset: {
-    id: string;
-    projectId: string;
-    name: string;
-    summary: string;
-    width: number;
-    height: number;
-  };
+  asset: LibraryAsset;
   projectName?: string;
+  onOpen?: ((asset: LibraryAsset, card: Element | null) => void) | undefined;
+  cardRef?: ((element: HTMLAnchorElement | null) => void) | undefined;
+  /** The canvas is flying here: the thumbnail takes the flight's name. */
+  returning?: boolean;
   onDelete?: (() => void) | undefined;
 }) {
+  // The card is a real link for the browser (open in a new tab, middle click,
+  // keyboard) and the click is handed to the router so it can play the
+  // transition. The card marks itself first, so it is what flies.
+  const open = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (onOpen === undefined) return;
+    if (event.defaultPrevented) return;
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onOpen(asset, event.currentTarget);
+  };
   return (
     <div className="group relative">
-      <Link
-        to="/projects/$projectId/assets/$assetId"
-        params={{ projectId: asset.projectId, assetId: asset.id }}
+      <a
+        ref={cardRef}
+        href={`/projects/${asset.projectId}/assets/${asset.id}`}
+        onClick={open}
         className="pixel-window grid gap-2 bg-raised p-2 transition-transform duration-150 group-hover:-translate-x-0.5 group-hover:-translate-y-0.5"
       >
         <div className="grid aspect-square place-items-center border-2 border-line bg-field p-2">
-          <SpriteThumb assetId={asset.id} display={64} />
+          {/* The artwork carries the flight's name during render, so the home's
+              first paint already has the counterpart the sprite morphs into.
+              Naming the canvas, not its well, keeps the card's dark frame out
+              of the flight. */}
+          <SpriteThumb assetId={asset.id} display={64} flight={returning} />
         </div>
         <div className="min-w-0">
           <p className="truncate text-pixel-label text-ink">{asset.name}</p>
@@ -153,7 +195,7 @@ function AssetCard({
             </span>
           </p>
         </div>
-      </Link>
+      </a>
       {onDelete !== undefined ? (
         // The X appears on hover, in the card's top-right corner, and rides
         // the card's own lift so the corner gaps stay equal.
