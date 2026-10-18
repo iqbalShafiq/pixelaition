@@ -38,6 +38,7 @@ import {
 } from "../components/interaction-card.js";
 import {
   applyRunEvent,
+  consoleTurns,
   noteRow,
   recordFollowUp,
   turnsFromAssetLog,
@@ -280,8 +281,6 @@ export function EditorScreen() {
   /** The task stream this tab is already attached to. Focus must not rejoin it. */
   const taskListenRef = useRef<string | null>(null);
   const loadedTaskLog = useRef<string | null>(null);
-  /** Earlier turns already filled for this task, so a live refresh does not repeat the fetch. */
-  const earlierLoaded = useRef<string | null>(null);
   // Strict mode unmounts once on mount. The mark waits a tick so that
   // simulated unmount can be cancelled by the remount.
   const seenMarkTimer = useRef<number | null>(null);
@@ -352,10 +351,14 @@ export function EditorScreen() {
   // in this session, but its usage/model/timing came with the log.
   const [restoredMeta, setRestoredMeta] = useState<TurnMeta | null>(null);
   const [runPrompt, setRunPrompt] = useState("");
+  // Every settled request of this asset's conversation, oldest first, as the
+  // server's log carries it: drawing tasks and ask-only runs alike. The turn
+  // on screen is placed among them by `consoleTurns`, never appended after a
+  // separate "earlier" list.
+  const [logTurns, setLogTurns] = useState<AssetLogTask[]>([]);
   // Finished requests stay above the live one. Each turn keeps its own prompt
   // so the console can pin that prompt with that turn's tabs.
   const [earlierTurns, setEarlierTurns] = useState<ConsoleTurn[]>([]);
-  const [runHistory, setRunHistory] = useState<HistoryRun[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
@@ -1151,21 +1154,9 @@ export function EditorScreen() {
             // was just looking at.
             adoptFinishedFrames();
             void client.invalidateQueries({ queryKey: ["versions", assetId] });
-            // The finished run is on screen already; only the earlier list needs
-            // a refresh, and it is scoped to the frame the agent painted.
-            const shown = runFrameIdRef.current;
-            if (shown) {
-              void api<ActiveRunResponse>(
-                `/api/assets/${assetId}/active-run?frameId=${encodeURIComponent(shown)}`,
-              )
-                .catch(() => null)
-                .then((result) => {
-                  if (!result || sourceRef.current) return;
-                  setRunHistory(
-                    result.history.filter((item) => item.id !== result.lastRun?.id),
-                  );
-                });
-            }
+            // The finished run is on screen already. An ask-only run is one
+            // more turn of the asset log; the session query re-reads its spend.
+            void client.invalidateQueries({ queryKey: ["asset-session", assetId] });
             // A queued follow-up starts the moment the run lands: the queue
             // drains itself, one prompt per finished run. The effect below
             // starts it once the running state has actually cleared.
@@ -1268,7 +1259,7 @@ export function EditorScreen() {
     viewedFrames.current = new Set();
     setUnseenDone(new Map());
     loadedTaskLog.current = null;
-    earlierLoaded.current = null;
+    setLogTurns([]);
     setEarlierTurns([]);
   }, [assetId]);
 
@@ -1498,7 +1489,6 @@ export function EditorScreen() {
           // The console still shows an earlier turn. The live run takes it
           // over, and the row's prompt names the turn from the first paint.
           setRows([]);
-          setRunHistory([]);
           setMessage("");
           setRestoredMs(null);
           setRunPrompt(result.run.prompt ?? "");
@@ -1521,26 +1511,17 @@ export function EditorScreen() {
     };
   }, [assetId, listen, log, rememberRunModel]);
 
-  // A finished drawing task keeps the whole transcript. A refresh has no live
-  // stream, so the stored children are the same steps the console showed
-  // while the agents were working.
+  // The asset conversation's log: every request of this asset — a drawing
+  // task or an ask-only run — with the steps the console showed while it ran.
+  // A refresh has no live stream, so this log is how each request is re-found
+  // in the same place it was shown.
   useEffect(() => {
     // Rejoining is decided first: a live run or task owns the console, and
     // this fill must not race in and overwrite the live turn.
     if (!rejoinDecided) return;
-    const record = task.data?.task;
-    if (record === null || record === undefined) return;
-    const terminal = !["queued", "running", "waiting"].includes(record.status);
-    const id = record.id;
-    const replaceTranscript =
-      terminal &&
-      runIdRef.current === null &&
-      sawLiveTask.current !== id &&
-      loadedTaskLog.current !== id;
-    // A live task still needs the prompts before it. The streaming rows stay.
-    if (!replaceTranscript && earlierLoaded.current === id) return;
     let cancelled = false;
     void api<{
+      task: { id: string; status: string; phase: string } | null;
       prompt: string | null;
       plan?: unknown;
       runs: TaskLogRun[];
@@ -1554,56 +1535,60 @@ export function EditorScreen() {
       .catch(() => null)
       .then((result) => {
         if (cancelled || result === null) return;
-        // The newest task carries the same meta as its earlier siblings; the
-        // log's top-level fields are what its turn's lines print.
-        const turns = turnsFromAssetLog(
-          {
-            id,
-            prompt: result.prompt,
-            plan: result.plan,
-            runs: result.runs,
-            usage: result.usage ?? null,
-            modelId: result.modelId ?? null,
-            effort: result.effort ?? null,
-            createdAt: result.createdAt ?? null,
-            finishedAt: result.finishedAt ?? null,
-          },
-          result.earlier ?? [],
-        );
-        if (replaceTranscript) {
-          if (sawLiveTask.current === id) return;
-          loadedTaskLog.current = id;
-          earlierLoaded.current = id;
-          const last = turns.at(-1);
-          setEarlierTurns(turns.slice(0, -1));
-          setRows(last?.rows ?? []);
-          setRunPrompt(last?.prompt ?? "");
-          setMessage("");
-          setRunHistory([]);
-          // The transcript is not live in this session; its exact meta came
-          // with the log.
-          setRestoredMeta(last?.meta ?? null);
-          setLiveStartedAt(null);
-          setLiveRunInfo(null);
-          setSettledAt(null);
-          displayedRunIdRef.current = `task:${id}`;
-          return;
-        }
-        earlierLoaded.current = id;
-        // A refresh mid-run rejoins without the prompt in memory; the log
-        // carries it. A prompt the send already set is left alone.
-        setRunPrompt((current) =>
-          current.trim().length > 0 ? current : (result.prompt ?? ""),
-        );
-        // Every stored turn stays listed; only the turn the live watcher
-        // already renders itself is dropped, exactly as the console's own
-        // filter drops it. An ask run's live turn is not in this log at all.
-        setEarlierTurns(turns.filter((turn) => turn.id !== (taskId ?? "live")));
+        const earlier = result.earlier ?? [];
+        // The server sends the newest entry as the top-level fields and the
+        // rest before it, oldest first.
+        const newest: AssetLogTask | null =
+          result.createdAt != null || result.prompt !== null || result.runs.length > 0
+            ? {
+                id: result.task?.id ?? `log-${result.createdAt ?? "newest"}`,
+                prompt: result.prompt,
+                plan: result.plan,
+                runs: result.runs,
+                usage: result.usage ?? null,
+                modelId: result.modelId ?? null,
+                effort: result.effort ?? null,
+                createdAt: result.createdAt ?? null,
+                finishedAt: result.finishedAt ?? null,
+              }
+            : null;
+        setLogTurns(newest !== null ? [...earlier, newest] : earlier);
+        // Without a drawing task the run stories are the whole console; there
+        // is no task transcript to replace.
+        const record = result.task;
+        if (record === null) return;
+        const id = record.id;
+        const terminal = !["queued", "running", "waiting"].includes(record.status);
+        const replaceTranscript =
+          newest !== null &&
+          terminal &&
+          runIdRef.current === null &&
+          sawLiveTask.current !== id &&
+          loadedTaskLog.current !== id;
+        // A live task still needs the prompts before it. The streaming rows stay.
+        if (!replaceTranscript) return;
+        // The rejoin landed while this fetch was in flight: the stream owns
+        // the turn now.
+        if (sawLiveTask.current === id) return;
+        loadedTaskLog.current = id;
+        const turns = turnsFromAssetLog(newest, earlier);
+        const last = turns.at(-1);
+        setEarlierTurns(turns.slice(0, -1));
+        setRows(last?.rows ?? []);
+        setRunPrompt(last?.prompt ?? "");
+        setMessage("");
+        // The transcript is not live in this session; its exact meta came
+        // with the log.
+        setRestoredMeta(last?.meta ?? null);
+        setLiveStartedAt(null);
+        setLiveRunInfo(null);
+        setSettledAt(null);
+        displayedRunIdRef.current = `task:${id}`;
       });
     return () => {
       cancelled = true;
     };
-  }, [assetId, rejoinDecided, taskId, task.data?.task?.id, task.data?.task?.status]);
+  }, [assetId, rejoinDecided, task.data?.task?.id, task.data?.task?.status]);
 
   // Switching frames rewinds the console to that frame's story: its last run's
   // steps and answer, plus the prompts and answers of the runs before it.
@@ -1617,7 +1602,6 @@ export function EditorScreen() {
       ).catch(() => null);
       if (cancelled || !result || sourceRef.current || result.run) return;
       const latest = result.lastRun;
-      setRunHistory(result.history.filter((item) => item.id !== latest?.id));
       if (latest?.id === displayedRunIdRef.current) return;
       let restored: RunRow[] = [];
       for (const event of latest?.events ?? []) {
@@ -2003,7 +1987,6 @@ export function EditorScreen() {
     setConsoleOpen(true);
     setRestoredMs(null);
     setRunPrompt(text);
-    setRunHistory([]);
     setRestoredMeta(null);
     setLiveStartedAt(Date.now());
     setLiveRunInfo({ modelId, effort });
@@ -2846,21 +2829,13 @@ export function EditorScreen() {
                         : undefined
                     }
                     rows={rows}
-                    turns={[
-                      ...earlierTurns.filter((turn) => turn.id !== (taskId ?? "live")),
-                      ...(runPrompt.trim().length > 0 || rows.length > 0
-                        ? [
-                            {
-                              id: taskId ?? "live",
-                              prompt: runPrompt,
-                              rows,
-                              ...(currentTurnMeta !== null
-                                ? { meta: currentTurnMeta }
-                                : {}),
-                            },
-                          ]
-                        : []),
-                    ]}
+                    turns={consoleTurns(logTurns, {
+                      id: taskId ?? "live",
+                      prompt: runPrompt,
+                      rows,
+                      meta: currentTurnMeta,
+                      createdAt: restoredMeta?.startedAt ?? null,
+                    })}
                     running={consoleRunning}
                     session={session.data ?? null}
                     live={liveContribution}
@@ -2878,7 +2853,6 @@ export function EditorScreen() {
                     onOpen={setConsoleOpen}
                     message={message || (error ?? "")}
                     prompt={runPrompt}
-                    history={runHistory}
                     restoredMs={restoredMs}
                     interaction={pendingInteraction}
                     frames={frames}

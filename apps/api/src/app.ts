@@ -114,7 +114,6 @@ function fail(res: Response, status: number, code: string, message: string) {
   res.status(status).json({ code, message });
 }
 
-/** One task's user line and the children the console rebuilds. */
 /**
  * One task's console transcript, plus the meta the console header reads: the
  * task's rolled-up usage, its model and effort (every child shares them), and
@@ -170,6 +169,48 @@ async function taskLog(task: {
         createdAt: child.createdAt.toISOString(),
         events: Array.isArray(child.events) ? child.events : [],
       })),
+  };
+}
+
+/**
+ * One request's console turn when it was not a drawing task: an ask-only run
+ * is a single run with no task, so its own id is the turn's id and that row
+ * is the child the console rebuilds. It appears in the asset conversation
+ * exactly like a drawing request, never merely as a "you" line a refresh
+ * forgets.
+ */
+function askRunLog(run: {
+  id: string;
+  status: string;
+  prompt: string | null;
+  answer: string | null;
+  modelId: string;
+  reasoningEffort: string;
+  createdAt: Date;
+  finishedAt: Date | null;
+  usage: unknown;
+  events: unknown;
+}) {
+  return {
+    id: run.id,
+    prompt: run.prompt,
+    plan: null,
+    usage: run.usage ?? null,
+    createdAt: run.createdAt.toISOString(),
+    finishedAt: run.finishedAt?.toISOString() ?? null,
+    modelId: run.modelId,
+    effort: run.reasoningEffort,
+    runs: [
+      {
+        id: run.id,
+        role: null,
+        workerKey: null,
+        status: run.status,
+        answer: run.answer,
+        createdAt: run.createdAt.toISOString(),
+        events: Array.isArray(run.events) ? run.events : [],
+      },
+    ],
   };
 }
 
@@ -1675,35 +1716,71 @@ export function createApp() {
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     const snapshot = await taskSnapshot(db, asset.id);
-    if (snapshot === undefined) return res.json({ task: null, prompt: null, runs: [] });
-    const tasks = await db
-      .select({
-        id: runTasks.id,
-        plan: runTasks.plan,
-        usage: runTasks.usage,
-        createdAt: runTasks.createdAt,
-        finishedAt: runTasks.finishedAt,
-      })
-      .from(runTasks)
-      .where(eq(runTasks.assetId, asset.id))
-      .orderBy(asc(runTasks.createdAt));
-    const logged = await Promise.all(tasks.map((task) => taskLog(task)));
-    const latest = logged.find((item) => item.id === snapshot.task.id) ?? logged.at(-1);
+    const task = snapshot?.task;
+    // The asset's own thread is where an ask-only run is recorded: the run
+    // belongs to the asset, not to a frame, so the run rows scope it by the
+    // thread's asset (`assetHasActiveRun` reads it the same way).
+    const [thread] = await db
+      .select({ id: generationThreads.id })
+      .from(generationThreads)
+      .where(eq(generationThreads.assetId, asset.id))
+      .limit(1);
+    // Every request of this asset's conversation, oldest first: the drawing
+    // tasks' children and the ask-only runs. The console shows them as one
+    // list of turns, so a refresh re-finds each request in the same place.
+    const [tasks, askRuns] = await Promise.all([
+      db
+        .select({
+          id: runTasks.id,
+          plan: runTasks.plan,
+          usage: runTasks.usage,
+          createdAt: runTasks.createdAt,
+          finishedAt: runTasks.finishedAt,
+        })
+        .from(runTasks)
+        .where(eq(runTasks.assetId, asset.id))
+        .orderBy(asc(runTasks.createdAt)),
+      thread === undefined
+        ? Promise.resolve([])
+        : db
+            .select({
+              id: generationRuns.id,
+              status: generationRuns.status,
+              prompt: generationRuns.prompt,
+              answer: generationRuns.answer,
+              modelId: generationRuns.modelId,
+              reasoningEffort: generationRuns.reasoningEffort,
+              createdAt: generationRuns.createdAt,
+              finishedAt: generationRuns.finishedAt,
+              usage: generationRuns.usage,
+              events: generationRuns.events,
+            })
+            .from(generationRuns)
+            .where(
+              and(eq(generationRuns.threadId, thread.id), isNull(generationRuns.taskId)),
+            )
+            .orderBy(asc(generationRuns.createdAt)),
+    ]);
+    const logged = [
+      ...(await Promise.all(tasks.map((row) => taskLog(row)))),
+      ...askRuns
+        .filter((run) => (run.prompt?.trim() ?? "").length > 0)
+        .map((run) => askRunLog(run)),
+    ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const latest = task
+      ? (logged.find((item) => item.id === task.id) ?? logged.at(-1))
+      : logged.at(-1);
     res.json({
-      task: {
-        id: snapshot.task.id,
-        status: snapshot.task.status,
-        phase: snapshot.task.phase,
-      },
+      task: task ? { id: task.id, status: task.status, phase: task.phase } : null,
       prompt: latest?.prompt ?? null,
-      plan: snapshot.task.plan ?? null,
+      plan: task?.plan ?? null,
       runs: latest?.runs ?? [],
       usage: latest?.usage ?? null,
       createdAt: latest?.createdAt ?? null,
       finishedAt: latest?.finishedAt ?? null,
       modelId: latest?.modelId ?? null,
       effort: latest?.effort ?? null,
-      earlier: logged.filter((item) => item.id !== snapshot.task.id),
+      earlier: latest ? logged.filter((item) => item.id !== latest.id) : [],
     });
   });
 

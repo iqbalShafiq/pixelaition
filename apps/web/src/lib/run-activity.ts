@@ -728,40 +728,175 @@ export type ConsoleTurn = {
 };
 
 /**
- * Each task is its own turn, oldest first. The prompt stays on the turn so
+ * Every request the asset's log can replay, oldest first: a drawing task's
+ * children and an ask-only run alike. Ask runs carry no task id, so the turn
+ * id falls back to the run's own id.
+ */
+export type AssetLogTurn = AssetLogTask | AssetLogRun;
+
+/** One ask-only request: a single run with its own prompt, answer, and usage. */
+export type AssetLogRun = {
+  id: string;
+  prompt: string | null;
+  runs: TaskLogRun[];
+  usage?: unknown;
+  modelId?: string | null;
+  effort?: string | null;
+  createdAt?: string | null;
+  finishedAt?: string | null;
+};
+
+/** An ask run's steps: its streamed events, and its answer when no note kept it. */
+export function turnFromAskRun(run: {
+  id: string;
+  prompt: string | null;
+  status: string;
+  answer: string | null;
+  modelId: string;
+  reasoningEffort: string;
+  createdAt: string;
+  finishedAt: string | null;
+  usage: unknown;
+  events: unknown;
+}): AssetLogRun {
+  return {
+    id: run.id,
+    prompt: run.prompt,
+    runs: [
+      {
+        id: run.id,
+        role: null,
+        workerKey: null,
+        status: run.status,
+        answer: run.answer,
+        createdAt: run.createdAt,
+        events: Array.isArray(run.events) ? (run.events as TaskLogRun["events"]) : [],
+      },
+    ],
+    usage: run.usage,
+    modelId: run.modelId,
+    effort: run.reasoningEffort,
+    createdAt: run.createdAt,
+    finishedAt: run.finishedAt,
+  };
+}
+
+function turnStartedAt(entry: AssetLogTurn): string {
+  const stamps = [
+    entry.createdAt ?? null,
+    ...entry.runs.map((run) => run.createdAt),
+  ].filter((stamp): stamp is string => typeof stamp === "string" && stamp.length > 0);
+  return stamps.sort((left, right) => left.localeCompare(right))[0] ?? "";
+}
+
+/**
+ * Oldest first by when the request started, so a settled drawing task and a
+ * later ask run read in the order the person typed them. An entry without a
+ * start time keeps its place at the end instead of jumping to the front.
+ */
+export function orderTurns(entries: AssetLogTurn[]): AssetLogTurn[] {
+  return entries
+    .map((entry, index) => ({ entry, index, started: turnStartedAt(entry) }))
+    .sort((left, right) => {
+      // Two undated turns keep the order they were given. An undated turn
+      // never jumps ahead of a dated one: it lands at the end.
+      if (left.started !== "" && right.started !== "") {
+        const byStart = left.started.localeCompare(right.started);
+        if (byStart !== 0) return byStart;
+      } else if (left.started !== right.started) {
+        return left.started === "" ? 1 : -1;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.entry);
+}
+
+function turnFromLogTask(task: AssetLogTask): ConsoleTurn {
+  const meta = turnMetaFromTask({
+    usage: task.usage ?? null,
+    modelId: task.modelId ?? null,
+    effort: task.effort ?? null,
+    createdAt: task.createdAt ?? null,
+    finishedAt: task.finishedAt ?? null,
+  });
+  const plan = "plan" in task ? task.plan : undefined;
+  return {
+    id: task.id,
+    prompt: task.prompt?.trim() ?? "",
+    ...(meta !== null ? { meta } : {}),
+    rows: rowsFromTaskLog(task.runs, plan).map((row) => ({
+      ...row,
+      id: `${task.id}:${row.id}`,
+    })),
+  };
+}
+
+/**
+ * Each request is its own turn, oldest first. The prompt stays on the turn so
  * the sticky header can pair it with that turn's tabs, and the meta rides
  * along so a settled turn can print its own usage, model, and timing.
  */
 export function turnsFromAssetLog(
-  latest: AssetLogTask,
-  earlier: AssetLogTask[] = [],
+  latest: AssetLogTurn,
+  earlier: AssetLogTurn[] = [],
 ): ConsoleTurn[] {
-  return [...earlier, latest].map((task) => {
-    const meta = turnMetaFromTask({
-      usage: task.usage ?? null,
-      modelId: task.modelId ?? null,
-      effort: task.effort ?? null,
-      createdAt: task.createdAt ?? null,
-      finishedAt: task.finishedAt ?? null,
-    });
-    return {
-      id: task.id,
-      prompt: task.prompt?.trim() ?? "",
-      ...(meta !== null ? { meta } : {}),
-      rows: rowsFromTaskLog(task.runs, task.plan).map((row) => ({
-        ...row,
-        id: `${task.id}:${row.id}`,
-      })),
-    };
-  });
+  return orderTurns([...earlier, latest]).map(turnFromLogTask);
 }
 
 /** The flat transcript, oldest turn first. Prompts stay on the turns. */
 export function rowsFromAssetLog(
-  latest: AssetLogTask,
-  earlier: AssetLogTask[] = [],
+  latest: AssetLogTurn,
+  earlier: AssetLogTurn[] = [],
 ): RunRow[] {
   return turnsFromAssetLog(latest, earlier).flatMap((turn) => turn.rows);
+}
+
+/**
+ * The console's turns for one asset: every replayed request in order, with
+ * the turn on screen taking its own place instead of being appended last. The
+ * live turn's rows and meta win when it is on screen — they are the stream,
+ * not the stored log.
+ */
+export function consoleTurns(
+  replayed: AssetLogTurn[],
+  shown: {
+    id: string;
+    prompt: string;
+    rows: RunRow[];
+    meta?: TurnMeta | null;
+    createdAt?: string | null;
+  },
+): ConsoleTurn[] {
+  // The turn in view is the log's own entry when the log carries it; before
+  // that (a send still in flight) it takes a place by its start time. One
+  // entry either way, never two.
+  const stored = replayed.find((entry) => entry.id === shown.id);
+  const onScreen: ConsoleTurn | null =
+    shown.prompt.trim().length > 0 || shown.rows.length > 0
+      ? {
+          id: shown.id,
+          prompt: shown.prompt,
+          rows: shown.rows,
+          ...(shown.meta !== undefined && shown.meta !== null
+            ? { meta: shown.meta }
+            : {}),
+        }
+      : null;
+  const entries: AssetLogTurn[] =
+    onScreen !== null && stored === undefined
+      ? [
+          {
+            id: onScreen.id,
+            prompt: onScreen.prompt,
+            runs: [],
+            createdAt: shown.createdAt ?? null,
+          },
+        ]
+      : [];
+  return orderTurns([...replayed, ...entries]).flatMap((entry) => {
+    if (onScreen !== null && entry.id === onScreen.id) return [onScreen];
+    return turnsFromAssetLog(entry).slice(-1);
+  });
 }
 
 export type ConsoleTab = {

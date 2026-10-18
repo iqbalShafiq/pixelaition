@@ -738,4 +738,69 @@ describe.skipIf(!db)("API routes", () => {
       await live.delete(projects).where(eq(projects.id, projectId));
     }
   });
+
+  it("replays an ask-only run as its own turn of the asset log", async () => {
+    const projectId = randomUUID();
+    const asset = createAsset({ name: "log-ask", width: 8, height: 8 });
+    await live.insert(projects).values({
+      id: projectId,
+      userId,
+      name: "log-ask",
+      style: defaultStyle,
+    });
+    await live.insert(assets).values({
+      id: asset.id,
+      projectId,
+      name: asset.name,
+      width: asset.width,
+      height: asset.height,
+      palette: asset.palette,
+    });
+    const thread = await ensureThread(live, userId, { assetId: asset.id });
+    // The newest request asked instead of drawing: one run with no task.
+    const askId = randomUUID();
+    await live.insert(generationRuns).values({
+      id: askId,
+      threadId: thread.id,
+      requestId: randomUUID(),
+      status: "succeeded",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      prompt: "which colors do I have?",
+      answer: "Six, from navy to erase.",
+      events: [
+        {
+          sequence: 1,
+          type: "model_note",
+          data: { operationId: "0:model:1", channel: "message", text: "reading" },
+        },
+      ],
+      usage: { cost: 0.05 },
+      createdAt: new Date("2026-10-17T11:00:00Z"),
+      finishedAt: new Date("2026-10-17T11:00:20Z"),
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/assets/${asset.id}/task/log`)
+        .set("authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      // No drawing task on this asset, so this response is the only history
+      // the console has. The ask must still be a full turn with its steps.
+      expect(res.body.task).toBeNull();
+      expect(res.body.prompt).toBe("which colors do I have?");
+      expect(res.body.modelId).toBe("deepseek-v4.1-flash");
+      expect(res.body.createdAt).toBe("2026-10-17T11:00:00.000Z");
+      expect(res.body.runs).toHaveLength(1);
+      expect(res.body.runs[0]).toMatchObject({
+        id: askId,
+        role: null,
+        status: "succeeded",
+        answer: "Six, from navy to erase.",
+        events: [{ type: "model_note" }],
+      });
+      expect(res.body.earlier).toEqual([]);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
 });

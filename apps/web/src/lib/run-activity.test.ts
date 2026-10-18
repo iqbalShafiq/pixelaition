@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   applyRunEvent,
   consoleTabs,
+  consoleTurns,
   groupRowsByWorker,
   noteRow,
   recordFollowUp,
+  turnFromAskRun,
   turnsFromAssetLog,
   rowsFromTaskLog,
   type RunRow,
@@ -375,6 +377,113 @@ describe("asset log", () => {
       startedAt: "2026-10-16T00:00:00.000Z",
       durationMs: 60_000,
     });
+  });
+
+  it("orders a later ask run around the drawing tasks by when it started", () => {
+    const ask = turnFromAskRun({
+      id: "ask-run",
+      prompt: "which colors do I have?",
+      status: "succeeded",
+      answer: "Six, from navy to erase.",
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      createdAt: "2026-10-17T11:00:00.000Z",
+      finishedAt: "2026-10-17T11:00:20.000Z",
+      usage: { input: 9, cached: 0, output: 3, cost: 0.02 },
+      events: [],
+    });
+    // The log sends the newest request first in the payload even when it is
+    // an ask; the turn still lands after the drawing task it came after.
+    const turns = turnsFromAssetLog(
+      {
+        id: "draw-1",
+        prompt: "draw a slime",
+        runs: [],
+        createdAt: "2026-10-17T10:00:00.000Z",
+      },
+      [ask],
+    );
+    expect(turns.map((turn) => turn.prompt)).toEqual([
+      "draw a slime",
+      "which colors do I have?",
+    ]);
+    expect(turns[1]?.id).toBe("ask-run");
+    expect(turns[1]?.rows.map((row) => row.kind)).toContain("supervisor");
+    expect(turns[1]?.meta).toEqual({
+      usage: { input: 9, cached: 0, output: 3, cost: 0.02 },
+      modelId: "deepseek-v4.1-flash",
+      effort: "low",
+      startedAt: "2026-10-17T11:00:00.000Z",
+      durationMs: 20_000,
+    });
+  });
+});
+
+describe("console turns", () => {
+  const askRun = (id: string, prompt: string, createdAt: string) =>
+    turnFromAskRun({
+      id,
+      prompt,
+      status: "succeeded",
+      answer: `answer to ${prompt}`,
+      modelId: "deepseek-v4.1-flash",
+      reasoningEffort: "low",
+      createdAt,
+      finishedAt: createdAt,
+      usage: null,
+      events: [],
+    });
+
+  it("keeps the ask the person just sent after the asks before it, not above them", () => {
+    const turns = consoleTurns(
+      [askRun("ask-1", "what is this?", "2026-10-17T10:00:00.000Z")],
+      {
+        id: "live",
+        prompt: "make it blue",
+        rows: [],
+      },
+    );
+    expect(turns[0]?.prompt).toBe("what is this?");
+    expect(turns.at(-1)).toMatchObject({ id: "live", prompt: "make it blue" });
+  });
+
+  it("places the turn in view among the log by its own start time", () => {
+    const turns = consoleTurns(
+      [askRun("newest", "add a hat", "2026-10-17T12:00:00.000Z")],
+      {
+        id: "shown",
+        prompt: "draw a slime",
+        rows: [],
+        createdAt: "2026-10-17T09:00:00.000Z",
+      },
+    );
+    expect(turns.map((turn) => turn.id)).toEqual(["shown", "newest"]);
+  });
+
+  it("replaces the shown turn's stored rows with the live ones", () => {
+    const stored = askRun("ask-1", "what is this?", "2026-10-17T10:00:00.000Z");
+    const liveRow: RunRow = {
+      id: "live:1",
+      kind: "phase",
+      label: "thinking",
+      state: "running",
+    };
+    const turns = consoleTurns([stored], {
+      id: "ask-1",
+      prompt: "what is this?",
+      rows: [liveRow],
+      createdAt: "2026-10-17T10:00:00.000Z",
+    });
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.rows).toEqual([liveRow]);
+  });
+
+  it("shows every log turn even when nothing is on screen", () => {
+    const turns = consoleTurns(
+      [askRun("a", "what is this?", "2026-10-17T10:00:00.000Z")],
+      { id: "live", prompt: "", rows: [] },
+    );
+    expect(turns.map((turn) => turn.prompt)).toEqual(["what is this?"]);
   });
 });
 

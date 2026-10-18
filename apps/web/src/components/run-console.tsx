@@ -185,7 +185,8 @@ function followUpStatus(row: Extract<RunRow, { kind: "steering" }>): string {
   return `with the supervisor${frame}`;
 }
 
-/** One earlier run, kept small: what was asked and what came back. */
+/** The settled requests of this asset, for the header's word when nothing is
+ * on screen. Their steps are turns like any other and never a second list. */
 export type HistoryRun = {
   id: string;
   status: string;
@@ -207,7 +208,6 @@ export function RunConsole({
   message,
   prompt = "",
   turns,
-  history = [],
   restoredMs = null,
   interaction,
   frames,
@@ -234,7 +234,6 @@ export function RunConsole({
    * Omitted, the console is a single turn of `prompt` and `rows`.
    */
   turns?: ConsoleTurn[];
-  history?: HistoryRun[];
   restoredMs?: number | null;
   interaction: PendingInteraction | null;
   frames: FrameDto[];
@@ -365,7 +364,6 @@ export function RunConsole({
     !running &&
     allRows.length === 0 &&
     !message &&
-    history.length === 0 &&
     sections.every((turn) => turn.prompt.trim().length === 0);
   // The outcome the header names. Note rows ("The task finished") never mask
   // a cancelled or failed status, and a failed attempt that was retried ends
@@ -377,15 +375,13 @@ export function RunConsole({
     ? "waiting for your answer"
     : running
       ? "working"
-      : allRows.length === 0 && history.length > 0
-        ? `${history.length} earlier run${history.length === 1 ? "" : "s"}`
-        : lastStatus?.kind === "status"
-          ? lastStatus.label === "failed" ||
-            lastStatus.label === "cancelled" ||
-            lastStatus.label === "completed"
-            ? lastStatus.label
-            : "finished"
-          : "finished";
+      : lastStatus?.kind === "status"
+        ? lastStatus.label === "failed" ||
+          lastStatus.label === "cancelled" ||
+          lastStatus.label === "completed"
+          ? lastStatus.label
+          : "finished"
+        : "finished";
   const stateTone =
     running || interaction
       ? "text-accent"
@@ -880,32 +876,6 @@ export function RunConsole({
                 </p>
                 <StreamMarkdown className="console-markdown mt-1" content={message} />
               </div>
-            </div>
-          ) : null}
-          {history.length > 0 ? (
-            <div className="mx-2 mt-2 border-t-2 border-line pt-2 pb-2">
-              <p className="text-pixel-mono tracking-[0.16em] text-muted uppercase">
-                earlier
-              </p>
-              <ul className="mt-1 grid gap-1.5">
-                {history.map((item) => (
-                  <li key={item.id} className="text-pixel-mono">
-                    <p className="text-muted">
-                      <span className="text-accent">you</span>{" "}
-                      <span className="line-clamp-2 whitespace-pre-wrap">
-                        {item.prompt ?? "—"}
-                      </span>
-                    </p>
-                    <p className="truncate text-ink" title={item.answer ?? ""}>
-                      <span className="text-accent">agent</span>{" "}
-                      {item.answer ?? item.status}
-                      {typeof item.usage?.cost === "number" && item.usage.cost > 0
-                        ? ` · ${formatCost(item.usage.cost)}`
-                        : ""}
-                    </p>
-                  </li>
-                ))}
-              </ul>
             </div>
           ) : null}
         </div>
