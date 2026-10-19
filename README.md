@@ -18,6 +18,8 @@ Pixelaition is a pixel-asset studio. You draw on a canvas, or describe a sprite 
 
 Before any generation starts, a decision layer reads the thread and picks the mode. A drawing run gets painting tools. An answering-only run gets read-only tools. That one call is the difference between the product working and the product politely explaining why it will not.
 
+It runs on [Anvia](https://github.com/anvia-hq/anvia), the agent runtime behind the tools, the durable task runner, the tracing and the evals.
+
 <p align="center">
   <img src="docs/images/library.png" alt="The Pixelaition home screen: a project list, a library of eight pixel assets, a feed of recent runs, and a composer at the bottom" width="1100">
 </p>
@@ -105,7 +107,7 @@ flowchart LR
 | ---------- | ----------------------------------------------------------------------- |
 | Interface  | React 19, Vite, TanStack Router, TanStack Query, Tailwind CSS 4, Motion |
 | Service    | Express, Drizzle, PostgreSQL, Better Auth                               |
-| Agent      | Anvia, TypeScript, Zod                                                  |
+| Agent      | [Anvia](https://github.com/anvia-hq/anvia), TypeScript, Zod             |
 | Jobs       | `@anvia/durable` on SQLite, one worker process                          |
 | Repository | pnpm 10 workspaces, Turborepo, Vitest, Biome                            |
 
