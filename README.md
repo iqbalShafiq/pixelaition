@@ -219,4 +219,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Open a branch from `main`, keep the chan
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Pixelaition is open source under the [MIT License](LICENSE).
