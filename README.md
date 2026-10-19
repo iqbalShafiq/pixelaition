@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/anvia-hq/anvia"><img src="https://img.shields.io/badge/built%20with-Anvia-d8a64e?labelColor=131211" alt="Built with Anvia"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22.16%2B-339933?logo=node.js&logoColor=white" alt="Node.js 22.16+"></a>
   <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10.30.3-F69220?logo=pnpm&logoColor=white" alt="pnpm 10.30.3"></a>
