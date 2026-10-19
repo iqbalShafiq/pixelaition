@@ -872,14 +872,16 @@ export function Wordmark({
   /** Signed-out brand: it leaves before the home's bar arrives, and vice versa. */
   flight?: boolean;
 }) {
+  const display = size === "display";
   return (
     <span
       className="inline-flex items-center gap-2 text-ink"
       {...(flight ? { "data-flight": "brand" } : {})}
     >
-      <PixelMark />
+      {/* The hero mark breathes like the slide under it; the chrome mark holds still. */}
+      <PixelMark size={display ? 26 : 18} pulse={display} />
       <span
-        className={`${size === "display" ? "text-pixel-display" : "text-pixel-title"} ${
+        className={`${display ? "text-pixel-display" : "text-pixel-title"} ${
           hideLabelOnNarrow ? "max-sm:sr-only" : ""
         }`}
       >
@@ -927,23 +929,46 @@ export function SegmentedControl<T extends string>({
 }
 
 /**
- * A 16px logo glyph drawn on a 16 grid, not a UI icon, so the 24/12 icon rule
- * does not apply. `currentColor` keeps it on `accent`.
+ * The brand mark: the signed-out slide's dither field condensed to a 16×16
+ * grid — an `ink` core, an `accent` ring, an `accent-deep` body, and a Bayer
+ * checker halo in the deep tone. It is `public/favicon.svg` without its tile,
+ * so the wordmark carries the app icon's identity on every page, and it is a
+ * logo glyph rather than a UI icon: the 24/12 icon rule does not apply.
  */
-export function PixelMark() {
+export function PixelMark({
+  size = 18,
+  pulse = false,
+}: {
+  size?: number;
+  pulse?: boolean;
+}) {
   return (
     <svg
       viewBox="0 0 16 16"
-      width={16}
-      height={16}
+      width={size}
+      height={size}
       shapeRendering="crispEdges"
       aria-hidden
-      className="text-accent"
+      className="shrink-0"
     >
-      <rect x="1" y="1" width="6" height="6" fill="currentColor" />
-      <rect x="9" y="1" width="6" height="6" fill="currentColor" opacity="0.5" />
-      <rect x="1" y="9" width="6" height="6" fill="currentColor" opacity="0.5" />
-      <rect x="9" y="9" width="6" height="6" fill="currentColor" />
+      <path
+        d="M6 2h1v1h-1zM8 2h1v1h-1zM10 2h1v1h-1zM3 3h1v1h-1zM11 3h1v1h-1zM12 4h1v1h-1zM13 5h1v1h-1zM2 6h1v1h-1zM13 7h1v1h-1zM2 8h1v1h-1zM13 9h1v1h-1zM2 10h1v1h-1zM3 11h1v1h-1zM4 12h1v1h-1zM12 12h1v1h-1zM5 13h1v1h-1zM7 13h1v1h-1zM9 13h1v1h-1z"
+        fill="var(--color-accent-deep)"
+        opacity={0.55}
+        className={pulse ? "brand-halo" : undefined}
+      />
+      <path
+        d="M5 3h6v1h-6zM4 4h2v1h-2zM10 4h2v1h-2zM3 5h2v1h-2zM11 5h2v1h-2zM3 6h1v1h-1zM12 6h1v1h-1zM3 7h1v1h-1zM12 7h1v1h-1zM3 8h1v1h-1zM12 8h1v1h-1zM3 9h1v1h-1zM12 9h1v1h-1zM3 10h2v1h-2zM11 10h2v1h-2zM4 11h2v1h-2zM10 11h2v1h-2zM5 12h6v1h-6z"
+        fill="var(--color-accent-deep)"
+      />
+      <path
+        d="M6 4h4v1h-4zM5 5h2v1h-2zM9 5h2v1h-2zM4 6h2v1h-2zM10 6h2v1h-2zM4 7h1v1h-1zM11 7h1v1h-1zM4 8h1v1h-1zM11 8h1v1h-1zM4 9h2v1h-2zM10 9h2v1h-2zM5 10h2v1h-2zM9 10h2v1h-2zM6 11h4v1h-4z"
+        fill="var(--color-accent)"
+      />
+      <path
+        d="M7 5h2v1h-2zM6 6h4v1h-4zM5 7h6v1h-6zM5 8h6v1h-6zM6 9h4v1h-4zM7 10h2v1h-2z"
+        fill="var(--color-ink)"
+      />
     </svg>
   );
 }

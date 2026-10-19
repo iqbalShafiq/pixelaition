@@ -71,10 +71,13 @@ field is focused.
 The app icon is the signed-out slide's dither field, condensed to a mark: a 16×16
 grid where a radial falloff is banded into the Atelier ramp — `ink` core, `accent`
 ring, `accent-deep` body, and a Bayer-checker halo in the deep tone — on a `coffee`
-tile with a one-pixel stepped corner. `favicon.svg` breathes that halo on the
-slide's own 2400ms (`prefers-reduced-motion` freezes it at 0.8), and the same grid
-exports to the 32/180/192/512 PNGs plus a full-bleed maskable 512, so the tab, the
-dock, and an installed window all show one mark.
+tile with a one-pixel stepped corner. The same grid, without the tile, is `PixelMark`
+in the wordmark on every page, so the tab, the dock, an installed window, and the
+app's own chrome all show one object. `favicon.svg` breathes that halo on the
+slide's own 2400ms (`prefers-reduced-motion` freezes it at 0.8), and the hero
+wordmark on the signed-out slide breathes with it; the mark in the bars holds
+still, because chrome that pulses beside working content is noise. The grid exports
+to the 32/180/192/512 PNGs plus a full-bleed maskable 512.
 
 ## Pixel craft
 

@@ -467,6 +467,22 @@
   }
 }
 
+/* The hero wordmark's halo breathes on the signed-out slide's own 2400ms, so
+   the mark in the tab, the slide, and the bar are visibly the same object. */
+.brand-halo {
+  animation: pixel-halo 2400ms ease-in-out infinite;
+}
+
+@keyframes pixel-halo {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 /* Typed view transitions: the home's composer, console, and target card
    assemble into the editor's counterparts. `data-flight` marks the source
    elements; the editor side carries the same names statically. */
@@ -905,6 +921,12 @@
   /* An infinite stepped animation would keep flickering at 0.01ms; freeze it. */
   .pixel-loader {
     animation: none;
+  }
+
+  /* Same for the brand halo: it rests at its mid opacity instead of pulsing. */
+  .brand-halo {
+    animation: none;
+    opacity: 0.55;
   }
 }
 
