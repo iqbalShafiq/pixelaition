@@ -16,7 +16,7 @@
 
 Pixelaition is a pixel-asset studio. You draw on a canvas, or describe a sprite and watch the pixels appear while an agent works. A project keeps one palette and one style guide, so every asset inside it stays related. A finished asset can grow a new state, such as another facing or another action, from a frame that already exists.
 
-Before any generation starts, a decision model called Jev reads the thread and picks the mode: a drawing run with painting tools, or an answering-only run with read-only tools. That one decision is the difference between the product working and the product politely explaining why it will not.
+Before any generation starts, a decision layer reads the thread and picks the mode. A drawing run gets painting tools. An answering-only run gets read-only tools. That one call is the difference between the product working and the product politely explaining why it will not.
 
 <p align="center">
   <img src="docs/images/library.png" alt="The Pixelaition home screen: a project list, a library of eight pixel assets, a feed of recent runs, and a composer at the bottom" width="1100">
@@ -65,7 +65,7 @@ Copy `.env.example` and fill the keys for the parts you want running. Manual edi
 | Variable                                                              | What it unlocks                                                                                                   |
 | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `AGENT_BASE_URL`, `AGENT_API_KEY`                                     | The drawing models. Point the base URL at any OpenAI-compatible endpoint, such as `https://openrouter.ai/api/v1`. |
-| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | Jev. Required before a run will start. It is a real model call, never a local heuristic.                          |
+| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | The decision layer. Required before a run will start. It is a real model call, never a local heuristic.           |
 | `DATABASE_URL`                                                        | Postgres. The Compose file already sets it.                                                                       |
 | `BETTER_AUTH_SECRET`                                                  | Signed session cookies. Generate one with `openssl rand -base64 32`.                                              |
 | `WORKER_INTERNAL_TOKEN`                                               | The API-to-worker handshake.                                                                                      |
@@ -83,7 +83,7 @@ flowchart LR
   API --> DB[(Postgres)]
   API -->|task| Worker["Worker<br/>@anvia/durable<br/>:4002"]
   Worker --> Agent["@pixelaition/agent"]
-  Agent --> Jev["Jev<br/>decision model"]
+  Agent --> Router["Guard and<br/>mode decision"]
   Agent --> Models["Drawing models"]
   Worker --> DB
   API -.->|stream| Web
@@ -109,7 +109,23 @@ flowchart LR
 | Jobs       | `@anvia/durable` on SQLite, one worker process                          |
 | Repository | pnpm 10 workspaces, Turborepo, Vitest, Biome                            |
 
-One drawing request is one durable `asset-draw` task. Jev sets the shape, a supervisor plans, up to four workers paint their own frames in parallel, and a review pass reads every frame and decides when the work is finished. Closing the tab does not stop it. A second request for the same asset answers `RUN_IN_PROGRESS` instead of starting a competing run.
+## The agent
+
+One drawing request is one durable `asset-draw` task, and three roles run inside it.
+
+| Role       | What it does                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| Supervisor | Reads the project and writes a plan. The plan card is approved before anything paints.     |
+| Workers    | Up to four, each painting its own frames in parallel behind an `allSettled` join.          |
+| Review     | Reads every frame, answers with a typed verdict, and decides whether the work is finished. |
+
+There is no round cap in code. Closing the tab does not stop the task. A second request for the same asset answers `RUN_IN_PROGRESS` instead of starting a competing run.
+
+Before any of that, a decision layer reads the whole thread with the project, asset and frames in view, and picks the mode. There is no user-facing toggle for it, and every message passes a guardrail before a run exists.
+
+A wrong verdict is silent. The run succeeds, the UI looks right, and the product quietly does nothing, which is why this layer is measured on its own. `pnpm eval:jev:decisions` runs 30 fixtures three times each through one deterministic metric, with no judge model in the loop. The current score is 90 of 90 verdicts and 30 of 30 stable, against 69 of 90 before the prompt rewrite.
+
+Every agentic case is read back from its Langfuse trace as well. A case without a readable trace is not a passed case.
 
 ## Editor
 
@@ -170,12 +186,6 @@ Canvases run from 8 to 128 pixels. Index 0 in the palette is transparent `#00000
 Tools: `list_projects`, `create_project`, `get_project`, `list_assets`, `get_asset`, `create_asset`, `get_frame`, `paint_pixels`, `set_palette`, `create_frame`, `duplicate_frame`, `export_asset`, `export_project`.
 
 `get_frame` returns the frame as rows of palette indexes, with `0` meaning transparent. `paint_pixels` takes palette indexes rather than hex and returns what the server actually committed. Writes go through the same `applyCommand` the editor uses, so a bad coordinate or an index outside the palette is refused instead of stored.
-
-## The decision layer
-
-Every message passes a guardrail before a run exists, and then Jev decides between drawing and answering. A wrong verdict here is silent. The run succeeds, the UI looks right, and the product quietly does nothing, which is why this layer has its own eval.
-
-`pnpm eval:jev:decisions` runs 30 fixtures three times each through one deterministic metric, with no judge model in the loop. The current score is 90 of 90 verdicts and 30 of 30 stable, against 69 of 90 before the prompt rewrite.
 
 ## Development
 
