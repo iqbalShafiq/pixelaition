@@ -209,7 +209,7 @@ server.registerTool(
   {
     description:
       "Replace an asset palette. Index 0 must stay #00000000. Refused if a frame still uses a color the new palette would remove.",
-    inputSchema: { assetId: z.string(), palette: z.array(z.string()).min(2).max(33) },
+    inputSchema: { assetId: z.string(), palette: z.array(z.string()).min(2).max(256) },
   },
   async ({ assetId, palette }) =>
     text(

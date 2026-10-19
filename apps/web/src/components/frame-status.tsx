@@ -1,0 +1,104 @@
+import { agentLabel } from "../lib/agent-label.js";
+import { PixelLoader } from "./pixel-loader.js";
+import { Check, Close } from "./pixel-icons.js";
+
+/** The states a frame can be in while its worker paints it. */
+export type FrameTaskState = {
+  status: "untouched" | "queued" | "working" | "retrying" | "done" | "failed" | "asking";
+  workerKey: string;
+  /** The user already looked at this frame; its tick stays quiet. */
+  seen?: boolean;
+  /** This frame is the one the worker is painting right now. */
+  painting?: boolean;
+};
+
+/**
+ * A frame's place in the running task. Colour, shape, and a text label travel
+ * together (never colour alone), and every animation is a whole-pixel
+ * `steps()` loop that `prefers-reduced-motion` turns off.
+ */
+export function FrameStatus({ state }: { state: FrameTaskState }) {
+  if (state.status === "untouched") {
+    // Nobody is painting this frame in the running task: say so quietly, so a
+    // frame without an agent is never mistaken for one in progress.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line-strong" />
+        untouched
+      </span>
+    );
+  }
+  if (state.status === "queued") {
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line" />
+        queued
+      </span>
+    );
+  }
+  if (state.status === "working" && state.painting !== true) {
+    // The worker owns this frame and is busy on another one. No loader.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line" />
+        {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "working") {
+    // One indicator, not two: the loader is the circle that means "painting".
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-accent">
+        <PixelLoader size={12} />
+        {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "retrying" && state.painting !== true) {
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-muted">
+        <span className="h-2 w-2 border-2 border-line" />
+        retrying · {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "retrying") {
+    // A retry that answers a failure is its own state: the frame is alive
+    // again, and the label says so instead of showing the dead attempt.
+    return (
+      <span className="flex items-center gap-1 text-pixel-mono text-ink">
+        <PixelLoader size={12} />
+        retrying · {agentLabel(state.workerKey)}
+      </span>
+    );
+  }
+  if (state.status === "done") {
+    if (state.seen === true) {
+      return (
+        <span className="flex items-center gap-1 text-pixel-mono text-muted">
+          <Check width={12} height={12} />
+          {agentLabel(state.workerKey)}
+        </span>
+      );
+    }
+    return (
+      <span className="done-pop flex items-center gap-1 text-pixel-mono text-accent">
+        <Check width={12} height={12} />
+        done
+      </span>
+    );
+  }
+  if (state.status === "failed") {
+    return (
+      <span className="glitch flex items-center gap-1 text-pixel-mono text-erase">
+        <Close width={12} height={12} />
+        failed
+      </span>
+    );
+  }
+  return (
+    <span className="ask-pulse flex items-center gap-1 border-2 border-accent px-1 text-pixel-mono text-accent">
+      ? needs you
+    </span>
+  );
+}

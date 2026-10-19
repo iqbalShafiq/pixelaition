@@ -1,58 +1,73 @@
 @import "tailwindcss";
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/silkscreen/400.css";
+@import "@fontsource/silkscreen/700.css";
+@import "@fontsource/pixelify-sans/400.css";
+@import "@fontsource/pixelify-sans/500.css";
+@import "@fontsource/pixelify-sans/600.css";
+@import "@fontsource/pixelify-sans/700.css";
+
+@font-face {
+  font-family: "Departure Mono";
+  src: url("./assets/fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
 /*
- * Colour comes from Sweetie 16, the 16-colour palette by GrafxKid that ships as
- * the TIC-80 default and is one of the most used palettes on Lospec. Using a
- * published pixel-art palette keeps the chrome and any sprite drawn in the
- * editor speaking the same language, instead of inventing brand colours and
- * hoping they sit together.
+ * Colour is the Atelier ramp: warm near-black surfaces, bone text, one brass
+ * accent, coral for destructive actions. The chrome is deliberately neutral so
+ * the artwork is the only colour on screen. The values were measured against
+ * live dark chrome: ChatGPT's #000000 page, Grok's #131211 page with #201f1d
+ * raised surfaces and 6% hairlines, Claude's #151515 page over #111111 chrome,
+ * and Gemini's #0f0f0f page with #1f1f1f rails. Every one of them keeps the
+ * surfaces within a few steps of black. The neutral steps follow the structure
+ * of Radix's 12-step dark scale (step 1 page, 3 rail, 4 overlay, 12 text); the
+ * accent and danger are desaturated amber and tomato.
  *
- *   Sweetie 16 slots used here:
- *     #1a1c2c  slot 0   deepest navy
- *     #333c57  slot 15  slate
- *     #566c86  slot 14  mid slate
- *     #f4f4f4  slot 12  white
- *     #a7f070  slot 5   green
- *     #38b764  slot 6   deep green
- *     #ef7d57  slot 3   coral
+ *   paper   #0a0a09   page
+ *   panel   #131211   rails, header, cards
+ *   raised  #1c1b19   menus, dialogs, sheets
+ *   field   #050505   inset wells
+ *   screen  #000000   the canvas well
+ *   ink     #f1efe9   primary text
+ *   muted   #a7a49e   secondary text
+ *   faint   #6d6a64   hairlines and marks only, never copy
+ *   accent  #d8a64e   focus, active tool, primary button
+ *   erase   #e07a63   errors and destructive actions
  *
  * Surfaces are flat blocks, one step apart, because a shadow cannot be darker
- * than a near-black page. The canvas sits in a darker "screen" well than the
- * chrome around it, the way a handheld console does.
+ * than a near-black page. The canvas sits in the deepest well, the way a
+ * drafting table sits under the lamp.
  */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-
-  /* Sweetie 16 direct */
-  --color-navy: #1a1c2c;
-  --color-slate: #333c57;
-  --color-steel: #566c86;
-  --color-paperwhite: #f4f4f4;
-  --color-green: #a7f070;
-  --color-green-deep: #38b764;
-  --color-coral: #ef7d57;
+  --font-sans: "Pixelify Sans", ui-sans-serif, sans-serif;
+  --font-body: "Pixelify Sans", ui-sans-serif, sans-serif;
+  --font-mono: "Departure Mono", ui-monospace, monospace;
+  --font-display: "Silkscreen", "Pixelify Sans", ui-sans-serif, sans-serif;
 
   /* Roles */
-  --color-paper: #1a1c2c;
-  --color-panel: #252a40;
-  --color-raised: #333c57;
-  --color-field: #101220;
-  --color-screen: #101220;
+  --color-paper: #0a0a09;
+  --color-panel: #131211;
+  --color-raised: #1c1b19;
+  --color-field: #050505;
+  --color-screen: #000000;
 
-  --color-ink: #f4f4f4;
-  --color-muted: #94b0c2;
-  --color-faint: #566c86;
+  --color-ink: #f1efe9;
+  --color-muted: #a7a49e;
+  --color-faint: #6d6a64;
 
-  --color-accent: #a7f070;
-  --color-accent-deep: #38b764;
-  --color-erase: #ef7d57;
+  --color-accent: #d8a64e;
+  --color-accent-deep: #a5772c;
+  --color-erase: #e07a63;
 
-  --color-line: rgba(148, 176, 194, 0.28);
-  --color-line-strong: rgba(148, 176, 194, 0.55);
+  /* The darkest tone: label on accent, overlay backdrop, hard lift bar. */
+  --color-coffee: #0b0906;
+  /* The quiet hard bar on ghost controls and the scrollbar thumb. */
+  --color-stone: #75726c;
+
+  --color-line: rgba(241, 239, 233, 0.1);
+  --color-line-strong: rgba(241, 239, 233, 0.38);
 
   --radius-pixel: 0px;
 }
@@ -66,7 +81,7 @@
 @layer base {
   * {
     scrollbar-width: thin;
-    scrollbar-color: #566c86 transparent;
+    scrollbar-color: var(--color-stone) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -79,7 +94,9 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #566c86;
+    background: var(--color-stone);
+    border: 2px solid var(--color-paper);
+    box-shadow: inset 2px 2px 0 0 rgba(241, 239, 233, 0.08);
   }
 
   *::-webkit-scrollbar-button {
@@ -96,7 +113,7 @@
     background: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
+    -webkit-font-smoothing: none;
   }
 
   /*
@@ -155,8 +172,8 @@
   }
 
   ::selection {
-    background: var(--color-green);
-    color: var(--color-navy);
+    background: var(--color-accent);
+    color: var(--color-coffee);
   }
 
   /* Pixel art is never smoothed. */
@@ -192,27 +209,146 @@
 /* A flat pixel grid, used as the page substrate. */
 @utility pixel-grid {
   background-image:
-    linear-gradient(to right, rgba(148, 176, 194, 0.1) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148, 176, 194, 0.1) 1px, transparent 1px);
+    linear-gradient(to right, rgba(241, 239, 233, 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(241, 239, 233, 0.1) 1px, transparent 1px);
   background-size: 16px 16px;
 }
 
 /* Coarser grid for large empty areas, so the texture reads at a distance. */
 @utility pixel-grid-lg {
   background-image:
-    linear-gradient(to right, rgba(148, 176, 194, 0.09) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(148, 176, 194, 0.09) 1px, transparent 1px);
+    linear-gradient(to right, rgba(241, 239, 233, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(241, 239, 233, 0.09) 1px, transparent 1px);
   background-size: 32px 32px;
+}
+
+/* Hard offset shadows: no blur, ever. The coffee bar is the default lift; on
+   the paper page it is nearly invisible (shadow tone = page tone), so ghost
+   buttons take the stone bar instead — the same hard edge, but it reads on
+   every surface. */
+@utility shadow-pixel-sm {
+  box-shadow: 2px 2px 0 0 var(--color-coffee);
+}
+@utility shadow-pixel-stone {
+  box-shadow: 2px 2px 0 0 var(--color-stone);
+}
+@utility shadow-pixel-md {
+  box-shadow: 3px 3px 0 0 var(--color-coffee);
+}
+@utility shadow-pixel-lg {
+  box-shadow: 4px 4px 0 0 var(--color-coffee);
+}
+
+/* 2px inset bevels for raised and sunken surfaces. */
+@utility bevel {
+  box-shadow:
+    inset 2px 2px 0 0 rgba(241, 239, 233, 0.08),
+    inset -2px -2px 0 0 rgba(11, 9, 6, 0.5);
+}
+@utility bevel-in {
+  box-shadow:
+    inset 2px 2px 0 0 rgba(11, 9, 6, 0.55),
+    inset -2px -2px 0 0 rgba(241, 239, 233, 0.05);
+}
+
+/* A stepped 2px frame that stays sharp at any size (9-slice). The frame is
+   `line-strong` baked into the data URI: ink at 38%. */
+@utility pixel-window {
+  border: 6px solid transparent;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cg fill='%23f1efe9' fill-opacity='0.38'%3E%3Crect x='2' y='0' width='20' height='2'/%3E%3Crect x='2' y='22' width='20' height='2'/%3E%3Crect x='0' y='2' width='2' height='20'/%3E%3Crect x='22' y='2' width='2' height='20'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='20' y='2' width='2' height='2'/%3E%3Crect x='2' y='20' width='2' height='2'/%3E%3Crect x='20' y='20' width='2' height='2'/%3E%3C/g%3E%3C/svg%3E")
+    6 fill / 6px / 0 stretch;
+}
+
+/* Checker dithers for hero and empty-state surfaces. */
+@utility dither-sm {
+  background-image: conic-gradient(
+    from 0deg,
+    rgba(241, 239, 233, 0.1) 25%,
+    transparent 0 50%,
+    rgba(241, 239, 233, 0.1) 0 75%,
+    transparent 0
+  );
+  background-size: 4px 4px;
+}
+@utility dither-md {
+  background-image: conic-gradient(
+    from 0deg,
+    rgba(241, 239, 233, 0.08) 25%,
+    transparent 0 50%,
+    rgba(241, 239, 233, 0.08) 0 75%,
+    transparent 0
+  );
+  background-size: 8px 8px;
+}
+
+/* The type scale. Sizes sit on each face's design grid: Silkscreen 16/24/32,
+   Departure Mono 11/22, Pixelify >= 12. Never introduce fractional sizes. */
+@layer components {
+  .text-pixel-hero {
+    font-family: var(--font-display);
+    font-size: 2rem; /* 32px, multiple of 8 */
+    line-height: 2.5rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  .text-pixel-display {
+    font-family: var(--font-display);
+    font-size: 1.5rem; /* 24px, multiple of 8 */
+    line-height: 2rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  .text-pixel-title {
+    font-family: var(--font-display);
+    font-size: 1rem; /* 16px */
+    line-height: 1.5rem;
+    letter-spacing: 0.04em;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  .text-pixel-label {
+    font-family: var(--font-sans);
+    font-size: 0.75rem; /* 12px */
+    line-height: 1rem;
+  }
+  .text-pixel-body {
+    font-family: var(--font-sans);
+    font-size: 1rem; /* 16px */
+    line-height: 1.5rem;
+  }
+  .text-pixel-mono {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem; /* 11px */
+    line-height: 1rem;
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+}
+
+/*
+ * The paint cursor. A 16px pixel cross in ink with the hotspot at 8,8, so the
+ * sight sits exactly on the cell being drawn. Used for every tool that touches
+ * pixels; pan and select keep their own cursors.
+ */
+.cursor-pixel-cross {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cg fill='%23f1efe9'%3E%3Crect x='7' y='1' width='2' height='6'/%3E%3Crect x='7' y='9' width='2' height='6'/%3E%3Crect x='1' y='7' width='6' height='2'/%3E%3Crect x='9' y='7' width='6' height='2'/%3E%3C/g%3E%3C/svg%3E")
+      8 8,
+    crosshair;
 }
 
 /* Swatch for palette index 0, which is transparent. */
 .checkerboard {
-  background-color: #252a40;
+  background-color: var(--color-panel);
   background-image:
-    linear-gradient(45deg, #333c57 25%, transparent 25%),
-    linear-gradient(-45deg, #333c57 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #333c57 75%),
-    linear-gradient(-45deg, transparent 75%, #333c57 75%);
+    linear-gradient(45deg, var(--color-raised) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-raised) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-raised) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-raised) 75%);
   background-position:
     0 0,
     0 6px,
@@ -255,11 +391,11 @@
 }
 
 .dialog-popup {
-  animation: overlay-enter 160ms ease-out;
+  animation: overlay-enter 160ms steps(3, end);
 }
 
 .sheet-popup {
-  animation: var(--sheet-enter) 180ms ease-out;
+  animation: var(--sheet-enter) 200ms steps(4, end);
 }
 
 .sheet-popup[data-side="left"] {
@@ -271,12 +407,507 @@
 }
 
 .toast-popup {
-  animation: sheet-enter-right 180ms ease-out;
-  transition: opacity 180ms ease-out;
+  animation: sheet-enter-right 200ms steps(4, end);
+  transition: opacity 160ms steps(2, end);
 }
 
 .toast-popup[data-ending-style] {
   opacity: 0;
+}
+
+.pixel-loader {
+  image-rendering: pixelated;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='36'%3E%3Cg fill='%23d8a64e'%3E%3Crect x='5' y='0' width='2' height='2'/%3E%3Crect x='8' y='2' width='2' height='2'/%3E%3Crect x='10' y='5' width='2' height='2'/%3E%3Crect x='8' y='8' width='2' height='2'/%3E%3Crect x='5' y='10' width='2' height='2'/%3E%3Crect x='2' y='8' width='2' height='2'/%3E%3Crect x='0' y='5' width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='4' y='13' width='4' height='4'/%3E%3Crect x='7' y='16' width='3' height='3'/%3E%3Crect x='5' y='19' width='2' height='2'/%3E%3Crect x='2' y='21' width='4' height='4'/%3E%3Crect x='0' y='30' width='12' height='2'/%3E%3Crect x='0' y='34' width='12' height='2'/%3E%3Crect x='3' y='32' width='6' height='2'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  animation: pixel-loader 600ms steps(3, end) infinite;
+}
+
+/* The selected tab is accent. The accent spinner vanishes on it, so that tab uses coffee. */
+.pixel-loader.pixel-loader-coffee {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='36'%3E%3Cg fill='%23151006'%3E%3Crect x='5' y='0' width='2' height='2'/%3E%3Crect x='8' y='2' width='2' height='2'/%3E%3Crect x='10' y='5' width='2' height='2'/%3E%3Crect x='8' y='8' width='2' height='2'/%3E%3Crect x='5' y='10' width='2' height='2'/%3E%3Crect x='2' y='8' width='2' height='2'/%3E%3Crect x='0' y='5' width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='4' y='13' width='4' height='4'/%3E%3Crect x='7' y='16' width='3' height='3'/%3E%3Crect x='5' y='19' width='2' height='2'/%3E%3Crect x='2' y='21' width='4' height='4'/%3E%3Crect x='0' y='30' width='12' height='2'/%3E%3Crect x='0' y='34' width='12' height='2'/%3E%3Crect x='3' y='32' width='6' height='2'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+.console-markdown p,
+.console-markdown ul,
+.console-markdown ol,
+.console-markdown pre,
+.console-markdown blockquote {
+  margin: 0.35em 0;
+}
+
+.console-markdown > :first-child {
+  margin-top: 0;
+}
+
+.console-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.console-markdown ul,
+.console-markdown ol {
+  padding-left: 1.2em;
+}
+
+.console-markdown code {
+  color: var(--color-ink);
+}
+
+.console-markdown pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+@keyframes pixel-loader {
+  from {
+    background-position-y: 0;
+  }
+  to {
+    /* The sheet is three squares tall; the element sets its own size. */
+    background-position-y: calc(var(--pixel-loader-size, 12px) * -3);
+  }
+}
+
+/* The hero wordmark's halo breathes on the signed-out slide's own 2400ms, so
+   the mark in the tab, the slide, and the bar are visibly the same object. */
+.brand-halo {
+  animation: pixel-halo 2400ms ease-in-out infinite;
+}
+
+@keyframes pixel-halo {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Typed view transitions: the home's composer, console, and target card
+   assemble into the editor's counterparts. `data-flight` marks the source
+   elements; the editor side carries the same names statically. */
+[data-flight="composer"] {
+  view-transition-name: composer-flight;
+}
+
+[data-flight="console"] {
+  view-transition-name: console-flight;
+}
+
+[data-flight="asset"] {
+  view-transition-name: asset-flight;
+}
+
+/* The chrome lands first and dims; the three components then fly in one after
+   another and settle, so the editor reads as assembled rather than swapped. */
+::view-transition-old(root) {
+  animation: assemble-fade 140ms ease-out both reverse;
+}
+
+::view-transition-new(root) {
+  animation: assemble-fade 180ms ease-out 70ms both;
+}
+
+@keyframes assemble-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+::view-transition-group(asset-flight) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(console-flight) {
+  animation-duration: 460ms;
+  animation-delay: 90ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(composer-flight) {
+  animation-duration: 500ms;
+  animation-delay: 170ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+@keyframes assemble-rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  60% {
+    opacity: 1;
+  }
+}
+
+::view-transition-new(console-flight),
+::view-transition-new(composer-flight) {
+  animation: assemble-rise 300ms cubic-bezier(0.2, 0.9, 0.15, 1) both;
+}
+
+@keyframes assemble-settle {
+  from {
+    transform: scale(0.985);
+  }
+}
+
+/* The card's own flight runs a little past the chrome's 420ms. */
+:active-view-transition-type(editor-card)::view-transition-group(asset-flight) {
+  animation-duration: 460ms;
+}
+
+::view-transition-new(asset-flight) {
+  animation: assemble-settle 320ms cubic-bezier(0.2, 0.9, 0.15, 1) both;
+}
+
+/* A library card is the whole arrival. Its chrome waits behind the card's
+   flight, but the editor itself is never withheld, so a browser whose type
+   pseudo-element support is absent still shows the page instead of nothing. */
+:active-view-transition-type(editor-card)::view-transition-old(root) {
+  animation: assemble-fade 200ms ease-out both reverse;
+}
+
+:active-view-transition-type(editor-card)::view-transition-new(root) {
+  animation: assemble-fade 260ms ease-out 170ms both;
+}
+
+/* Signing in and out never scales a glyph: the pieces that travel are the
+   home's bar and library, translated as whole blocks from their own rendered
+   size. The branding is therefore correct at every frame — it rises with the
+   bar at its final size instead of being resampled from another page's. */
+[data-flight="bar"] {
+  view-transition-name: bar-flight;
+}
+
+/* The bar's pieces travel on their own, so the bar can stay one element while
+   its contents change: the account chip leaves, the breadcrumb grows in, the
+   action cluster rises, and the surface itself cross-fades underneath. */
+[data-flight="bar-account"] {
+  view-transition-name: bar-account;
+}
+
+[data-flight="bar-context"] {
+  view-transition-name: bar-context;
+}
+
+[data-flight="bar-actions"] {
+  view-transition-name: bar-actions;
+}
+
+/* The signed-out brand is its own piece, not part of the page snapshot: it
+   leaves before the home's bar arrives, so two wordmarks are never on screen
+   together at different sizes. */
+[data-flight="brand"] {
+  view-transition-name: brand-flight;
+}
+
+[data-flight="library"] {
+  view-transition-name: library-flight;
+}
+
+::view-transition-group(bar-flight) {
+  animation-duration: 340ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(library-flight) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(brand-flight) {
+  animation-duration: 220ms;
+  animation-timing-function: ease-out;
+}
+
+/* Home ↔ editor: the bar is the one element that never blinks. Its surface
+   cross-fades (the home's transparent float becomes the editor's panel), the
+   wordmark glides between the two bars, the account chip leaves to the right,
+   and the action cluster rises. The breadcrumb waits for the wordmark to land
+   and then fades in place, so the two never cross over each other. Named
+   pieces are excluded from the bar's snapshot, so nothing is resampled twice. */
+::view-transition-old(bar-flight) {
+  animation: assemble-fade 180ms ease-out both reverse;
+}
+
+::view-transition-new(bar-flight) {
+  animation: assemble-fade 220ms ease-out 60ms both;
+}
+
+::view-transition-group(bar-context) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(bar-actions) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-group(bar-account) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.15, 1);
+}
+
+::view-transition-new(bar-context) {
+  animation: assemble-fade 200ms ease-out 180ms both;
+}
+
+::view-transition-old(bar-context) {
+  animation: assemble-fade 120ms ease-out both reverse;
+}
+
+::view-transition-new(bar-actions) {
+  animation: bar-piece-in-up 280ms cubic-bezier(0.2, 0.9, 0.15, 1) 180ms both;
+}
+
+::view-transition-old(bar-actions) {
+  animation: bar-piece-out-up 140ms ease-in both;
+}
+
+::view-transition-new(bar-account) {
+  animation: bar-piece-in-right 260ms cubic-bezier(0.2, 0.9, 0.15, 1) 180ms both;
+}
+
+::view-transition-old(bar-account) {
+  animation: bar-piece-out-right 140ms ease-in both;
+}
+
+@keyframes bar-piece-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes bar-piece-out-up {
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes bar-piece-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes bar-piece-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+/* Auth → home: the signed-out panel dissolves, the brand flies into the bar as
+   one shared element, and the library follows it up. */
+:active-view-transition-type(auth-in)::view-transition-old(root) {
+  animation: auth-leave 220ms ease-out both;
+}
+
+:active-view-transition-type(auth-in)::view-transition-new(root) {
+  animation: auth-arrive 240ms ease-out 60ms both;
+}
+
+:active-view-transition-type(auth-in)::view-transition-new(bar-flight) {
+  animation: bar-rise 280ms cubic-bezier(0.2, 0.9, 0.15, 1) 40ms both;
+}
+
+:active-view-transition-type(auth-in)::view-transition-new(library-flight) {
+  animation: library-rise 320ms cubic-bezier(0.2, 0.9, 0.15, 1) 170ms both;
+}
+
+/* Signing out is the same move backwards: the library drops first, the bar
+   follows, and the signed-out page arrives underneath. */
+:active-view-transition-type(auth-out)::view-transition-old(root) {
+  animation: auth-leave 260ms ease-in both;
+}
+
+:active-view-transition-type(auth-out)::view-transition-new(root) {
+  animation: auth-arrive 300ms ease-out 80ms both;
+}
+
+:active-view-transition-type(auth-out)::view-transition-old(bar-flight) {
+  animation: bar-drop 220ms ease-in both;
+}
+
+:active-view-transition-type(auth-out)::view-transition-old(library-flight) {
+  animation: library-drop 200ms ease-in both;
+}
+
+/* The brand is one shared element across the signed-out page and the home bar:
+   the group box scales and travels between the two, and the snapshots
+   cross-fade inside it. The fades are short and the incoming wordmark waits,
+   so the two sizes never sit on screen together for long. */
+:active-view-transition-type(auth-in)::view-transition-group(brand-flight),
+:active-view-transition-type(auth-out)::view-transition-group(brand-flight) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:active-view-transition-type(auth-in)::view-transition-old(brand-flight),
+:active-view-transition-type(auth-out)::view-transition-new(brand-flight) {
+  animation: assemble-fade 170ms ease-out both reverse;
+}
+
+:active-view-transition-type(auth-in)::view-transition-new(brand-flight),
+:active-view-transition-type(auth-out)::view-transition-old(brand-flight) {
+  animation: assemble-fade 200ms ease-out 110ms both;
+}
+
+@keyframes auth-leave {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes auth-arrive {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes bar-rise {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes bar-drop {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes library-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+@keyframes library-drop {
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* Return needs no home-side animation: the flight is the gesture. The home is
+   simply there from the first frame, so the card is already in place when the
+   canvas lands on it. */
+
+/* Back to the home: the artwork shrinks into its thumbnail in the grid. A
+   transparent copy of the painted pixels is `asset-flight` on the old side and
+   the returning card's thumbnail canvas carries the same name on the new side,
+   so the browser morphs one box into the other: position and size in one
+   gesture, with no editor panel travelling along.
+   The old side is a transparent copy of the artwork, not the editor's frame,
+   so the sprite floats free; `contain` keeps all of it visible as the box
+   becomes square. The new side only arrives once the two boxes overlap. */
+:active-view-transition-type(editor-back)::view-transition-group(asset-flight) {
+  animation-duration: 520ms;
+  animation-timing-function: cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+:active-view-transition-type(editor-back)::view-transition-old(asset-flight) {
+  animation: none;
+  block-size: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+:active-view-transition-type(editor-back)::view-transition-new(asset-flight) {
+  /* It arrives as the last few pixels close, not as a second fade. */
+  animation: asset-arrive 140ms ease-out 380ms both;
+  block-size: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+@keyframes asset-arrive {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The editor's chrome dissolves while the canvas is still flying, and the
+   home is at full strength from the first frame: the grid is already there
+   under the shrinking canvas, never popping in after it. */
+:active-view-transition-type(editor-back)::view-transition-old(root) {
+  animation: back-leave 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+:active-view-transition-type(editor-back)::view-transition-new(root) {
+  animation: none;
+}
+
+@keyframes back-leave {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(asset-flight),
+  ::view-transition-group(console-flight),
+  ::view-transition-group(composer-flight) {
+    animation: none;
+  }
+
+  ::view-transition-group(bar-flight),
+  ::view-transition-group(bar-account),
+  ::view-transition-group(bar-context),
+  ::view-transition-group(bar-actions),
+  ::view-transition-group(library-flight),
+  ::view-transition-group(brand-flight) {
+    animation: none;
+  }
+
+  /* The pieces still arrive, but as one plain dissolve with no travel. */
+  ::view-transition-old(bar-flight),
+  ::view-transition-old(bar-account),
+  ::view-transition-old(bar-context),
+  ::view-transition-old(bar-actions) {
+    animation: assemble-fade 180ms ease-out both reverse;
+  }
+
+  ::view-transition-new(bar-flight),
+  ::view-transition-new(bar-account),
+  ::view-transition-new(bar-context),
+  ::view-transition-new(bar-actions) {
+    animation: assemble-fade 180ms ease-out both;
+  }
+
+  :active-view-transition-type(auth-in)::view-transition-old(brand-flight),
+  :active-view-transition-type(auth-in)::view-transition-new(bar-flight),
+  :active-view-transition-type(auth-in)::view-transition-new(library-flight),
+  :active-view-transition-type(auth-out)::view-transition-new(brand-flight),
+  :active-view-transition-type(auth-out)::view-transition-old(bar-flight),
+  :active-view-transition-type(auth-out)::view-transition-old(library-flight) {
+    animation: none;
+  }
+
+  /* Reduced motion never scales a glyph: the brand stops being its own flight
+     element, so it dissolves with the page it sits on instead of morphing
+     between the auth slide's display size and the bar's title size. */
+  [data-flight="brand"] {
+    view-transition-name: none;
+  }
+
+  /* The move still happens, without the parts travelling: one plain dissolve. */
+  :active-view-transition-type(editor-back)::view-transition-old(root) {
+    animation: assemble-fade 180ms ease-out both reverse;
+  }
+
+  :active-view-transition-type(editor-back)::view-transition-new(root) {
+    animation: assemble-fade 180ms ease-out both;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -286,4 +917,289 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* An infinite stepped animation would keep flickering at 0.01ms; freeze it. */
+  .pixel-loader {
+    animation: none;
+  }
+
+  /* Same for the brand halo: it rests at its mid opacity instead of pulsing. */
+  .brand-halo {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
+@utility hue-strip {
+  appearance: none;
+  height: 14px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+@layer base {
+  .hue-strip::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 14px;
+    background: var(--color-ink);
+    border: 2px solid var(--color-paper);
+    box-shadow: 2px 2px 0 0 var(--color-coffee);
+  }
+
+  /* Firefox draws its own pseudo-element; same square knob, no radius. */
+  .hue-strip::-moz-range-thumb {
+    width: 10px;
+    height: 14px;
+    background: var(--color-ink);
+    border: 2px solid var(--color-paper);
+    box-shadow: 2px 2px 0 0 var(--color-coffee);
+    border-radius: 0;
+  }
+}
+
+/* Task worker states: whole-pixel, steps() loops that the reduced-motion
+   block below turns off. Sparkles are 2x2 cells drawn in palette tokens. */
+@keyframes worker-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes dither-sweep {
+  from {
+    background-position: -8px 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+@keyframes sparkle {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  40% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(3px, -3px);
+  }
+}
+@keyframes done-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes glitch {
+  0% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: translateX(2px);
+  }
+}
+@keyframes ask-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes frame-crossfade {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.worker-blink {
+  animation: worker-blink 900ms steps(2, end) infinite;
+}
+.dither-sweep {
+  animation: dither-sweep 1.4s steps(8, end) infinite;
+}
+.sparkle {
+  animation: sparkle 1.2s steps(4, end) infinite;
+}
+.done-pop {
+  animation: done-pop 220ms steps(3, end) both;
+}
+.glitch {
+  animation: glitch 180ms steps(2, end) both;
+}
+.ask-pulse {
+  animation: ask-pulse 1s steps(2, end) infinite;
+}
+.frame-crossfade {
+  animation: frame-crossfade 120ms steps(2, end) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .worker-blink,
+  .dither-sweep,
+  .sparkle,
+  .done-pop,
+  .glitch,
+  .ask-pulse,
+  .frame-crossfade {
+    animation: none;
+  }
+}
+
+/* While an agent paints a frame the whole card glints: one 3px pixel at a
+   time, four corners in turn. Opacity only, whole-pixel steps; reduced
+   motion keeps the glints as still pixels. */
+@keyframes card-glint {
+  0%,
+  55%,
+  100% {
+    opacity: 0;
+  }
+  10%,
+  35% {
+    opacity: 1;
+  }
+}
+.card-sparkle .glint {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: var(--color-accent);
+  opacity: 0;
+  animation: card-glint 1.6s steps(2, end) infinite;
+}
+.card-sparkle .glint:nth-child(1) {
+  left: 3px;
+  top: 3px;
+}
+.card-sparkle .glint:nth-child(2) {
+  right: 3px;
+  top: 3px;
+  animation-delay: 0.4s;
+}
+.card-sparkle .glint:nth-child(3) {
+  right: 3px;
+  bottom: 3px;
+  animation-delay: 0.8s;
+}
+.card-sparkle .glint:nth-child(4) {
+  left: 3px;
+  bottom: 3px;
+  animation-delay: 1.2s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-sparkle .glint {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+/* The agent's own cursor, painting inside a frame's square while its worker
+   works. Whole-pixel steps, and prefers-reduced-motion turns it off. */
+.agent-cursor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: agent-cursor-move 1.7s steps(4, end) infinite;
+}
+.agent-cursor-tip {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 7px;
+  height: 7px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(11, 9, 6, 0.8);
+  clip-path: polygon(0 0, 100% 42%, 52% 54%, 42% 100%);
+}
+@keyframes agent-cursor-move {
+  0% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(17px, 7px);
+  }
+  50% {
+    transform: translate(6px, 19px);
+  }
+  75% {
+    transform: translate(21px, 22px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+.agent-paint-ring {
+  animation: agent-paint-ring 1.3s steps(2, end) infinite;
+}
+@keyframes agent-paint-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(216, 166, 78, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(216, 166, 78, 0.6);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-cursor,
+  .agent-paint-ring {
+    animation: none;
+  }
+}
+
+/* The canvas wears the agent's presence while a stroke lands in the frame the
+   user is looking at. Reduced motion keeps the outline, drops the pulse. */
+.agent-canvas-pulse > * {
+  outline: 2px solid rgba(216, 166, 78, 0.55);
+  outline-offset: 4px;
+  animation: agent-canvas-pulse 1.1s steps(2, end) 1;
+}
+@keyframes agent-canvas-pulse {
+  0% {
+    outline-color: rgba(216, 166, 78, 0.85);
+  }
+  100% {
+    outline-color: rgba(216, 166, 78, 0.25);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-canvas-pulse > * {
+    animation: none;
+  }
+}
+
+/* A turn's user message: four lines at most, the rest scrolls (see TurnPrompt). */
+.turn-prompt {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-faint) transparent;
+}
+
+.turn-prompt::-webkit-scrollbar {
+  width: 6px;
+}
+
+.turn-prompt::-webkit-scrollbar-thumb {
+  background: var(--color-faint);
+}
+
+/* Not at the end: a hairline under the last visible line says there is more. */
+.turn-prompt-more {
+  border-bottom: 2px dotted var(--color-line-strong);
 }

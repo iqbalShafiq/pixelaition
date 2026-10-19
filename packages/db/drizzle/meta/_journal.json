@@ -8,6 +8,174 @@
       "when": 1791604085172,
       "tag": "0000_absurd_korvac",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791637584840,
+      "tag": "0001_watery_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791643839356,
+      "tag": "0002_slow_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791644966746,
+      "tag": "0003_nice_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791695190360,
+      "tag": "0004_spooky_magik",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791703451620,
+      "tag": "0005_perpetual_mikhail_rasputin",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791708049561,
+      "tag": "0006_tearful_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791719025868,
+      "tag": "0007_rapid_plazm",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": 7,
+      "when": 1791731017891,
+      "tag": "0008_openrouter_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": 7,
+      "when": 1791763340730,
+      "tag": "0009_run_approved_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": 7,
+      "when": 1791770545697,
+      "tag": "0010_run_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791778758212,
+      "tag": "0011_opencode_go_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791791669938,
+      "tag": "0012_entity_summaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791818819797,
+      "tag": "0013_model_output_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791843322981,
+      "tag": "0014_model_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1791848827960,
+      "tag": "0015_drop_model_output_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791860038215,
+      "tag": "0016_run_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791930576000,
+      "tag": "0017_deepseek_responses_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791930768000,
+      "tag": "0018_model_api_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791956840000,
+      "tag": "0019_deepseek_chat_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792116454000,
+      "tag": "0020_model_user_images",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792207827341,
+      "tag": "0021_model_context_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792232172000,
+      "tag": "0022_openrouter_agent_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792235419000,
+      "tag": "0023_rename_model_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792238779000,
+      "tag": "0024_model_display_name",
+      "breakpoints": true
     }
   ]
 }

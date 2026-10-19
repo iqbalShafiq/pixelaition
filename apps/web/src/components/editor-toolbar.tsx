@@ -1,69 +1,106 @@
-import {
-  Eraser,
-  Hand,
-  Minus,
-  PaintBucket,
-  Pencil,
-  Pipette,
-  Plus,
-  Slash,
-  Square,
-  SquareDashed,
-} from "lucide-react";
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
-import { Button, Checkbox, IconButton, Panel, Separator } from "./ui.js";
-
-const stroke = 2;
-const size = 16;
+import {
+  Eraser,
+  Fill,
+  Grid,
+  Hand,
+  Layers,
+  Line,
+  Pencil,
+  Picker,
+  Select,
+  Square,
+  Transparency,
+  type IconProps,
+} from "./pixel-icons.js";
+import { Button, IconButton, Panel, Separator } from "./ui.js";
 
 const tools: Array<{
   id: Tool;
   label: string;
   key: string;
-  icon: ComponentType<{ size?: number; strokeWidth?: number }>;
+  icon: ComponentType<IconProps>;
 }> = [
-  { id: "select", label: "Select", key: "V", icon: SquareDashed },
+  { id: "select", label: "Select", key: "V", icon: Select },
   { id: "pencil", label: "Pencil", key: "B", icon: Pencil },
   { id: "eraser", label: "Eraser", key: "E", icon: Eraser },
-  { id: "fill", label: "Fill", key: "G", icon: PaintBucket },
-  { id: "picker", label: "Eyedropper", key: "I", icon: Pipette },
-  { id: "line", label: "Line", key: "L", icon: Slash },
+  { id: "fill", label: "Fill", key: "G", icon: Fill },
+  { id: "picker", label: "Eyedropper", key: "I", icon: Picker },
+  { id: "line", label: "Line", key: "L", icon: Line },
   { id: "rect", label: "Rectangle", key: "R", icon: Square },
   { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
 
+/** A pixel-art dot: round enough to read as a circle, drawn on a square grid. */
+const dotMaps: Record<number, string[]> = {
+  1: [".XXX.", "XXXXX", "XXXXX", "XXXXX", ".XXX."],
+  2: ["..XXX..", ".XXXXX.", "XXXXXXX", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX.."],
+  3: [
+    "...XXX...",
+    ".XXXXXXX.",
+    ".XXXXXXX.",
+    "XXXXXXXXX",
+    "XXXXXXXXX",
+    "XXXXXXXXX",
+    ".XXXXXXX.",
+    ".XXXXXXX.",
+    "...XXX...",
+  ],
+};
+
+function PixelDot({ level }: { level: number }) {
+  const map = dotMaps[level] ?? dotMaps[1] ?? [];
+  const n = map.length;
+  return (
+    <svg
+      aria-hidden
+      width={n * 2}
+      height={n * 2}
+      viewBox={`0 0 ${n} ${n}`}
+      shapeRendering="crispEdges"
+    >
+      {map.flatMap((row, y) =>
+        [...row].map((cell, x) =>
+          cell === "X" ? (
+            <rect
+              key={`${x}-${y}`}
+              x={x}
+              y={y}
+              width={1}
+              height={1}
+              fill="currentColor"
+            />
+          ) : null,
+        ),
+      )}
+    </svg>
+  );
+}
+
 export function Toolbar({
   tool,
   brushSize,
-  zoom,
   selectionActive,
   locked,
   onTool,
   onBrush,
-  onZoom,
-  onFit,
-  onActualSize,
   onSelectionFill,
   onSelectionClear,
   onDeselect,
 }: {
   tool: Tool;
   brushSize: number;
-  zoom: number;
   selectionActive: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
   onBrush: (size: number) => void;
-  onZoom: (direction: 1 | -1) => void;
-  onFit: () => void;
-  onActualSize: () => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onDeselect: () => void;
 }) {
   return (
-    <div className="relative flex items-center gap-1 overflow-x-auto border-b-2 border-line bg-paper px-2 py-2">
+    <div className="relative flex min-w-0 items-center gap-1 overflow-x-auto bg-panel">
       {tools.map((entry) => {
         const Icon = entry.icon;
         return (
@@ -74,61 +111,30 @@ export function Toolbar({
             active={tool === entry.id}
             onClick={() => onTool(entry.id)}
           >
-            <Icon size={size} strokeWidth={stroke} />
+            <Icon />
           </IconButton>
         );
       })}
-
-      <Separator vertical />
 
       {[1, 2, 3].map((value) => (
         <IconButton
           key={value}
           label={`Brush size ${value}`}
+          hint="[ or ]"
           subtle
           active={brushSize === value}
           onClick={() => onBrush(value)}
         >
-          <span className="font-mono text-[11px]">{value}</span>
+          <PixelDot level={value} />
         </IconButton>
       ))}
-
-      <Separator vertical />
-
-      <span className="shrink-0 border-2 border-line bg-field px-2 py-1 font-mono text-[11px] text-muted">
-        {Math.round(zoom * 100)}%
-      </span>
-      <IconButton label="Zoom out" onClick={() => onZoom(-1)}>
-        <Minus size={size} strokeWidth={stroke} />
-      </IconButton>
-      <IconButton label="Zoom in" onClick={() => onZoom(1)}>
-        <Plus size={size} strokeWidth={stroke} />
-      </IconButton>
-      <Button
-        tone="ghost"
-        className="px-2 py-1.5 text-[11px]"
-        aria-label="Fit to view"
-        title="Fit to view (Ctrl+0)"
-        onClick={onFit}
-      >
-        Fit
-      </Button>
-      <Button
-        tone="ghost"
-        className="px-2 py-1.5 text-[11px]"
-        aria-label="Actual size"
-        title="Actual size (Ctrl+1)"
-        onClick={onActualSize}
-      >
-        1:1
-      </Button>
 
       {selectionActive ? (
         <>
           <Separator vertical />
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-[11px]"
+            className="px-2 py-1.5 text-pixel-label"
             disabled={locked}
             onClick={onSelectionFill}
           >
@@ -136,13 +142,17 @@ export function Toolbar({
           </Button>
           <Button
             tone="ghost"
-            className="px-2 py-1.5 text-[11px]"
+            className="px-2 py-1.5 text-pixel-label"
             disabled={locked}
             onClick={onSelectionClear}
           >
             Clear
           </Button>
-          <Button tone="quiet" className="px-2 py-1.5 text-[11px]" onClick={onDeselect}>
+          <Button
+            tone="quiet"
+            className="px-2 py-1.5 text-pixel-label"
+            onClick={onDeselect}
+          >
             Deselect
           </Button>
         </>
@@ -168,10 +178,20 @@ export function ViewPanel({
 }) {
   return (
     <Panel title="View">
-      <div className="grid gap-2">
-        <Checkbox label="Grid" checked={grid} onChange={onGrid} />
-        <Checkbox label="Transparency" checked={checker} onChange={onChecker} />
-        <Checkbox label="Onion skin" checked={onion} onChange={onOnion} />
+      <div className="flex items-center gap-1">
+        <IconButton label="Grid" active={grid} onClick={() => onGrid(!grid)}>
+          <Grid />
+        </IconButton>
+        <IconButton
+          label="Transparency"
+          active={checker}
+          onClick={() => onChecker(!checker)}
+        >
+          <Transparency />
+        </IconButton>
+        <IconButton label="Onion skin" active={onion} onClick={() => onOnion(!onion)}>
+          <Layers />
+        </IconButton>
       </div>
     </Panel>
   );

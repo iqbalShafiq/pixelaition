@@ -44,7 +44,7 @@ export function ExportDialog({
   const [scope, setScope] = useState<Scope>("frame");
   const [format, setFormat] = useState<Format>("png");
   const [scale, setScale] = useState<string>("1");
-  const [background, setBackground] = useState("#14120e");
+  const [background, setBackground] = useState("#0a0a09");
   const [state, setState] = useState<{
     kind: "idle" | "busy" | "failed";
     message?: string;
@@ -159,7 +159,7 @@ export function ExportDialog({
       {state.kind === "failed" ? (
         <Callout tone="danger">{state.message}</Callout>
       ) : state.message ? (
-        <p className="font-mono text-[11px] text-muted">{state.message}</p>
+        <p className="text-pixel-mono text-muted">{state.message}</p>
       ) : null}
 
       <div className="flex items-center gap-2">

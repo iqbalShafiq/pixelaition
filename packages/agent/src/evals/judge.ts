@@ -7,18 +7,36 @@ import {
   runEvalSuite,
 } from "@anvia/core/evals";
 import { OpenAIClient } from "@anvia/openai";
+import { randomUUID } from "node:crypto";
+import OpenAI from "openai";
+import { openCodeGoHeaders } from "../models.js";
 
-const key = process.env.OPENAI_API_KEY?.trim();
+const key = process.env.AGENT_API_KEY?.trim();
 if (!key) {
-  console.error("OPENAI_API_KEY is required for judge evaluations.");
+  console.error("AGENT_API_KEY is required for judge evaluations.");
   process.exit(1);
 }
 
+const evalModelId = process.env.EVAL_MODEL?.trim();
+if (!evalModelId) {
+  console.error(
+    "EVAL_MODEL is required for judge evaluations. Set it to a model that supports structured outputs.",
+  );
+  process.exit(1);
+}
+
+const evalBaseUrl = process.env.AGENT_BASE_URL?.trim();
+const headers = openCodeGoHeaders(evalBaseUrl, randomUUID());
 const model = new OpenAIClient({
-  apiKey: key,
-  ...(process.env.OPENAI_BASE_URL ? { baseUrl: process.env.OPENAI_BASE_URL } : {}),
+  // Same retry posture as the worker: the judge must not fail on one 429.
+  client: new OpenAI({
+    apiKey: key,
+    ...(evalBaseUrl ? { baseURL: evalBaseUrl } : {}),
+    ...(headers ? { defaultHeaders: headers } : {}),
+    maxRetries: 2,
+  }),
 }).completionModel({
-  modelId: process.env.EVAL_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
+  modelId: evalModelId,
   api: "chat",
 });
 

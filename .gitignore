@@ -6,6 +6,10 @@ playwright-report
 test-results
 .superpowers
 .playwright-mcp
+# Ad-hoc scripts and probe queries kept next to the package they inspect; they
+# read local databases and are never part of the app.
+.scratch/
+.*[a-z].mjs
 .env
 .env.local
 *.sqlite

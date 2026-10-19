@@ -5,7 +5,7 @@ import {
   type Camera,
   type FrameBuffer,
 } from "@pixelaition/pixel";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
@@ -34,8 +34,12 @@ type Props = {
   grid: boolean;
   checker: boolean;
   onionSkin: FrameBuffer[];
+  /** A version shown over the current frame: the current dims, the version draws. */
+  ghost?: FrameBuffer | null;
   selection: Rect | null;
   locked: boolean;
+  /** The cell the agent is about to ink. Drawn with the same border as a hover. */
+  agentCursor?: Point | null;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
 };
@@ -86,8 +90,8 @@ function rgba(hex: string): [number, number, number, number] {
   return [0, 0, 0, 255];
 }
 
-const FIELD_DARK = "#1c2136";
-const FIELD_LIGHT = "#262c45";
+const FIELD_DARK = "#100f0e";
+const FIELD_LIGHT = "#181715";
 
 /**
  * The workspace texture is a checker of one square per document pixel, tiled
@@ -184,6 +188,31 @@ function lineCells(from: Point, to: Point): Point[] {
   return points;
 }
 
+/**
+ * The hover outline on one document cell. A coffee edge sits under the accent
+ * so the border stays visible on a pixel of any colour, including the accent.
+ */
+function strokeCell(
+  context: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
+  cell: number,
+  point: Point,
+) {
+  const x = originX + point.x * cell + 0.5;
+  const y = originY + point.y * cell + 0.5;
+  const size = Math.max(0, cell - 1);
+  context.lineWidth = 1;
+  context.strokeStyle = "#0b0906";
+  context.strokeRect(x, y, size, size);
+  context.strokeStyle = "rgba(216, 166, 78, 0.95)";
+  if (cell >= 8) {
+    context.strokeRect(x + 1, y + 1, Math.max(0, size - 2), Math.max(0, size - 2));
+  } else {
+    context.strokeRect(x, y, size, size);
+  }
+}
+
 function rectCells(box: Rect, filled: boolean): Point[] {
   const cells: Point[] = [];
   for (let y = box.y; y < box.y + box.height; y += 1) {
@@ -207,8 +236,10 @@ export function PixelCanvas({
   grid,
   checker,
   onionSkin,
+  ghost = null,
   selection,
   locked,
+  agentCursor = null,
   onAction,
   onCamera,
 }: Props) {
@@ -221,14 +252,17 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  // Pan is a ref because the gesture must not re-render; the cursor still has
+  // to switch to grabbing, so the fact of panning is mirrored into state.
+  const [panning, setPanning] = useState(false);
   // The workspace texture, cached per cell size because it scales with the zoom.
   const field = useRef(new Map<number, CanvasPattern | null>());
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
   const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
-  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera });
-  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera };
+  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera, ghost });
+  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera, ghost };
 
   useEffect(() => {
     function down(event: KeyboardEvent) {
@@ -291,8 +325,7 @@ export function PixelCanvas({
       const docHeight = doc.height * cell;
 
       // One texture across the whole preview, anchored to the document grid, so
-      // one square always equals one pixel. The document is not recoloured and
-      // not outlined: nothing in the preview is a highlighted box.
+      // one square always equals one pixel.
       const tile = Math.max(1, Math.round(cell)) * 2;
       const offsetX = ((originX % tile) + tile) % tile;
       const offsetY = ((originY % tile) + tile) % tile;
@@ -321,13 +354,46 @@ export function PixelCanvas({
       }
       context.globalAlpha = 1;
 
-      context.drawImage(
-        bitmapFor(doc, bitmaps.current),
-        originX,
-        originY,
-        docWidth,
-        docHeight,
-      );
+      const ghost = latest.current.ghost;
+      if (ghost) {
+        // History preview: the current frame is dimmed to context and the
+        // version draws over it at reduced alpha, so the difference between
+        // the two reads as a shift in tone rather than two stacked sprites.
+        context.globalAlpha = 0.3;
+        context.drawImage(
+          bitmapFor(doc, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+        context.globalAlpha = 0.75;
+        context.drawImage(
+          bitmapFor(ghost, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+        context.globalAlpha = 1;
+      } else {
+        context.drawImage(
+          bitmapFor(doc, bitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+      }
+
+      // The writable area is the document: an accent border marks exactly the
+      // region the tools and the agent may touch.
+      const edge = 2;
+      context.fillStyle = "#d8a64e";
+      context.fillRect(originX - edge, originY - edge, docWidth + edge * 2, edge);
+      context.fillRect(originX - edge, originY + docHeight, docWidth + edge * 2, edge);
+      context.fillRect(originX - edge, originY, edge, docHeight);
+      context.fillRect(originX + docWidth, originY, edge, docHeight);
 
       // The grid only appears once a cell is wide enough that a boundary line
       // adds information. Below that it eats a pixel out of every cell, so an
@@ -336,7 +402,7 @@ export function PixelCanvas({
       // texture rather than as a pixel grid. The checker already shows the grid
       // at those zooms.
       if (grid && cell >= 12) {
-        context.strokeStyle = "rgba(148, 176, 194, 0.22)";
+        context.strokeStyle = "rgba(241, 239, 233, 0.16)";
         context.beginPath();
         for (let x = 1; x < doc.width; x += 1) {
           const px = Math.round(originX + x * cell) + 0.5;
@@ -357,7 +423,7 @@ export function PixelCanvas({
           shape.kind === "line"
             ? lineCells(shape.from, shape.to)
             : rectCells(normalizeRect(shape.from, shape.to), shape.filled);
-        context.fillStyle = "rgba(167, 240, 112, 0.55)";
+        context.fillStyle = "rgba(216, 166, 78, 0.55)";
         for (const item of cells) {
           context.fillRect(originX + item.x * cell, originY + item.y * cell, cell, cell);
         }
@@ -365,7 +431,7 @@ export function PixelCanvas({
 
       const box = selection ?? marquee.current;
       if (box) {
-        context.strokeStyle = "#a7f070";
+        context.strokeStyle = "#d8a64e";
         context.lineWidth = 1;
         context.setLineDash([4, 3]);
         context.strokeRect(
@@ -378,20 +444,24 @@ export function PixelCanvas({
       }
 
       const pointed = hover.current;
-      if (pointed && !locked) {
-        context.strokeStyle = "rgba(167, 240, 112, 0.85)";
-        context.strokeRect(
-          originX + pointed.x * cell + 0.5,
-          originY + pointed.y * cell + 0.5,
-          cell - 1,
-          cell - 1,
-        );
+      if (pointed && !locked) strokeCell(context, originX, originY, cell, pointed);
+      // The agent's border leads the pixel: it sits on the cell, then the
+      // pixel inks and the border steps to the next one.
+      if (
+        agentCursor &&
+        agentCursor.x >= 0 &&
+        agentCursor.y >= 0 &&
+        agentCursor.x < doc.width &&
+        agentCursor.y < doc.height &&
+        (!pointed || locked || pointed.x !== agentCursor.x || pointed.y !== agentCursor.y)
+      ) {
+        strokeCell(context, originX, originY, cell, agentCursor);
       }
     };
 
     repaint.current = draw;
     draw();
-  }, [buffer, camera, grid, checker, onionSkin, selection, locked]);
+  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked, agentCursor]);
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;
@@ -413,7 +483,19 @@ export function PixelCanvas({
     preview.current = null;
     stroke.current = null;
     pan.current = null;
+    setPanning(false);
   }
+
+  // The paint tools all share the pixel cross; pan and select keep the cursors
+  // that say what they do. A pan started with space or the middle button shows
+  // grabbing whatever tool is selected.
+  const cursorClass = panning
+    ? "cursor-grabbing"
+    : tool === "pan"
+      ? "cursor-grab"
+      : tool === "select"
+        ? "cursor-default"
+        : "cursor-pixel-cross";
 
   function strokeCells(from: Point, to: Point): Point[] {
     const doc = latest.current.buffer;
@@ -429,10 +511,7 @@ export function PixelCanvas({
   return (
     <canvas
       ref={viewRef}
-      className="h-full w-full touch-none"
-      style={{
-        cursor: tool === "pan" ? "grab" : tool === "picker" ? "copy" : "crosshair",
-      }}
+      className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
         if (event.button === 1 || active === "pan" || space.current) {
@@ -441,6 +520,7 @@ export function PixelCanvas({
             y: event.clientY,
             camera: latest.current.camera,
           };
+          setPanning(true);
           event.currentTarget.setPointerCapture(event.pointerId);
           return;
         }

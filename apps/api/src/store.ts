@@ -2,12 +2,19 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   apiKeys,
   assets,
+  createVersion,
   frames,
   generationRuns,
   generationThreads,
+  models,
   projects,
+  runProposals,
+  runTasks,
   userPreferences,
+  versions,
+  RETENTION_LIMIT,
   type Database,
+  type VersionScope,
 } from "@pixelaition/db";
 import {
   addFrame,
@@ -17,23 +24,38 @@ import {
   decodePixels,
   defaultStyle,
   duplicateFrame,
+  moveFrame,
   writeFrame,
   type Asset,
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 
 export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
 export async function listProjects(db: Database, userId: string) {
-  return db
-    .select()
+  const rows = await db
+    .select({ project: projects, assetCount: count(assets.id) })
     .from(projects)
+    .leftJoin(assets, eq(assets.projectId, projects.id))
     .where(eq(projects.userId, userId))
+    .groupBy(projects.id)
     .orderBy(desc(projects.updatedAt));
+  return rows.map((row) => ({ ...row.project, assetCount: row.assetCount }));
 }
 
 export async function createProjectRecord(
@@ -115,8 +137,73 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
     style: row.style as StyleGuide,
     projectId: row.projectId,
     projectName: row.projectName,
-    frames: frameRows as Array<Frame & { assetId: string }>,
+    frames: frameRows as Array<Frame & { assetId: string; summary: string }>,
   };
+}
+
+type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
+
+export type StoreFailure = { code: string; message: string };
+
+/** Frame-scoped snapshot shape: the name and layers a restore replays. */
+function frameSnapshot(name: string, layers: Frame["layers"]) {
+  return { name, layers };
+}
+
+/** Asset-scoped snapshot shape: the metadata plus the frames that existed. */
+function assetSnapshot(asset: {
+  name: string;
+  width: number;
+  height: number;
+  palette: unknown;
+  frames: Array<{ id: string }>;
+}) {
+  return {
+    name: asset.name,
+    width: asset.width,
+    height: asset.height,
+    palette: asset.palette,
+    frameIds: asset.frames.map((frame) => frame.id),
+  };
+}
+
+async function recordFrameVersion(
+  db: Database,
+  assetId: string,
+  frameId: string,
+  kind: string,
+  name: string,
+  layers: Frame["layers"],
+) {
+  await createVersion(db, {
+    assetId,
+    frameId,
+    scope: "frame",
+    kind,
+    author: "user",
+    snapshot: frameSnapshot(name, layers),
+  });
+}
+
+async function recordAssetVersion(
+  db: Database,
+  assetId: string,
+  kind: string,
+  asset: {
+    name: string;
+    width: number;
+    height: number;
+    palette: unknown;
+    frames: Array<{ id: string }>;
+  },
+) {
+  await createVersion(db, {
+    assetId,
+    scope: "asset",
+    kind,
+    author: "user",
+    snapshot: assetSnapshot(asset),
+  });
 }
 
 export async function saveFrame(
@@ -128,6 +215,12 @@ export async function saveFrame(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const asset = await getAssetRecord(db, userId, assetId);
   if (!asset) return { asset: undefined };
+  const frame = asset.frames.find((item) => item.id === frameId);
+  if (!frame)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
+    };
   // A buffer sized for another canvas would make every later read of this asset
   // throw, so it is refused here instead of stored.
   const expected = asset.width * asset.height;
@@ -147,12 +240,9 @@ export async function saveFrame(
     .set({ layers, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, frameId, "edit", frame.name, layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
-
-type AssetRecord = NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>;
-
-export type StoreFailure = { code: string; message: string };
 
 function asPixelAsset(record: AssetRecord): Asset {
   return {
@@ -220,6 +310,7 @@ export async function addFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -248,6 +339,43 @@ export async function duplicateFrameRecord(
     layers: added.layers,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function moveFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  toIndex: number,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  const before = asPixelAsset(record);
+  const next = moveFrame(before, frameId, toIndex);
+  if (!next)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is gone." },
+    };
+  await db.transaction(async (tx) => {
+    // A unique index guards (asset, index), so a direct renumber might collide
+    // with a row that has not moved yet. Park every frame far above the final
+    // range first, then write the dense 0..n-1 order.
+    await tx
+      .update(frames)
+      .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+      .where(eq(frames.assetId, assetId));
+    for (const frame of next.frames) {
+      await tx
+        .update(frames)
+        .set({ index: frame.index, updatedAt: new Date() })
+        .where(and(eq(frames.id, frame.id), eq(frames.assetId, assetId)));
+    }
+    await tx.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  });
+  await recordAssetVersion(db, assetId, "frame-move", next);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -261,12 +389,14 @@ export async function renameFrameRecord(
   const trimmed = name.trim();
   if (!trimmed) return undefined;
   const asset = await getAssetRecord(db, userId, assetId);
-  if (!asset?.frames.some((frame) => frame.id === frameId)) return undefined;
+  const frame = asset?.frames.find((item) => item.id === frameId);
+  if (!asset || !frame) return undefined;
   await db
     .update(frames)
     .set({ name: trimmed, updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  await recordFrameVersion(db, assetId, frameId, "rename", trimmed, frame.layers);
   return getAssetRecord(db, userId, assetId);
 }
 
@@ -278,19 +408,35 @@ export async function deleteFrameRecord(
 ): Promise<{ ok: boolean; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { ok: false };
-  if (record.frames.length <= 1) {
-    return {
-      ok: false,
-      failure: { code: "FRAME_REQUIRED", message: "An asset keeps at least one frame." },
-    };
-  }
   if (!record.frames.some((frame) => frame.id === frameId)) return { ok: false };
   await db.delete(frames).where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+  // An asset keeps at least one frame: removing the last one replaces it with a
+  // fresh blank frame instead of refusing, so delete always means delete.
+  if (record.frames.length <= 1) {
+    const previous = asPixelAsset(record);
+    const next = addFrame(
+      { ...previous, frames: previous.frames.filter((frame) => frame.id !== frameId) },
+      "",
+    );
+    const added = next.frames.at(-1);
+    if (added) {
+      await db.insert(frames).values({
+        id: added.id,
+        assetId,
+        name: added.name,
+        index: added.index,
+        layers: added.layers,
+      });
+    }
+  }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  const after = await getAssetRecord(db, userId, assetId);
+  if (after) await recordAssetVersion(db, assetId, "frame-delete", after);
   return { ok: true };
 }
 
-export async function updateAssetRecord(
+/** Applies name, resize, and palette changes without recording a version. */
+async function applyAssetUpdate(
   db: Database,
   userId: string,
   assetId: string,
@@ -344,6 +490,294 @@ export async function updateAssetRecord(
     asset = writeFrame(asset, firstId, next);
   }
   return { asset: await persistAsset(db, userId, assetId, asset, before) };
+}
+
+export async function updateAssetRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  input: { name?: string; width?: number; height?: number; palette?: string[] },
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const result = await applyAssetUpdate(db, userId, assetId, input);
+  if (!result.asset) return result;
+  const kind =
+    input.width !== undefined || input.height !== undefined
+      ? "resize"
+      : input.palette !== undefined
+        ? "palette"
+        : input.name !== undefined
+          ? "rename"
+          : undefined;
+  if (kind) await recordAssetVersion(db, assetId, kind, result.asset);
+  return result;
+}
+
+/**
+ * The active-run guard shared by the store's restore and the API's routes.
+ * A live run owns an asset through its thread (editor runs) or through its
+ * frame_id (a workspace run that bound an asset mid-run keeps a project-scoped
+ * thread, so only the frame pointer identifies the asset it is drawing on).
+ */
+export async function assetHasActiveRun(db: Database, assetId: string): Promise<boolean> {
+  const [run] = await db
+    .select({ id: generationRuns.id })
+    .from(generationRuns)
+    .innerJoin(generationThreads, eq(generationRuns.threadId, generationThreads.id))
+    .leftJoin(frames, eq(frames.id, generationRuns.frameId))
+    .where(
+      and(
+        inArray(generationRuns.status, ["queued", "running", "waiting"]),
+        or(eq(generationThreads.assetId, assetId), eq(frames.assetId, assetId)),
+      ),
+    )
+    .limit(1);
+  if (run !== undefined) return true;
+  // A task is active from the moment it is submitted; its child runs may not
+  // exist yet, so the task row is checked too (live finding: two tasks for one
+  // asset slipped through in the 100 ms before the plan child bound).
+  const [task] = await db
+    .select({ id: runTasks.id })
+    .from(runTasks)
+    .where(
+      and(
+        inArray(runTasks.status, ["queued", "running", "waiting"]),
+        or(
+          eq(runTasks.assetId, assetId),
+          inArray(
+            runTasks.threadId,
+            db
+              .select({ id: generationThreads.id })
+              .from(generationThreads)
+              .where(eq(generationThreads.assetId, assetId)),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return task !== undefined;
+}
+
+function frameSnapshotFrom(
+  snapshot: unknown,
+): { name: string; layers: Frame["layers"] } | undefined {
+  if (typeof snapshot !== "object" || snapshot === null) return undefined;
+  const item = snapshot as { name?: unknown; layers?: unknown };
+  if (typeof item.name !== "string") return undefined;
+  const name = item.name.trim();
+  if (!name || name.length > 80) return undefined;
+  const layers = item.layers;
+  if (!Array.isArray(layers) || layers.length === 0) return undefined;
+  for (const layer of layers) {
+    if (typeof layer !== "object" || layer === null) return undefined;
+    const entry = layer as Record<string, unknown>;
+    if (
+      typeof entry.id !== "string" ||
+      typeof entry.name !== "string" ||
+      typeof entry.visible !== "boolean" ||
+      typeof entry.pixels !== "string"
+    )
+      return undefined;
+  }
+  return { name, layers: layers as Frame["layers"] };
+}
+
+function assetSnapshotFrom(snapshot: unknown):
+  | {
+      name: string;
+      width: number;
+      height: number;
+      palette: string[];
+      frameIds: string[];
+    }
+  | undefined {
+  if (typeof snapshot !== "object" || snapshot === null) return undefined;
+  const item = snapshot as Record<string, unknown>;
+  if (typeof item.name !== "string" || item.name.trim() === "") return undefined;
+  if (typeof item.width !== "number" || typeof item.height !== "number") return undefined;
+  if (!Array.isArray(item.palette)) return undefined;
+  if (item.palette.some((color) => typeof color !== "string")) return undefined;
+  if (!Array.isArray(item.frameIds)) return undefined;
+  if (item.frameIds.some((id) => typeof id !== "string")) return undefined;
+  return {
+    name: item.name,
+    width: item.width,
+    height: item.height,
+    palette: item.palette as string[],
+    frameIds: item.frameIds as string[],
+  };
+}
+
+/** Parks every frame above the range, then writes the dense 0..n-1 order. */
+async function reorderFrames(db: Database, assetId: string, frameIds: string[]) {
+  await db.transaction(async (tx) => {
+    // A unique index guards (asset, index), so a direct renumber might collide
+    // with a row that has not moved yet. Park first, then write the order.
+    await tx
+      .update(frames)
+      .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
+      .where(eq(frames.assetId, assetId));
+    for (const [index, id] of frameIds.entries()) {
+      await tx
+        .update(frames)
+        .set({ index, updatedAt: new Date() })
+        .where(and(eq(frames.id, id), eq(frames.assetId, assetId)));
+    }
+  });
+}
+
+/**
+ * Replays a snapshot as the new current state and records the replay as a new
+ * `restore` version. Never destructive, and never while a run owns the asset.
+ */
+export async function restoreVersion(
+  db: Database,
+  userId: string,
+  assetId: string,
+  versionId: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  if (await assetHasActiveRun(db, assetId)) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "RUN_IN_PROGRESS",
+        message: "The agent is drawing on this asset right now.",
+      },
+    };
+  }
+  const [version] = await db
+    .select()
+    .from(versions)
+    .where(and(eq(versions.id, versionId), eq(versions.assetId, assetId)));
+  if (!version)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That version is not available." },
+    };
+
+  let restored: unknown;
+  if (version.scope === "frame") {
+    const frameId = version.frameId;
+    if (!frameId)
+      return {
+        asset: undefined,
+        failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
+      };
+    const frame = record.frames.find((item) => item.id === frameId);
+    if (!frame)
+      return {
+        asset: undefined,
+        failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
+      };
+    const snapshot = frameSnapshotFrom(version.snapshot);
+    if (!snapshot)
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's snapshot is malformed.",
+        },
+      };
+    try {
+      for (const layer of snapshot.layers)
+        decodePixels(layer.pixels, record.width * record.height);
+    } catch {
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version does not fit this asset's canvas.",
+        },
+      };
+    }
+    await db
+      .update(frames)
+      .set({ name: snapshot.name, layers: snapshot.layers, updatedAt: new Date() })
+      .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+    await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+    restored = frameSnapshot(snapshot.name, snapshot.layers);
+  } else {
+    const snapshot = assetSnapshotFrom(version.snapshot);
+    if (!snapshot)
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's snapshot is malformed.",
+        },
+      };
+    // The recorded order only replays when it still names exactly this asset's
+    // frames: a version from another frame set cannot be replayed safely.
+    const currentIds = new Set(record.frames.map((item) => item.id));
+    const recordedIds = new Set(snapshot.frameIds);
+    if (
+      recordedIds.size !== snapshot.frameIds.length ||
+      recordedIds.size !== currentIds.size ||
+      snapshot.frameIds.some((id) => !currentIds.has(id))
+    )
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_VERSION",
+          message: "That version's frames do not match this asset.",
+        },
+      };
+    const applied = await applyAssetUpdate(db, userId, assetId, {
+      name: snapshot.name,
+      width: snapshot.width,
+      height: snapshot.height,
+      palette: snapshot.palette,
+    });
+    if (!applied.asset)
+      return {
+        asset: undefined,
+        failure: applied.failure ?? {
+          code: "NOT_FOUND",
+          message: "That asset is not available.",
+        },
+      };
+    const currentOrder = record.frames.map((item) => item.id).join("|");
+    if (currentOrder !== snapshot.frameIds.join("|"))
+      await reorderFrames(db, assetId, snapshot.frameIds);
+    restored = assetSnapshot(applied.asset);
+  }
+
+  const after = await getAssetRecord(db, userId, assetId);
+  if (!after)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  if (version.scope === "asset") restored = assetSnapshot(after);
+
+  await createVersion(db, {
+    assetId,
+    frameId: version.frameId,
+    scope: version.scope,
+    kind: "restore",
+    author: "user",
+    label: `Restore of ${version.author} ${version.kind} · ${version.id}`,
+    snapshot: restored,
+  });
+  return { asset: after };
+}
+
+export async function updateVersionLabel(
+  db: Database,
+  userId: string,
+  assetId: string,
+  versionId: string,
+  label: string | null,
+) {
+  const asset = await getAssetRecord(db, userId, assetId);
+  if (!asset) return undefined;
+  const [updated] = await db
+    .update(versions)
+    .set({ label })
+    .where(and(eq(versions.id, versionId), eq(versions.assetId, assetId)))
+    .returning();
+  return updated;
 }
 
 /** A run id alone must never be enough to read or cancel somebody else's run. */
@@ -416,17 +850,37 @@ export async function revokeApiKey(db: Database, userId: string, id: string) {
     .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId)));
 }
 
-export async function ensureThread(db: Database, userId: string, assetId: string) {
-  const [existing] = await db
-    .select()
-    .from(generationThreads)
-    .where(
-      and(eq(generationThreads.assetId, assetId), eq(generationThreads.userId, userId)),
-    );
+/** A thread's home: the asset an editor run draws on, or a workspace project. */
+export type ThreadScope = { assetId: string } | { projectId: string };
+
+/**
+ * The one thread per user and scope. An asset thread and a workspace thread
+ * are separate conversations even when the workspace later picks that asset.
+ */
+export async function ensureThread(db: Database, userId: string, scope: ThreadScope) {
+  const where =
+    "assetId" in scope
+      ? and(
+          eq(generationThreads.assetId, scope.assetId),
+          eq(generationThreads.userId, userId),
+        )
+      : and(
+          eq(generationThreads.projectId, scope.projectId),
+          eq(generationThreads.userId, userId),
+        );
+  const [existing] = await db.select().from(generationThreads).where(where);
   if (existing) return existing;
   const id = randomUUID();
-  await db.insert(generationThreads).values({ id, assetId, userId });
-  return { id, assetId, userId };
+  const [created] = await db
+    .insert(generationThreads)
+    .values(
+      "assetId" in scope
+        ? { id, assetId: scope.assetId, userId }
+        : { id, projectId: scope.projectId, userId },
+    )
+    .returning();
+  if (!created) throw new Error("The thread row could not be created.");
+  return created;
 }
 
 export async function insertRun(
@@ -436,6 +890,8 @@ export async function insertRun(
     requestId: string;
     modelId: string;
     reasoningEffort: string;
+    frameId?: string;
+    prompt?: string;
     durableRunId?: string;
     status: string;
   },
@@ -443,4 +899,387 @@ export async function insertRun(
   const id = randomUUID();
   await db.insert(generationRuns).values({ id, ...input });
   return id;
+}
+
+/**
+ * The task row for one drawing request. The API owns the public id (the same
+ * id the web streams), and the worker records the durable task id on it.
+ */
+export async function insertTaskRecord(
+  db: Database,
+  input: {
+    id: string;
+    threadId: string;
+    assetId?: string;
+    shape: { workers: number; review: boolean; source?: string };
+  },
+) {
+  await db.insert(runTasks).values({
+    id: input.id,
+    threadId: input.threadId,
+    ...(input.assetId !== undefined ? { assetId: input.assetId } : {}),
+    status: "queued",
+    phase: "plan",
+    shape: input.shape,
+  });
+  return input.id;
+}
+
+export async function setTaskDurableId(
+  db: Database,
+  id: string,
+  durableTaskId: string,
+): Promise<void> {
+  await db
+    .update(runTasks)
+    .set({ durableTaskId, status: "running" })
+    .where(eq(runTasks.id, id));
+}
+
+export async function failTask(db: Database, id: string, reason: string): Promise<void> {
+  await db
+    .update(runTasks)
+    .set({ status: "failed", finishedAt: new Date() })
+    .where(eq(runTasks.id, id));
+  void reason;
+}
+
+export async function taskBelongsTo(
+  db: Database,
+  taskId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: runTasks.id })
+    .from(runTasks)
+    .innerJoin(generationThreads, eq(runTasks.threadId, generationThreads.id))
+    .where(and(eq(runTasks.id, taskId), eq(generationThreads.userId, userId)));
+  return row !== undefined;
+}
+
+/** The task row plus every child run, for the editor's snapshot endpoint. */
+export async function taskSnapshot(db: Database, assetId: string) {
+  const [task] = await db
+    .select()
+    .from(runTasks)
+    .where(
+      // Every terminal state counts too: the editor shows the asset's latest
+      // task whatever happened to it, never a stale earlier one.
+      and(
+        eq(runTasks.assetId, assetId),
+        inArray(runTasks.status, [
+          "queued",
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled",
+        ]),
+      ),
+    )
+    .orderBy(desc(runTasks.createdAt))
+    .limit(1);
+  if (task === undefined) return undefined;
+  const children = await db
+    .select({
+      id: generationRuns.id,
+      status: generationRuns.status,
+      role: generationRuns.role,
+      workerKey: generationRuns.workerKey,
+      frameIds: generationRuns.frameIds,
+      durableRunId: generationRuns.durableRunId,
+      modelId: generationRuns.modelId,
+      reasoningEffort: generationRuns.reasoningEffort,
+    })
+    .from(generationRuns)
+    .where(eq(generationRuns.taskId, task.id))
+    .orderBy(generationRuns.createdAt);
+  const frameRows = await db
+    .select({ id: frames.id, name: frames.name })
+    .from(frames)
+    .where(eq(frames.assetId, assetId));
+  return { task, children, frameRows };
+}
+
+/** The newest generation's context window state, as the worker persisted it. */
+export type SessionContext = {
+  model: { modelId: string; context: { contextWindow: number } };
+  usedTokens: number;
+  remainingTokens: number;
+  usedPercent: number;
+  remainingPercent: number;
+};
+
+export type SessionUsage = {
+  input: number;
+  cached: number;
+  output: number;
+  total: number;
+  cost: number;
+  /** Agent wall time across every settled turn, in milliseconds. */
+  elapsedMs: number;
+  /** The latest generation's context state; null when none is known. */
+  context: SessionContext | null;
+  /** The model the newest generation used; null before the first model call. */
+  modelId: string | null;
+  /**
+   * That model's catalog window, when the catalog declares one. The console's
+   * empty context line prints `0 / 1M` from it before the first snapshot.
+   */
+  contextWindow: number | null;
+};
+
+type UsagePart = {
+  input?: unknown;
+  cached?: unknown;
+  output?: unknown;
+  total?: unknown;
+  cost?: unknown;
+  context?: unknown;
+};
+
+function sumNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Reads the context state off a persisted usage blob. The worker writes it in
+ * Anvia's `ContextUsage` shape; a malformed one reads as "no context", never
+ * as a guess.
+ */
+function contextFromUsage(usage: UsagePart): SessionContext | null {
+  const candidate = usage.context as
+    | {
+        model?: { modelId?: unknown; context?: { contextWindow?: unknown } };
+        usedTokens?: unknown;
+        remainingTokens?: unknown;
+        usedPercent?: unknown;
+        remainingPercent?: unknown;
+      }
+    | null
+    | undefined;
+  const modelId = candidate?.model?.modelId;
+  const contextWindow = candidate?.model?.context?.contextWindow;
+  if (typeof modelId !== "string" || modelId.length === 0) return null;
+  if (!isFiniteNumber(contextWindow) || contextWindow <= 0) return null;
+  if (
+    !isFiniteNumber(candidate?.usedTokens) ||
+    !isFiniteNumber(candidate?.remainingTokens) ||
+    !isFiniteNumber(candidate?.usedPercent) ||
+    !isFiniteNumber(candidate?.remainingPercent)
+  ) {
+    return null;
+  }
+  return {
+    model: { modelId, context: { contextWindow } },
+    usedTokens: candidate.usedTokens,
+    remainingTokens: candidate.remainingTokens,
+    usedPercent: candidate.usedPercent,
+    remainingPercent: candidate.remainingPercent,
+  };
+}
+
+/**
+ * The whole asset conversation's settled spend: every finished task (its usage
+ * already rolled up its children) plus every finished parentless run, the
+ * summed agent wall time, and the newest context window state. Live rows stay
+ * out — the console composes those from the run's own stream.
+ */
+export async function sessionUsageForThread(
+  db: Database,
+  threadId: string,
+): Promise<SessionUsage> {
+  const taskRows = await db
+    .select({
+      usage: runTasks.usage,
+      createdAt: runTasks.createdAt,
+      finishedAt: runTasks.finishedAt,
+    })
+    .from(runTasks)
+    .where(and(eq(runTasks.threadId, threadId), isNotNull(runTasks.finishedAt)));
+  const runRows = await db
+    .select({
+      usage: generationRuns.usage,
+      createdAt: generationRuns.createdAt,
+      finishedAt: generationRuns.finishedAt,
+    })
+    .from(generationRuns)
+    .where(
+      and(
+        eq(generationRuns.threadId, threadId),
+        // A task's children are already inside the task's rollup.
+        isNull(generationRuns.taskId),
+        isNotNull(generationRuns.finishedAt),
+      ),
+    );
+  // The newest generation names the model the conversation last used. Its
+  // catalog window lets the header print `0 / 1M` before a snapshot exists.
+  const [newestRun] = await db
+    .select({
+      modelId: generationRuns.modelId,
+      contextWindow: models.contextWindow,
+    })
+    .from(generationRuns)
+    .leftJoin(models, eq(models.id, generationRuns.modelId))
+    .where(eq(generationRuns.threadId, threadId))
+    .orderBy(desc(generationRuns.createdAt))
+    .limit(1);
+  const totals: SessionUsage = {
+    input: 0,
+    cached: 0,
+    output: 0,
+    total: 0,
+    cost: 0,
+    elapsedMs: 0,
+    context: null,
+    modelId: newestRun?.modelId ?? null,
+    contextWindow: newestRun?.contextWindow ?? null,
+  };
+  // Settled rows in finish order: the last context state is the newest one.
+  const settled = [...taskRows, ...runRows].sort(
+    (left, right) =>
+      (left.finishedAt?.getTime() ?? 0) - (right.finishedAt?.getTime() ?? 0),
+  );
+  for (const row of settled) {
+    const usage = (row.usage ?? {}) as UsagePart;
+    totals.input += sumNumber(usage.input);
+    totals.cached += sumNumber(usage.cached);
+    totals.output += sumNumber(usage.output);
+    totals.total += sumNumber(usage.total);
+    totals.cost += sumNumber(usage.cost);
+    if (row.finishedAt && row.createdAt) {
+      totals.elapsedMs += Math.max(0, row.finishedAt.getTime() - row.createdAt.getTime());
+    }
+    const context = contextFromUsage(usage);
+    if (context !== null) totals.context = context;
+  }
+  return totals;
+}
+
+export type ProposalRow = typeof runProposals.$inferSelect;
+
+export type ProposalInput = {
+  userId: string;
+  prompt: string;
+  intent: string;
+  project: { id: string | "new"; confidence: number };
+  asset?: { id: string | "new"; confidence: number };
+  guardrail: unknown;
+  decision: unknown;
+  expiresAt: Date;
+};
+
+/** Hold a home decision between the proposal response and the confirm. */
+export async function insertProposal(
+  db: Database,
+  input: ProposalInput,
+): Promise<ProposalRow> {
+  const id = randomUUID();
+  const [row] = await db
+    .insert(runProposals)
+    .values({
+      id,
+      userId: input.userId,
+      prompt: input.prompt,
+      intent: input.intent,
+      projectId: input.project.id,
+      assetId: input.asset?.id ?? null,
+      projectConfidence: input.project.confidence,
+      assetConfidence: input.asset?.confidence ?? null,
+      guardrail: input.guardrail as never,
+      decision: input.decision as never,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  if (!row) throw new Error("The proposal could not be stored.");
+  return row;
+}
+
+/** One-shot: an expired, consumed, or foreign proposal fails with its cause. */
+export async function consumeProposal(
+  db: Database,
+  userId: string,
+  id: string,
+): Promise<{ proposal: ProposalRow } | { failure: StoreFailure }> {
+  // Atomic: only an unconsumed row can be claimed, so two parallel confirms
+  // cannot both start a run.
+  const [claimed] = await db
+    .update(runProposals)
+    .set({ consumedAt: new Date() })
+    .where(
+      and(
+        eq(runProposals.id, id),
+        eq(runProposals.userId, userId),
+        isNull(runProposals.consumedAt),
+      ),
+    )
+    .returning();
+  if (claimed) {
+    if (claimed.expiresAt.getTime() <= Date.now()) {
+      return {
+        failure: {
+          code: "PROPOSAL_EXPIRED",
+          message: "That proposal expired; send the prompt again.",
+        },
+      };
+    }
+    return { proposal: claimed };
+  }
+  // The claim failed: name why from the current row.
+  const [row] = await db
+    .select()
+    .from(runProposals)
+    .where(and(eq(runProposals.id, id), eq(runProposals.userId, userId)));
+  if (!row) {
+    return { failure: { code: "NOT_FOUND", message: "That proposal is not available." } };
+  }
+  if (row.consumedAt !== null) {
+    return {
+      failure: { code: "PROPOSAL_CONSUMED", message: "That proposal was already used." },
+    };
+  }
+  return {
+    failure: {
+      code: "PROPOSAL_EXPIRED",
+      message: "That proposal expired; send the prompt again.",
+    },
+  };
+}
+
+export type VersionCursor = { createdAt: Date; id: string };
+
+/** Newest first, paged by `(createdAt, id)` so equal timestamps stay ordered. */
+export async function listVersions(
+  db: Database,
+  assetId: string,
+  options: {
+    scope?: VersionScope;
+    frameId?: string;
+    limit?: number;
+    cursor?: VersionCursor;
+  },
+) {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), RETENTION_LIMIT);
+  const conditions = [eq(versions.assetId, assetId)];
+  if (options.scope) conditions.push(eq(versions.scope, options.scope));
+  if (options.frameId) conditions.push(eq(versions.frameId, options.frameId));
+  if (options.cursor) {
+    const { createdAt, id } = options.cursor;
+    conditions.push(
+      or(
+        lt(versions.createdAt, createdAt),
+        and(eq(versions.createdAt, createdAt), lt(versions.id, id)),
+      )!,
+    );
+  }
+  return db
+    .select()
+    .from(versions)
+    .where(and(...conditions))
+    .orderBy(desc(versions.createdAt), desc(versions.id))
+    .limit(limit);
 }

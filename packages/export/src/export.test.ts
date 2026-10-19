@@ -23,6 +23,16 @@ describe("export", () => {
     expect(parsed.assets[0]?.name).toBe("icon");
   });
 
+  it("imports a v1 file whose style still carries maxColors", () => {
+    const project = sample();
+    const raw = JSON.parse(serializeProject(project)) as {
+      project: { style: Record<string, unknown> };
+    };
+    raw.project.style.maxColors = 8;
+    const parsed = parseProject(JSON.stringify(raw));
+    expect(parsed.project.style).not.toHaveProperty("maxColors");
+  });
+
   it("writes a png signature, an svg rect, and a zip entry", () => {
     const project = sample();
     const asset = project.assets[0];

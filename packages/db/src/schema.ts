@@ -1,9 +1,12 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
+  index,
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
@@ -86,6 +89,9 @@ export const projects = pgTable("projects", {
     .references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  /** Generated, read-only: what this project holds, for decisions and prompts. */
+  summary: text("summary").notNull().default(""),
+  summaryAt: timestamp("summary_at", { withTimezone: true }),
   style: jsonb("style").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -97,6 +103,9 @@ export const assets = pgTable("assets", {
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  /** Generated, read-only: what this asset depicts. */
+  summary: text("summary").notNull().default(""),
+  summaryAt: timestamp("summary_at", { withTimezone: true }),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   palette: jsonb("palette").notNull(),
@@ -112,6 +121,9 @@ export const frames = pgTable(
       .notNull()
       .references(() => assets.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /** Generated, read-only: what this frame shows. */
+    summary: text("summary").notNull().default(""),
+    summaryAt: timestamp("summary_at", { withTimezone: true }),
     index: integer("index").notNull(),
     layers: jsonb("layers").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -120,16 +132,81 @@ export const frames = pgTable(
   (table) => [uniqueIndex("frames_asset_index").on(table.assetId, table.index)],
 );
 
-export const generationThreads = pgTable("generation_threads", {
+/**
+ * A home prompt's decision, held between the proposal response and the
+ * explicit confirm: the guardrail and Jev spend happens once, and the run
+ * starts only from a consumed proposal.
+ */
+export const runProposals = pgTable("run_proposals", {
   id: text("id").primaryKey(),
-  assetId: text("asset_id")
-    .notNull()
-    .references(() => assets.id, { onDelete: "cascade" }),
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
+  prompt: text("prompt").notNull(),
+  intent: text("intent").notNull(),
+  projectId: text("project_id"),
+  assetId: text("asset_id"),
+  projectConfidence: real("project_confidence"),
+  assetConfidence: real("asset_confidence"),
+  guardrail: jsonb("guardrail"),
+  decision: jsonb("decision"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
 });
+
+export type VersionScope = "frame" | "asset";
+export type VersionAuthor = "user" | "agent";
+
+export const versions = pgTable(
+  "versions",
+  {
+    id: text("id").primaryKey(),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    frameId: text("frame_id").references(() => frames.id, { onDelete: "cascade" }),
+    scope: text("scope").$type<VersionScope>().notNull(),
+    kind: text("kind").notNull(),
+    author: text("author").$type<VersionAuthor>().notNull(),
+    runId: text("run_id"),
+    label: text("label"),
+    snapshot: jsonb("snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("versions_asset_created").on(
+      table.assetId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+    index("versions_frame_id").on(table.frameId),
+  ],
+);
+
+/**
+ * A thread is one conversation. It hangs off an asset (editor runs) or, for a
+ * workspace run that has not picked an asset yet, off its project. The check
+ * keeps a thread from existing with no home at all.
+ */
+export const generationThreads = pgTable(
+  "generation_threads",
+  {
+    id: text("id").primaryKey(),
+    assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "generation_threads_scope",
+      sql`${table.assetId} IS NOT NULL OR ${table.projectId} IS NOT NULL`,
+    ),
+  ],
+);
 
 export const generationMessages = pgTable("generation_messages", {
   id: text("id").primaryKey(),
@@ -154,9 +231,72 @@ export const generationRuns = pgTable("generation_runs", {
   status: text("status").notNull(),
   modelId: text("model_id").notNull(),
   reasoningEffort: text("reasoning_effort").notNull(),
+  frameId: text("frame_id"),
+  prompt: text("prompt"),
+  answer: text("answer"),
   errorCode: text("error_code"),
+  events: jsonb("events"),
+  override: jsonb("override"),
+  /** Frames the user has approved for this run; survives a worker restart. */
+  approvedScope: jsonb("approved_scope"),
+  /** Token counts and USD cost the run spent, model and Jev split out. */
+  usage: jsonb("usage"),
+  /** The task this run belongs to; a supervisor or worker child of it. */
+  taskId: text("task_id").references(() => runTasks.id, { onDelete: "set null" }),
+  /** plan | worker | review | fix, for a run inside a task. */
+  role: text("role"),
+  /** w1..w4 for a worker child. */
+  workerKey: text("worker_key"),
+  /** Frame ids this child owns; every write is checked against it. */
+  frameIds: jsonb("frame_ids"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+/**
+ * One durable asset-draw task per drawing request: Jev's shape, the
+ * validated plan, the phase it is in, and the usage every child rolled up.
+ */
+export const runTasks = pgTable("run_tasks", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id")
+    .notNull()
+    .references(() => generationThreads.id, { onDelete: "cascade" }),
+  assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  phase: text("phase").notNull(),
+  shape: jsonb("shape"),
+  plan: jsonb("plan"),
+  usage: jsonb("usage"),
+  durableTaskId: text("durable_task_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const models = pgTable("models", {
+  id: text("id").primaryKey(),
+  /**
+   * The name a person reads in the composer, the console header, and a turn's
+   * meta. The `id` stays the provider slug the request is sent with.
+   */
+  displayName: text("display_name").notNull(),
+  api: text("api").notNull(),
+  efforts: jsonb("efforts").notNull(),
+  position: integer("position").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  vision: boolean("vision").notNull().default(false),
+  userImages: boolean("user_images").notNull().default(false),
+  roles: jsonb("roles").notNull().default([]),
+  /**
+   * The model's context window, seeded by migrations. The worker feeds it to
+   * Anvia as `contextLimits`, which is what attaches `contextUsage`
+   * (used/remaining tokens and percent) to every completion response. Null
+   * means the window is not declared: the console shows no context line
+   * rather than guessing one.
+   */
+  contextWindow: integer("context_window"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const userRelations = relations(user, ({ many, one }) => ({
@@ -185,8 +325,14 @@ export const projectRelations = relations(projects, ({ one, many }) => ({
 export const assetRelations = relations(assets, ({ one, many }) => ({
   project: one(projects, { fields: [assets.projectId], references: [projects.id] }),
   frames: many(frames),
+  versions: many(versions),
 }));
 
 export const frameRelations = relations(frames, ({ one }) => ({
   asset: one(assets, { fields: [frames.assetId], references: [assets.id] }),
+}));
+
+export const versionRelations = relations(versions, ({ one }) => ({
+  asset: one(assets, { fields: [versions.assetId], references: [assets.id] }),
+  frame: one(frames, { fields: [versions.frameId], references: [frames.id] }),
 }));

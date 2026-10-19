@@ -1,13 +1,15 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
+import { Popover as BasePopover } from "@base-ui/react/popover";
 import { ScrollArea as BaseScrollArea } from "@base-ui/react/scroll-area";
 import { Select } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
 import { motion, type HTMLMotionProps } from "motion/react";
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import { ChevronDown, Close, Eye, EyeOff } from "./pixel-icons.js";
+import type { InputHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from "react";
 import { useCallback, useState } from "react";
+import { toastPayload, type ToastInput } from "../lib/toast.js";
 
 /** DESIGN.md: 140-200ms, ease-out, transform and opacity only. */
 export const motionToken = { duration: 0.16, ease: "easeOut" as const };
@@ -18,13 +20,12 @@ const press = { whileTap: { scale: 0.98 }, transition: motionToken };
 type Tone = "solid" | "ghost" | "danger" | "quiet";
 
 const buttonTones: Record<Tone, string> = {
-  // A pixel button is a flat block lifted by a solid bar, not a soft shadow.
-  solid:
-    "bg-accent text-navy border-accent-deep shadow-[0_3px_0_0_var(--color-accent-deep)] active:shadow-none active:translate-y-[3px]",
-  ghost:
-    "bg-panel text-ink border-line-strong shadow-[0_3px_0_0_rgba(148,176,194,0.28)] active:shadow-none active:translate-y-[3px] hover:bg-raised",
-  danger:
-    "bg-erase text-navy border-erase shadow-[0_3px_0_0_#b13e53] active:shadow-none active:translate-y-[3px]",
+  // A pixel button is a flat block; a hard bar lifts it. The coffee bar reads
+  // on panel and raised surfaces; ghost takes the stone bar so it also reads
+  // on paper.
+  solid: "bg-accent text-coffee border-accent-deep shadow-pixel-sm",
+  ghost: "bg-panel text-ink border-line-strong shadow-pixel-stone hover:bg-raised",
+  danger: "bg-erase text-coffee border-erase shadow-pixel-sm",
   quiet: "bg-transparent text-muted border-transparent hover:text-ink",
 };
 
@@ -40,7 +41,7 @@ export function Button({
       {...press}
       type={type}
       {...props}
-      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 border-2 px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:translate-y-0 disabled:border-line disabled:bg-panel disabled:text-muted disabled:shadow-none ${buttonTones[tone]} ${className}`}
     >
       {children}
     </motion.button>
@@ -58,6 +59,7 @@ export function IconButton({
   subtle = false,
   disabled,
   size = "md",
+  tone = "default",
   onClick,
   children,
   className = "",
@@ -67,18 +69,23 @@ export function IconButton({
   active?: boolean;
   /** Active state shown as an accent edge rather than a solid fill. */
   subtle?: boolean;
+  /** danger reads red at rest and fills solid (never translucent) on hover. */
+  tone?: "default" | "danger";
   disabled?: boolean;
-  size?: "sm" | "md";
+  /** sm 28px, md 36px, lg 40px — lg matches the composer bar's controls. */
+  size?: "sm" | "md" | "lg";
   onClick?: () => void;
   children: ReactNode;
   className?: string;
 }) {
-  const box = size === "sm" ? "h-7 w-7" : "h-9 w-9";
+  const box = size === "sm" ? "h-7 w-7" : size === "lg" ? "h-10 w-10" : "h-9 w-9";
   const state = !active
-    ? "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
+    ? tone === "danger"
+      ? "border-erase/60 text-erase hover:border-erase hover:bg-erase hover:text-coffee"
+      : "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
     : subtle
       ? "border-accent bg-accent/15 text-accent"
-      : "border-accent bg-accent text-navy";
+      : "border-accent bg-accent text-coffee";
   return (
     <Tooltip label={hint ? `${label} · ${hint}` : label}>
       <motion.button
@@ -88,7 +95,7 @@ export function IconButton({
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
-        className={`grid ${box} shrink-0 place-items-center border-2 transition-colors duration-150 disabled:opacity-40 ${state} ${className}`}
+        className={`grid ${box} shrink-0 place-items-center border-2 shadow-pixel-sm transition-[transform,box-shadow,background-color,border-color] duration-150 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-40 ${state} ${className}`}
       >
         {children}
       </motion.button>
@@ -96,18 +103,47 @@ export function IconButton({
   );
 }
 
-export function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export const TooltipProvider = BaseTooltip.Provider;
+
+export function Tooltip({
+  label,
+  instant = false,
+  children,
+}: {
+  label: string;
+  instant?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <BaseTooltip.Root>
+    <BaseTooltip.Root {...(instant ? { delay: 0 } : {})}>
       <BaseTooltip.Trigger render={children as React.ReactElement} />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner sideOffset={8}>
-          <BaseTooltip.Popup className="z-40 border-2 border-line-strong bg-raised px-2 py-1 font-mono text-[11px] text-ink">
+        <BaseTooltip.Positioner sideOffset={8} className="z-40">
+          <BaseTooltip.Popup className="bg-raised pixel-window px-2 py-1 text-pixel-mono text-ink">
             {label}
           </BaseTooltip.Popup>
         </BaseTooltip.Positioner>
       </BaseTooltip.Portal>
     </BaseTooltip.Root>
+  );
+}
+
+/**
+ * Text that never wraps: it ellipsizes in place, and the full value arrives in
+ * a portalled tooltip on hover — no ancestor overflow can clip it, so the plan
+ * card, the question options, and the layer rows all behave the same.
+ */
+export function TruncatedText({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <Tooltip label={text} instant>
+      <span className={`block min-w-0 truncate ${className}`}>{text}</span>
+    </Tooltip>
   );
 }
 
@@ -122,30 +158,38 @@ export function Field({
   label,
   htmlFor,
   hint,
+  note,
   error,
   children,
 }: {
   label: string;
   htmlFor: string;
   hint?: string;
+  /** Sits under the control, not beside the label. */
+  note?: string;
   error?: string;
   children: ReactNode;
 }) {
   return (
     <div className="grid gap-1.5">
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="grid gap-0.5">
         <label
           htmlFor={htmlFor}
-          className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase"
+          className="text-pixel-mono tracking-[0.14em] text-muted uppercase"
         >
           {label}
         </label>
-        {hint ? <span className="font-mono text-[10px] text-muted">{hint}</span> : null}
+        {hint ? <span className="text-pixel-mono text-muted">{hint}</span> : null}
       </div>
       {children}
-      {/* Colour is never the only signal: the message carries the meaning. */}
+      {note ? <p className="text-pixel-mono text-muted">{note}</p> : null}
+      {/* Colour is never the only signal: the message carries the meaning. The
+          field chip also puts coral on the darkest surface, at 6.92:1. */}
       {error ? (
-        <span role="alert" className="text-[12px] text-erase">
+        <span
+          role="alert"
+          className="border-2 border-erase/60 bg-field px-2 py-1 text-[12px] text-erase"
+        >
           {error}
         </span>
       ) : null}
@@ -154,7 +198,7 @@ export function Field({
 }
 
 const well =
-  "w-full border-2 bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none placeholder:text-muted disabled:opacity-50";
+  "w-full border-2 bevel-in bg-field px-3 py-2.5 text-ink transition-colors duration-150 outline-none placeholder:text-muted disabled:opacity-50";
 
 export function TextInput({
   className = "",
@@ -191,20 +235,28 @@ export function PasswordInput({
         onClick={() => setShown((value) => !value)}
         className="absolute inset-y-0 right-1.5 my-auto grid h-8 w-8 place-items-center border-2 border-transparent text-muted hover:border-line-strong hover:text-ink"
       >
-        {shown ? <EyeOff size={16} strokeWidth={2} /> : <Eye size={16} strokeWidth={2} />}
+        {shown ? <EyeOff /> : <Eye />}
       </button>
     </span>
   );
 }
 
 export function Textarea({
+  bare = false,
   className = "",
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  ref?: Ref<HTMLTextAreaElement>;
+  bare?: boolean;
+}) {
   return (
     <textarea
       {...props}
-      className={`${well} resize-none border-line hover:border-line-strong focus:border-accent ${className}`}
+      className={
+        bare
+          ? `w-full resize-none bg-transparent p-0 text-ink outline-none placeholder:text-muted disabled:opacity-50 ${className}`
+          : `${well} resize-none border-line hover:border-line-strong focus:border-accent ${className}`
+      }
     />
   );
 }
@@ -230,7 +282,9 @@ export function Checkbox({
 }) {
   return (
     <label
-      className={`group inline-flex items-center gap-2 text-[12px] ${
+      className={`group ${
+        hideLabel ? "inline-flex" : "flex w-full min-w-0"
+      } items-center gap-2 text-[12px] ${
         disabled ? "cursor-not-allowed opacity-45" : ""
       }`}
     >
@@ -246,16 +300,39 @@ export function Checkbox({
         aria-hidden
         className={`grid h-[18px] w-[18px] shrink-0 place-items-center border-2 transition-colors duration-150 ${
           checked
-            ? "border-accent bg-accent text-navy"
-            : "border-line-strong bg-field text-transparent group-hover:border-muted"
+            ? "border-accent bg-accent text-coffee"
+            : "border-line-strong bevel-in bg-field text-transparent group-hover:border-muted"
         }`}
       >
-        <Check size={13} strokeWidth={4} strokeLinecap="square" />
+        {/* 13px layout box keeps the pre-change baseline (the svg bottom edge is
+            the label baseline inside the layers panel's clipped 18px wrapper);
+            preserveAspectRatio still draws the 12px glyph. */}
+        {/* The classic pixel check: two integer-grid strokes, two pixels
+            thick, square caps, no antialiasing. At an exact 2x scale every
+            pixel stays a crisp square. */}
+        <svg
+          viewBox="0 0 12 12"
+          width={12}
+          height={12}
+          shapeRendering="crispEdges"
+          aria-hidden
+        >
+          <path
+            d="M2.5 6.5 L5.5 9.5 L9.5 3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="square"
+            strokeLinejoin="miter"
+          />
+        </svg>
       </span>
       {hideLabel ? (
         <span className="sr-only">{label}</span>
       ) : (
-        <span className={checked ? "text-ink" : "text-muted"}>{label}</span>
+        <span className="w-0 min-w-0 flex-1">
+          <TruncatedText text={label} className={checked ? "text-ink" : "text-muted"} />
+        </span>
       )}
     </label>
   );
@@ -277,9 +354,32 @@ export function Toggle({
   );
 }
 
+/* ---------------------------------------------------------------- progress */
+
+/**
+ * Progress and usage read as segmented cells, one cell per unit — never a
+ * smooth bar. The row is capped at the 33-colour palette limit and can shrink
+ * with its container so a big total cannot run off the rail; the surrounding
+ * text names the count, so the row itself stays out of the a11y tree.
+ */
+export function ProgressCells({ value, total }: { value: number; total: number }) {
+  const cells = Math.min(Math.max(total, 1), 33);
+  const filled = Math.min(Math.max(value, 0), cells);
+  return (
+    <span aria-hidden className="flex min-w-0 flex-1 items-center gap-px">
+      {Array.from({ length: cells }, (_, index) => (
+        <span
+          key={index}
+          className={`w-1 h-3 ${index < filled ? "bg-accent" : "bg-raised"}`}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function Kbd({ children }: { children: ReactNode }) {
   return (
-    <kbd className="border-2 border-line-strong px-1 font-mono text-[10px] text-muted">
+    <kbd className="border-2 border-line-strong px-1 text-pixel-mono text-muted">
       {children}
     </kbd>
   );
@@ -312,21 +412,32 @@ export function Card({
 
 export function Panel({
   title,
+  subtitle,
   action,
   children,
   className = "",
 }: {
   title: string;
+  /** A second line under the title, so the title itself stays one line. */
+  subtitle?: string;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <section className={`flex min-h-0 flex-col gap-2 ${className}`}>
+    <section className={`flex min-h-0 min-w-0 flex-col gap-2 ${className}`}>
       <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
-        <h2 className="font-mono text-[11px] tracking-[0.16em] text-muted uppercase">
-          {title}
-        </h2>
+        {/* Micro-label decision: panel headers are Silkscreen 16, the same
+            display face as dialog and sheet titles (see DESIGN.md). */}
+        <div className="min-w-0">
+          <h2 className="text-pixel-title text-ink">{title}</h2>
+          {subtitle ? (
+            <p className="flex items-center gap-1 text-pixel-mono text-accent uppercase">
+              <span className="worker-blink inline-block h-1.5 w-1.5 bg-accent" />
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
         {action}
       </header>
       {children}
@@ -350,7 +461,7 @@ export function ScrollArea({
         orientation="vertical"
         className="flex w-2 touch-none select-none"
       >
-        <BaseScrollArea.Thumb className="flex-1 bg-steel" />
+        <BaseScrollArea.Thumb className="flex-1 bg-stone" />
       </BaseScrollArea.Scrollbar>
       <BaseScrollArea.Corner />
     </BaseScrollArea.Root>
@@ -381,32 +492,45 @@ export function SelectControl({
 }: {
   id?: string;
   value: string;
-  options: string[];
+  /** Plain strings use the value as the label; objects keep the two apart. */
+  options: Array<string | { value: string; label: string }>;
   onChange: (value: string) => void;
   label: string;
   placeholder?: string;
   className?: string;
 }) {
+  const items = options.map((option) =>
+    typeof option === "string" ? { value: option, label: option } : option,
+  );
   return (
     <Select.Root value={value} onValueChange={(next) => onChange(next ?? value)}>
       <Select.Trigger
         id={id}
         aria-label={label}
-        className={`flex items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] whitespace-nowrap text-ink transition-colors duration-150 hover:border-line-strong focus:border-accent ${className}`}
+        title={items.find((item) => item.value === value)?.label ?? placeholder}
+        className={`flex min-w-0 items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] text-ink shadow-[inset_2px_2px_0_0_rgba(241,239,233,0.08),inset_-2px_-2px_0_0_rgba(11,9,6,0.5),2px_2px_0_0_var(--color-coffee)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
       >
-        <Select.Value placeholder={placeholder} />
-        <ChevronDown size={14} strokeWidth={2.5} className="shrink-0 text-muted" />
+        <Select.Value placeholder={placeholder} className="min-w-0">
+          {(selected: string | null) => (
+            // Long model ids ellipsize instead of overflowing the control.
+            <span className="block min-w-0 truncate">
+              {items.find((item) => item.value === selected)?.label ?? placeholder}
+            </span>
+          )}
+        </Select.Value>
+        <ChevronDown className="shrink-0 text-muted" />
       </Select.Trigger>
       <Select.Portal>
         <Select.Positioner sideOffset={4} className="z-40">
-          <Select.Popup className="max-h-64 min-w-[10rem] overflow-auto border-2 border-line-strong bg-raised p-1 text-[13px]">
-            {options.map((option) => (
+          <Select.Popup className="max-h-64 min-w-[10rem] max-w-[min(22rem,90vw)] overflow-auto bg-raised pixel-window p-1 text-[13px]">
+            {items.map((item) => (
               <Select.Item
-                key={option}
-                value={option}
-                className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-navy"
+                key={item.value}
+                value={item.value}
+                title={item.label}
+                className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-coffee"
               >
-                <Select.ItemText>{option}</Select.ItemText>
+                <Select.ItemText>{item.label}</Select.ItemText>
               </Select.Item>
             ))}
           </Select.Popup>
@@ -422,22 +546,38 @@ export function Menu({
   label,
   children,
   align = "end",
+  trigger,
+  popupClassName = "",
 }: {
   label: string;
   children: ReactNode;
   align?: "start" | "end";
+  /**
+   * A custom trigger element, for a menu that needs more than the ⋯ glyph.
+   * Base UI merges its own props (ARIA, keyboard, `data-popup-open`) onto it,
+   * so the element a caller passes owns its own look.
+   */
+  trigger?: React.ReactElement;
+  /** Width (and any extra styling) for the popup itself. */
+  popupClassName?: string;
 }) {
   return (
     <BaseMenu.Root>
-      <BaseMenu.Trigger
-        aria-label={label}
-        className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
-      >
-        ⋯
-      </BaseMenu.Trigger>
+      {trigger === undefined ? (
+        <BaseMenu.Trigger
+          aria-label={label}
+          className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink"
+        >
+          ⋯
+        </BaseMenu.Trigger>
+      ) : (
+        <BaseMenu.Trigger aria-label={label} render={trigger} />
+      )}
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={6} align={align} className="z-40">
-          <BaseMenu.Popup className="min-w-[10rem] border-2 border-line-strong bg-raised p-1 text-[13px]">
+          <BaseMenu.Popup
+            className={`min-w-[10rem] bg-raised pixel-window p-1 text-[13px] ${popupClassName}`}
+          >
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -459,7 +599,7 @@ export function MenuItem({
     <BaseMenu.Item
       disabled={disabled}
       onClick={onClick}
-      className="cursor-pointer px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-navy data-[disabled]:opacity-40"
+      className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-coffee data-[disabled]:opacity-40"
     >
       {children}
     </BaseMenu.Item>
@@ -467,6 +607,50 @@ export function MenuItem({
 }
 
 export const MenuSeparator = BaseMenu.Separator;
+
+/* ----------------------------------------------------------------- popover */
+
+export function Popover({
+  trigger,
+  label,
+  children,
+  align = "end",
+  triggerClassName = "border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent",
+  popupClassName = "w-64",
+  openOnHover = false,
+}: {
+  trigger: ReactNode;
+  label: string;
+  children: ReactNode;
+  align?: "start" | "end";
+  /** Replaces the default bordered trigger styling. */
+  triggerClassName?: string;
+  /** Width (and any extra styling) for the popup itself. */
+  popupClassName?: string;
+  /** Open on hover as well: a detail read, while click and keyboard still work. */
+  openOnHover?: boolean;
+}) {
+  return (
+    <BasePopover.Root>
+      <BasePopover.Trigger
+        aria-label={label}
+        {...(openOnHover ? { openOnHover: true, delay: 120, closeDelay: 80 } : {})}
+        className={triggerClassName}
+      >
+        {trigger}
+      </BasePopover.Trigger>
+      <BasePopover.Portal>
+        <BasePopover.Positioner sideOffset={6} align={align} className="z-40">
+          <BasePopover.Popup
+            className={`${popupClassName} bg-raised pixel-window p-2 text-[13px]`}
+          >
+            {children}
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
+  );
+}
 
 /* ---------------------------------------------------------------- overlays */
 
@@ -488,14 +672,14 @@ export function Dialog({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/85" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-coffee/85" />
         <BaseDialog.Popup
           style={{ width: `min(${width}, 94vw)` }}
-          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 border-2 border-line-strong bg-raised p-4"
+          className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4"
         >
           <header className="flex items-start justify-between gap-3 border-b-2 border-line pb-2">
             <div>
-              <BaseDialog.Title className="font-mono text-[12px] tracking-[0.16em] text-accent uppercase">
+              <BaseDialog.Title className="text-pixel-title text-accent">
                 {title}
               </BaseDialog.Title>
               {description ? (
@@ -505,11 +689,61 @@ export function Dialog({
               ) : null}
             </div>
             <DialogClose>
-              <X size={16} strokeWidth={2.5} />
+              <Close />
               <span className="sr-only">Close</span>
             </DialogClose>
           </header>
           <div className="mt-4 grid gap-4">{children}</div>
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}
+
+/**
+ * A destructive-action confirmation. Base UI owns the focus trap, Escape and
+ * ARIA wiring; the copy names the consequence before anything is removed.
+ */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel = "Delete",
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-coffee/85" />
+        <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4">
+          <BaseDialog.Title className="text-pixel-title text-accent">
+            {title}
+          </BaseDialog.Title>
+          <BaseDialog.Description className="mt-2 text-[13px] text-muted">
+            {description}
+          </BaseDialog.Description>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button tone="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              tone="danger"
+              onClick={() => {
+                onConfirm();
+                onOpenChange(false);
+              }}
+            >
+              {confirmLabel}
+            </Button>
+          </div>
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>
@@ -544,7 +778,7 @@ export function Sheet({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/80" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-coffee/80" />
         <BaseDialog.Popup
           data-side={side}
           className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col bg-raised ${
@@ -552,11 +786,11 @@ export function Sheet({
           } border-line-strong`}
         >
           <header className="flex items-center justify-between border-b-2 border-line px-3 py-2">
-            <BaseDialog.Title className="font-mono text-[11px] tracking-[0.16em] text-accent uppercase">
+            <BaseDialog.Title className="text-pixel-title text-accent">
               {title}
             </BaseDialog.Title>
             <DialogClose>
-              <X size={16} strokeWidth={2.5} />
+              <Close />
               <span className="sr-only">Close {title}</span>
             </DialogClose>
           </header>
@@ -574,7 +808,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <BaseToast.Provider>
       {children}
       <BaseToast.Portal>
-        <BaseToast.Viewport className="fixed right-4 bottom-4 z-50 flex w-[min(24rem,90vw)] flex-col gap-2">
+        {/* bottom-32 clears the composer band, whose Generate button the old
+            bottom-4 viewport covered while a toast was visible. */}
+        <BaseToast.Viewport className="fixed right-4 bottom-32 z-50 flex w-[min(24rem,90vw)] flex-col gap-2">
           <ToastList />
         </BaseToast.Viewport>
       </BaseToast.Portal>
@@ -590,13 +826,13 @@ function ToastList() {
       toast={toast}
       className="toast-popup relative border-2 border-line-strong bg-raised p-3"
     >
-      <BaseToast.Title className="pr-6 font-mono text-[11px] tracking-[0.14em] text-accent uppercase" />
+      <BaseToast.Title className="pr-6 text-pixel-mono tracking-[0.14em] text-accent uppercase" />
       <BaseToast.Description className="mt-1 text-[12px] text-muted" />
       <BaseToast.Close
         aria-label="Dismiss"
         className="absolute top-2 right-2 grid h-6 w-6 place-items-center border-2 border-line text-muted hover:border-line-strong hover:text-ink"
       >
-        <X size={13} strokeWidth={2.5} />
+        <Close width={12} height={12} />
       </BaseToast.Close>
     </BaseToast.Root>
   ));
@@ -604,14 +840,136 @@ function ToastList() {
 
 export function useToast() {
   const manager = BaseToast.useToastManager();
-  return useCallback(
-    (input: { title: string; description?: string }) =>
-      manager.add({
-        title: input.title,
-        description: input.description,
-        timeout: input.description?.toLowerCase().includes("failed") ? 8000 : 4000,
-      }),
-    [manager],
+  // `manager` is memoized on the toast list, so its identity changes with
+  // every toast that appears or expires; `add` is the store's stable method.
+  // Callers hold this callback in effect dependencies, and one that re-armed
+  // on each toast fed a save-failure into its own retry loop.
+  const add = manager.add;
+  return useCallback((input: ToastInput) => add(toastPayload(input)), [add]);
+}
+
+/** Close one keyed toast, or every toast when called with no id. */
+export function useToastCloser() {
+  const manager = BaseToast.useToastManager();
+  const close = manager.close;
+  return useCallback((id?: string) => close(id), [close]);
+}
+
+/* ------------------------------------------------------------------- brand */
+
+/**
+ * The product name next to the mark. Titles stay ink; the mark carries the
+ * accent, so a header does not read as a row of green labels.
+ */
+export function Wordmark({
+  size = "title",
+  hideLabelOnNarrow = false,
+  flight = false,
+}: {
+  size?: "title" | "display";
+  /** Keep the mark and drop the name when the bar has no room, such as the editor. */
+  hideLabelOnNarrow?: boolean;
+  /** Signed-out brand: it leaves before the home's bar arrives, and vice versa. */
+  flight?: boolean;
+}) {
+  const display = size === "display";
+  return (
+    <span
+      className="inline-flex items-center gap-2 text-ink"
+      {...(flight ? { "data-flight": "brand" } : {})}
+    >
+      {/* The hero mark breathes like the slide under it; the chrome mark holds still. */}
+      <PixelMark size={display ? 26 : 18} pulse={display} />
+      <span
+        className={`${display ? "text-pixel-display" : "text-pixel-title"} ${
+          hideLabelOnNarrow ? "max-sm:sr-only" : ""
+        }`}
+      >
+        PIXELAITION
+      </span>
+    </span>
+  );
+}
+
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="pixel-corners-sm inline-flex w-fit max-w-full border-2 border-line"
+    >
+      {options.map((option, index) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={selected}
+            className={`px-3 py-1.5 text-pixel-label transition-colors duration-150 ${
+              index > 0 ? "border-l-2 border-line" : ""
+            } ${selected ? "bg-raised text-ink" : "text-muted hover:text-ink"}`}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The brand mark: the signed-out slide's dither field condensed to a 16×16
+ * grid — an `ink` core, an `accent` ring, an `accent-deep` body, and a Bayer
+ * checker halo in the deep tone. It is `public/favicon.svg` without its tile,
+ * so the wordmark carries the app icon's identity on every page, and it is a
+ * logo glyph rather than a UI icon: the 24/12 icon rule does not apply.
+ */
+export function PixelMark({
+  size = 18,
+  pulse = false,
+}: {
+  size?: number;
+  pulse?: boolean;
+}) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      shapeRendering="crispEdges"
+      aria-hidden
+      className="shrink-0"
+    >
+      <path
+        d="M6 2h1v1h-1zM8 2h1v1h-1zM10 2h1v1h-1zM3 3h1v1h-1zM11 3h1v1h-1zM12 4h1v1h-1zM13 5h1v1h-1zM2 6h1v1h-1zM13 7h1v1h-1zM2 8h1v1h-1zM13 9h1v1h-1zM2 10h1v1h-1zM3 11h1v1h-1zM4 12h1v1h-1zM12 12h1v1h-1zM5 13h1v1h-1zM7 13h1v1h-1zM9 13h1v1h-1z"
+        fill="var(--color-accent-deep)"
+        opacity={0.55}
+        className={pulse ? "brand-halo" : undefined}
+      />
+      <path
+        d="M5 3h6v1h-6zM4 4h2v1h-2zM10 4h2v1h-2zM3 5h2v1h-2zM11 5h2v1h-2zM3 6h1v1h-1zM12 6h1v1h-1zM3 7h1v1h-1zM12 7h1v1h-1zM3 8h1v1h-1zM12 8h1v1h-1zM3 9h1v1h-1zM12 9h1v1h-1zM3 10h2v1h-2zM11 10h2v1h-2zM4 11h2v1h-2zM10 11h2v1h-2zM5 12h6v1h-6z"
+        fill="var(--color-accent-deep)"
+      />
+      <path
+        d="M6 4h4v1h-4zM5 5h2v1h-2zM9 5h2v1h-2zM4 6h2v1h-2zM10 6h2v1h-2zM4 7h1v1h-1zM11 7h1v1h-1zM4 8h1v1h-1zM11 8h1v1h-1zM4 9h2v1h-2zM10 9h2v1h-2zM5 10h2v1h-2zM9 10h2v1h-2zM6 11h4v1h-4z"
+        fill="var(--color-accent)"
+      />
+      <path
+        d="M7 5h2v1h-2zM6 6h4v1h-4zM5 7h6v1h-6zM5 8h6v1h-6zM6 9h4v1h-4zM7 10h2v1h-2z"
+        fill="var(--color-ink)"
+      />
+    </svg>
   );
 }
 
@@ -627,12 +985,14 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="pixel-corners-sm grid gap-2 border-2 border-dashed border-line p-4">
-      <p className="font-mono text-[11px] tracking-[0.14em] text-muted uppercase">
-        {title}
-      </p>
-      <p className="text-[13px] text-muted">{body}</p>
-      {action}
+    <div className="pixel-corners-sm dither-sm grid gap-2 border-2 border-dashed border-line p-4">
+      {/* The dither is the atmosphere around the message; the copy keeps a
+          solid surface so its contrast never rides the checker. */}
+      <div className="grid gap-2 bg-panel p-3">
+        <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">{title}</p>
+        <p className="text-[13px] text-muted">{body}</p>
+        {action}
+      </div>
     </div>
   );
 }

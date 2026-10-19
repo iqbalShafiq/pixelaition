@@ -129,3 +129,22 @@ export function mirrorFrame(asset: Asset, frameId: string): Asset | undefined {
   if (!mirrored.ok) return undefined;
   return writeFrame(asset, frameId, mirrored.buffer);
 }
+
+/**
+ * Reorders a frame by moving it to a slot in the list. Indexes are the order
+ * of record, so the whole list is renumbered as a dense 0..n-1 sequence.
+ */
+export function moveFrame(
+  asset: Asset,
+  frameId: string,
+  toIndex: number,
+): Asset | undefined {
+  const from = asset.frames.findIndex((frame) => frame.id === frameId);
+  if (from === -1) return undefined;
+  const frames = [...asset.frames];
+  const [moved] = frames.splice(from, 1);
+  if (!moved) return undefined;
+  const to = Math.max(0, Math.min(toIndex, frames.length));
+  frames.splice(to, 0, moved);
+  return { ...asset, frames: frames.map((frame, index) => ({ ...frame, index })) };
+}

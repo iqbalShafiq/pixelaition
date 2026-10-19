@@ -29,7 +29,7 @@ export function frameToPng(buffer: FrameBuffer, scale: ExportScale): Uint8Array 
 export function frameToJpg(
   buffer: FrameBuffer,
   scale: ExportScale,
-  background = "#14120e",
+  background = "#0a0a09",
 ): Uint8Array {
   const image = rasterize(buffer, scale, background);
   return encodeJpeg({ data: image.data, width: image.width, height: image.height }, 90)

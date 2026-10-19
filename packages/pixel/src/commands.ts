@@ -1,4 +1,4 @@
-import { cloneBuffer, layerById, replaceLayer } from "./buffer.js";
+import { cloneBuffer, composite, layerById, replaceLayer } from "./buffer.js";
 import {
   clonePixels,
   inBounds,
@@ -9,9 +9,9 @@ import {
 } from "./pixels.js";
 import {
   MAX_COLORS,
-  MAX_LAYERS,
   type Command,
   type CommandResult,
+  type DitherPattern,
   type FrameBuffer,
   type Point,
 } from "./types.js";
@@ -138,6 +138,104 @@ function flood(
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
 
+function paletteIndexOk(buffer: FrameBuffer, color: number): boolean {
+  return Number.isInteger(color) && color >= 0 && color < buffer.palette.length;
+}
+
+function replaceColor(
+  buffer: FrameBuffer,
+  layerId: string | undefined,
+  from: number,
+  to: number,
+): CommandResult {
+  if (!paletteIndexOk(buffer, from) || !paletteIndexOk(buffer, to)) {
+    return fail("PALETTE_INDEX", "The swap uses a color that is not in the palette.");
+  }
+  if (layerId !== undefined) {
+    const gate = requireLayer(buffer, layerId);
+    if ("ok" in gate) return gate;
+  }
+  const swap = (pixels: Uint8Array): Uint8Array => {
+    const next = clonePixels(pixels);
+    for (let index = 0; index < next.length; index += 1) {
+      if (next[index] === from) next[index] = to;
+    }
+    return next;
+  };
+  return {
+    ok: true,
+    buffer: {
+      ...buffer,
+      layers: buffer.layers.map((layer) =>
+        layerId === undefined || layer.id === layerId
+          ? { ...layer, pixels: swap(layer.pixels) }
+          : layer,
+      ),
+    },
+  };
+}
+
+function outline(buffer: FrameBuffer, layerId: string, color: number): CommandResult {
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  if (!paletteIndexOk(buffer, color)) {
+    return fail("PALETTE_INDEX", "The outline color is not in the palette.");
+  }
+  const view = composite(buffer);
+  const next = clonePixels(layer.pixels);
+  for (let y = 0; y < buffer.height; y += 1) {
+    for (let x = 0; x < buffer.width; x += 1) {
+      if (readCell(view, indexOf(buffer.width, x, y)) !== 0) continue;
+      const touchesOpaque = [
+        { x: x + 1, y },
+        { x: x - 1, y },
+        { x, y: y + 1 },
+        { x, y: y - 1 },
+      ].some(
+        (point) =>
+          inBounds(buffer.width, buffer.height, point.x, point.y) &&
+          readCell(view, indexOf(buffer.width, point.x, point.y)) !== 0,
+      );
+      if (touchesOpaque) next[indexOf(buffer.width, x, y)] = color;
+    }
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
+function dither(
+  buffer: FrameBuffer,
+  layerId: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  colorA: number,
+  colorB: number,
+  pattern: DitherPattern,
+): CommandResult {
+  const gate = requireLayer(buffer, layerId);
+  if ("ok" in gate) return gate;
+  if (width < 1 || height < 1) {
+    return fail("SIZE", "A dither region needs a positive width and height.");
+  }
+  if (!withinRegion(buffer, x, y, width, height)) {
+    return fail("OUT_OF_BOUNDS", "The dither region reaches outside the canvas.");
+  }
+  if (!paletteIndexOk(buffer, colorA) || !paletteIndexOk(buffer, colorB)) {
+    return fail("PALETTE_INDEX", "A dither color is not in the palette.");
+  }
+  const layer = layerById(buffer, layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const next = clonePixels(layer.pixels);
+  for (let cellY = y; cellY < y + height; cellY += 1) {
+    for (let cellX = x; cellX < x + width; cellX += 1) {
+      const useA = pattern === "checker" ? (cellX + cellY) % 2 === 0 : cellX % 2 === 0;
+      next[indexOf(buffer.width, cellX, cellY)] = useA ? colorA : colorB;
+    }
+  }
+  return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
+}
+
 export function applyCommand(source: FrameBuffer, command: Command): CommandResult {
   const buffer = cloneBuffer(source);
   switch (command.type) {
@@ -203,7 +301,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
         return fail(
           "PALETTE_SIZE",
-          "A palette needs a transparent color and at most 32 others.",
+          "A palette needs a transparent color and at most 255 others.",
         );
       }
       const palette: string[] = [];
@@ -231,6 +329,68 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       }
       return { ok: true, buffer: { ...buffer, palette } };
     }
+    case "reindexPalette": {
+      if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
+        return fail(
+          "PALETTE_SIZE",
+          "A palette needs a transparent color and at most 255 others.",
+        );
+      }
+      const palette: string[] = [];
+      for (const color of command.palette) {
+        const hex = normalizeHex(color);
+        if (!hex) {
+          return fail(
+            "PALETTE_COLOR",
+            "Index 0 must be #00000000 and every entry must be hex.",
+          );
+        }
+        palette.push(hex);
+      }
+      if (palette[0] !== "#00000000") {
+        return fail(
+          "PALETTE_COLOR",
+          "Index 0 must be #00000000 and every entry must be hex.",
+        );
+      }
+      const mapping = new Map<number, number>();
+      for (const [from, to] of Object.entries(command.mapping)) {
+        const source = Number(from);
+        if (
+          !Number.isInteger(source) ||
+          source < 0 ||
+          source >= buffer.palette.length ||
+          !Number.isInteger(to) ||
+          to < 0 ||
+          to >= palette.length
+        ) {
+          return fail(
+            "PALETTE_INDEX",
+            `The mapping from ${from} to ${to} is not an index in both palettes.`,
+          );
+        }
+        mapping.set(source, to);
+      }
+      for (const layer of buffer.layers) {
+        for (const value of layer.pixels) {
+          if (value !== 0 && !mapping.has(value)) {
+            return fail(
+              "PALETTE_IN_USE",
+              `The canvas uses colour ${value}, and this palette replaces it without saying what it becomes.`,
+            );
+          }
+        }
+      }
+      const layers = buffer.layers.map((layer) => {
+        const pixels = clonePixels(layer.pixels);
+        for (let index = 0; index < pixels.length; index += 1) {
+          const mapped = mapping.get(pixels[index] ?? 0);
+          if (mapped !== undefined) pixels[index] = mapped;
+        }
+        return { ...layer, pixels };
+      });
+      return { ok: true, buffer: { ...buffer, palette, layers } };
+    }
     case "resize": {
       if (!isSizeAllowed(command.width) || !isSizeAllowed(command.height)) {
         return fail("SIZE", "Canvas size must be an integer from 8 to 128.");
@@ -255,9 +415,6 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       };
     }
     case "addLayer": {
-      if (buffer.layers.length >= MAX_LAYERS) {
-        return fail("LAYER_LIMIT", "A frame can hold four layers.");
-      }
       const name = command.name.trim();
       if (!name) return fail("LAYER_NAME", "A layer needs a name.");
       return {
@@ -330,6 +487,26 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         },
       };
     }
+    case "replaceColor":
+      return replaceColor(buffer, command.layerId, command.from, command.to);
+    case "stamp":
+      return stamp(buffer, command);
+    case "mirrorRegion":
+      return mirrorRegion(buffer, command);
+    case "outline":
+      return outline(buffer, command.layerId, command.color);
+    case "dither":
+      return dither(
+        buffer,
+        command.layerId,
+        command.x,
+        command.y,
+        command.width,
+        command.height,
+        command.colorA,
+        command.colorB,
+        command.pattern,
+      );
     default: {
       const unexpected: never = command;
       return fail("UNKNOWN_COMMAND", `Unsupported edit: ${JSON.stringify(unexpected)}`);
@@ -353,4 +530,80 @@ function mirrorPixels(pixels: Uint8Array, width: number, height: number): Uint8A
     }
   }
   return next;
+}
+
+/** Write a resolved block of indices into one layer; every index must be a colour. */
+function stamp(
+  buffer: FrameBuffer,
+  command: Extract<Command, { type: "stamp" }>,
+): CommandResult {
+  const gate = requireLayer(buffer, command.layerId);
+  if ("ok" in gate) return gate;
+  if (command.width < 1 || command.height < 1) {
+    return fail("SIZE", "A copied region needs a positive width and height.");
+  }
+  if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+    return fail("OUT_OF_BOUNDS", "The copied region reaches outside the canvas.");
+  }
+  if (command.pixels.length !== command.width * command.height) {
+    return fail(
+      "SHAPE",
+      `The copied region holds ${command.pixels.length} pixels but ${command.width}×${command.height} needs ${command.width * command.height}.`,
+    );
+  }
+  const layer = layerById(buffer, command.layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const next = clonePixels(layer.pixels);
+  for (let row = 0; row < command.height; row += 1) {
+    for (let column = 0; column < command.width; column += 1) {
+      const color = command.pixels[row * command.width + column];
+      if (color === undefined || !paletteIndexOk(buffer, color)) {
+        const target =
+          color === undefined
+            ? `row ${row + command.y}, column ${column + command.x}`
+            : `row ${row + command.y}, column ${column + command.x} uses index ${color}`;
+        return fail(
+          "PALETTE_INDEX",
+          `${target} is not a colour in this asset's palette. Map the source colours to this palette first.`,
+        );
+      }
+      next[indexOf(buffer.width, command.x + column, command.y + row)] = color;
+    }
+  }
+  return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+}
+
+/** Flip one rectangle inside its own bounds; pixels outside it are untouched. */
+function mirrorRegion(
+  buffer: FrameBuffer,
+  command: Extract<Command, { type: "mirrorRegion" }>,
+): CommandResult {
+  const gate = requireLayer(buffer, command.layerId);
+  if ("ok" in gate) return gate;
+  if (command.width < 1 || command.height < 1) {
+    return fail("SIZE", "A mirrored region needs a positive width and height.");
+  }
+  if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+    return fail("OUT_OF_BOUNDS", "The mirrored region reaches outside the canvas.");
+  }
+  const layer = layerById(buffer, command.layerId);
+  if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const next = clonePixels(layer.pixels);
+  for (let row = 0; row < command.height; row += 1) {
+    for (let column = 0; column < command.width; column += 1) {
+      const fromX =
+        command.axis === "horizontal"
+          ? command.x + command.width - 1 - column
+          : command.x + column;
+      const fromY =
+        command.axis === "vertical"
+          ? command.y + command.height - 1 - row
+          : command.y + row;
+      next[indexOf(buffer.width, command.x + column, command.y + row)] = readCell(
+        layer.pixels,
+        indexOf(buffer.width, fromX, fromY),
+      );
+    }
+  }
+  return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
 }
