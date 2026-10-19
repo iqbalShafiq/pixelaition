@@ -53,11 +53,11 @@ pnpm db:migrate
 pnpm dev
 ```
 
-|        |                       |
-| ------ | --------------------- |
-| Web    | http://localhost:3000 |
-| API    | http://localhost:3001 |
-| Worker | http://localhost:4002 |
+| Service | URL                   |
+| ------- | --------------------- |
+| Web     | http://localhost:3000 |
+| API     | http://localhost:3001 |
+| Worker  | http://localhost:4002 |
 
 The web app proxies `/api` to port 3001. One `.env` at the repository root feeds every package through `dotenv-cli`.
 
