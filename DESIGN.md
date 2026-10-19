@@ -4,45 +4,60 @@ Pixelaition looks like a drafting table at night. The canvas is the product. Chr
 
 ## Color
 
-The palette is **Sweetie 16** by GrafxKid, the 16-colour palette that ships as
-the TIC-80 default and is one of the most used on Lospec. Keeping the chrome on
-a published pixel-art palette means an asset drawn in the editor and the
-interface around it speak the same language, instead of inventing brand colours
-and hoping they sit together.
+The chrome is **Atelier**, a near-black warm graphite ramp with one brass accent
+and one coral signal. It is deliberately quieter than the artwork: a neutral
+studio wall around the canvas, with every surface a few steps from black. The
+values were measured from live dark chrome, not moodboards: ChatGPT's `#000000`
+page with `#cdcdcd` secondary text, Grok's `#131211` page over `#201f1d` raised
+surfaces and 6% hairlines, Claude's `#151515` page over `#111111` chrome with
+`#f0efec` text, and Gemini's `#0f0f0f` page with `#1f1f1f` rails. Linear
+(`#08090a`) and Raycast (`#07080a`) have the same shape, and Dribbble's
+dark-dashboard set keeps every saturated colour inside the content. The ladder's
+structure follows Radix's 12-step dark scale; the values were tuned against this
+app's own WCAG audit.
 
 Surfaces are flat blocks, one step apart, because a shadow cannot be darker than
-a near-black page. The canvas sits in a darker well than the chrome around it,
-the way a handheld console does.
+a near-black page. The canvas sits in the deepest well, the way a drafting table
+sits under the lamp.
 
-| Token       | Value                       | Sweetie 16 | Use                                  |
-| ----------- | --------------------------- | ---------- | ------------------------------------ |
-| navy        | `#1a1c2c`                   | slot 0     | Deepest navy, text on the accent     |
-| paper       | `#1a1c2c`                   | slot 0     | Page base                            |
-| panel       | `#252a40`                   | derived    | Raised: side rails, cards            |
-| raised      | `#333c57`                   | slot 15    | Overlay: menus, dialogs, sheets      |
-| field       | `#101220`                   | derived    | Inset wells and the canvas screen    |
-| screen      | `#101220`                   | derived    | The canvas plane                     |
-| ink         | `#f4f4f4`                   | slot 12    | Primary text                         |
-| muted       | `#94b0c2`                   | slot 13    | Secondary text, placeholders, labels |
-| faint       | `#566c86`                   | slot 14    | Hairlines and marks only, never copy |
-| accent      | `#a7f070`                   | slot 5     | Focus, active tool, primary button   |
-| accent-deep | `#38b764`                   | slot 6     | The bar under a primary button       |
-| erase       | `#ef7d57`                   | slot 3     | Errors and destructive actions       |
-| line        | `rgba(148, 176, 194, 0.28)` | slot 13    | Structural hairlines                 |
-| line-strong | `rgba(148, 176, 194, 0.55)` | slot 13    | Edges that must read as a boundary   |
+| Token       | Value                       | Ramp step | Use                                   |
+| ----------- | --------------------------- | --------- | ------------------------------------- |
+| paper       | `#0a0a09`                   | 1         | Page base                             |
+| panel       | `#131211`                   | 3         | Raised: side rails, header, cards     |
+| raised      | `#1c1b19`                   | 4         | Overlay: menus, dialogs, sheets       |
+| field       | `#050505`                   | 0         | Inset wells                           |
+| screen      | `#000000`                   | 00        | The canvas plane                      |
+| ink         | `#f1efe9`                   | 12        | Primary text                          |
+| muted       | `#a7a49e`                   | 11        | Secondary text, placeholders, labels  |
+| faint       | `#6d6a64`                   | 8         | Hairlines and marks only, never copy  |
+| accent      | `#d8a64e`                   | 9         | Focus, active tool, primary button    |
+| accent-deep | `#a5772c`                   | 10        | The bar under a primary button        |
+| erase       | `#e07a63`                   | 11        | Errors and destructive actions        |
+| coffee      | `#0b0906`                   | 0         | Text on accent/erase, backdrops, bars |
+| stone       | `#75726c`                   | 7         | Ghost lift bar and scrollbar thumb    |
+| line        | `rgba(241, 239, 233, 0.1)`  | derived   | Structural hairlines                  |
+| line-strong | `rgba(241, 239, 233, 0.38)` | derived   | Edges that must read as a boundary    |
 
 Only `accent` and `erase` carry hue. The accent is for state, never for a large
-fill besides the primary button, and that button's label is `navy`. Wordmarks,
+fill besides the primary button, and that button's label is `coffee`. Wordmarks,
 page titles, and panel headers are `ink`. `muted` is secondary copy, never a
 title.
 
 `faint` is for hairlines, marks, and the checkered transparency field. It
-measures about 3.1:1 against the page, which clears the 3:1 a UI boundary needs
-and fails the 4.5:1 that copy needs, so **no text uses it**.
+measures 3.67:1 against the page, 3.47:1 against `panel`, and 3.19:1 against
+`raised`, which clears the 3:1 a UI boundary needs and fails the 4.5:1 that copy
+needs, so **no text uses it**. `line-strong` blends to about 3.2:1 on the
+surfaces it edges, so a control boundary still reads.
 
 Every text and surface pair clears WCAG 2.2 AA: 4.5:1 for body text and 3:1 for
-large text. The audit runs over every visible text node, which is how the
-`faint`-as-copy mistakes were caught.
+large text. `ink` is 17.23:1 on the page, `muted` 7.97:1, `accent` 8.95:1, and
+`erase` 6.73:1; the lowest text pair is `erase` on `raised` at 5.85:1. The audit
+runs over every visible text node, which is how the `faint`-as-copy mistakes
+were caught.
+
+The artwork's palette is the artist's. The palette panel still offers Sweetie 16
+as a starting point, but the chrome draws no colour from an asset palette and no
+interface token is added to one: the sprite is the only colour on the page.
 
 Base rules live in `@layer base` in `apps/web/src/styles.css`. Unlayered CSS
 beats Tailwind utilities, so a bare `button { color: inherit }` silently defeats
@@ -61,7 +76,7 @@ The interface is built from the vocabulary of a limited-colour screen.
   differ in lightness; `line-strong` is for input edges that must read as a
   boundary.
 - **A pixel button is a flat block lifted by a solid bar**, not a soft shadow:
-  `shadow-pixel-sm` (2px navy) on solid and danger, `shadow-pixel-steel` on
+  `shadow-pixel-sm` (2px coffee) on solid and danger, `shadow-pixel-stone` on
   ghost so the bar also reads on the paper page, no bar on quiet. Pressing
   translates the block 2px down and right and removes the bar. Nothing blurs.
 - **A pixel checkbox is an 18px square** that fills with the accent and takes a
@@ -114,11 +129,13 @@ The left rail is 280px and the right rail is 300px. The composer is a 220px band
 
 140–200ms, ease-out, transform and opacity only. Buttons press to scale 0.98. Cards enter with a short rise. Overlays grow from their own origin. `prefers-reduced-motion` removes those transitions. Pixel cells are not eased. A new stroke can reveal its cells in order, then stop.
 
+The home and the editor are joined by one bar. It keeps its flight name across the move, so its surface cross-fades between the home's floating paper and the editor's `panel`; the wordmark glides between the two bar positions, and the account chip, breadcrumb, and action cluster hand over in sequence (out, then in) instead of all at once. The bar's pieces are named, so the browser never resamples the same pixels twice. Signing in flies the signed-out wordmark into the bar as that same shared element, scaling from the slide's display size to the bar's title size; sign-out plays it back. The named box is what the browser scales, so the auth wordmark is wrapped to the glyphs' own width rather than the column's.
+
 ## Editor
 
 Wide screens keep frames and layers on the left, the canvas in the center, and the palette and style guide on the right. The header and both rails share the `panel` surface and meet the canvas on a `line` border. The canvas column is the `field` well, so the sprite reads as the stage and the chrome stays quiet. Rails flex between 240px and their caps (280px left, 300px right) so a narrow laptop does not crush the canvas. Below 1100px both columns become sheets opened from the header, because a hidden rail with no way to reach it is a dead end rather than a layout choice. Below 720px the toolbar becomes a bottom dock above the composer, and the canvas stays the main surface.
 
-The signed-in home is the same shell: a `panel` bar, a project list (a sticky rail from 1024px, a scrolling chip row below that), the library, and recent runs. The page has no hero and no graph-paper background. The composer stays the dock the editor uses.
+The signed-in home is the same shell: a sticky bar that starts as part of the page — no background, no hairline, so the wordmark floats on `paper` — and gains its `panel` container and `line` hairline as soon as the library scrolls under it, over 200ms ease-out (`prefers-reduced-motion` keeps the switch instant). Its content shares the page's `max-w-7xl` container. Below it sit the project list (a sticky rail from 1024px, a scrolling chip row under that), the library, and recent runs. The bar ends in the account cluster — the signed-in monogram, the name, and a menu that owns Sign out — so the destructive action is not a loose button in the chrome, and the rails stick below the 64px bar (`top-20`) instead of under it. The page has no hero and no graph-paper background. The composer stays the dock the editor uses.
 
 The signed-out page puts the account form in a full-height `panel` column, from 28rem up to 36rem. The other column is a slide. Branding stays on flat paper at the left. A `pixel-grid-slide` covers the rest of the slide, at 12px so the squares read as a field, and fades out before the type. Assets sit where they belong in that field: a cloud and a bird high, the knight, potion, and slime on the ground. Each asset has two poses and at least two layers. The first pose paints layer by layer. Later poses replace it at once. The name under an asset stays put, with the pose name beside it. Two marks show which pose is on screen, and another set shows how many layers of the current pose are drawn. Below 1024px the same picture is a short band above the form. `prefers-reduced-motion` shows every asset on its second pose, finished.
 
@@ -152,7 +169,7 @@ Buttons, fields, cards, selects, menus, dialogs, sheets, tooltips, scroll areas,
 
 The pixel craft itself lives in `styles.css` utilities: `pixel-corners` (stepped
 corner), `pixel-window` (a 6px border-image 9-slice whose frame colour is baked
-into the data URI at `muted` 55% — the same tone as `line-strong`; changing it
+into the data URI at `ink` 38% — the same tone as `line-strong`; changing it
 means editing the SVG), `bevel`/`bevel-in` (2px inset edges), the hard
 `shadow-pixel-*` bars, and the `pixel-grid`/`dither` textures. Menus, popovers,
 tooltips, dialogs, sheets, and the select popup all use `pixel-window`; only

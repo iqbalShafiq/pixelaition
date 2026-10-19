@@ -90,8 +90,8 @@ function rgba(hex: string): [number, number, number, number] {
   return [0, 0, 0, 255];
 }
 
-const FIELD_DARK = "#1c2136";
-const FIELD_LIGHT = "#262c45";
+const FIELD_DARK = "#100f0e";
+const FIELD_LIGHT = "#181715";
 
 /**
  * The workspace texture is a checker of one square per document pixel, tiled
@@ -189,7 +189,7 @@ function lineCells(from: Point, to: Point): Point[] {
 }
 
 /**
- * The hover outline on one document cell. A navy edge sits under the accent
+ * The hover outline on one document cell. A coffee edge sits under the accent
  * so the border stays visible on a pixel of any colour, including the accent.
  */
 function strokeCell(
@@ -203,9 +203,9 @@ function strokeCell(
   const y = originY + point.y * cell + 0.5;
   const size = Math.max(0, cell - 1);
   context.lineWidth = 1;
-  context.strokeStyle = "#1a1c2c";
+  context.strokeStyle = "#0b0906";
   context.strokeRect(x, y, size, size);
-  context.strokeStyle = "rgba(167, 240, 112, 0.95)";
+  context.strokeStyle = "rgba(216, 166, 78, 0.95)";
   if (cell >= 8) {
     context.strokeRect(x + 1, y + 1, Math.max(0, size - 2), Math.max(0, size - 2));
   } else {
@@ -391,7 +391,7 @@ export function PixelCanvas({
       // The writable area is the document: an accent border marks exactly the
       // region the tools and the agent may touch.
       const edge = 2;
-      context.fillStyle = "#a7f070";
+      context.fillStyle = "#d8a64e";
       context.fillRect(originX - edge, originY - edge, docWidth + edge * 2, edge);
       context.fillRect(originX - edge, originY + docHeight, docWidth + edge * 2, edge);
       context.fillRect(originX - edge, originY, edge, docHeight);
@@ -404,7 +404,7 @@ export function PixelCanvas({
       // texture rather than as a pixel grid. The checker already shows the grid
       // at those zooms.
       if (grid && cell >= 12) {
-        context.strokeStyle = "rgba(148, 176, 194, 0.22)";
+        context.strokeStyle = "rgba(241, 239, 233, 0.16)";
         context.beginPath();
         for (let x = 1; x < doc.width; x += 1) {
           const px = Math.round(originX + x * cell) + 0.5;
@@ -425,7 +425,7 @@ export function PixelCanvas({
           shape.kind === "line"
             ? lineCells(shape.from, shape.to)
             : rectCells(normalizeRect(shape.from, shape.to), shape.filled);
-        context.fillStyle = "rgba(167, 240, 112, 0.55)";
+        context.fillStyle = "rgba(216, 166, 78, 0.55)";
         for (const item of cells) {
           context.fillRect(originX + item.x * cell, originY + item.y * cell, cell, cell);
         }
@@ -433,7 +433,7 @@ export function PixelCanvas({
 
       const box = selection ?? marquee.current;
       if (box) {
-        context.strokeStyle = "#a7f070";
+        context.strokeStyle = "#d8a64e";
         context.lineWidth = 1;
         context.setLineDash([4, 3]);
         context.strokeRect(

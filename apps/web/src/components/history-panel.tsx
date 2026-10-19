@@ -198,7 +198,7 @@ export function HistoryPanel({
               onClick={() => setTab(value)}
               className={`px-2 py-1.5 text-pixel-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
                 tab === value
-                  ? "bg-accent text-navy"
+                  ? "bg-accent text-coffee"
                   : "text-muted hover:bg-raised hover:text-ink"
               }`}
             >

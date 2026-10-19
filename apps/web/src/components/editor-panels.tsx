@@ -777,11 +777,13 @@ export function PalettePanel({
   onPick: (index: number) => void;
   onAdd: (hex: string) => void;
 }) {
-  const [draft, setDraft] = useState("#a7f070");
-  const [hsv, setHsv] = useState(() => hexToHsv("#a7f070"));
+  const [draft, setDraft] = useState("#d8a64e");
+  const [hsv, setHsv] = useState(() => hexToHsv("#d8a64e"));
   const valid = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(draft);
   const exists = palette.includes(draft.toLowerCase());
 
+  // The art preset, not the chrome: the drawing palette belongs to the
+  // artist, while the interface stays on the Atelier ramp.
   const sweetie16 = [
     "#1a1c2c",
     "#5d275d",

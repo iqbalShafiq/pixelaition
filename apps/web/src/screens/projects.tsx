@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { Close, Search } from "../components/pixel-icons.js";
+import { ChevronDown, Close, Logout, Search } from "../components/pixel-icons.js";
 import {
   startTransition,
   useCallback,
@@ -36,9 +36,10 @@ import {
   type StagedPlanFrame,
 } from "../components/interaction-card.js";
 import {
-  Button,
   Callout,
   ConfirmDialog,
+  Menu,
+  MenuItem,
   SegmentedControl,
   TextInput,
   Wordmark,
@@ -47,6 +48,7 @@ import {
 import { api } from "../lib/api.js";
 import { authClient } from "../lib/auth.js";
 import { useAttachments } from "../lib/use-attachments.js";
+import { useMediaQuery } from "../lib/use-media.js";
 import {
   buildConfirmPayload,
   type ConfirmChoice,
@@ -79,6 +81,104 @@ type RecentRun = {
 
 /** Long enough to outlast the return flight, short enough to free the name. */
 const RETURN_MARK_MS = 700;
+
+/**
+ * The home's account cluster. The monogram is the signed-in user's first
+ * letter in a pixel square; the one destructive action lives in the menu
+ * instead of loose in the bar.
+ */
+function AccountMenu({ onSignOut }: { onSignOut: () => void }) {
+  const session = authClient.useSession();
+  const user = session.data?.user;
+  const name = user?.name?.trim() ?? "";
+  const email = user?.email ?? "";
+  const label = name.length > 0 ? name : email;
+  const initial = label.charAt(0).toUpperCase();
+  return (
+    <Menu
+      label="Account"
+      align="end"
+      popupClassName="w-64"
+      trigger={
+        // No container at rest: the monogram and the name sit on the page,
+        // and the chip only grows an edge on hover or while the menu is open.
+        <button
+          type="button"
+          className="group flex min-w-0 items-center gap-2 border-2 border-transparent px-1.5 py-1 text-pixel-label transition-colors duration-150 hover:border-line hover:bg-raised data-[popup-open]:border-line-strong data-[popup-open]:bg-raised"
+        >
+          <span
+            aria-hidden
+            className="grid h-7 w-7 shrink-0 place-items-center border-2 border-line-strong bg-field text-pixel-mono text-accent uppercase"
+          >
+            {session.isPending ? "" : initial}
+          </span>
+          <span className="hidden max-w-[10rem] truncate text-muted group-hover:text-ink sm:block">
+            {session.isPending ? "Account" : label.length > 0 ? label : "Account"}
+          </span>
+          <ChevronDown className="shrink-0 text-muted" />
+        </button>
+      }
+    >
+      {/* A profile card between two hairlines: who is signed in, then the one
+          action. The kicker matches every other mono label in the app. */}
+      <p className="px-2 pt-1 pb-2 text-pixel-mono tracking-[0.16em] text-muted uppercase">
+        Account
+      </p>
+      <div className="flex min-w-0 items-center gap-2.5 border-y-2 border-line px-2 py-2.5">
+        <span
+          aria-hidden
+          className="grid h-8 w-8 shrink-0 place-items-center border-2 border-line-strong bg-field text-pixel-mono text-accent uppercase"
+        >
+          {session.isPending ? "" : initial}
+        </span>
+        <span className="grid min-w-0 gap-0.5">
+          <span className="truncate text-pixel-label text-ink">
+            {label.length > 0 ? label : "Signed in"}
+          </span>
+          {email.length > 0 && email !== label ? (
+            <span className="truncate text-pixel-mono text-muted">{email}</span>
+          ) : null}
+        </span>
+      </div>
+      <div className="pt-1">
+        <MenuItem onClick={onSignOut}>
+          <Logout width={12} height={12} className="shrink-0" />
+          Sign out
+        </MenuItem>
+      </div>
+    </Menu>
+  );
+}
+
+/**
+ * The home bar floats on the page at the top and gains its container once the
+ * library scrolls under it. One passive listener, coalesced into a frame, so a
+ * scroll never re-renders the page more than once per paint; the state only
+ * flips at the threshold because React bails out on the same value.
+ */
+function usePageScrolled(threshold = 6) {
+  const [scrolled, setScrolled] = useState(false);
+  // A layout effect, so a restored scroll position (the editor's back move
+  // passes `resetScroll: false`) paints the contained bar on the first frame
+  // instead of flashing a transparent one over the library.
+  useLayoutEffect(() => {
+    let frame = 0;
+    const read = () => {
+      frame = 0;
+      setScrolled(window.scrollY > threshold);
+    };
+    const onScroll = () => {
+      if (frame === 0) frame = window.requestAnimationFrame(read);
+    };
+    read();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+    };
+  }, [threshold]);
+  return scrolled;
+}
 
 export function ProjectsScreen() {
   const queryClient = useQueryClient();
@@ -183,6 +283,14 @@ export function ProjectsScreen() {
     return () => window.clearTimeout(timer);
   }, [authFlight]);
   const barRef = useRef<HTMLElement | null>(null);
+  const brandRef = useRef<HTMLSpanElement | null>(null);
+  // The editor keeps the wordmark's label at this width, so the brand can fly
+  // between the two bars; below it the editor shows only the mark, and a morph
+  // would squash the label, so the bar's own cross-fade carries it instead.
+  const brandMorphs = useMediaQuery("(min-width: 640px)");
+  // The bar is part of the page at the very top; the container arrives with
+  // the first scroll, so the wordmark floats before anything passes under it.
+  const barContained = usePageScrolled();
   const libraryRef = useRef<HTMLDivElement | null>(null);
   const returnCardRef = useRef<HTMLAnchorElement | null>(null);
   // The name lives only as long as the flight: two elements with the same
@@ -286,7 +394,7 @@ export function ProjectsScreen() {
   const navigateToEditor = useCallback(
     (projectId: string, assetId: string, from: { card?: Element | null } = {}) => {
       const card = from.card ?? null;
-      const marks: Array<[Element | null, "composer" | "console" | "asset"]> =
+      const marks: Array<[Element | null, "composer" | "console" | "asset" | "brand"]> =
         card !== null
           ? [[card, "asset"]]
           : [
@@ -294,6 +402,9 @@ export function ProjectsScreen() {
               [consoleRef.current, "console"],
               [targetRef.current, "asset"],
             ];
+      // The brand rides the same move so the wordmark glides between the two
+      // bars instead of cross-fading at two different x positions.
+      if (brandMorphs) marks.push([brandRef.current, "brand"]);
       for (const [element, name] of marks) markFlight([element], true, name);
       // The door rides the history state as well, so a plain navigation (a
       // browser without the API) still tells the editor where the visit began.
@@ -322,7 +433,7 @@ export function ProjectsScreen() {
         for (const [element] of marks) markFlight([element], false);
       }, 600);
     },
-    [navigate],
+    [brandMorphs, navigate],
   );
 
   /** A library card: the card itself flies into the canvas. */
@@ -891,12 +1002,17 @@ export function ProjectsScreen() {
    * reload would throw the move away.
    */
   const signOut = useCallback(async () => {
-    markFlight([barRef.current], true, "bar");
+    // The bar carries its flight name statically now (the home and the editor
+    // share it). The library and the brand are marked for this move: the brand
+    // is the same shared element as the signed-out page's, so it morphs out of
+    // the bar instead of dissolving with it.
     markFlight([libraryRef.current], true, "library");
+    markFlight([brandRef.current], true, "brand");
     try {
       await authClient.signOut();
     } catch (reason) {
-      markFlight([barRef.current, libraryRef.current], false);
+      markFlight([libraryRef.current], false, "library");
+      markFlight([brandRef.current], false, "brand");
       notify({
         title: "Could not sign out",
         description: reason instanceof Error ? reason.message : "Unknown error",
@@ -908,7 +1024,8 @@ export function ProjectsScreen() {
       FLIGHT_SIGN_OUT_TYPE,
       () => navigate({ to: "/login" }),
     ).finally(() => {
-      markFlight([barRef.current, libraryRef.current], false);
+      markFlight([libraryRef.current], false, "library");
+      markFlight([brandRef.current], false, "brand");
       // The next session starts from an empty cache, not the last one's.
       queryClient.clear();
     });
@@ -918,21 +1035,37 @@ export function ProjectsScreen() {
     <main id="content" className="min-h-dvh bg-paper">
       <header
         ref={barRef}
-        className="flex items-center justify-between gap-3 border-b-2 border-line bg-panel px-4 py-2.5"
-        {...(authFlight ? { "data-flight": "bar" } : {})}
+        data-flight="bar"
+        data-contained={barContained ? "" : undefined}
+        className={`sticky top-0 z-20 border-b-2 transition-colors duration-200 ease-out ${
+          barContained ? "border-line bg-panel" : "border-transparent bg-transparent"
+        }`}
       >
-        <Wordmark />
-        <Button
-          tone="ghost"
-          className="px-3 py-1.5 text-pixel-label"
-          onClick={() => void signOut()}
-        >
-          Sign out
-        </Button>
+        {/* The bar's content shares the page's container, so the wordmark and
+            the account cluster sit on the same rails as the columns below. */}
+        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-3 px-4">
+          {/* The brand is named only while a move is in flight: the editor's
+              wordmark carries the same name, so the two glide into each other
+              instead of cross-fading at two different x positions. Signing in
+              names it too, because the signed-out wordmark is the same element
+              arriving from the auth slide. */}
+          <span
+            ref={brandRef}
+            className="flex shrink-0 items-center"
+            {...(authFlight || (returnMarked && brandMorphs)
+              ? { "data-flight": "brand" }
+              : {})}
+          >
+            <Wordmark />
+          </span>
+          <span data-flight="bar-account" className="flex min-w-0 items-center">
+            <AccountMenu onSignOut={() => void signOut()} />
+          </span>
+        </div>
       </header>
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 pb-80 lg:flex-row lg:items-start">
-        <aside className="hidden w-60 shrink-0 lg:sticky lg:top-4 lg:block lg:max-h-[calc(100dvh-8rem)] lg:overflow-y-auto">
+        <aside className="hidden w-60 shrink-0 lg:sticky lg:top-20 lg:block lg:max-h-[calc(100dvh-8rem)] lg:overflow-y-auto">
           <ProjectNav {...navProps} layout="rail" />
         </aside>
 
@@ -1027,7 +1160,7 @@ export function ProjectsScreen() {
             />
           )}
         </div>
-        <aside className="w-full shrink-0 lg:sticky lg:top-4 lg:w-72">
+        <aside className="w-full shrink-0 lg:sticky lg:top-20 lg:w-72">
           <RecentRunsRail runs={recent.data?.runs ?? []} />
         </aside>
       </div>

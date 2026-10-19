@@ -5,12 +5,12 @@
  */
 
 export const demoPalette = {
-  o: "#94b0c2",
-  s: "#ef7d57",
-  a: "#a7f070",
-  d: "#38b764",
-  w: "#f4f4f4",
-  b: "#566c86",
+  o: "#6d6a64",
+  s: "#e07a63",
+  a: "#d8a64e",
+  d: "#a5772c",
+  w: "#f1efe9",
+  b: "#75726c",
 } as const;
 
 export type DemoColor = keyof typeof demoPalette;

@@ -17,12 +17,12 @@ import {
 export const defaultStyle = {
   defaultWidth: 32,
   defaultHeight: 32,
-  outline: "#1a1c2c",
+  outline: "#0b0906",
   shadowDirection: "down",
   notes: "",
 } satisfies StyleGuide;
 
-export const defaultPalette = ["#00000000", "#1a1c2c", "#f4efe4", "#e8ff6a"];
+export const defaultPalette = ["#00000000", "#0b0906", "#f1efe9", "#d8a64e"];
 
 export function cloneBuffer(buffer: FrameBuffer): FrameBuffer {
   return {

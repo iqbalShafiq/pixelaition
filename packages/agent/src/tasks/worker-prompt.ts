@@ -56,7 +56,7 @@ export function paletteLegend(palette: readonly string[]): string {
 const DEFAULT_STYLE = {
   defaultWidth: 32,
   defaultHeight: 32,
-  outline: "#1a1c2c",
+  outline: "#0b0906",
   shadowDirection: "down",
   notes: "",
 };

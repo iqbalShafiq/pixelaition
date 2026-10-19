@@ -18,6 +18,7 @@ import {
   Grid3x3 as RawGrid3x3,
   Hand as RawHand,
   Layout as RawLayout,
+  Logout as RawLogout,
   Menu as RawMenu,
   Minus as RawMinus,
   Pencil as RawPencil,
@@ -72,6 +73,7 @@ import type { ComponentType, SVGProps } from "react";
  * Palette           Palette             ColorsSwatch           substitution: no Palette
  * ArrowRight        ArrowRight          ArrowRight
  * ChevronDown       ChevronDown         ChevronDown
+ * Logout            (account menu)      Logout
  * Minus             Minus               Minus
  * Attach            (attach button)     Attachment
  * Info              (attachment hint)   CircleInfo
@@ -130,6 +132,7 @@ export const Send = crisp(RawSend);
 export const Palette = crisp(RawColorsSwatch);
 export const ArrowRight = crisp(RawArrowRight);
 export const ChevronDown = crisp(RawChevronDown);
+export const Logout = crisp(RawLogout);
 export const Minus = crisp(RawMinus);
 export const Attach = crisp(RawAttachment);
 export const Info = crisp(RawCircleInfo);

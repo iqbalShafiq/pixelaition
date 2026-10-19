@@ -20,11 +20,12 @@ const press = { whileTap: { scale: 0.98 }, transition: motionToken };
 type Tone = "solid" | "ghost" | "danger" | "quiet";
 
 const buttonTones: Record<Tone, string> = {
-  // A pixel button is a flat block; a hard bar lifts it. Navy reads on panel
-  // and raised surfaces; ghost takes the steel bar so it also reads on paper.
-  solid: "bg-accent text-navy border-accent-deep shadow-pixel-sm",
-  ghost: "bg-panel text-ink border-line-strong shadow-pixel-steel hover:bg-raised",
-  danger: "bg-erase text-navy border-erase shadow-pixel-sm",
+  // A pixel button is a flat block; a hard bar lifts it. The coffee bar reads
+  // on panel and raised surfaces; ghost takes the stone bar so it also reads
+  // on paper.
+  solid: "bg-accent text-coffee border-accent-deep shadow-pixel-sm",
+  ghost: "bg-panel text-ink border-line-strong shadow-pixel-stone hover:bg-raised",
+  danger: "bg-erase text-coffee border-erase shadow-pixel-sm",
   quiet: "bg-transparent text-muted border-transparent hover:text-ink",
 };
 
@@ -80,11 +81,11 @@ export function IconButton({
   const box = size === "sm" ? "h-7 w-7" : size === "lg" ? "h-10 w-10" : "h-9 w-9";
   const state = !active
     ? tone === "danger"
-      ? "border-erase/60 text-erase hover:border-erase hover:bg-erase hover:text-navy"
+      ? "border-erase/60 text-erase hover:border-erase hover:bg-erase hover:text-coffee"
       : "border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink"
     : subtle
       ? "border-accent bg-accent/15 text-accent"
-      : "border-accent bg-accent text-navy";
+      : "border-accent bg-accent text-coffee";
   return (
     <Tooltip label={hint ? `${label} · ${hint}` : label}>
       <motion.button
@@ -183,8 +184,7 @@ export function Field({
       {children}
       {note ? <p className="text-pixel-mono text-muted">{note}</p> : null}
       {/* Colour is never the only signal: the message carries the meaning. The
-          field chip keeps coral at 6.85:1 even when the field sits on `raised`,
-          where coral directly on the surface would be 4.02:1. */}
+          field chip also puts coral on the darkest surface, at 6.92:1. */}
       {error ? (
         <span
           role="alert"
@@ -300,7 +300,7 @@ export function Checkbox({
         aria-hidden
         className={`grid h-[18px] w-[18px] shrink-0 place-items-center border-2 transition-colors duration-150 ${
           checked
-            ? "border-accent bg-accent text-navy"
+            ? "border-accent bg-accent text-coffee"
             : "border-line-strong bevel-in bg-field text-transparent group-hover:border-muted"
         }`}
       >
@@ -461,7 +461,7 @@ export function ScrollArea({
         orientation="vertical"
         className="flex w-2 touch-none select-none"
       >
-        <BaseScrollArea.Thumb className="flex-1 bg-steel" />
+        <BaseScrollArea.Thumb className="flex-1 bg-stone" />
       </BaseScrollArea.Scrollbar>
       <BaseScrollArea.Corner />
     </BaseScrollArea.Root>
@@ -508,7 +508,7 @@ export function SelectControl({
         id={id}
         aria-label={label}
         title={items.find((item) => item.value === value)?.label ?? placeholder}
-        className={`flex min-w-0 items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] text-ink shadow-[inset_2px_2px_0_0_rgba(244,244,244,0.08),inset_-2px_-2px_0_0_rgba(26,28,44,0.45),2px_2px_0_0_var(--color-navy)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
+        className={`flex min-w-0 items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] text-ink shadow-[inset_2px_2px_0_0_rgba(241,239,233,0.08),inset_-2px_-2px_0_0_rgba(11,9,6,0.5),2px_2px_0_0_var(--color-coffee)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
       >
         <Select.Value placeholder={placeholder} className="min-w-0">
           {(selected: string | null) => (
@@ -528,7 +528,7 @@ export function SelectControl({
                 key={item.value}
                 value={item.value}
                 title={item.label}
-                className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-navy"
+                className="cursor-pointer truncate px-2 py-1.5 text-ink data-[highlighted]:bg-accent data-[highlighted]:text-coffee"
               >
                 <Select.ItemText>{item.label}</Select.ItemText>
               </Select.Item>
@@ -546,22 +546,38 @@ export function Menu({
   label,
   children,
   align = "end",
+  trigger,
+  popupClassName = "",
 }: {
   label: string;
   children: ReactNode;
   align?: "start" | "end";
+  /**
+   * A custom trigger element, for a menu that needs more than the ⋯ glyph.
+   * Base UI merges its own props (ARIA, keyboard, `data-popup-open`) onto it,
+   * so the element a caller passes owns its own look.
+   */
+  trigger?: React.ReactElement;
+  /** Width (and any extra styling) for the popup itself. */
+  popupClassName?: string;
 }) {
   return (
     <BaseMenu.Root>
-      <BaseMenu.Trigger
-        aria-label={label}
-        className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink"
-      >
-        ⋯
-      </BaseMenu.Trigger>
+      {trigger === undefined ? (
+        <BaseMenu.Trigger
+          aria-label={label}
+          className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink"
+        >
+          ⋯
+        </BaseMenu.Trigger>
+      ) : (
+        <BaseMenu.Trigger aria-label={label} render={trigger} />
+      )}
       <BaseMenu.Portal>
         <BaseMenu.Positioner sideOffset={6} align={align} className="z-40">
-          <BaseMenu.Popup className="min-w-[10rem] bg-raised pixel-window p-1 text-[13px]">
+          <BaseMenu.Popup
+            className={`min-w-[10rem] bg-raised pixel-window p-1 text-[13px] ${popupClassName}`}
+          >
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -583,7 +599,7 @@ export function MenuItem({
     <BaseMenu.Item
       disabled={disabled}
       onClick={onClick}
-      className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-navy data-[disabled]:opacity-40"
+      className="flex cursor-pointer items-center gap-2 whitespace-nowrap px-2 py-1.5 text-ink data-[disabled]:cursor-not-allowed data-[highlighted]:bg-accent data-[highlighted]:text-coffee data-[disabled]:opacity-40"
     >
       {children}
     </BaseMenu.Item>
@@ -656,7 +672,7 @@ export function Dialog({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/85" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-coffee/85" />
         <BaseDialog.Popup
           style={{ width: `min(${width}, 94vw)` }}
           className="dialog-popup fixed top-1/2 left-1/2 z-40 -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4"
@@ -706,7 +722,7 @@ export function ConfirmDialog({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-navy/85" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-coffee/85" />
         <BaseDialog.Popup className="fixed top-1/2 left-1/2 z-50 w-[min(26rem,94vw)] -translate-x-1/2 -translate-y-1/2 bg-raised pixel-window p-4">
           <BaseDialog.Title className="text-pixel-title text-accent">
             {title}
@@ -762,7 +778,7 @@ export function Sheet({
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-navy/80" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-30 bg-coffee/80" />
         <BaseDialog.Popup
           data-side={side}
           className={`sheet-popup fixed inset-y-0 z-40 flex w-[min(20rem,86vw)] flex-col bg-raised ${

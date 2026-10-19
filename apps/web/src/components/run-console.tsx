@@ -472,15 +472,23 @@ export function RunConsole({
 
   const tabMark = (status: "running" | "done" | "failed", selected: boolean) => {
     if (status === "running") {
-      return <PixelLoader size={12} tone={selected ? "navy" : "accent"} />;
+      return <PixelLoader size={12} tone={selected ? "coffee" : "accent"} />;
     }
     if (status === "failed") {
       return (
-        <Close width={12} height={12} className={selected ? "text-navy" : "text-erase"} />
+        <Close
+          width={12}
+          height={12}
+          className={selected ? "text-coffee" : "text-erase"}
+        />
       );
     }
     return (
-      <Check width={12} height={12} className={selected ? "text-navy" : "text-accent"} />
+      <Check
+        width={12}
+        height={12}
+        className={selected ? "text-coffee" : "text-accent"}
+      />
     );
   };
 
@@ -703,7 +711,7 @@ export function RunConsole({
                               }}
                               className={`flex shrink-0 items-center gap-1 border-2 px-1.5 py-1 text-pixel-mono tracking-[0.12em] uppercase ${
                                 selected
-                                  ? "border-accent bg-accent text-navy"
+                                  ? "border-accent bg-accent text-coffee"
                                   : "border-line bg-panel text-muted hover:text-ink"
                               }`}
                             >

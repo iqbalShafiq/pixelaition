@@ -10,13 +10,13 @@ export function PixelLoader({
   tone = "accent",
 }: {
   size?: 12 | 16;
-  /** Navy sits on an accent tab, where the accent spinner would disappear. */
-  tone?: "accent" | "navy";
+  /** Coffee sits on an accent tab, where the accent spinner would disappear. */
+  tone?: "accent" | "coffee";
 }) {
   return (
     <span
       aria-hidden
-      className={`pixel-loader inline-block shrink-0${tone === "navy" ? " pixel-loader-navy" : ""}`}
+      className={`pixel-loader inline-block shrink-0${tone === "coffee" ? " pixel-loader-coffee" : ""}`}
       style={
         {
           width: size,

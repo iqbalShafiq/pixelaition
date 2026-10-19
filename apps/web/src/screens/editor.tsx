@@ -28,7 +28,6 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { Composer } from "../components/composer.js";
-import { PixelLoader } from "../components/pixel-loader.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
 import {
@@ -120,7 +119,7 @@ const toolByKey = new Map<string, Tool>([
 const fallbackStyle: StyleGuide = {
   defaultWidth: 32,
   defaultHeight: 32,
-  outline: "#1a1c2c",
+  outline: "#0b0906",
   shadowDirection: "down",
   notes: "",
 };
@@ -366,6 +365,10 @@ export function EditorScreen() {
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
   // strands Base UI's exit animation and its inert overlay blocks the page.
   const wide = useMediaQuery("(min-width: 1024px)");
+  // At this width the header keeps the wordmark's label, so the brand can morph
+  // between the home bar and this one; below it, the label is hidden and the
+  // bar's own cross-fade carries the change without squashing the text.
+  const brandMorphs = useMediaQuery("(min-width: 640px)");
   useEffect(() => {
     if (!wide) return;
     setLeftSheet(false);
@@ -2522,12 +2525,25 @@ export function EditorScreen() {
       id="content"
       className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-paper"
     >
-      <header className="flex min-h-16 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3">
-        <Link to="/projects" className="shrink-0" onClick={backToHome}>
+      {/* The bar is one element across home and editor: it keeps its name on
+          both sides, and its pieces carry their own so they can travel. */}
+      <header
+        data-flight="bar"
+        className="flex min-h-16 min-w-0 items-center gap-3 border-b-2 border-line bg-panel px-3"
+      >
+        <Link
+          to="/projects"
+          className="shrink-0"
+          onClick={backToHome}
+          {...(brandMorphs ? { "data-flight": "brand" } : {})}
+        >
           <Wordmark hideLabelOnNarrow />
         </Link>
         <span className="h-4 w-0.5 shrink-0 bg-line" aria-hidden />
-        <p className="min-w-0 truncate text-pixel-label text-muted">
+        <p
+          data-flight="bar-context"
+          className="min-w-0 truncate text-pixel-label text-muted"
+        >
           {asset.data ? (
             <>
               <span className="text-ink">{asset.data.name}</span>
@@ -2538,13 +2554,7 @@ export function EditorScreen() {
             "Loading asset"
           )}
         </p>
-        <span className="ml-auto flex items-center gap-1.5">
-          {running ? (
-            <span className="hidden items-center gap-1.5 text-pixel-mono text-accent sm:flex">
-              <PixelLoader size={12} />
-              drawing
-            </span>
-          ) : null}
+        <span data-flight="bar-actions" className="ml-auto flex items-center gap-1.5">
           <IconButton
             label="Frames and layers"
             className="lg:hidden"

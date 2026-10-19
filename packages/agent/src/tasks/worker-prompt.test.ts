@@ -8,7 +8,7 @@ const input = {
   width: 32,
   height: 32,
   paletteSize: 4,
-  palette: ["#00000000", "#1a1c2c", "#f4efe4", "#e8ff6a"],
+  palette: ["#00000000", "#0b0906", "#f1efe9", "#d8a64e"],
   assetId: "asset-1",
   frames: ["idle", "jalan-a", "jalan-b"],
   styleLines: ["one outline color", "no anti-aliasing"],
@@ -54,7 +54,7 @@ describe("buildWorkerPrompt", () => {
     expect(prompt).toContain("ksatria, pedang, cahaya");
     expect(prompt).toContain("one outline color");
     expect(prompt).toContain("This asset's frames: idle, jalan-a, jalan-b");
-    expect(prompt).toContain("Outline colour #1a1c2c is palette index 1");
+    expect(prompt).toContain("Outline colour #0b0906 is palette index 1");
     expect(prompt).toContain("asset-2");
     expect(prompt).toContain("ksatria-besar");
   });

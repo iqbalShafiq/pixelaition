@@ -17,7 +17,7 @@ function Layout() {
       {/* Keyboard users should not have to tab through the chrome. */}
       <a
         href="#content"
-        className="sr-only bg-accent px-3 py-2 text-sm text-navy focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+        className="sr-only bg-accent px-3 py-2 text-sm text-coffee focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
       >
         Skip to content
       </a>
@@ -42,7 +42,7 @@ function NotFound() {
         </p>
         <Link
           to="/projects"
-          className="mt-6 inline-flex min-h-11 items-center justify-center border-2 border-accent-deep bg-accent px-3.5 py-2 text-pixel-label text-navy shadow-pixel-sm"
+          className="mt-6 inline-flex min-h-11 items-center justify-center border-2 border-accent-deep bg-accent px-3.5 py-2 text-pixel-label text-coffee shadow-pixel-sm"
         >
           Back to projects
         </Link>

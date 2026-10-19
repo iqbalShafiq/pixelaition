@@ -582,8 +582,8 @@ describe("palette reindex", () => {
       type: "reindexPalette",
       palette: [
         "#00000000",
-        painted.buffer.palette[2] ?? "#f4efe4",
-        painted.buffer.palette[1] ?? "#1a1c2c",
+        painted.buffer.palette[2] ?? "#f1efe9",
+        painted.buffer.palette[1] ?? "#0b0906",
       ],
       mapping: { "1": 2, "2": 1 },
     });
@@ -591,7 +591,7 @@ describe("palette reindex", () => {
     if (!reordered.ok) return;
     const pixels = reordered.buffer.layers[0]!.pixels;
     expect([pixels[9], pixels[10]]).toEqual([2, 1]);
-    expect(reordered.buffer.palette[1]).toBe("#f4efe4");
+    expect(reordered.buffer.palette[1]).toBe(painted.buffer.palette[2]);
   });
 
   it("refuses a palette that drops a colour without mapping it", () => {

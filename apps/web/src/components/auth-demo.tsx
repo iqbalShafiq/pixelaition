@@ -71,9 +71,10 @@ function AuthGrid() {
           const level = stepped / 3;
           const px = x * gridCell;
           const py = y * gridCell;
-          ctx.fillStyle = `rgba(148, 176, 194, ${0.04 + level * 0.42})`;
+          // Ink at low alpha: the field is atmosphere, not a checkerboard.
+          ctx.fillStyle = `rgba(241, 239, 233, ${0.02 + level * 0.18})`;
           ctx.fillRect(px + 1, py + 1, gridCell - 1, gridCell - 1);
-          ctx.fillStyle = "rgba(148, 176, 194, 0.42)";
+          ctx.fillStyle = "rgba(241, 239, 233, 0.15)";
           ctx.fillRect(px, py, gridCell, 1);
           ctx.fillRect(px, py, 1, gridCell);
           if (x === cols - 1) ctx.fillRect(px + gridCell - 1, py, 1, gridCell);
@@ -426,7 +427,13 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
         <AuthGrid />
       </div>
       <div className="relative flex h-full flex-col px-8 py-8">
-        <Wordmark size="display" flight />
+        {/* `self-start` keeps the wordmark's box the size of the mark and the
+            label. A column flex item stretches to the full width by default,
+            and that stretched box would be what the auth → home morph scales,
+            dragging the glyphs sideways on the way to the bar. */}
+        <div className="self-start">
+          <Wordmark size="display" flight />
+        </div>
         <div className="mt-10 max-w-md">
           <p className="text-pixel-mono text-accent">Sprite families</p>
           <p className="mt-3 max-w-[14ch] text-pixel-hero text-balance text-ink">
