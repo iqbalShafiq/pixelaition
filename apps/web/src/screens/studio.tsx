@@ -1568,6 +1568,7 @@ export function Inspector({
   onAddText,
   onAddElement,
   onImportPalette,
+  onImportBackground,
   running,
 }: {
   board: Artboard;
@@ -1596,6 +1597,7 @@ export function Inspector({
   onAddText: () => void;
   onAddElement: (kind: "rect" | "pattern" | "frame") => void;
   onImportPalette?: () => void;
+  onImportBackground?: () => void;
   running: boolean;
 }) {
   const [elementId, setElementId] = useState<string | null>(
@@ -1669,6 +1671,15 @@ export function Inspector({
               >
                 Pattern
               </Button>
+              {onImportBackground ? (
+                <Button
+                  tone="ghost"
+                  className="px-2 py-1 text-pixel-label"
+                  onClick={onImportBackground}
+                >
+                  From project
+                </Button>
+              ) : null}
             </div>
           </section>
 

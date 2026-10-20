@@ -405,6 +405,7 @@ export function EditorScreen() {
   const [socialPickerOpen, setSocialPickerOpen] = useState(false);
   const [importFrameOpen, setImportFrameOpen] = useState(false);
   const [paletteImportOpen, setPaletteImportOpen] = useState(false);
+  const [backgroundImportOpen, setBackgroundImportOpen] = useState(false);
   const [paletteSourceId, setPaletteSourceId] = useState("");
   const socialSaveTimers = useRef(new Map<string, number>());
   const socialSaveChains = useRef(new Map<string, Promise<void>>());
@@ -1168,6 +1169,29 @@ export function EditorScreen() {
     onError: (reason: unknown) =>
       notify({
         title: "Could not import the palette",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const copyBackground = useMutation({
+    mutationFn: (input: { sourceAssetId: string; sourceFrameId: string }) => {
+      if (!socialFrame) throw new Error("Open a social frame first.");
+      return api<AssetDto>(`/api/assets/${assetId}/frames/${socialFrame.id}/background`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+    },
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data);
+      setBackgroundImportOpen(false);
+      notify({
+        title: "Background copied",
+        description: "Colours mapped through the palette.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not copy the background",
         description: reason instanceof Error ? reason.message : "Unknown error",
       }),
   });
@@ -2796,6 +2820,7 @@ export function EditorScreen() {
           setPaletteSourceId("");
           setPaletteImportOpen(true);
         }}
+        onImportBackground={() => setBackgroundImportOpen(true)}
         running={running}
       />
     ) : null;
@@ -3694,6 +3719,17 @@ export function EditorScreen() {
           </Button>
         </div>
       </Dialog>
+      <ImportFrameDialog
+        open={backgroundImportOpen}
+        onOpenChange={setBackgroundImportOpen}
+        mode="background"
+        assets={resources.data?.assets ?? []}
+        currentAssetId={assetId}
+        busy={copyBackground.isPending}
+        onImport={(sourceAssetId, sourceFrameId) =>
+          copyBackground.mutate({ sourceAssetId, sourceFrameId })
+        }
+      />
       <ImportFrameDialog
         open={importFrameOpen}
         onOpenChange={setImportFrameOpen}

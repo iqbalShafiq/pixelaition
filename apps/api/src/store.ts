@@ -1964,3 +1964,64 @@ export async function renderSocialFrameRecord(
     };
   }
 }
+
+export async function copySocialBackgroundRecord(
+  db: Database,
+  userId: string,
+  targetAssetId: string,
+  targetFrameId: string,
+  sourceAssetId: string,
+  sourceFrameId: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const target = await getAssetRecord(db, userId, targetAssetId);
+  const source = await getAssetRecord(db, userId, sourceAssetId);
+  if (!target || !source) {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  }
+  const frame = target.frames.find(
+    (item) => item.id === targetFrameId && item.kind === "social",
+  );
+  const sourceFrame = source.frames.find(
+    (item) => item.id === sourceFrameId && item.kind === "social",
+  );
+  if (!frame || !sourceFrame?.scene) {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+    };
+  }
+  const sourceScene = sceneSchema.parse(sourceFrame.scene);
+  const targetScene = sceneSchema.parse(frame.scene);
+  const mapping = paletteIndexMap(source.palette as string[], target.palette as string[]);
+  const mapColor = (value: number) => mapping[value] ?? 0;
+  const background: typeof targetScene.background =
+    sourceScene.background.kind === "solid"
+      ? { ...sourceScene.background, color: mapColor(sourceScene.background.color) }
+      : sourceScene.background.kind === "pattern"
+        ? {
+            ...sourceScene.background,
+            colorA: mapColor(sourceScene.background.colorA),
+            colorB: mapColor(sourceScene.background.colorB),
+          }
+        : sourceScene.background;
+  const [updated] = await db
+    .update(frames)
+    .set({
+      scene: { ...targetScene, background },
+      version: frame.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(eq(frames.id, frame.id))
+    .returning();
+  if (updated) {
+    await recordSocialVersion(db, targetAssetId, frame.id, "edit", updated);
+  }
+  await db
+    .update(assets)
+    .set({ updatedAt: new Date() })
+    .where(eq(assets.id, targetAssetId));
+  return { asset: await getAssetRecord(db, userId, targetAssetId) };
+}

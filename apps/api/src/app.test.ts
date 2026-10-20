@@ -345,6 +345,19 @@ describe.skipIf(!db)("API routes", () => {
       expect(copied.scene.elements.length).toBeGreaterThan(0);
       expect(importedSocial.body.asset.copy.headline).toBe("Orbit is live");
 
+      const background = await request(app)
+        .post(
+          `/api/assets/${target.body.id}/frames/${importedSocial.body.frameId}/background`,
+        )
+        .set("authorization", `Bearer ${token}`)
+        .send({ sourceAssetId: asset.body.id, sourceFrameId: social.id });
+      expect(background.status).toBe(200);
+      expect(
+        background.body.frames.find(
+          (frame: { id: string }) => frame.id === importedSocial.body.frameId,
+        ).version,
+      ).toBeGreaterThan(copied.version);
+
       const png = await request(app)
         .post(`/api/assets/${asset.body.id}/social-export`)
         .set("authorization", `Bearer ${token}`)

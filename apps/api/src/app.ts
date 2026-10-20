@@ -84,6 +84,7 @@ import {
   addSocialFrameRecord,
   assetHasActiveRun,
   consumeProposal,
+  copySocialBackgroundRecord,
   createApiKey,
   createAssetRecord,
   createProjectRecord,
@@ -896,6 +897,34 @@ export function createApp() {
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     res.json(asset);
+  });
+
+  app.post("/api/assets/:id/frames/:frameId/background", async (req, res) => {
+    const body = z
+      .object({
+        sourceAssetId: z.string().min(1),
+        sourceFrameId: z.string().min(1),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(res, 409, "RUN_IN_PROGRESS", "The asset is busy right now.");
+    }
+    const result = await copySocialBackgroundRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.sourceAssetId,
+      body.sourceFrameId,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        404,
+        result.failure?.code ?? "NOT_FOUND",
+        result.failure?.message ?? "That background could not be copied.",
+      );
+    res.json(result.asset);
   });
 
   app.post("/api/assets/:id/social-export", async (req, res) => {
