@@ -1807,8 +1807,10 @@ function Inspector({
             </Field>
           ))}
           <div className="flex flex-wrap gap-1">
-            <Button onClick={() => onCopy(copyDraft)}>Apply to all formats</Button>
-            <Button tone="ghost" onClick={onClearOverrides}>
+            <Button onClick={() => onCopy(copyDraft)} disabled={running}>
+              Apply to all formats
+            </Button>
+            <Button tone="ghost" onClick={onClearOverrides} disabled={running}>
               Reset overrides
             </Button>
           </div>
