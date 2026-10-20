@@ -7,13 +7,35 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import {
+  encodeArtboard,
   frameToJpg,
   frameToPng,
   frameToSvg,
   serializeProject,
   zipFiles,
 } from "@pixelaition/export";
+import {
+  artboardInputSchema,
+  artboardPatchSchema,
+  copyDeckSchema,
+  formatPresets,
+  presetsByGroup,
+  setPatchSchema,
+} from "@pixelaition/artboard";
+import {
+  createArtboard,
+  createArtboardSet,
+  deleteArtboard,
+  deleteArtboardSet,
+  getArtboardSet,
+  listArtboardSets,
+  renderArtboardRecord,
+  renderSet,
+  updateArtboard,
+  updateArtboardSet,
+} from "./artboards.js";
 import { toNodeHandler } from "better-auth/node";
+import { artboards } from "@pixelaition/db";
 import { and, asc, count, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -2529,18 +2551,411 @@ export function createApp() {
     });
   });
 
+  // Social formats are data, not prompt text: the composer, the editor and
+  // the agent all read the same registry, including its source and check date.
+  app.get("/api/formats", (_req, res) => {
+    res.json({
+      groups: presetsByGroup(),
+      presets: formatPresets,
+      checkedAt: formatPresets.reduce(
+        (latest, preset) => (preset.verifiedAt > latest ? preset.verifiedAt : latest),
+        "",
+      ),
+    });
+  });
+
+  app.get("/api/sets", async (req, res) => {
+    const projectId =
+      typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    res.json({
+      sets: await listArtboardSets(db, res.locals.userId as string, projectId),
+    });
+  });
+
+  app.post("/api/projects/:id/sets", async (req, res) => {
+    const body = z
+      .object({
+        assetId: z.string().min(1),
+        name: z.string().min(1).max(80).optional(),
+        presetIds: z.array(z.string().min(1)).min(1).max(40).optional(),
+        copy: copyDeckSchema.optional(),
+      })
+      .parse(req.body);
+    const created = await createArtboardSet(db, res.locals.userId as string, {
+      projectId: req.params.id ?? "",
+      assetId: body.assetId,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.presetIds !== undefined ? { presetIds: body.presetIds } : {}),
+      ...(body.copy !== undefined ? { copy: body.copy } : {}),
+    });
+    if ("failure" in created) {
+      return fail(
+        res,
+        created.failure?.code === "NOT_FOUND" ? 404 : 422,
+        created.failure?.code ?? "INVALID",
+        created.failure?.message ?? "The set could not be created.",
+      );
+    }
+    res.status(201).json(created.set);
+  });
+
+  app.get("/api/sets/:id", async (req, res) => {
+    const set = await getArtboardSet(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    res.json(set);
+  });
+
+  app.patch("/api/sets/:id", async (req, res) => {
+    const body = setPatchSchema.parse(req.body);
+    const set = await getArtboardSet(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this set right now.",
+      );
+    }
+    const updated = await updateArtboardSet(db, res.locals.userId as string, set.id, {
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.copy !== undefined ? { copy: body.copy } : {}),
+    });
+    if ("failure" in updated) {
+      return fail(res, 404, updated.failure.code, updated.failure.message);
+    }
+    res.json(updated.set);
+  });
+
+  app.delete("/api/sets/:id", async (req, res) => {
+    const set = await getArtboardSet(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this set right now.",
+      );
+    }
+    await deleteArtboardSet(db, res.locals.userId as string, set.id);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/sets/:id/artboards", async (req, res) => {
+    const body = artboardInputSchema.parse(req.body);
+    const set = await getArtboardSet(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this set right now.",
+      );
+    }
+    const created = await createArtboard(db, res.locals.userId as string, set.id, {
+      presetId: body.presetId,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.template !== undefined ? { template: body.template } : {}),
+      ...(body.copy !== undefined ? { copy: body.copy } : {}),
+    });
+    if ("failure" in created) {
+      return fail(
+        res,
+        created.failure?.code === "NOT_FOUND" ? 404 : 422,
+        created.failure?.code ?? "INVALID",
+        created.failure?.message ?? "The set could not be created.",
+      );
+    }
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/artboards/:id", async (req, res) => {
+    const body = artboardPatchSchema.parse(req.body);
+    const userId = res.locals.userId as string;
+    const [row] = await db
+      .select({ setId: artboards.setId })
+      .from(artboards)
+      .where(eq(artboards.id, req.params.id ?? ""));
+    if (!row) return fail(res, 404, "NOT_FOUND", "That artboard is not available.");
+    const set = await getArtboardSet(db, userId, row.setId);
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is composing this set right now.",
+      );
+    }
+    const updated = await updateArtboard(db, userId, req.params.id ?? "", {
+      version: body.version,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.scene !== undefined ? { scene: body.scene } : {}),
+      ...(body.copyOverride !== undefined ? { copyOverride: body.copyOverride } : {}),
+      ...(body.status !== undefined ? { status: body.status } : {}),
+    });
+    if ("failure" in updated) {
+      return fail(
+        res,
+        updated.failure.code === "NOT_FOUND"
+          ? 404
+          : updated.failure.code === "VERSION_CONFLICT"
+            ? 409
+            : 422,
+        updated.failure.code,
+        updated.failure.message,
+      );
+    }
+    res.json(updated);
+  });
+
+  app.delete("/api/artboards/:id", async (req, res) => {
+    const userId = res.locals.userId as string;
+    const [row] = await db
+      .select({ setId: artboards.setId })
+      .from(artboards)
+      .where(eq(artboards.id, req.params.id ?? ""));
+    if (!row) return fail(res, 404, "NOT_FOUND", "That artboard is not available.");
+    const set = await getArtboardSet(db, userId, row.setId);
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is composing this set right now.",
+      );
+    }
+    await deleteArtboard(db, userId, req.params.id ?? "");
+    res.json({ ok: true });
+  });
+
+  app.get("/api/artboards/:id/preview", async (req, res) => {
+    const requested = req.query.format === "jpg" ? "jpg" : "png";
+    const result = await renderArtboardRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      requested,
+    );
+    if ("failure" in result) {
+      return fail(
+        res,
+        result.failure.code === "NOT_FOUND" ? 404 : 422,
+        result.failure.code,
+        result.failure.message,
+      );
+    }
+    const format = result.rendered.format;
+    const png =
+      format === "png"
+        ? encodeArtboard(result.rendered.image, "png")
+        : encodeArtboard(result.rendered.image, "jpg", "#0a0a09");
+    res.setHeader("content-type", format === "png" ? "image/png" : "image/jpeg");
+    res.setHeader("cache-control", "private, max-age=0, must-revalidate");
+    res.setHeader(
+      "content-disposition",
+      `inline; filename="${slug(result.rendered.artboard.name)}-${result.rendered.artboard.width}x${result.rendered.artboard.height}.${format}"`,
+    );
+    res.send(Buffer.from(png));
+  });
+
+  app.get("/api/artboards/:id/state", async (req, res) => {
+    const result = await renderArtboardRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      "png",
+    );
+    if ("failure" in result) {
+      return fail(
+        res,
+        result.failure.code === "NOT_FOUND" ? 404 : 422,
+        result.failure.code,
+        result.failure.message,
+      );
+    }
+    res.json({
+      artboard: result.rendered.artboard,
+      checks: result.rendered.checks,
+      bytes: result.rendered.bytes,
+      format: result.rendered.format,
+    });
+  });
+
+  app.get("/api/sets/:id/state", async (req, res) => {
+    const result = await renderSet(db, res.locals.userId as string, req.params.id ?? "");
+    if ("failure" in result) {
+      return fail(res, 404, result.failure.code, result.failure.message);
+    }
+    res.json({
+      set: result.set,
+      copy: result.copy,
+      summary: result.summary,
+      artboards: result.rendered.map((item) => ({
+        artboard: item.artboard,
+        checks: item.checks,
+        bytes: item.bytes,
+        format: item.format,
+      })),
+    });
+  });
+
   app.post("/api/export", async (req, res) => {
     const body = z
       .object({
-        scope: z.enum(["frame", "asset", "project"]).default("project"),
-        projectId: z.string(),
+        scope: z
+          .enum(["frame", "asset", "project", "artboard", "set"])
+          .default("project"),
+        projectId: z.string().optional(),
         assetId: z.string().optional(),
         frameId: z.string().optional(),
+        artboardId: z.string().optional(),
+        setId: z.string().optional(),
         format: z.enum(["pxl", "png", "jpg", "svg", "zip"]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
       })
       .parse(req.body);
+    const userId = res.locals.userId as string;
+    if (body.format === "svg" && (body.scope === "artboard" || body.scope === "set")) {
+      return fail(
+        res,
+        422,
+        "INVALID",
+        "Social artboards export as PNG, JPG, or ZIP; SVG is for pixel documents.",
+      );
+    }
+    if (body.format === "pxl" && (body.scope === "artboard" || body.scope === "set")) {
+      return fail(
+        res,
+        422,
+        "INVALID",
+        "A .pxl document holds a project. Choose PNG, JPG, or ZIP for a social set.",
+      );
+    }
+    if (body.scope === "artboard") {
+      if (!body.artboardId) {
+        return fail(res, 400, "INVALID", "Exporting an artboard needs an artboardId.");
+      }
+      const result = await renderArtboardRecord(
+        db,
+        userId,
+        body.artboardId,
+        body.format === "jpg" ? "jpg" : "png",
+      );
+      if ("failure" in result) {
+        return fail(
+          res,
+          result.failure.code === "NOT_FOUND" ? 404 : 422,
+          result.failure.code,
+          result.failure.message,
+        );
+      }
+      const name = `${slug(result.rendered.artboard.name)}-${result.rendered.artboard.width}x${result.rendered.artboard.height}.${result.rendered.format}`;
+      const bytes =
+        body.format === "zip"
+          ? zipFiles({
+              [name]:
+                result.rendered.format === "png"
+                  ? encodeArtboard(result.rendered.image, "png")
+                  : encodeArtboard(result.rendered.image, "jpg", "#0a0a09"),
+            })
+          : result.rendered.format === "png"
+            ? encodeArtboard(result.rendered.image, "png")
+            : encodeArtboard(result.rendered.image, "jpg", "#0a0a09");
+      res.setHeader(
+        "content-type",
+        body.format === "zip"
+          ? "application/zip"
+          : result.rendered.format === "png"
+            ? "image/png"
+            : "image/jpeg",
+      );
+      res.setHeader(
+        "content-disposition",
+        `attachment; filename="${body.format === "zip" ? `${slug(result.rendered.artboard.name)}.zip` : name}"`,
+      );
+      return res.send(Buffer.from(bytes));
+    }
+    if (body.scope === "set") {
+      if (!body.setId) return fail(res, 400, "INVALID", "Exporting a set needs a setId.");
+      const result = await renderSet(db, userId, body.setId);
+      if ("failure" in result) {
+        return fail(
+          res,
+          result.failure.code === "NOT_FOUND" ? 404 : 422,
+          result.failure.code,
+          result.failure.message,
+        );
+      }
+      const files: Record<string, Uint8Array | string> = {};
+      const manifest = {
+        format: "pixelaition-social",
+        version: 1,
+        setId: result.set.id,
+        name: result.set.name,
+        assetId: result.set.assetId,
+        generatedAt: new Date().toISOString(),
+        copy: result.copy,
+        summary: result.summary,
+        artboards: result.rendered.map((item) => ({
+          id: item.artboard.id,
+          name: item.artboard.name,
+          presetId: item.artboard.presetId,
+          width: item.artboard.width,
+          height: item.artboard.height,
+          bytes: item.bytes,
+          format: item.format,
+          checks: item.checks,
+        })),
+      };
+      for (const item of result.rendered) {
+        const name = `${slug(item.artboard.name)}-${item.artboard.width}x${item.artboard.height}.${item.format}`;
+        files[name] =
+          item.format === "png"
+            ? encodeArtboard(item.image, "png")
+            : encodeArtboard(item.image, "jpg", "#0a0a09");
+      }
+      files["manifest.json"] = `${JSON.stringify(manifest, null, 2)}\n`;
+      const names = Object.keys(files);
+      if (names.length > 2 || body.format === "zip") {
+        res.setHeader("content-type", "application/zip");
+        res.setHeader(
+          "content-disposition",
+          `attachment; filename="${slug(result.set.name)}.zip"`,
+        );
+        return res.send(Buffer.from(zipFiles(files)));
+      }
+      const only = names.find((name) => name !== "manifest.json");
+      if (!only) return fail(res, 422, "NOTHING_TO_EXPORT", "The set has no artboards.");
+      const contents = files[only];
+      res.setHeader("content-type", only.endsWith(".jpg") ? "image/jpeg" : "image/png");
+      res.setHeader("content-disposition", `attachment; filename="${only}"`);
+      return res.send(
+        Buffer.from(
+          typeof contents === "string" ? contents : (contents ?? new Uint8Array()),
+        ),
+      );
+    }
     if (body.scope !== "project" && body.format === "pxl") {
       return fail(
         res,
@@ -2549,13 +2964,15 @@ export function createApp() {
         "A .pxl document holds a whole project. Choose PNG, JPG, SVG, or ZIP.",
       );
     }
+    if (!body.projectId)
+      return fail(res, 400, "INVALID", "That export needs a projectId.");
     if (body.scope === "frame" && !(body.assetId && body.frameId)) {
       return fail(res, 400, "INVALID", "Exporting one frame needs an asset and a frame.");
     }
     if (body.scope === "asset" && !body.assetId) {
       return fail(res, 400, "INVALID", "Exporting one asset needs an asset id.");
     }
-    const document = await documentForScope(res.locals.userId as string, {
+    const document = await documentForScope(userId, {
       projectId: body.projectId,
       assetId: body.scope === "project" ? undefined : body.assetId,
       frameId: body.scope === "frame" ? body.frameId : undefined,
@@ -2593,7 +3010,7 @@ export function createApp() {
       return res.send(Buffer.from(zipFiles(files)));
     }
     const only = names[0];
-    if (!only) return fail(res, 422, "EXPORT_TOO_LARGE", "There is nothing to export.");
+    if (!only) return fail(res, 422, "NOTHING_TO_EXPORT", "There is nothing to export.");
     const contents = files[only];
     res.setHeader("content-disposition", `attachment; filename="${only}"`);
     res.send(

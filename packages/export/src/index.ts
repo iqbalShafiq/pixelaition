@@ -62,3 +62,11 @@ export function zipFiles(files: Record<string, Uint8Array | string>): Uint8Array
   }
   return zipSync(entries);
 }
+
+export {
+  artboardToPng,
+  artboardToJpg,
+  encodeArtboard,
+  artboardBytes,
+  type ArtboardFormat,
+} from "./artboard.js";
