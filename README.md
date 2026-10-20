@@ -33,6 +33,19 @@ It runs on [Anvia](https://github.com/anvia-hq/anvia), the agent runtime behind 
 
 The same screen holds projects, assets, frames, layers and the run history. A composer docks at the bottom of both the workspace and the editor, so a new request and a follow-up are the same motion.
 
+## Social kits
+
+A sprite can also become a **social kit** of 44 native formats: profiles, covers, feed posts, Reels/TikTok covers, YouTube thumbnails, banners and OG images. The sprite stays a sprite; the kit is a palette-indexed scene graph rendered at the output size, with safe zones, crops, deterministic checks and one shared copy deck.
+
+Open **Social** from the editor header, or go to
+`/projects/:projectId/assets/:assetId/studio`. The Studio includes a format rail,
+contact sheet, artboard stage, inspector, in-context previews, export (PNG/JPG or
+a ZIP with `manifest.json`), and the same composer/console for an art-director
+run that plans, checks and saves each format.
+
+The architecture and the trade-offs are in
+[docs/reports/2026-10-20-social-artboards.md](docs/reports/2026-10-20-social-artboards.md).
+
 ## Quick start
 
 You need Node.js 22.16 or newer, pnpm 10.30.3, and Docker.

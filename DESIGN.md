@@ -2,6 +2,24 @@
 
 Pixelaition looks like a drafting table at night. The canvas is the product. Chrome stays quiet.
 
+## Social Studio
+
+The Studio is the same drafting table, one size larger. Its stage is a **screen**
+well; the format rail and inspector are **panel** rails; the contact sheet is a
+grid of flat cards with a 2 px line, no soft shadow and no gradient. A selected
+format uses only `accent` as its border and the current card lifts by its line,
+not by a blur.
+
+Safe-zone, crop and exclusion overlays are 1 px dashed `line-strong` guides with
+`mono` labels on `coffee`; they are guides, not artwork. The in-context preview
+is a neutral wireframe around the real bitmap and says **simulated crop** in
+`muted`. Never put a platform logo or an off-palette brand colour on it.
+
+Native-size artboards are shown contained, with their own aspect. Do not stretch
+a 4:1 cover into a 4:3 card; letterbox it in the card's `field` well. On narrow
+screens the rails become sheets and the composer stays docked; the stage scrolls
+under it, with bottom padding so the last card is reachable.
+
 ## Color
 
 The chrome is **Atelier**, a near-black warm graphite ramp with one brass accent

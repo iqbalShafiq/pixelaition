@@ -21,6 +21,7 @@ import {
   type Element,
   type FormatPreset,
   type SetWithArtboards,
+  type SpriteSource,
   type TemplateId,
 } from "@pixelaition/artboard";
 import { ArtboardCanvas } from "../components/artboard-canvas.js";
@@ -31,6 +32,10 @@ import { api, ApiError } from "../lib/api.js";
 import { spritesForAsset } from "../lib/artboard.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole } from "../components/run-console.js";
+import type {
+  InteractionResponse,
+  PendingInteraction,
+} from "../components/interaction-card.js";
 import {
   Button,
   Callout,
@@ -95,7 +100,8 @@ export function StudioScreen() {
   const [setId, setSetId] = useState<string | null>(null);
   const [boards, setBoards] = useState<Artboard[]>([]);
   const [setInfo, setSetInfo] = useState<SetDto | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [view, setView] = useState<"sheet" | "board">("sheet");
   const [fit, setFit] = useState(true);
   const [showZones, setShowZones] = useState(true);
@@ -106,6 +112,7 @@ export function StudioScreen() {
   const [exportOpen, setExportOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteBoard, setDeleteBoard] = useState<Artboard | null>(null);
+  const [deleteSetOpen, setDeleteSetOpen] = useState(false);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -114,9 +121,7 @@ export function StudioScreen() {
   const [runPrompt, setRunPrompt] = useState("");
   const [message, setMessage] = useState("");
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [interaction, setInteraction] = useState<
-    import("../components/interaction-card.js").PendingInteraction | null
-  >(null);
+  const [interaction, setInteraction] = useState<PendingInteraction | null>(null);
   const [pendingRunId, setPendingRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [modelId, setModelId] = useState("");
@@ -154,6 +159,21 @@ export function StudioScreen() {
     refetchInterval: runId !== null ? 1800 : false,
     queryFn: () => api<SetDto>(`/api/sets/${setId}`),
   });
+  const activeRun = useQuery({
+    queryKey: ["studio-active-run", assetId],
+    enabled: setId !== null && runId === null,
+    refetchInterval: runId === null ? 4000 : false,
+    queryFn: () =>
+      api<{
+        run: {
+          id: string;
+          status: string;
+          prompt: string | null;
+          setId?: string | null;
+        } | null;
+        interaction: PendingInteraction | null;
+      }>(`/api/assets/${assetId}/active-run`),
+  });
   const catalog = useQuery({
     queryKey: ["models"],
     queryFn: () => api<Catalog>("/api/models"),
@@ -190,7 +210,7 @@ export function StudioScreen() {
   const selectedModel = models.find((item) => item.id === modelId);
   const efforts = selectedModel?.efforts ?? [];
   const running = runId !== null;
-  const selectedBoard = boards.find((board) => board.id === selectedId) ?? boards[0];
+  const selectedBoard = boards.find((board) => board.id === selectedBoardId) ?? boards[0];
   const selectedPreset = selectedBoard ? presets.get(selectedBoard.presetId) : undefined;
   const checks = useMemo(() => {
     if (!asset.data) return new Map<string, ArtboardCheck[]>();
@@ -219,7 +239,11 @@ export function StudioScreen() {
   // link can name a different set without changing the route shape.
   useEffect(() => {
     if (setId !== null) return;
-    const first = sets.data?.sets.find((item) => item.assetId === assetId);
+    const key = `pixelaition:studio-set:${assetId}`;
+    const stored = window.localStorage.getItem(key);
+    const first =
+      sets.data?.sets.find((item) => item.id === stored && item.assetId === assetId) ??
+      sets.data?.sets.find((item) => item.assetId === assetId);
     if (first) setSetId(first.id);
   }, [sets.data, assetId, setId]);
 
@@ -236,6 +260,27 @@ export function StudioScreen() {
       setBoards(data.artboards);
     }
   }, [setQuery.data, runId]);
+
+  useEffect(() => {
+    if (runId !== null || setId === null) return;
+    const run = activeRun.data?.run;
+    if (
+      !run ||
+      run.setId !== setId ||
+      !["queued", "running", "waiting"].includes(run.status)
+    ) {
+      return;
+    }
+    setRunId(run.id);
+    setRunPrompt(run.prompt ?? "");
+    setRows([]);
+    setConsoleOpen(true);
+    if (activeRun.data?.interaction) {
+      setInteraction(activeRun.data.interaction);
+      setPendingRunId(run.id);
+    }
+    listen(run.id);
+  }, [activeRun.data, runId, setId]);
 
   useEffect(() => {
     if (modelId.length > 0) return;
@@ -274,7 +319,9 @@ export function StudioScreen() {
       setBoards(created.artboards);
       loadedSet.current = created.id;
       setSetId(created.id);
-      setSelectedId(created.artboards[0]?.id ?? null);
+      window.localStorage.setItem(`pixelaition:studio-set:${assetId}`, created.id);
+      setSelectedBoardId(created.artboards[0]?.id ?? null);
+      setSelectedElementId(null);
       setView("board");
       void queryClient.invalidateQueries({ queryKey: ["sets", projectId] });
       notify({
@@ -298,7 +345,8 @@ export function StudioScreen() {
     onSuccess: (result) => {
       setBoards((current) => [...current, result.artboard]);
       setSetInfo(result.set);
-      setSelectedId(result.artboard.id);
+      setSelectedBoardId(result.artboard.id);
+      setSelectedElementId(null);
       setView("board");
       setPickerOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["sets", projectId] });
@@ -338,8 +386,7 @@ export function StudioScreen() {
   }
 
   function flushBoard(boardId: string) {
-    const board = boardsRef.current.find((item) => item.id === boardId);
-    if (!board || !setId) return;
+    if (!setId) return;
     const timer = timers.current.get(boardId);
     if (timer !== undefined) {
       window.clearTimeout(timer);
@@ -349,6 +396,8 @@ export function StudioScreen() {
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        const board = boardsRef.current.find((item) => item.id === boardId);
+        if (!board) return;
         setSaveState("saving");
         try {
           const result = await api<{ artboard: Artboard; set: SetDto }>(
@@ -441,11 +490,23 @@ export function StudioScreen() {
     }
     const scene = {
       ...selectedBoard.scene,
-      elements: selectedBoard.scene.elements.map((element) =>
-        element.id === elementId && element.kind === "text"
-          ? fitTextToSlot({ ...element, text })
-          : element,
-      ),
+      elements: selectedBoard.scene.elements.map((element) => {
+        if (element.id !== elementId || element.kind !== "text") return element;
+        const nextTextY = selectedBoard.scene.elements
+          .filter(
+            (candidate) =>
+              candidate.kind === "text" &&
+              candidate.id !== element.id &&
+              candidate.y > element.y &&
+              candidate.x < element.x + element.width &&
+              candidate.x + candidate.width > element.x,
+          )
+          .sort((a, b) => a.y - b.y)[0]?.y;
+        return fitTextToSlot(
+          { ...element, text },
+          nextTextY !== undefined ? Math.max(8, nextTextY - element.y - 2) : undefined,
+        );
+      }),
     };
     commitBoard({ ...selectedBoard, scene, copyOverride: override });
   }
@@ -613,10 +674,7 @@ export function StudioScreen() {
       onMessage: (body) => {
         setRows((current) => applyRunEvent(current, body.sequence, body.type, body.data));
         if (body.type === "interaction") {
-          const data =
-            body.data as import("../components/interaction-card.js").PendingInteraction & {
-              runId?: string;
-            };
+          const data = body.data as PendingInteraction & { runId?: string };
           if (typeof data.id === "string" && !answeredRef.current.has(data.id)) {
             setInteraction(data);
             setPendingRunId(typeof data.runId === "string" ? data.runId : id);
@@ -659,9 +717,7 @@ export function StudioScreen() {
     });
   }
 
-  async function respond(
-    response: import("../components/interaction-card.js").InteractionResponse,
-  ) {
+  async function respond(response: InteractionResponse) {
     if (!pendingRunId || !interaction) return;
     const run = pendingRunId;
     const id = interaction.id;
@@ -781,6 +837,21 @@ export function StudioScreen() {
   }
 
   const currentSet = setInfo;
+  if (setId !== null && setQuery.isError) {
+    return (
+      <Shell asset={asset.data} title="Social kit" actions={null}>
+        <div className="mx-auto grid w-full max-w-xl gap-3 p-6">
+          <Callout tone="danger">The social kit could not be loaded.</Callout>
+          <p className="text-pixel-body text-muted">
+            {setQuery.error instanceof Error
+              ? setQuery.error.message
+              : "The API did not answer."}
+          </p>
+          <Button onClick={() => void setQuery.refetch()}>Try again</Button>
+        </div>
+      </Shell>
+    );
+  }
   if (!currentSet) {
     return <Centered>Loading the social kit…</Centered>;
   }
@@ -792,18 +863,34 @@ export function StudioScreen() {
       checks={checks}
       asset={asset.data}
       sprites={sprites}
-      selectedId={selectedId}
+      selectedId={selectedBoardId}
       onSelect={(id) => {
-        setSelectedId(id);
+        setSelectedBoardId(id);
+        setSelectedElementId(null);
         setView("board");
         setLeftSheet(false);
       }}
       onSheet={() => {
-        setSelectedId(null);
+        setSelectedBoardId(null);
+        setSelectedElementId(null);
         setView("sheet");
         setLeftSheet(false);
       }}
       onAdd={() => setPickerOpen(true)}
+      sets={sets.data?.sets.map((item) => ({ id: item.id, name: item.name })) ?? []}
+      setId={setId ?? ""}
+      onDeleteSet={() => setDeleteSetOpen(true)}
+      onSet={(id) => {
+        if (id === setId) return;
+        loadedSet.current = null;
+        window.localStorage.setItem(`pixelaition:studio-set:${assetId}`, id);
+        setSetId(id);
+        setSetInfo(null);
+        setBoards([]);
+        setSelectedBoardId(null);
+        setSelectedElementId(null);
+        setView("sheet");
+      }}
     />
   );
 
@@ -814,16 +901,23 @@ export function StudioScreen() {
       copy={currentSet.copy}
       checks={selectedChecks}
       palette={asset.data.palette}
+      selectedElementId={selectedElementId}
       tab={inspectorTab}
       onTab={setInspectorTab}
       onTemplate={applyTemplate}
+      onRename={(name) => {
+        const trimmed = name.trim();
+        if (selectedBoard && trimmed.length > 0) {
+          commitBoard({ ...selectedBoard, name: trimmed.slice(0, 80) });
+        }
+      }}
       onBackground={setBackground}
       onUpdateElement={updateElement}
       onText={setElementText}
       onRemoveElement={removeElement}
       onCopy={(copy) => applyCopy.mutate(copy)}
       onClearOverrides={clearOverrides}
-      onSelectElement={(id) => setSelectedId(id)}
+      onSelectElement={(id) => setSelectedElementId(id)}
       onAddText={addTextElement}
       onAddElement={addElement}
       running={running}
@@ -923,20 +1017,20 @@ export function StudioScreen() {
                     key={board.id}
                     type="button"
                     onClick={() => {
-                      setSelectedId(board.id);
+                      setSelectedBoardId(board.id);
+                      setSelectedElementId(null);
                       setView("board");
                     }}
-                    className="group grid gap-2 border-2 border-line bg-panel p-2 text-left transition-colors hover:border-accent"
+                    className={`group grid gap-2 border-2 border-line bg-panel p-2 text-left transition-colors hover:border-accent ${
+                      board.width / board.height >= 1.6 ? "sm:col-span-2" : ""
+                    }`}
                   >
                     <div className="relative flex h-[210px] items-center justify-center overflow-hidden bg-field p-2">
-                      <ArtboardCanvas
+                      <LazyArtboard
                         artboard={board}
                         preset={preset}
                         asset={asset.data}
                         sprites={sprites}
-                        fit
-                        showZones={false}
-                        thumbnail
                       />
                     </div>
                     <span className="flex items-baseline justify-between gap-2">
@@ -990,8 +1084,8 @@ export function StudioScreen() {
                   sprites={sprites}
                   fit={fit}
                   showZones={showZones}
-                  selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  selectedId={selectedElementId}
+                  onSelect={setSelectedElementId}
                   onMove={moveElement}
                   locked={running}
                 />
@@ -1159,6 +1253,43 @@ export function StudioScreen() {
         selectedId={selectedBoard?.id}
       />
       <ConfirmDialog
+        open={deleteSetOpen}
+        onOpenChange={setDeleteSetOpen}
+        title="Delete this social kit?"
+        description={`${currentSet.name} and its ${boards.length} formats will be removed. The sprite and its frames are untouched.`}
+        onConfirm={() => {
+          setDeleteSetOpen(false);
+          void api(`/api/sets/${currentSet.id}`, { method: "DELETE" })
+            .then(() => {
+              window.localStorage.removeItem(`pixelaition:studio-set:${assetId}`);
+              queryClient.setQueryData(
+                ["sets", projectId],
+                (current: { sets: Array<{ id: string }> } | undefined) =>
+                  current
+                    ? {
+                        ...current,
+                        sets: current.sets.filter((item) => item.id !== currentSet.id),
+                      }
+                    : current,
+              );
+              setSetId(null);
+              setSetInfo(null);
+              setBoards([]);
+              setSelectedBoardId(null);
+              setSelectedElementId(null);
+              loadedSet.current = null;
+              void queryClient.invalidateQueries({ queryKey: ["sets", projectId] });
+              notify({ title: "Social kit deleted" });
+            })
+            .catch((reason: unknown) =>
+              notify({
+                title: "Could not delete the kit",
+                description: reason instanceof Error ? reason.message : "Unknown error",
+              }),
+            );
+        }}
+      />
+      <ConfirmDialog
         open={deleteBoard !== null}
         onOpenChange={(open) => {
           if (!open) setDeleteBoard(null);
@@ -1172,7 +1303,8 @@ export function StudioScreen() {
           void api(`/api/artboards/${id}`, { method: "DELETE" })
             .then(() => {
               setBoards((current) => current.filter((board) => board.id !== id));
-              setSelectedId((current) => (current === id ? null : current));
+              setSelectedBoardId((current) => (current === id ? null : current));
+              setSelectedElementId(null);
               setView("sheet");
             })
             .catch((reason: unknown) =>
@@ -1232,6 +1364,55 @@ function Centered({ children }: { children: ReactNode }) {
   );
 }
 
+function LazyArtboard({
+  artboard,
+  preset,
+  asset,
+  sprites,
+}: {
+  artboard: Artboard;
+  preset: FormatPreset;
+  asset: AssetDto;
+  sprites: Map<string, SpriteSource>;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className="grid h-full w-full place-items-center">
+      {visible ? (
+        <ArtboardCanvas
+          artboard={artboard}
+          preset={preset}
+          asset={asset}
+          sprites={sprites}
+          fit
+          showZones={false}
+          thumbnail
+        />
+      ) : (
+        <span className="font-mono text-[9px] text-muted">
+          {artboard.width}×{artboard.height}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function FormatCard({ preset }: { preset: FormatPreset }) {
   return (
     <div className="border-2 border-line bg-panel p-2">
@@ -1261,19 +1442,38 @@ function FormatRail({
   onSelect,
   onSheet,
   onAdd,
+  sets,
+  setId,
+  onSet,
+  onDeleteSet,
 }: {
   boards: Artboard[];
   presets: Map<string, FormatPreset>;
   checks: Map<string, ArtboardCheck[]>;
   asset: AssetDto;
-  sprites: Map<string, import("@pixelaition/artboard").SpriteSource>;
+  sprites: Map<string, SpriteSource>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onSheet: () => void;
   onAdd: () => void;
+  sets: Array<{ id: string; name: string }>;
+  setId: string;
+  onSet: (id: string) => void;
+  onDeleteSet: () => void;
 }) {
   return (
     <div className="grid gap-2">
+      {sets.length > 1 ? (
+        <Field label="Kit" htmlFor="studio-set">
+          <SelectControl
+            id="studio-set"
+            label="Kit"
+            value={setId}
+            options={sets.map((item) => ({ value: item.id, label: item.name }))}
+            onChange={onSet}
+          />
+        </Field>
+      ) : null}
       <div className="flex items-center justify-between gap-2 px-1">
         <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">Formats</p>
         <span className="font-mono text-[10px] text-muted">{boards.length}</span>
@@ -1302,14 +1502,11 @@ function FormatRail({
               }`}
             >
               <span className="grid h-12 w-12 place-items-center overflow-hidden border border-line bg-field">
-                <ArtboardCanvas
+                <LazyArtboard
                   artboard={board}
                   preset={preset}
                   asset={asset}
                   sprites={sprites}
-                  fit
-                  showZones={false}
-                  thumbnail
                 />
               </span>
               <span className="min-w-0">
@@ -1338,6 +1535,13 @@ function FormatRail({
       >
         + Add format
       </Button>
+      <Button
+        tone="danger"
+        className="justify-start px-2 py-1 text-pixel-label"
+        onClick={onDeleteSet}
+      >
+        Delete kit
+      </Button>
     </div>
   );
 }
@@ -1348,9 +1552,11 @@ function Inspector({
   copy,
   checks,
   palette,
+  selectedElementId,
   tab,
   onTab,
   onTemplate,
+  onRename,
   onBackground,
   onUpdateElement,
   onText,
@@ -1367,9 +1573,11 @@ function Inspector({
   copy: CopyDeck;
   checks: ArtboardCheck[];
   palette: string[];
+  selectedElementId: string | null;
   tab: "layout" | "copy" | "checks";
   onTab: (tab: "layout" | "copy" | "checks") => void;
   onTemplate: (template: TemplateId) => void;
+  onRename: (name: string) => void;
   onBackground: (background: ArtboardScene["background"]) => void;
   onUpdateElement: (id: string, patch: Partial<Element>) => void;
   onText: (id: string, text: string, key?: keyof CopyDeck) => void;
@@ -1385,13 +1593,27 @@ function Inspector({
     board.scene.elements[0]?.id ?? null,
   );
   const [copyDraft, setCopyDraft] = useState<CopyDeck>(copy);
+  const [nameDraft, setNameDraft] = useState(board.name);
   useEffect(() => setCopyDraft(copy), [copy]);
+  useEffect(() => setNameDraft(board.name), [board.name]);
+  useEffect(() => {
+    if (selectedElementId) setElementId(selectedElementId);
+  }, [selectedElementId]);
   const selected = board.scene.elements.find((element) => element.id === elementId);
   const roles = paletteRoles(palette);
   const summary = summarizeChecks(checks);
 
   return (
     <div className="grid gap-3">
+      <Field label="Artboard name" htmlFor="artboard-name">
+        <TextInput
+          id="artboard-name"
+          value={nameDraft}
+          disabled={running}
+          onChange={(event) => setNameDraft(event.target.value)}
+          onBlur={() => onRename(nameDraft)}
+        />
+      </Field>
       <SegmentedControl
         label="Inspector section"
         value={tab}
@@ -1921,12 +2143,7 @@ function ColorPicker({
             className={`h-6 w-6 border-2 ${
               value === index ? "border-accent" : "border-line hover:border-line-strong"
             }`}
-            style={{
-              background:
-                index === 0
-                  ? "repeating-conic-gradient(#1c1b19 0% 25%, #050505 0% 50%) 50% / 8px 8px"
-                  : hex,
-            }}
+            style={{ background: index === 0 ? "transparent" : hex }}
           />
         ))}
       </div>
@@ -2035,6 +2252,7 @@ function ExportDialog({
 }) {
   const [scope, setScope] = useState<"board" | "set">("set");
   const [format, setFormat] = useState<"png" | "jpg" | "zip">("zip");
+  const effectiveFormat = scope === "set" ? "zip" : format;
   const [busy, setBusy] = useState(false);
   const notify = useToast();
   const summary = board ? summarizeChecks(checks.get(board.id) ?? []) : null;
@@ -2048,8 +2266,8 @@ function ExportDialog({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
           scope === "board" && board
-            ? { scope: "artboard", artboardId: board.id, format }
-            : { scope: "set", setId, format },
+            ? { scope: "artboard", artboardId: board.id, format: effectiveFormat }
+            : { scope: "set", setId, format: "zip" },
         ),
       });
       if (!response.ok) {
@@ -2062,7 +2280,7 @@ function ExportDialog({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${slug(name)}-${scope === "board" && board ? `${slug(board.name)}-${board.width}x${board.height}` : "kit"}.${format === "jpg" ? "jpg" : format === "zip" ? "zip" : "png"}`;
+      link.download = `${slug(name)}-${scope === "board" && board ? `${slug(board.name)}-${board.width}x${board.height}` : "kit"}.${effectiveFormat === "jpg" ? "jpg" : effectiveFormat === "zip" ? "zip" : "png"}`;
       link.click();
       URL.revokeObjectURL(url);
       onOpenChange(false);
@@ -2101,8 +2319,8 @@ function ExportDialog({
           <SelectControl
             id="export-format"
             label="Format"
-            value={format}
-            options={["zip", "png", "jpg"]}
+            value={effectiveFormat}
+            options={scope === "set" ? ["zip"] : ["png", "jpg", "zip"]}
             onChange={(next) => setFormat(next as "png" | "jpg" | "zip")}
           />
         </Field>
@@ -2139,7 +2357,7 @@ function PreviewDialog({
   boards: Artboard[];
   presets: Map<string, FormatPreset>;
   asset: AssetDto;
-  sprites: Map<string, import("@pixelaition/artboard").SpriteSource>;
+  sprites: Map<string, SpriteSource>;
   selectedId?: string;
 }) {
   const [activeId, setActiveId] = useState(selectedId ?? boards[0]?.id ?? "");
@@ -2290,3 +2508,5 @@ function slug(value: string): string {
       .replace(/^-|-$/g, "") || "social"
   );
 }
+
+export default StudioScreen;

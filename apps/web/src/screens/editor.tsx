@@ -2580,10 +2580,14 @@ export function EditorScreen() {
           <Link
             to="/projects/$projectId/assets/$assetId/studio"
             params={{ projectId: asset.data?.projectId ?? "", assetId }}
-            className="hidden min-h-9 items-center border-2 border-line px-2.5 py-1.5 text-pixel-label text-muted hover:border-line-strong hover:text-ink sm:inline-flex"
+            aria-label="Open the social kit"
+            className="inline-flex min-h-9 items-center border-2 border-line px-2 py-1.5 text-pixel-label text-muted hover:border-line-strong hover:text-ink sm:px-2.5"
             aria-disabled={!asset.data || running}
           >
-            Social
+            <span aria-hidden className="sm:hidden">
+              ◫
+            </span>
+            <span className="hidden sm:inline">Social</span>
           </Link>
           <Button
             tone="ghost"

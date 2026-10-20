@@ -55,18 +55,34 @@ pnpm db:migrate
 - Interface type comes from the pixel scale in `apps/web/src/styles.css` (`text-pixel-hero/display/title/label/body/mono`, each face on its design grid); pixel craft comes from the utilities there (`pixel-corners`, `pixel-window`, `bevel`, `shadow-pixel-*`, `pixel-grid`, `dither-*`). Components use both instead of hand-rolling sizes, radii, or soft shadows.
 - Commit messages follow Conventional Commits.
 
+- Social kits are a second surface, not a bigger pixel document: `artboard_sets`,
+  `artboards` and `artboard_versions` hold a palette-indexed scene graph at the
+  preset's native size. `packages/artboard` is shared by the web, API, worker
+  and MCP; do not fork the renderer or the preset registry.
+- A social format's dimensions, safe zones, crops, exclusions, minimum text size
+  and byte budget come from `packages/artboard/src/presets.ts`. A check error is
+  a real geometry failure, never a warning to wave through.
+- The art director is one compose run per kit, bound to the set and the asset;
+  it plans through `present_artboard_plan`, writes only after approval, saves
+  each board with optimistic versioning, and leaves a version snapshot. Boot
+  recovery re-binds both the asset and artboard tools.
+- The Studio keeps one conversation per kit and reuses the composer, run
+  console, question and approval cards. The in-context preview is labelled as
+  simulated; the export always keeps the native dimensions.
+
 ## Packages
 
-| Path              | Role                                  |
-| ----------------- | ------------------------------------- |
-| `packages/pixel`  | Document, commands, camera, critique  |
-| `packages/export` | `.pxl`, PNG, JPG, SVG, ZIP            |
-| `packages/agent`  | Tools, decisions, instructions, evals |
-| `packages/db`     | Drizzle schema                        |
-| `apps/web`        | Editor                                |
-| `apps/api`        | Auth, CRUD, export, run proxy         |
-| `apps/worker`     | Durable runtime                       |
-| `apps/mcp`        | Stdio MCP                             |
+| Path                | Role                                   |
+| ------------------- | -------------------------------------- |
+| `packages/pixel`    | Document, commands, camera, critique   |
+| `packages/artboard` | Social scene renderer, presets, checks |
+| `packages/export`   | `.pxl`, PNG, JPG, SVG, ZIP             |
+| `packages/agent`    | Tools, decisions, instructions, evals  |
+| `packages/db`       | Drizzle schema                         |
+| `apps/web`          | Editor                                 |
+| `apps/api`          | Auth, CRUD, export, run proxy          |
+| `apps/worker`       | Durable runtime                        |
+| `apps/mcp`          | Stdio MCP                              |
 
 <!-- BEGIN:turborepo-agent-rules -->
 

@@ -43,6 +43,7 @@ export function ArtboardCanvas({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [compact, setCompact] = useState(false);
   const image = useMemo<PaletteImage>(() => {
     const rendered = renderArtboard(artboard, preset, asset, sprites);
     return thumbnail ? downsamplePalette(rendered, 520) : rendered;
@@ -53,6 +54,16 @@ export function ArtboardCanvas({
     if (!canvas) return;
     drawPaletteImage(canvas, image);
   }, [image]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setCompact((entry?.contentRect.width ?? 0) < 420);
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
 
   const bounds = useMemo(() => {
     const map = new Map<string, ReturnType<typeof elementBounds>>();
@@ -167,9 +178,11 @@ export function ArtboardCanvas({
                   height: `${zone.height * scaleY}%`,
                 }}
               >
-                <span className="absolute -top-4 left-0 bg-paper/90 px-1 font-mono text-[9px] tracking-[0.12em] text-accent uppercase">
-                  {zone.label}
-                </span>
+                {compact ? null : (
+                  <span className="absolute -top-4 left-0 bg-paper/90 px-1 font-mono text-[9px] tracking-[0.12em] text-accent uppercase">
+                    {zone.label}
+                  </span>
+                )}
               </div>
             ))}
             {preset.crops.map((crop) => (
@@ -183,9 +196,11 @@ export function ArtboardCanvas({
                   height: `${crop.height * scaleY}%`,
                 }}
               >
-                <span className="absolute -bottom-4 left-0 bg-paper/90 px-1 font-mono text-[9px] text-muted">
-                  {crop.label}
-                </span>
+                {compact ? null : (
+                  <span className="absolute -bottom-4 left-0 bg-paper/90 px-1 font-mono text-[9px] text-muted">
+                    {crop.label}
+                  </span>
+                )}
               </div>
             ))}
             {preset.exclusions.map((zone) => (
@@ -199,9 +214,11 @@ export function ArtboardCanvas({
                   height: `${zone.height * scaleY}%`,
                 }}
               >
-                <span className="absolute top-1 left-1 bg-paper/90 px-1 font-mono text-[9px] text-erase">
-                  {zone.label}
-                </span>
+                {compact ? null : (
+                  <span className="absolute top-1 left-1 bg-paper/90 px-1 font-mono text-[9px] text-erase">
+                    {zone.label}
+                  </span>
+                )}
               </div>
             ))}
             {preset.shape === "circle" ? (
@@ -223,9 +240,11 @@ export function ArtboardCanvas({
               opacity: dragging === selected.id ? 0.6 : 1,
             }}
           >
-            <span className="absolute -top-4 left-0 bg-accent px-1 font-mono text-[9px] text-coffee uppercase">
-              {selected.kind}
-            </span>
+            {compact ? null : (
+              <span className="absolute -top-4 left-0 bg-accent px-1 font-mono text-[9px] text-coffee uppercase">
+                {selected.kind}
+              </span>
+            )}
           </div>
         ) : null}
       </div>
