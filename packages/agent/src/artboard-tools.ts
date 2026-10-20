@@ -475,6 +475,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       const resolvedWeight = input.weight ?? (input.face === "silkscreen" ? 700 : 400);
       requireColor(input.color, run, "text");
       const snapped = snapTextSize(input.face, resolvedWeight, input.size);
+      const scale = Math.max(1, Math.min(8, input.scale * snapped.scale));
       const font = resolveFont(input.face, resolvedWeight, snapped.size);
       const missing = missingGlyphs(font, input.text);
       if (missing.length > 0) {
@@ -493,7 +494,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         face: input.face,
         weight: resolvedWeight,
         size: snapped.size,
-        ...(snapped.scale > 1 ? { scale: snapped.scale } : {}),
+        ...(scale > 1 ? { scale } : {}),
         color: input.color,
         x: input.x,
         y: input.y,
@@ -524,8 +525,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         width: layout.width,
         height: layout.height,
         size: snapped.size,
-        scale: snapped.scale,
-        effectiveSize: snapped.effective,
+        scale,
+        effectiveSize: snapped.size * scale,
         checks: checksJson(checksFor(run, next)),
       };
     },
