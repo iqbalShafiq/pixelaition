@@ -86,19 +86,6 @@ function profileTemplate(
       })
     : undefined;
   if (sprite) elements.push(sprite);
-  // A profile is a mark, not a poster. The field ring gives the circle crop a
-  // visible edge without adding a colour the palette does not hold.
-  elements.push({
-    id: "ring",
-    kind: "frame",
-    x: safe.x,
-    y: safe.y,
-    width: safe.width,
-    height: safe.height,
-    thickness: Math.max(2, Math.round(input.preset.width * 0.012)),
-    color: colors.accent,
-    safe: false,
-  });
   return {
     version: 1,
     background: { kind: "solid", color: colors.background },
@@ -211,7 +198,7 @@ function splitTemplate(
         box: {
           x: safe.x + copyWidth + Math.round(safe.width * 0.04),
           y: safe.y,
-          width: safe.width - copyWidth - Math.round(safe.width * 0.04),
+          width: safe.width - copyWidth - Math.round(safe.width * 0.08),
           height: safe.height,
         },
         anchor: "center",
@@ -270,7 +257,7 @@ function stackTemplate(
       }),
     );
   }
-  const bottomHeight = Math.round(safe.height * 0.2);
+  const bottomHeight = Math.round(safe.height * 0.32);
   const spriteTop = safe.y + headlineHeight + Math.round(safe.height * 0.03);
   const spriteBottom =
     safe.y + safe.height - bottomHeight - Math.round(safe.height * 0.03);
@@ -302,7 +289,7 @@ function stackTemplate(
         bottomBox,
         colors,
         "left",
-        Math.round(safe.width * 0.055),
+        Math.round(bottomHeight * 0.45),
       ),
     );
   }
@@ -425,7 +412,7 @@ function copyStack(
       face: "mono",
       weight: 400,
       color: colors.accent,
-      share: 0.12,
+      share: 0.08,
       maxLines: 1,
     },
     {
@@ -434,7 +421,7 @@ function copyStack(
       face: "silkscreen",
       weight: 700,
       color: colors.ink,
-      share: 0.42,
+      share: 0.3,
       maxLines: 3,
     },
     {
@@ -443,16 +430,16 @@ function copyStack(
       face: "pixelify",
       weight: 400,
       color: colors.muted,
-      share: 0.22,
+      share: 0.28,
       maxLines: 3,
     },
     {
       id: "cta",
       text: copy.cta,
-      face: "mono",
-      weight: 400,
+      face: "pixelify",
+      weight: 600,
       color: colors.accent,
-      share: 0.12,
+      share: 0.16,
       maxLines: 1,
     },
     {
@@ -461,7 +448,7 @@ function copyStack(
       face: "mono",
       weight: 400,
       color: colors.muted,
-      share: 0.12,
+      share: 0.18,
       maxLines: 1,
     },
   ];
@@ -512,8 +499,23 @@ function makeFittedText(input: {
   const sizes = availableSizes(input.face, input.weight)
     .filter((size) => size <= Math.max(8, input.desired))
     .sort((a, b) => b - a);
-  let fallback: TextElement | undefined;
-  for (const size of sizes.length > 0 ? sizes : [input.desired]) {
+  const candidates: Array<{ size: number; scale: number; effective: number }> = [];
+  for (const size of sizes) {
+    const maxScale = Math.max(
+      1,
+      Math.min(8, Math.ceil(Math.max(8, input.desired) / Math.max(1, size))),
+    );
+    for (let scale = 1; scale <= maxScale; scale += 1) {
+      candidates.push({ size, scale, effective: size * scale });
+    }
+  }
+  candidates.sort(
+    (a, b) =>
+      Math.abs(a.effective - input.desired) - Math.abs(b.effective - input.desired) ||
+      b.effective - a.effective,
+  );
+  let smallest: TextElement | undefined;
+  for (const candidate of candidates) {
     const element = makeText({
       id: input.id,
       text: input.text,
@@ -522,20 +524,31 @@ function makeFittedText(input: {
       color: input.color,
       box: input.box,
       align: input.align,
-      size,
+      size: candidate.size,
+      scale: candidate.scale,
       maxLines: input.maxLines,
       lineHeight: Math.round(
-        size * (input.id === "headline" ? 1.15 : input.id === "subhead" ? 1.2 : 1.1),
+        candidate.size *
+          (input.id === "headline" ? 1.15 : input.id === "subhead" ? 1.2 : 1.1),
       ),
     });
     const layout = layoutText(element);
-    fallback = element;
-    if (layout.height <= input.box.height && layout.lines.length <= input.maxLines) {
+    if (
+      !smallest ||
+      element.size * (element.scale ?? 1) < smallest.size * (smallest.scale ?? 1)
+    ) {
+      smallest = element;
+    }
+    if (
+      layout.height <= input.box.height &&
+      (input.maxLines === undefined || layout.lines.length <= input.maxLines)
+    ) {
       return element;
     }
   }
   return (
-    fallback ?? makeText({ ...input, size: input.box.height, maxLines: input.maxLines })
+    smallest ??
+    makeText({ ...input, size: Math.max(8, input.box.height), maxLines: input.maxLines })
   );
 }
 
@@ -548,10 +561,13 @@ function makeText(input: {
   box: Rect;
   align: "left" | "center" | "right";
   size: number;
+  scale?: number;
   maxLines: number;
   lineHeight?: number;
 }): TextElement {
-  const { size, scale } = fontSpec(input.face, input.weight, input.size);
+  const spec = fontSpec(input.face, input.weight, input.size);
+  const size = spec.size;
+  const scale = input.scale ?? spec.scale;
   return {
     id: input.id,
     kind: "text",

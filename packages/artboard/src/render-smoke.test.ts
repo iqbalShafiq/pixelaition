@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import { createBuffer } from "@pixelaition/pixel";
-import { encodeArtboard } from "@pixelaition/export";
+import { PNG } from "pngjs";
 import {
   buildTemplateScene,
   checkScene,
   getPreset,
   renderScene,
+  toRgba,
   type SpriteSource,
 } from "./index.js";
 
@@ -62,8 +63,10 @@ describe("artboard render smoke", () => {
     });
     expect(result.image.width).toBe(1080);
     console.log(JSON.stringify(checks, null, 2));
-    const png = encodeArtboard(result.image, "png");
-    writeFileSync("/tmp/artboard-post.png", Buffer.from(png));
-    expect(png.length).toBeGreaterThan(0);
+    const png = new PNG({ width: result.image.width, height: result.image.height });
+    png.data.set(toRgba(result.image));
+    const encoded = PNG.sync.write(png);
+    writeFileSync("/tmp/artboard-post.png", encoded);
+    expect(encoded.length).toBeGreaterThan(0);
   });
 });

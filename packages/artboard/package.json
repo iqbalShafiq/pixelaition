@@ -21,6 +21,7 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.4",
     "@types/node": "^26.6.5",
-    "@pixelaition/export": "workspace:*"
+    "pngjs": "^7.0.0",
+    "@types/pngjs": "^6.0.5"
   }
 }

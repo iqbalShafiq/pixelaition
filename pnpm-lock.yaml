@@ -337,15 +337,18 @@ importers:
       '@pixelaition/config':
         specifier: workspace:*
         version: link:../config
-      '@pixelaition/export':
-        specifier: workspace:*
-        version: link:../export
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
+      '@types/pngjs':
+        specifier: ^6.0.5
+        version: 6.0.5
       eslint:
         specifier: ^9.39.4
         version: 9.39.5(jiti@2.7.0)
+      pngjs:
+        specifier: ^7.0.0
+        version: 7.0.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
