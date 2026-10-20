@@ -160,7 +160,11 @@ checked at 1440, 1100, 720 and 390 px.
   waited for plan approval, created both social frames inside the same asset,
   saved them with shared copy and finished 0 errors/0 warnings. The Langfuse
   trace had 73 observations and no refused tool calls.
-  `node tools/trace-check.mjs --run <durableRunId>` reads it back.
+  `node tools/trace-check.mjs --run <durableRunId>` reads it back. A follow-up
+  question on the same Instagram frame stayed an ask run; with the artboard
+  read tools bound it answered the safe-area bounds and 0 error/0 warning
+  result without editing the frame. Cross-asset frame, palette and background
+  copy were exercised through the API and UI.
 - A 44-format creation probe built every preset with a real sprite and the
   default template: 44 artboards, 0 errors, 0 warnings.
 - `pnpm eval:social` makes a real MiniMax M3.1 Flash planning call, retries a
