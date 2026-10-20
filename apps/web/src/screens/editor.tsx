@@ -3163,9 +3163,9 @@ export function EditorScreen() {
                   <span className="font-mono text-[10px] text-muted">
                     {socialFrame.width}×{socialFrame.height}
                     {socialSummary.errors > 0
-                      ? ` · ${socialSummary.errors} errors`
+                      ? ` · ${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"}`
                       : socialSummary.warnings > 0
-                        ? ` · ${socialSummary.warnings} warnings`
+                        ? ` · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
                         : " · ready"}
                   </span>
                   <span className="ml-auto flex items-center gap-1">
