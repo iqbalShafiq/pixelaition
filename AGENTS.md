@@ -75,8 +75,8 @@ pnpm db:migrate
   `present_artboard_plan`, writes only after approval, saves each social frame
   with optimistic versioning, and leaves a version snapshot. Boot recovery
   re-binds the asset and artboard tools from `generation_runs.mode`.
-- A social frame is created with `POST /api/assets/:id/frames` (`kind:
-social`), edited through its scene route, and exported at native size.
+- A social frame is created with `POST /api/assets/:id/frames`
+  (`kind: social`), edited through its scene route, and exported at native size.
   `GET /api/projects/:id/resources` is the project-wide read: assets, sprite
   frames, social frames, palettes and dimensions. Cross-asset reuse is explicit:
   sprite elements name `assetId/frameId`; frame import maps the palette; palette
