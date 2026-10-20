@@ -50,7 +50,7 @@ import {
   spritesForAsset,
   spritesForResources,
 } from "../lib/artboard.js";
-import { FormatPicker, Inspector } from "./studio.js";
+import { FormatPicker, Inspector } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";

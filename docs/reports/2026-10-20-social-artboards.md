@@ -115,29 +115,31 @@ one, and answers in the request's language. A model that cannot see images gets
 a description through the existing summary-vision path; a model with vision gets
 the actual PNG. The composer never silently substitutes a different model.
 
-A compose run is bound to the kit in the worker. Boot recovery re-loads the set
-and re-binds both the asset and artboard tools, and infers plan approval from
-boards that already have version > 1.
+A compose run is bound to the asset in the worker. Boot recovery re-loads the
+asset's social frames and the project's sprite frames, re-binds both the pixel
+and artboard tools, and infers plan approval from social frames already at
+version > 1.
 
 ## UI
 
-`/projects/$projectId/assets/$assetId/studio` is the Social Studio:
+The separate Studio route is gone; `/studio` only redirects to the asset
+editor. The unified editor switches on the selected frame:
 
-- a format rail grouped by platform, with a live thumbnail and check state;
-- a contact sheet of the whole kit, each card at its own aspect;
-- an artboard stage with fit/1:1, safe-zone/crop/exclusion overlays and direct
-  whole-pixel sprite dragging;
-- an inspector for background, elements, text (face, weight, size, align),
-  palette-only colours, shared copy and the deterministic check list;
-- an in-context preview for profile crops, covers, feed posts and vertical
-  video, clearly labelled as simulated and never exported;
-- an export sheet for one board or the whole kit;
-- the existing composer and run console, so a compose run streams, pauses for
-  plan approval, and resumes without leaving the screen.
+- the frame rail holds sprite and social frames together, with native size and
+  check state on the social rows;
+- a social frame opens the artboard stage with fit/1:1, safe-zone/crop/
+  exclusion overlays and direct whole-pixel sprite dragging;
+- the right inspector carries background (including copy from another project
+  frame), elements, text (face, weight, size, align), palette-only colours,
+  shared copy, checks, template and source sprite;
+- the same composer and run console handle a compose run, its plan approval and
+  its saves without leaving the editor;
+- the same Export sheet exports a social frame at native size or a sprite
+  through the pixel formats.
 
-At ≥ 1100 px the rail and inspector are columns. Below that they become sheets;
-the stage keeps the composer docked and scrolls independently. The layout was
-checked at 1440, 1100, 720 and 390 px.
+At ≥ 1100 px the frame rail and inspector are columns. Below that they become
+sheets; the stage keeps the composer docked and reserves room above it. The
+layout was checked at 1440, 1100, 720 and 390 px.
 
 ## Testing
 

@@ -91,7 +91,7 @@ const editorRoute = createRoute({
   component: EditorScreen,
 });
 
-const studioRoute = createRoute({
+const legacyStudioRedirect = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId/assets/$assetId/studio",
   beforeLoad: ({ params }) => {
@@ -108,7 +108,7 @@ const routeTree = rootRoute.addChildren([
   registerRoute,
   projectsRoute,
   editorRoute,
-  studioRoute,
+  legacyStudioRedirect,
 ]);
 
 export const router = createRouter({ routeTree, defaultNotFoundComponent: NotFound });
