@@ -71,6 +71,7 @@ import {
   createDatabase,
   createVersion,
   artboardSets,
+  artboardVersions,
   artboards,
   assets,
   frames,
@@ -3055,6 +3056,25 @@ function setDtoFromRow(row: typeof artboardSets.$inferSelect) {
 
 async function saveArtboardRecord(artboard: Artboard): Promise<Artboard> {
   const scene = sceneSchema.parse(artboard.scene);
+  const [existing] = await db
+    .select()
+    .from(artboards)
+    .where(and(eq(artboards.id, artboard.id), eq(artboards.version, artboard.version)));
+  if (!existing) {
+    throw new Error(
+      `Artboard "${artboard.name}" changed while the agent was working; reload it before saving.`,
+    );
+  }
+  await db.insert(artboardVersions).values({
+    id: randomUUID(),
+    setId: existing.setId,
+    artboardId: existing.id,
+    scope: "artboard",
+    kind: "agent-update",
+    author: "agent",
+    runId: null,
+    snapshot: { scene: existing.scene, name: existing.name },
+  });
   const [row] = await db
     .update(artboards)
     .set({
@@ -3146,6 +3166,16 @@ async function setCopyRecord(
       next.push(current);
       continue;
     }
+    await db.insert(artboardVersions).values({
+      id: randomUUID(),
+      setId,
+      artboardId: current.id,
+      scope: "artboard",
+      kind: "copy-sync",
+      author: "agent",
+      runId: null,
+      snapshot: { scene: current.scene, name: current.name },
+    });
     const [updated] = await db
       .update(artboards)
       .set({ scene, version: current.version + 1, updatedAt: new Date() })
@@ -3183,6 +3213,7 @@ function bindArtboardRunFor(options: {
   publicRunId: string;
   loaded: LoadedArtboardSet;
   userId: string;
+  planApproved?: boolean;
 }): void {
   const { loaded, durableRunId, publicRunId, userId } = options;
   const sprites = spritesForAsset(loaded.asset);
@@ -3196,7 +3227,7 @@ function bindArtboardRunFor(options: {
     copy: loaded.set.copy as CopyDeck,
     artboards: new Map(loaded.artboards.map((artboard) => [artboard.id, artboard])),
     sprites,
-    planApproved: false,
+    planApproved: options.planApproved ?? false,
     onSave: (artboard) => saveArtboardRecord(artboard),
     onCreate: (input) =>
       createArtboardRecord({
@@ -3656,6 +3687,26 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
           `[recovery] asset ${assetId} for run ${run.id} has no frames; leaving the run unrecovered`,
         );
         continue;
+      }
+      if (run.setId) {
+        const loaded = await loadArtboardSetForRun(run.setId, assetId, userId);
+        if (!loaded) {
+          console.error(
+            `[recovery] artboard set ${run.setId} for run ${run.id} was not found; the artboard tools will be unavailable`,
+          );
+        } else {
+          bindArtboardRunFor({
+            durableRunId,
+            publicRunId: run.id,
+            loaded,
+            userId,
+            // A scene at version > 1 means the user already approved the plan
+            // and boards were written; otherwise the resumed agent re-asks.
+            planApproved: loaded.artboards.some(
+              (artboard) => artboard.version > 1 || artboard.status === "ready",
+            ),
+          });
+        }
       }
       bindAssetRun({
         durableRunId,

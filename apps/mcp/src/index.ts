@@ -322,3 +322,116 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// ---- Social artboards -------------------------------------------------------
+
+server.registerTool(
+  "list_social_sets",
+  {
+    description:
+      "List the social kits in a project, with artboard counts and shared copy.",
+    inputSchema: { projectId: z.string() },
+  },
+  async ({ projectId }) =>
+    text(await call(`/api/sets?projectId=${encodeURIComponent(projectId)}`)),
+);
+
+server.registerTool(
+  "get_social_set",
+  {
+    description:
+      "Read a social kit with every artboard scene, shared copy, and format preset.",
+    inputSchema: { setId: z.string() },
+  },
+  async ({ setId }) => text(await call(`/api/sets/${setId}`)),
+);
+
+server.registerTool(
+  "create_social_set",
+  {
+    description:
+      "Create a social kit from one asset. Presets are exact native formats; omit presetIds for the starter six.",
+    inputSchema: {
+      projectId: z.string(),
+      assetId: z.string(),
+      presetIds: z.array(z.string()).optional(),
+    },
+  },
+  async ({ projectId, assetId, presetIds }) =>
+    text(
+      await call(`/api/projects/${projectId}/sets`, {
+        method: "POST",
+        body: JSON.stringify({ assetId, ...(presetIds ? { presetIds } : {}) }),
+      }),
+    ),
+);
+
+server.registerTool(
+  "add_social_format",
+  {
+    description:
+      "Add one format (profile, cover, post, story, reel, thumbnail, banner) to a kit.",
+    inputSchema: { setId: z.string(), presetId: z.string() },
+  },
+  async ({ setId, presetId }) =>
+    text(
+      await call(`/api/sets/${setId}/artboards`, {
+        method: "POST",
+        body: JSON.stringify({ presetId }),
+      }),
+    ),
+);
+
+server.registerTool(
+  "update_social_artboard",
+  {
+    description:
+      "Replace an artboard scene with optimistic versioning. Read it first with get_social_set.",
+    inputSchema: {
+      artboardId: z.string(),
+      version: z.number().int().positive(),
+      name: z.string().optional(),
+      scene: z.unknown().optional(),
+      copyOverride: z.record(z.string(), z.string()).optional(),
+      status: z.enum(["draft", "ready"]).optional(),
+    },
+  },
+  async ({ artboardId, ...patch }) =>
+    text(
+      await call(`/api/artboards/${artboardId}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    ),
+);
+
+server.registerTool(
+  "check_social_set",
+  {
+    description:
+      "Run the deterministic size, safe-zone, crop, text, contrast, and byte checks for a kit.",
+    inputSchema: { setId: z.string() },
+  },
+  async ({ setId }) => text(await call(`/api/sets/${setId}/state`)),
+);
+
+server.registerTool(
+  "render_social_artboard",
+  {
+    description: "Render one artboard to PNG and return the image.",
+    inputSchema: { artboardId: z.string() },
+  },
+  async ({ artboardId }) => {
+    const response = await fetch(`${api}/api/artboards/${artboardId}/preview`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok)
+      throw new Error((await response.text()) || `API ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return {
+      content: [
+        { type: "image" as const, data: bytes.toString("base64"), mimeType: "image/png" },
+      ],
+    };
+  },
+);

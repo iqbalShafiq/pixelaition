@@ -2688,7 +2688,7 @@ export function createApp() {
       .object({
         assetId: z.string().min(1),
         name: z.string().min(1).max(80).optional(),
-        presetIds: z.array(z.string().min(1)).min(1).max(40).optional(),
+        presetIds: z.array(z.string().min(1)).min(1).max(64).optional(),
         copy: copyDeckSchema.optional(),
       })
       .parse(req.body);

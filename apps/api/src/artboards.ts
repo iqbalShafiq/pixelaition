@@ -223,6 +223,16 @@ export async function updateArtboardSet(
     for (const artboard of existing.artboards) {
       const scene = syncCopyScene(artboard.scene, nextCopy, artboard.copyOverride);
       if (JSON.stringify(scene) === JSON.stringify(artboard.scene)) continue;
+      await db.insert(artboardVersions).values({
+        id: randomUUID(),
+        setId,
+        artboardId: artboard.id,
+        scope: "artboard",
+        kind: "copy-sync",
+        author: "user",
+        runId: null,
+        snapshot: { scene: artboard.scene, name: artboard.name },
+      });
       await db
         .update(artboards)
         .set({ scene, version: artboard.version + 1, updatedAt: new Date() })
@@ -328,6 +338,26 @@ export async function updateArtboard(
   }
   const nextScene = input.scene ?? (row.artboard.scene as ArtboardScene);
   const scene = sceneSchema.parse(nextScene);
+  const [written] = await db
+    .update(artboards)
+    .set({
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.copyOverride !== undefined ? { copyOverride: input.copyOverride } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      scene,
+      version: row.artboard.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(artboards.id, artboardId), eq(artboards.version, input.version)))
+    .returning({ id: artboards.id });
+  if (!written) {
+    return {
+      failure: {
+        code: "VERSION_CONFLICT",
+        message: "This artboard changed while it was being saved. Reload it.",
+      },
+    };
+  }
   await db.insert(artboardVersions).values({
     id: randomUUID(),
     setId: row.set.id,
@@ -338,17 +368,6 @@ export async function updateArtboard(
     runId: input.runId ?? null,
     snapshot: { scene: row.artboard.scene, name: row.artboard.name },
   });
-  await db
-    .update(artboards)
-    .set({
-      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-      ...(input.copyOverride !== undefined ? { copyOverride: input.copyOverride } : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      scene,
-      version: row.artboard.version + 1,
-      updatedAt: new Date(),
-    })
-    .where(eq(artboards.id, artboardId));
   await db
     .update(artboardSets)
     .set({ updatedAt: new Date() })

@@ -170,6 +170,77 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
+  it("creates, edits, checks, previews, and exports a social kit", async () => {
+    const project = await request(app)
+      .post("/api/projects")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "social routes" });
+    expect(project.status).toBe(201);
+    const asset = await request(app)
+      .post(`/api/projects/${project.body.id}/assets`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "orbit" });
+    expect(asset.status).toBe(201);
+    try {
+      const created = await request(app)
+        .post(`/api/projects/${project.body.id}/sets`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          assetId: asset.body.id,
+          presetIds: ["linkedin-profile", "instagram-post"],
+        });
+      expect(created.status).toBe(201);
+      expect(created.body.artboards).toHaveLength(2);
+      const board = created.body.artboards[0];
+      expect(board.width).toBe(400);
+      expect(board.scene.elements.length).toBeGreaterThan(0);
+
+      const preview = await request(app)
+        .get(`/api/artboards/${board.id}/preview`)
+        .set("authorization", `Bearer ${token}`);
+      expect(preview.status).toBe(200);
+      expect(preview.headers["content-type"]).toBe("image/png");
+      expect((preview.body as Buffer).readUInt32BE(16)).toBe(400);
+      expect((preview.body as Buffer).readUInt32BE(20)).toBe(400);
+
+      const state = await request(app)
+        .get(`/api/sets/${created.body.id}/state`)
+        .set("authorization", `Bearer ${token}`);
+      expect(state.status).toBe(200);
+      expect(state.body.artboards).toHaveLength(2);
+      expect(state.body.summary.errors).toBe(0);
+
+      const patched = await request(app)
+        .patch(`/api/artboards/${board.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: board.version, name: "LinkedIn avatar", status: "ready" });
+      expect(patched.status).toBe(200);
+      expect(patched.body.artboard.version).toBe(board.version + 1);
+
+      const stale = await request(app)
+        .patch(`/api/artboards/${board.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: board.version, name: "stale" });
+      expect(stale.status).toBe(409);
+
+      const png = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "artboard", artboardId: board.id, format: "png" });
+      expect(png.status).toBe(200);
+      expect(png.headers["content-type"]).toBe("image/png");
+
+      const zip = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "set", setId: created.body.id, format: "zip" });
+      expect(zip.status).toBe(200);
+      expect(zip.headers["content-type"]).toBe("application/zip");
+    } finally {
+      await live.delete(projects).where(eq(projects.id, project.body.id));
+    }
+  });
+
   it("surfaces a bound workspace run as the asset's active run with its card", async () => {
     const projectId = randomUUID();
     const asset = createAsset({ name: "bound-run", width: 8, height: 8 });

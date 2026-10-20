@@ -26,6 +26,7 @@ import { artboardToJpg, artboardToPng } from "@pixelaition/export";
 import { z } from "zod";
 import {
   assertOwnedArtboard,
+  assertPlanApproved,
   requireArtboardRun,
   resolveArtboard,
   spriteFor,
@@ -440,7 +441,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const setText = createTool({
     name: "set_text",
     description:
-      "Create or update a text element. Size must be one of the face's atlas sizes; scale grows it by whole pixels. Text is wrapped inside `width`; `maxLines` and the deterministic checks report overflow instead of clipping silently.",
+      "Create or update a text element. `size` is the requested final pixel height; it snaps to an atlas size plus whole-pixel scale. Text is wrapped inside `width`; `height` reserves a copy slot (copy edits refit inside it), and `maxLines` plus the deterministic checks report overflow instead of clipping silently.",
     inputSchema: z.object({
       artboardId,
       elementId: z.string().min(1).max(80).default("headline"),
@@ -453,6 +454,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       x: z.number().int().min(0),
       y: z.number().int().min(0),
       width: z.number().int().min(1),
+      height: z.number().int().min(1).optional(),
       align: align.default("left"),
       lineHeight: z.number().int().min(1).optional(),
       maxLines: z.number().int().min(1).max(20).default(3),
@@ -480,6 +482,10 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
           `${input.face} cannot render ${missing.map((char) => `"${char}"`).join(", ")}. Rewrite the copy with supported characters.`,
         );
       }
+      const existing = artboard.scene.elements.find(
+        (item) => item.id === input.elementId,
+      );
+      const existingHeight = existing?.kind === "text" ? existing.height : undefined;
       const element: TextElement = {
         id: input.elementId,
         kind: "text",
@@ -492,6 +498,11 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         x: input.x,
         y: input.y,
         width: input.width,
+        ...(input.height !== undefined
+          ? { height: input.height }
+          : existingHeight !== undefined
+            ? { height: existingHeight }
+            : {}),
         align: input.align,
         ...(input.lineHeight !== undefined ? { lineHeight: input.lineHeight } : {}),
         maxLines: input.maxLines,
@@ -682,6 +693,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ artboardId }),
     execute: async (input, context) => {
       const run = requireArtboardRun(context.operationId);
+      assertPlanApproved(run);
       const artboard = resolveArtboard(run, input.artboardId);
       assertOwnedArtboard(run, artboard.id);
       const encodedResult = encoded(run, artboard);
@@ -749,6 +761,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
     inputSchema: z.object({ artboardId: z.string().min(1) }),
     execute: async (input, context) => {
       const run = requireArtboardRun(context.operationId);
+      assertPlanApproved(run);
       if (!run.onDelete) throw new Error("This run cannot delete artboards.");
       const artboard = resolveArtboard(run, input.artboardId);
       await run.onDelete(artboard.id);
@@ -764,6 +777,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
     inputSchema: copySchema,
     execute: async (input, context) => {
       const run = requireArtboardRun(context.operationId);
+      assertPlanApproved(run);
       if (!run.onSetCopy) throw new Error("This run cannot change the set copy.");
       const copy = copyFrom(input);
       const result = await run.onSetCopy(copy);

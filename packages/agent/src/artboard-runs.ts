@@ -107,7 +107,16 @@ export function assertOwnedArtboard(run: ArtboardRunBinding, artboardId: string)
   }
 }
 
+export function assertPlanApproved(run: ArtboardRunBinding): void {
+  if (run.planApproved !== true) {
+    throw new Error(
+      "The plan is not approved yet. Call present_artboard_plan and wait for the user.",
+    );
+  }
+}
+
 export function writeArtboard(run: ArtboardRunBinding, artboard: Artboard): void {
+  assertPlanApproved(run);
   run.artboards.set(artboard.id, artboard);
   run.currentArtboardId = artboard.id;
 }
