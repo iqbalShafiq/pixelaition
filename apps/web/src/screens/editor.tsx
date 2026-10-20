@@ -2331,6 +2331,11 @@ export function EditorScreen() {
         });
       } else if (kind === "delete") {
         await api(`/api/assets/${assetId}/frames/${target}`, { method: "DELETE" });
+        const timer = socialSaveTimers.current.get(target);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          socialSaveTimers.current.delete(target);
+        }
         flush();
         setDrafts((current) => {
           const next = { ...current };
