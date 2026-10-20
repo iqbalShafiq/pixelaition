@@ -1535,13 +1535,13 @@ function FormatRail({
       >
         + Add format
       </Button>
-      <Button
-        tone="danger"
-        className="justify-start px-2 py-1 text-pixel-label"
+      <button
+        type="button"
         onClick={onDeleteSet}
+        className="mt-1 border-t-2 border-line px-2 pt-2 pb-1 text-left text-pixel-label text-erase hover:text-ink"
       >
         Delete kit
-      </Button>
+      </button>
     </div>
   );
 }
