@@ -2787,6 +2787,10 @@ export function EditorScreen() {
         onSelectElement={setSocialElementId}
         onAddText={addSocialText}
         onAddElement={addSocialElement}
+        onImportPalette={() => {
+          setPaletteSourceId("");
+          setPaletteImportOpen(true);
+        }}
         running={running}
       />
     ) : null;

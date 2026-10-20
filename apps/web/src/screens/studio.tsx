@@ -1567,6 +1567,7 @@ export function Inspector({
   onSelectElement,
   onAddText,
   onAddElement,
+  onImportPalette,
   running,
 }: {
   board: Artboard;
@@ -1594,6 +1595,7 @@ export function Inspector({
   onSelectElement: (id: string) => void;
   onAddText: () => void;
   onAddElement: (kind: "rect" | "pattern" | "frame") => void;
+  onImportPalette?: () => void;
   running: boolean;
 }) {
   const [elementId, setElementId] = useState<string | null>(
@@ -1669,6 +1671,16 @@ export function Inspector({
               </Button>
             </div>
           </section>
+
+          {onImportPalette ? (
+            <Button
+              tone="ghost"
+              className="justify-start px-2 py-1 text-pixel-label"
+              onClick={onImportPalette}
+            >
+              Import project palette
+            </Button>
+          ) : null}
 
           <section className="grid gap-2 border-2 border-line bg-field p-2">
             <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
