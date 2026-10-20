@@ -33,15 +33,25 @@ It runs on [Anvia](https://github.com/anvia-hq/anvia), the agent runtime behind 
 
 The same screen holds projects, assets, frames, layers and the run history. A composer docks at the bottom of both the workspace and the editor, so a new request and a follow-up are the same motion.
 
-## Social kits
+## One asset, sprite and social frames
 
-A sprite can also become a **social kit** of 44 native formats: profiles, covers, feed posts, Reels/TikTok covers, YouTube thumbnails, banners and OG images. The sprite stays a sprite; the kit is a palette-indexed scene graph rendered at the output size, with safe zones, crops, deterministic checks and one shared copy deck.
+An asset is a mixed document. A frame can be a **sprite** — palette-indexed
+layers on the asset canvas, made for animation — or a **social** frame rendered
+at a platform's native size with safe zones, crops, deterministic checks and a
+shared copy deck. One asset can hold sprite X, sprite Y, a Facebook cover, a
+Reels thumbnail and a YouTube thumbnail as different frames.
 
-Open **Social** from the editor header, or go to
-`/projects/:projectId/assets/:assetId/studio`. The Studio includes a format rail,
-contact sheet, artboard stage, inspector, in-context previews, export (PNG/JPG or
-a ZIP with `manifest.json`), and the same composer/console for an art-director
-run that plans, checks and saves each format.
+All frames stay in the same editor. Select a sprite to draw; select a social
+frame and the same stage becomes its native-size artboard, with a layout/copy/
+checks inspector. Formats come from 44 official presets. The art director is one
+compose run for the asset: it plans the frames, waits for approval, composes and
+saves each one through the same composer and console as a sprite run.
+
+Project resources are reusable without copying a whole asset. Sprite elements
+name an `assetId`/`frameId`, the sprite picker lists every frame in the project,
+frame import copies a sprite or social frame, and palette import remaps both
+sprite layers and social scenes. Social frames export as PNG or JPG at native
+size; sprite export keeps PNG/JPG/SVG/ZIP and `.pxl`.
 
 The architecture and the trade-offs are in
 [docs/reports/2026-10-20-social-artboards.md](docs/reports/2026-10-20-social-artboards.md).

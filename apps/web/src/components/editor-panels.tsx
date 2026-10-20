@@ -8,6 +8,10 @@ import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
+import { getPreset, type SpriteSource } from "@pixelaition/artboard";
+import { ArtboardCanvas } from "./artboard-canvas.js";
+import { artboardForFrame, sceneSpritesReady } from "../lib/artboard.js";
+import type { AssetDto } from "../lib/types.js";
 import {
   Check,
   Copy,
@@ -15,6 +19,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Square,
   Stop,
   Trash,
 } from "./pixel-icons.js";
@@ -142,6 +147,8 @@ function FrameRow({
   pixelWidth,
   pixelHeight,
   live,
+  asset,
+  sprites,
   current,
   locked,
   editing,
@@ -165,6 +172,8 @@ function FrameRow({
   pixelWidth?: number;
   pixelHeight?: number;
   live?: FrameBuffer;
+  asset?: AssetDto;
+  sprites?: Map<string, SpriteSource>;
   current: boolean;
   locked: boolean;
   editing: boolean;
@@ -226,13 +235,32 @@ function FrameRow({
           className="pointer-events-none relative shrink-0 overflow-hidden"
           style={{ height: 36 }}
         >
-          <FrameThumb
-            frame={frame}
-            palette={live?.palette ?? palette}
-            width={pixelWidth}
-            height={pixelHeight}
-            live={live}
-          />
+          {frame.kind === "social" &&
+          asset &&
+          sprites &&
+          frame.presetId &&
+          frame.scene &&
+          sceneSpritesReady(frame.scene, sprites) ? (
+            <span className="grid h-9 w-9 place-items-center overflow-hidden border-2 border-line bg-screen">
+              <ArtboardCanvas
+                artboard={artboardForFrame(asset, frame)!}
+                preset={getPreset(frame.presetId)}
+                asset={asset}
+                sprites={sprites}
+                fit
+                showZones={false}
+                thumbnail
+              />
+            </span>
+          ) : (
+            <FrameThumb
+              frame={frame}
+              palette={live?.palette ?? palette}
+              width={pixelWidth}
+              height={pixelHeight}
+              live={live}
+            />
+          )}
           {taskState?.painting === true ? (
             // The agent's own cursor, painting inside this frame's square.
             <span aria-hidden className="agent-cursor">
@@ -270,6 +298,12 @@ function FrameRow({
               </span>
             ) : current && locked ? (
               <span className="text-pixel-mono">drawing</span>
+            ) : frame.kind === "social" ? (
+              <span className="truncate font-mono text-[9px] text-muted">
+                {frame.presetId
+                  ? `${getPreset(frame.presetId).platform} · ${frame.width}×${frame.height}`
+                  : "social"}
+              </span>
             ) : null}
           </span>
         )}
@@ -376,9 +410,13 @@ export function FramePanel({
   locked,
   activity,
   taskFrames,
+  asset,
+  sprites,
   onSelect,
   onTogglePlay,
   onAdd,
+  onAddSocial,
+  onImport,
   onDuplicate,
   onRename,
   onDelete,
@@ -397,9 +435,13 @@ export function FramePanel({
   activity?: string;
   /** Per-frame task state, keyed by frame id, while a task runs. */
   taskFrames?: Map<string, FrameTaskState>;
+  asset?: AssetDto;
+  sprites?: Map<string, SpriteSource>;
   onSelect: (frameId: string) => void;
   onTogglePlay: () => void;
   onAdd: () => void;
+  onAddSocial?: () => void;
+  onImport?: () => void;
   onDuplicate: (frameId: string) => void;
   onRename: (frameId: string, name: string) => void;
   onDelete: (frameId: string) => void;
@@ -487,6 +529,11 @@ export function FramePanel({
           <IconButton label="Add frame" disabled={locked} onClick={onAdd}>
             <Plus />
           </IconButton>
+          {onAddSocial ? (
+            <IconButton label="Add social format" disabled={locked} onClick={onAddSocial}>
+              <Square />
+            </IconButton>
+          ) : null}
         </div>
       }
     >
@@ -521,6 +568,8 @@ export function FramePanel({
                   pixelWidth={pixelWidth}
                   pixelHeight={pixelHeight}
                   live={liveFrames?.[frame.id]}
+                  asset={asset}
+                  sprites={sprites}
                   current={current}
                   {...(taskFrames?.get(frame.id) !== undefined
                     ? { taskState: taskFrames.get(frame.id) }
@@ -543,6 +592,17 @@ export function FramePanel({
           </Reorder.Group>
         </div>
       )}
+
+      {onImport ? (
+        <Button
+          tone="ghost"
+          className="mt-1 justify-start px-2 py-1 text-pixel-label"
+          onClick={onImport}
+          disabled={locked}
+        >
+          Import project frame
+        </Button>
+      ) : null}
 
       <ConfirmDialog
         open={pendingDelete !== null}
@@ -770,12 +830,14 @@ export function PalettePanel({
   usedColors,
   onPick,
   onAdd,
+  onImportPalette,
 }: {
   palette: string[];
   color: number;
   usedColors: number;
   onPick: (index: number) => void;
   onAdd: (hex: string) => void;
+  onImportPalette?: () => void;
 }) {
   const [draft, setDraft] = useState("#d8a64e");
   const [hsv, setHsv] = useState(() => hexToHsv("#d8a64e"));
@@ -928,6 +990,15 @@ export function PalettePanel({
           </div>
         </Popover>
       </div>
+      {onImportPalette ? (
+        <Button
+          tone="ghost"
+          className="justify-start px-2 py-1 text-pixel-label"
+          onClick={onImportPalette}
+        >
+          Import project palette
+        </Button>
+      ) : null}
     </Panel>
   );
 }

@@ -21,6 +21,7 @@ import {
   formatPresets,
   presetsByGroup,
   setPatchSchema,
+  templateIds,
 } from "@pixelaition/artboard";
 import {
   createArtboard,
@@ -80,6 +81,7 @@ const telemetry =
     : undefined;
 import {
   addFrameRecord,
+  addSocialFrameRecord,
   assetHasActiveRun,
   consumeProposal,
   createApiKey,
@@ -88,6 +90,10 @@ import {
   deleteFrameRecord,
   duplicateFrameRecord,
   ensureThread,
+  importFrameRecord,
+  importPaletteRecord,
+  renderSocialFrameRecord,
+  updateAssetCopyRecord,
   getAssetRecord,
   getPreferences,
   getProjectRecord,
@@ -106,6 +112,7 @@ import {
   revokeApiKey,
   runBelongsTo,
   saveFrame,
+  saveSocialFrameRecord,
   savePreferences,
   sessionUsageForThread,
   updateAssetRecord,
@@ -445,6 +452,7 @@ async function startRunViaWorker(
           ...(input.setId !== undefined ? { setId: input.setId } : {}),
           prompt: input.prompt,
           status: "queued",
+          mode: input.mode,
         });
   let worker: Awaited<ReturnType<typeof fetch>>;
   try {
@@ -628,6 +636,68 @@ export function createApp() {
     res.json(project);
   });
 
+  app.get("/api/projects/:id/resources", async (req, res) => {
+    const project = await getProjectRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!project) return fail(res, 404, "NOT_FOUND", "That project is not available.");
+    const rows = await db
+      .select({ asset: assets, frame: frames })
+      .from(assets)
+      .leftJoin(frames, eq(frames.assetId, assets.id))
+      .where(eq(assets.projectId, project.id))
+      .orderBy(asc(assets.createdAt), asc(frames.index));
+    const byAsset = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        width: number;
+        height: number;
+        palette: string[];
+        frames: Array<{
+          id: string;
+          name: string;
+          index: number;
+          kind: "sprite" | "social";
+          width: number | null;
+          height: number | null;
+          presetId: string | null;
+          layers: unknown;
+        }>;
+      }
+    >();
+    for (const row of rows) {
+      let entry = byAsset.get(row.asset.id);
+      if (!entry) {
+        entry = {
+          id: row.asset.id,
+          name: row.asset.name,
+          width: row.asset.width,
+          height: row.asset.height,
+          palette: row.asset.palette as string[],
+          frames: [],
+        };
+        byAsset.set(row.asset.id, entry);
+      }
+      if (row.frame) {
+        entry.frames.push({
+          id: row.frame.id,
+          name: row.frame.name,
+          index: row.frame.index,
+          kind: row.frame.kind,
+          width: row.frame.width,
+          height: row.frame.height,
+          presetId: row.frame.presetId,
+          layers: row.frame.kind === "sprite" ? row.frame.layers : [],
+        });
+      }
+    }
+    res.json({ assets: [...byAsset.values()] });
+  });
+
   app.post("/api/projects/:id/assets", async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
     const asset = await createAssetRecord(
@@ -724,23 +794,190 @@ export function createApp() {
   });
 
   app.post("/api/assets/:id/frames", async (req, res) => {
-    const body = z.object({ name: z.string().max(80).default("") }).parse(req.body);
+    const body = z
+      .object({
+        kind: z.enum(["sprite", "social"]).default("sprite"),
+        name: z.string().max(80).default(""),
+        presetId: z.string().min(1).optional(),
+        template: z.enum(templateIds).optional(),
+        copy: copyDeckSchema.optional(),
+      })
+      .refine((value) => value.kind !== "social" || value.presetId !== undefined, {
+        message: "A social frame needs a format preset.",
+      })
+      .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {
       return fail(
         res,
         409,
         "RUN_IN_PROGRESS",
-        "The agent is drawing on this asset right now.",
+        "The agent is working on this asset right now.",
       );
     }
-    const result = await addFrameRecord(
+    const result =
+      body.kind === "social"
+        ? await addSocialFrameRecord(
+            db,
+            res.locals.userId as string,
+            req.params.id ?? "",
+            {
+              presetId: body.presetId ?? "",
+              ...(body.name ? { name: body.name } : {}),
+              ...(body.template ? { template: body.template } : {}),
+              ...(body.copy ? { copy: body.copy } : {}),
+            },
+          )
+        : await addFrameRecord(
+            db,
+            res.locals.userId as string,
+            req.params.id ?? "",
+            body.name,
+          );
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "UNKNOWN_FORMAT" ? 422 : 404,
+        result.failure?.code ?? "NOT_FOUND",
+        result.failure?.message ?? "That asset is not available.",
+      );
+    res.status(201).json(result.asset);
+  });
+
+  app.patch("/api/assets/:id/frames/:frameId/scene", async (req, res) => {
+    const body = artboardPatchSchema.parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await saveSocialFrameRecord(
       db,
       res.locals.userId as string,
       req.params.id ?? "",
+      req.params.frameId ?? "",
+      {
+        version: body.version,
+        ...(body.scene !== undefined ? { scene: body.scene } : {}),
+        ...(body.copyOverride !== undefined
+          ? { copyOverride: body.copyOverride as Record<string, string> }
+          : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
+        ...(body.name !== undefined ? { name: body.name } : {}),
+      },
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "VERSION_CONFLICT" ? 409 : 404,
+        result.failure?.code ?? "NOT_FOUND",
+        result.failure?.message ?? "That frame is not available.",
+      );
+    res.json(result.asset);
+  });
+
+  app.patch("/api/assets/:id/copy", async (req, res) => {
+    const body = z.object({ copy: copyDeckSchema }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const asset = await updateAssetCopyRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.copy,
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    res.json(asset);
+  });
+
+  app.post("/api/assets/:id/social-export", async (req, res) => {
+    const body = z
+      .object({
+        frameId: z.string().min(1),
+        format: z.enum(["png", "jpg"]).default("png"),
+      })
+      .parse(req.body);
+    const result = await renderSocialFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.frameId,
+    );
+    if ("failure" in result) {
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "RENDER_FAILED",
+        result.failure?.message ?? "The frame could not render.",
+      );
+    }
+    const bytes = encodeArtboard(
+      result.image,
+      body.format,
+      body.format === "jpg" ? "#0a0a09" : undefined,
+    );
+    const name = `${slug(result.name)}-${result.width}x${result.height}.${body.format}`;
+    res.setHeader("content-type", body.format === "jpg" ? "image/jpeg" : "image/png");
+    res.setHeader("content-disposition", `attachment; filename="${name}"`);
+    res.send(Buffer.from(bytes));
+  });
+
+  app.post("/api/assets/:id/palette/import", async (req, res) => {
+    const body = z.object({ sourceAssetId: z.string().min(1) }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(res, 409, "RUN_IN_PROGRESS", "The asset is busy right now.");
+    }
+    const result = await importPaletteRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.sourceAssetId,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        404,
+        result.failure?.code ?? "NOT_FOUND",
+        result.failure?.message ?? "That palette could not be imported.",
+      );
+    res.json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames/import", async (req, res) => {
+    const body = z
+      .object({
+        sourceAssetId: z.string().min(1),
+        sourceFrameId: z.string().min(1),
+        name: z.string().min(1).max(80).optional(),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(res, 409, "RUN_IN_PROGRESS", "The asset is busy right now.");
+    }
+    const result = await importFrameRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.sourceAssetId,
+      body.sourceFrameId,
       body.name,
     );
-    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
-    res.status(201).json(result.asset);
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "FRAME_SIZE_MISMATCH" ? 422 : 404,
+        result.failure?.code ?? "NOT_FOUND",
+        result.failure?.message ?? "That frame could not be imported.",
+      );
+    res.status(201).json(result);
   });
 
   app.post("/api/assets/:id/frames/:frameId/duplicate", async (req, res) => {
@@ -954,6 +1191,8 @@ export function createApp() {
         prompt: z.string().min(1).max(4000),
         modelId: z.string().min(1),
         reasoningEffort: z.string().min(1),
+        /** The frame is social: a draw request becomes a compose run. */
+        social: z.boolean().optional(),
         // Reference images: the web app downscales each one well under these
         // caps, so a body over them is a bug or an abuse, not a big picture.
         attachments: z
@@ -1193,7 +1432,8 @@ export function createApp() {
     );
     // The decision chose the mode: an ask is a conversational run that
     // answers with the same context but no painting tools, never an error.
-    const mode = decided.intent === "ask" ? "ask" : "draw";
+    const mode =
+      decided.intent === "ask" ? "ask" : body.social === true ? "compose" : "draw";
     return startRunViaWorker(res, {
       userId,
       prompt: body.prompt,
@@ -2555,6 +2795,114 @@ export function createApp() {
     });
   });
 
+  app.post("/api/assets/:id/compose", async (req, res) => {
+    const body = z
+      .object({
+        prompt: z.string().min(1).max(4000),
+        modelId: z.string().min(1),
+        reasoningEffort: z.string().min(1),
+        frameId: z.string().min(1).optional(),
+        attachments: z
+          .array(
+            z.object({
+              mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+              data: z.string().min(16).max(1_500_000),
+            }),
+          )
+          .max(4)
+          .refine(
+            (list) => list.reduce((sum, item) => sum + item.data.length, 0) <= 5_000_000,
+            { message: "The attachments are too large together." },
+          )
+          .optional(),
+      })
+      .parse(req.body);
+    const userId = res.locals.userId as string;
+    const asset = await getAssetRecord(db, userId, req.params.id ?? "");
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const frame =
+      asset.frames.find((item) => item.id === body.frameId) ??
+      asset.frames.find((item) => item.kind === "social") ??
+      asset.frames[0];
+    if (!frame) return fail(res, 422, "EMPTY_ASSET", "That asset has no frames.");
+    if (await activeRunFor(asset.id)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "This asset already has an unfinished run; wait for it to finish or cancel it first.",
+      );
+    }
+    const pair = await modelPairFor(
+      res,
+      body.modelId,
+      body.reasoningEffort,
+      body.attachments?.length ?? 0,
+    );
+    if (!pair) return;
+    const decisionModel = process.env.DECISION_MODEL?.trim();
+    const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
+    const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
+    if (!decisionModel || !decisionBaseUrl || !decisionApiKey) {
+      return fail(
+        res,
+        503,
+        "DECISION_UNCONFIGURED",
+        "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY before generating.",
+      );
+    }
+    let guardrail: GuardrailReport;
+    try {
+      guardrail = await screenInput(body.prompt, {
+        apiKey: decisionApiKey,
+        model: decisionModel,
+        baseUrl: decisionBaseUrl,
+      });
+    } catch (reason) {
+      if (reason instanceof JevNotConfiguredError) {
+        return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+      }
+      return fail(
+        res,
+        502,
+        "GUARDRAIL_FAILED",
+        reason instanceof Error ? reason.message : "The content guardrail failed.",
+      );
+    }
+    if (guardrail.action === "block") {
+      return fail(
+        res,
+        422,
+        "POLICY_BLOCKED",
+        `This request breaks the content policy (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}, severity=${guardrail.severity.toFixed(2)}).`,
+      );
+    }
+    if (guardrail.action === "review") {
+      return fail(
+        res,
+        422,
+        "POLICY_REVIEW",
+        `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
+      );
+    }
+    const thread = await ensureThread(db, userId, { assetId: asset.id });
+    const requestId = crypto.randomUUID();
+    await startRunViaWorker(res, {
+      userId,
+      prompt: body.prompt,
+      modelId: body.modelId,
+      reasoningEffort: body.reasoningEffort,
+      ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
+      target: { scope: "asset", assetId: asset.id, frameId: frame.id },
+      threadId: thread.id,
+      requestId,
+      mode: "compose",
+      usage: usageSeedFromSpend({
+        ...(guardrail.usage !== undefined ? { guardrailUsage: guardrail.usage } : {}),
+      }),
+    });
+  });
+
   app.post("/api/sets/:id/compose", async (req, res) => {
     const body = z
       .object({
@@ -3165,9 +3513,11 @@ async function documentForScope(
   for (const asset of wanted) {
     const full = await getAssetRecord(db, userId, asset.id);
     if (!full) continue;
-    const frames = input.frameId
-      ? full.frames.filter((frame) => frame.id === input.frameId)
-      : full.frames;
+    const frames = (
+      input.frameId
+        ? full.frames.filter((frame) => frame.id === input.frameId)
+        : full.frames
+    ).filter((frame) => frame.kind !== "social");
     if (frames.length === 0) continue;
     built.assets.push({
       id: full.id,

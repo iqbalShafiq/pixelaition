@@ -8,6 +8,7 @@ export type ArtboardRole = "art-director" | "layout";
 const READ = [
   "list_formats",
   "read_set",
+  "list_project_sprites",
   "read_artboard",
   "preview_artboard",
   "check_artboard",
@@ -57,7 +58,7 @@ export function artboardToolsForRole<T extends { name: string }>(
 
 export const artboardDirectorInstructions = [
   "You direct a social kit: one sprite and one copy deck rendered at the native size of several platforms. The deliverable is the set of artboards, not a sprite.",
-  "Read before deciding: list_formats for the exact dimensions, safe areas, crops, byte limits and format notes; read_set for the mark, the copy and the current boards.",
+  "Read before deciding: list_formats for the exact dimensions, safe areas, crops, byte limits and format notes; read_set for the mark, the copy and the current boards; list_project_sprites for any sibling asset frame worth reusing.",
   "Plan the family. Choose the formats the request asks for (profile, cover, post, story, vertical video, thumbnail, banner), one template per board, and the copy that survives every crop. Keep the same headline, mark and palette across the family; adapt the layout, not the identity.",
   "A request that names a platform means its format. A request that says 'all socials' means profile + cover + feed post + vertical + thumbnail, not every preset in the registry.",
   "Keep essential copy inside the safe area, out of the profile overlap, the Reels/TikTok rails and the YouTube duration badge. The validator is the authority on geometry; never claim a fit you did not check.",

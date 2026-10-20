@@ -185,7 +185,7 @@ export function Composer({
               ? "The agent is working — type a follow-up to queue it"
               : "Describe the pixel asset, ask a question, or attach a reference image"
         }
-        className="min-h-[2.75rem] px-3 py-2.5"
+        className="min-h-[3.5rem] px-3 py-2.5"
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();

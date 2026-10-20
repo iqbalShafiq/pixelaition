@@ -75,7 +75,12 @@ export function HistoryPanel({
   const snapshots = new Map(
     (versions.data?.versions ?? []).map((version) => [version.id, version.snapshot]),
   );
-  const rows = toHistoryRows(versions.data?.versions ?? [], runModels);
+  const rows = toHistoryRows(versions.data?.versions ?? [], runModels).filter((row) => {
+    // Social scenes belong to the artboard inspector, not the pixel history;
+    // their snapshot has no layers to preview or ghost on the sprite canvas.
+    const snapshot = snapshots.get(row.id);
+    return !(typeof snapshot === "object" && snapshot !== null && "social" in snapshot);
+  });
   const frameRows = rows.filter(
     (row) => row.scope === "frame" && row.frameId === frameId,
   );

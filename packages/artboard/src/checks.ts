@@ -202,6 +202,14 @@ function validateText(
       elementId: element.id,
     });
   }
+  if (element.height !== undefined && layout.height > element.height) {
+    checks.push({
+      code: "TEXT_OVERFLOW",
+      severity: "error",
+      message: `${labelOf(element)} is ${layout.height}px tall; its copy slot is ${element.height}px.`,
+      elementId: element.id,
+    });
+  }
   if (preset.minTextSize > 0 && !["eyebrow", "handle", "legal"].includes(element.id)) {
     const effective = element.size * (element.scale ?? 1);
     if (effective < preset.minTextSize) {

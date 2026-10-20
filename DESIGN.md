@@ -2,23 +2,27 @@
 
 Pixelaition looks like a drafting table at night. The canvas is the product. Chrome stays quiet.
 
-## Social Studio
+## Social frames in the editor
 
-The Studio is the same drafting table, one size larger. Its stage is a **screen**
-well; the format rail and inspector are **panel** rails; the contact sheet is a
-grid of flat cards with a 2 px line, no soft shadow and no gradient. A selected
-format uses only `accent` as its border and the current card lifts by its line,
-not by a blur.
+A social frame is the same editor stage, not a second app. The frame rail shows
+sprite and social frames together; a social frame adds its preset label and
+native dimensions, and the centre becomes a **field** well holding the artboard
+at its own aspect. The right rail switches to the artboard inspector: name,
+layout/copy/checks, background, elements, template and the sprite source picker.
+There is no separate Studio route or navigation item.
 
 Safe-zone, crop and exclusion overlays are 1 px dashed `line-strong` guides with
-`mono` labels on `coffee`; they are guides, not artwork. The in-context preview
-is a neutral wireframe around the real bitmap and says **simulated crop** in
-`muted`. Never put a platform logo or an off-palette brand colour on it.
+`mono` labels on `coffee`; they are guides, not artwork. The selected element
+uses only `accent` for its bounds. Native-size artboards are contained, never
+stretched: a 4:1 cover sits in its own letterboxed box with the stage's `screen`
+behind it. On narrow screens the rails become sheets, the inspector becomes a
+"Social frame" sheet, and the stage reserves room above the docked composer so
+the bottom of a 9:16 frame is still reachable.
 
-Native-size artboards are shown contained, with their own aspect. Do not stretch
-a 4:1 cover into a 4:3 card; letterbox it in the card's `field` well. On narrow
-screens the rails become sheets and the composer stays docked; the stage scrolls
-under it, with bottom padding so the last card is reachable.
+The social toolbar keeps Fit / 1:1 / Zones / + Format. Fit computes whole-pixel
+scale from the measured stage, including height, so a vertical frame is never
+cropped by the viewport; zones are positioned in the same displayed box. Social
+frames are not shown through the sprite zoom control.
 
 ## Color
 

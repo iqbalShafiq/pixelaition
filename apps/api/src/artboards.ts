@@ -587,7 +587,9 @@ export function primarySprite(
   asset: NonNullable<Awaited<ReturnType<typeof getAssetRecord>>>,
   frameId: string | undefined,
 ): SpriteSource | undefined {
-  const frame = asset.frames.find((item) => item.id === frameId) ?? asset.frames[0];
+  const frame =
+    asset.frames.find((item) => item.id === frameId && item.kind !== "social") ??
+    asset.frames.find((item) => item.kind !== "social");
   if (!frame) return undefined;
   const buffer: FrameBuffer = frameToBuffer(
     frame as Frame,

@@ -150,6 +150,41 @@ describe("long shared copy", () => {
     console.log(failures.join("\n"));
     expect(failures).toEqual([]);
   });
+
+  it("builds every default template directly with long copy and no errors", async () => {
+    const { checkScene } = await import("./index.js");
+    const source = sprite();
+    const palette = source.buffer.palette;
+    const failures: string[] = [];
+    for (const preset of formatPresets) {
+      const scene = buildTemplateScene({
+        preset,
+        template: preset.defaultTemplate,
+        copy: {
+          eyebrow: "PIXELAITION LAUNCH",
+          headline: "Orbit, everywhere your crew already is",
+          subhead: "One pixel mark for every feed, cover, thumbnail and story.",
+          cta: "Start the launch",
+          handle: "@pixelaition",
+        },
+        palette,
+        sprite: source,
+      });
+      const errors = checkScene({
+        scene,
+        preset,
+        palette,
+        sprites: new Map([["asset:frame", source]]),
+      }).filter((check) => check.severity === "error");
+      if (errors.length > 0) {
+        failures.push(
+          `${preset.id}: ${errors.map((check) => `${check.code} ${check.message}`).join(" | ")}`,
+        );
+      }
+    }
+    console.log(failures.join("\n"));
+    expect(failures).toEqual([]);
+  });
 });
 
 describe("registry integrity", () => {

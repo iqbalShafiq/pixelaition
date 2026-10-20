@@ -109,6 +109,8 @@ export const assets = pgTable("assets", {
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   palette: jsonb("palette").notNull(),
+  /** Shared social copy deck; sprite frames ignore it. */
+  copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -126,6 +128,15 @@ export const frames = pgTable(
     summaryAt: timestamp("summary_at", { withTimezone: true }),
     index: integer("index").notNull(),
     layers: jsonb("layers").notNull(),
+    /** `sprite` frames paint layers; `social` frames own a scene at native size. */
+    kind: text("kind").$type<"sprite" | "social">().notNull().default("sprite"),
+    width: integer("width"),
+    height: integer("height"),
+    presetId: text("preset_id"),
+    scene: jsonb("scene"),
+    copyOverride: jsonb("copy_override").notNull().default({}),
+    status: text("status").notNull().default("ready"),
+    version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -303,6 +314,8 @@ export const generationRuns = pgTable("generation_runs", {
   durableRunId: text("durable_run_id"),
   requestId: text("request_id").notNull(),
   status: text("status").notNull(),
+  /** `draw`, `ask`, or `compose` — recovery binds a compose run to social frames. */
+  mode: text("mode").$type<"draw" | "ask" | "compose">().notNull().default("draw"),
   modelId: text("model_id").notNull(),
   reasoningEffort: text("reasoning_effort").notNull(),
   frameId: text("frame_id"),

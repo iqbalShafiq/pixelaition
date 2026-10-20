@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { composite, frameToBuffer } from "@pixelaition/pixel";
+import { getPreset } from "@pixelaition/artboard";
 import { useLayoutEffect, useRef } from "react";
 import { api } from "../lib/api.js";
 import { hexToRgba } from "../lib/color.js";
 import type { AssetDto } from "../lib/types.js";
+import { artboardForFrame, renderArtboard, spritesForAsset } from "../lib/artboard.js";
 
 /**
  * Draws the first frame of an asset at 1:1 and lets CSS scale it with
@@ -35,13 +37,43 @@ export function SpriteThumb({
     const canvas = ref.current;
     const data = asset.data;
     if (!canvas || !data) return;
-    const frame = data.frames[0];
+    const frame = data.frames.find((item) => item.kind !== "social") ?? data.frames[0];
     if (!frame) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    if (frame.kind === "social") {
+      const artboard = artboardForFrame(data, frame);
+      if (!artboard || !frame.presetId) return;
+      try {
+        const image = renderArtboard(
+          artboard,
+          getPreset(frame.presetId),
+          data,
+          spritesForAsset(data),
+        );
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const pixels = context.createImageData(image.width, image.height);
+        for (let index = 0; index < image.indices.length; index += 1) {
+          const value = image.indices[index] ?? 0;
+          if (value === 0) continue;
+          const [r, g, b, a] = hexToRgba(image.palette[value] ?? "#000000");
+          const offset = index * 4;
+          pixels.data[offset] = r;
+          pixels.data[offset + 1] = g;
+          pixels.data[offset + 2] = b;
+          pixels.data[offset + 3] = a;
+        }
+        context.putImageData(pixels, 0, 0);
+      } catch {
+        // A cross-asset scene needs the project sprite map; the shelf stays
+        // blank until the editor has that context rather than guessing a mark.
+      }
+      return;
+    }
     const buffer = frameToBuffer(frame, data.width, data.height, data.palette);
     canvas.width = buffer.width;
     canvas.height = buffer.height;
-    const context = canvas.getContext("2d");
-    if (!context) return;
     const image = context.createImageData(buffer.width, buffer.height);
     const indexes = composite(buffer);
     for (let index = 0; index < indexes.length; index += 1) {
@@ -70,6 +102,7 @@ export function SpriteThumb({
             width: display - 4,
             height: display - 4,
             imageRendering: "pixelated",
+            objectFit: "contain",
             ...(flight ? { viewTransitionName: "asset-flight" } : {}),
           }}
         />

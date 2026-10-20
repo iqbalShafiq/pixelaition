@@ -1546,12 +1546,13 @@ function FormatRail({
   );
 }
 
-function Inspector({
+export function Inspector({
   board,
   preset,
   copy,
   checks,
   palette,
+  spriteChoices,
   selectedElementId,
   tab,
   onTab,
@@ -1573,6 +1574,12 @@ function Inspector({
   copy: CopyDeck;
   checks: ArtboardCheck[];
   palette: string[];
+  spriteChoices?: Array<{
+    assetId: string;
+    assetName: string;
+    frameId: string;
+    frameName: string;
+  }>;
   selectedElementId: string | null;
   tab: "layout" | "copy" | "checks";
   onTab: (tab: "layout" | "copy" | "checks") => void;
@@ -1605,7 +1612,7 @@ function Inspector({
 
   return (
     <div className="grid gap-3">
-      <Field label="Artboard name" htmlFor="artboard-name">
+      <Field label="Frame name" htmlFor="artboard-name">
         <TextInput
           id="artboard-name"
           value={nameDraft}
@@ -1740,6 +1747,7 @@ function Inspector({
               element={selected}
               palette={palette}
               board={board}
+              spriteChoices={spriteChoices}
               disabled={running}
               onUpdate={(patch) => onUpdateElement(selected.id, patch)}
               onText={(text) =>
@@ -1849,6 +1857,7 @@ function ElementEditor({
   element,
   palette,
   board,
+  spriteChoices,
   disabled,
   onUpdate,
   onText,
@@ -1857,6 +1866,12 @@ function ElementEditor({
   element: Element;
   palette: string[];
   board: Artboard;
+  spriteChoices?: Array<{
+    assetId: string;
+    assetName: string;
+    frameId: string;
+    frameName: string;
+  }>;
   disabled: boolean;
   onUpdate: (patch: Partial<Element>) => void;
   onText: (text: string) => void;
@@ -1881,6 +1896,23 @@ function ElementEditor({
           Remove
         </Button>
       </div>
+      {element.kind === "sprite" && spriteChoices && spriteChoices.length > 0 ? (
+        <Field label="Source sprite" htmlFor="element-sprite-source">
+          <SelectControl
+            id="element-sprite-source"
+            label="Source sprite"
+            value={`${element.assetId}:${element.frameId ?? ""}`}
+            options={spriteChoices.map((choice) => ({
+              value: `${choice.assetId}:${choice.frameId}`,
+              label: `${choice.assetName} · ${choice.frameName}`,
+            }))}
+            onChange={(value) => {
+              const [assetId, frameId] = value.split(":");
+              if (assetId && frameId) onUpdate({ assetId, frameId } as Partial<Element>);
+            }}
+          />
+        </Field>
+      ) : null}
       {element.kind === "text" ? (
         <>
           <Field label="Text" htmlFor="element-text">
@@ -2153,7 +2185,7 @@ function ColorPicker({
   );
 }
 
-function FormatPicker({
+export function FormatPicker({
   open,
   onOpenChange,
   existing,
@@ -2235,7 +2267,7 @@ function FormatPicker({
   );
 }
 
-function ExportDialog({
+export function ExportDialog({
   open,
   onOpenChange,
   setId,
@@ -2345,7 +2377,7 @@ function ExportDialog({
   );
 }
 
-function PreviewDialog({
+export function PreviewDialog({
   open,
   onOpenChange,
   boards,

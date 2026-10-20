@@ -241,6 +241,123 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
+  it("adds a social frame to a sprite asset, saves its scene, reads resources, and exports it", async () => {
+    const project = await request(app)
+      .post("/api/projects")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "mixed frames" });
+    expect(project.status).toBe(201);
+    const asset = await request(app)
+      .post(`/api/projects/${project.body.id}/assets`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "orbit mixed" });
+    expect(asset.status).toBe(201);
+    try {
+      const added = await request(app)
+        .post(`/api/assets/${asset.body.id}/frames`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          kind: "social",
+          presetId: "linkedin-cover",
+          copy: { headline: "Orbit is live", subhead: "One mark, every feed." },
+        });
+      expect(added.status).toBe(201);
+      const social = added.body.frames.find(
+        (frame: { kind?: string }) => frame.kind === "social",
+      );
+      expect(social.presetId).toBe("linkedin-cover");
+      expect(social.width).toBe(1584);
+      expect(social.scene.elements.length).toBeGreaterThan(0);
+
+      const resources = await request(app)
+        .get(`/api/projects/${project.body.id}/resources`)
+        .set("authorization", `Bearer ${token}`);
+      expect(resources.status).toBe(200);
+      expect(resources.body.assets[0].frames).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "sprite" }),
+          expect.objectContaining({ kind: "social", presetId: "linkedin-cover" }),
+        ]),
+      );
+
+      const saved = await request(app)
+        .patch(`/api/assets/${asset.body.id}/frames/${social.id}/scene`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: social.version, name: "Launch cover", status: "ready" });
+      expect(saved.status).toBe(200);
+      expect(
+        saved.body.frames.find((frame: { id: string }) => frame.id === social.id).name,
+      ).toBe("Launch cover");
+
+      const stale = await request(app)
+        .patch(`/api/assets/${asset.body.id}/frames/${social.id}/scene`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: social.version, status: "ready" });
+      expect(stale.status).toBe(409);
+
+      await request(app)
+        .patch(`/api/assets/${asset.body.id}/copy`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          copy: {
+            eyebrow: "ORBIT",
+            headline: "Orbit is live",
+            subhead: "One mark, every feed.",
+            cta: "Make yours",
+            handle: "@orbit",
+          },
+        });
+
+      const target = await request(app)
+        .post(`/api/projects/${project.body.id}/assets`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ name: "import target" });
+      expect(target.status).toBe(201);
+      const spriteFrame = added.body.frames.find(
+        (frame: { kind?: string }) => frame.kind !== "social",
+      );
+      const importedSprite = await request(app)
+        .post(`/api/assets/${target.body.id}/frames/import`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          sourceAssetId: asset.body.id,
+          sourceFrameId: spriteFrame.id,
+        });
+      expect(importedSprite.status).toBe(201);
+      expect(
+        importedSprite.body.asset.frames.some(
+          (frame: { kind?: string }) => frame.kind === "sprite",
+        ),
+      ).toBe(true);
+      const importedSocial = await request(app)
+        .post(`/api/assets/${target.body.id}/frames/import`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          sourceAssetId: asset.body.id,
+          sourceFrameId: social.id,
+        });
+      expect(importedSocial.status).toBe(201);
+      const copied = importedSocial.body.asset.frames.find(
+        (frame: { kind?: string; presetId?: string }) =>
+          frame.presetId === "linkedin-cover" && frame.kind === "social",
+      );
+      expect(copied.width).toBe(1584);
+      expect(copied.scene.elements.length).toBeGreaterThan(0);
+      expect(importedSocial.body.asset.copy.headline).toBe("Orbit is live");
+
+      const png = await request(app)
+        .post(`/api/assets/${asset.body.id}/social-export`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ frameId: social.id, format: "png" });
+      expect(png.status).toBe(200);
+      expect(png.headers["content-type"]).toBe("image/png");
+      expect((png.body as Buffer).readUInt32BE(16)).toBe(1584);
+      expect((png.body as Buffer).readUInt32BE(20)).toBe(396);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, project.body.id));
+    }
+  });
+
   it("surfaces a bound workspace run as the asset's active run with its card", async () => {
     const projectId = randomUUID();
     const asset = createAsset({ name: "bound-run", width: 8, height: 8 });

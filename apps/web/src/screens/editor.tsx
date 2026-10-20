@@ -27,6 +27,31 @@ import {
   type History,
   type StyleGuide,
 } from "@pixelaition/pixel";
+import {
+  buildTemplateScene,
+  checkScene,
+  fitTextToSlot,
+  getPreset,
+  paletteRoles,
+  summarizeChecks,
+  syncCopyScene,
+  type ArtboardCheck,
+  type ArtboardScene,
+  type CopyDeck,
+  type CopyOverride,
+  type Element,
+  type TemplateId,
+} from "@pixelaition/artboard";
+import { ArtboardCanvas } from "../components/artboard-canvas.js";
+import {
+  artboardForFrame,
+  type ProjectResourceAsset,
+  sceneSpritesReady,
+  spritesForAsset,
+  spritesForResources,
+} from "../lib/artboard.js";
+import { FormatPicker, Inspector } from "./studio.js";
+import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
@@ -84,7 +109,10 @@ import {
   Callout,
   EmptyState,
   ConfirmDialog,
+  Dialog,
+  Field,
   IconButton,
+  SelectControl,
   Sheet,
   Wordmark,
   useToast,
@@ -190,6 +218,14 @@ export function EditorScreen() {
   const asset = useQuery({
     queryKey: ["asset", assetId],
     queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
+  });
+  const resources = useQuery({
+    queryKey: ["project-resources", asset.data?.projectId ?? ""],
+    enabled: Boolean(asset.data?.projectId),
+    queryFn: () =>
+      api<{ assets: ProjectResourceAsset[] }>(
+        `/api/projects/${asset.data?.projectId}/resources`,
+      ),
   });
   const preferences = useQuery({
     queryKey: ["preferences"],
@@ -362,6 +398,16 @@ export function EditorScreen() {
   const [earlierTurns, setEarlierTurns] = useState<ConsoleTurn[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
+  const [socialTab, setSocialTab] = useState<"layout" | "copy" | "checks">("layout");
+  const [socialElementId, setSocialElementId] = useState<string | null>(null);
+  const [socialFit, setSocialFit] = useState(true);
+  const [socialZones, setSocialZones] = useState(true);
+  const [socialPickerOpen, setSocialPickerOpen] = useState(false);
+  const [importFrameOpen, setImportFrameOpen] = useState(false);
+  const [paletteImportOpen, setPaletteImportOpen] = useState(false);
+  const [paletteSourceId, setPaletteSourceId] = useState("");
+  const socialSaveTimers = useRef(new Map<string, number>());
+  const socialSaveChains = useRef(new Map<string, Promise<void>>());
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
   // strands Base UI's exit animation and its inert overlay blocks the page.
   const wide = useMediaQuery("(min-width: 1024px)");
@@ -571,6 +617,55 @@ export function EditorScreen() {
     return next;
   }, [drafts]);
   const frame = frames.find((item) => item.id === frameId) ?? null;
+  const socialFrame = frame?.kind === "social" ? frame : null;
+  const socialPreset = socialFrame?.presetId
+    ? getPreset(socialFrame.presetId)
+    : undefined;
+  const socialArtboard =
+    asset.data && socialFrame ? artboardForFrame(asset.data, socialFrame) : null;
+  const socialSprites = useMemo(() => {
+    if (resources.data && resources.data.assets.length > 0) {
+      return spritesForResources(resources.data.assets);
+    }
+    return asset.data ? spritesForAsset(asset.data) : new Map();
+  }, [asset.data, resources.data]);
+  const socialSpritesReady = useMemo(
+    () => !socialArtboard || sceneSpritesReady(socialArtboard.scene, socialSprites),
+    [socialArtboard, socialSprites],
+  );
+  const spriteChoices = useMemo(
+    () =>
+      (resources.data?.assets ?? []).flatMap((item) =>
+        item.frames
+          .filter((frame) => frame.kind === "sprite")
+          .map((frame) => ({
+            assetId: item.id,
+            assetName: item.name,
+            frameId: frame.id,
+            frameName: frame.name,
+          })),
+      ),
+    [resources.data],
+  );
+  const socialCopy = (asset.data?.copy ?? {}) as CopyDeck;
+  const socialChecks = useMemo<ArtboardCheck[]>(() => {
+    if (!asset.data || !socialFrame || !socialPreset || !socialArtboard) return [];
+    if (!sceneSpritesReady(socialArtboard.scene, socialSprites)) return [];
+    return checkScene({
+      scene: socialArtboard.scene,
+      preset: socialPreset,
+      palette: asset.data.palette,
+      sprites: socialSprites,
+    });
+  }, [asset.data, socialFrame, socialPreset, socialArtboard, socialSprites]);
+  useEffect(() => {
+    if (!running || !socialFrame) return;
+    const timer = window.setInterval(() => {
+      void asset.refetch();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [running, socialFrame?.id, asset.refetch]);
+
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
   // While playback cycles frames, the layer selection must not blink: fall back
@@ -614,9 +709,14 @@ export function EditorScreen() {
       let changed = false;
       const next = { ...current };
       for (const item of data.frames) {
-        if (next[item.id]) continue;
+        if (next[item.id] || item.kind === "social") continue;
         next[item.id] = createHistory(
-          frameToBuffer(item, data.width, data.height, data.palette),
+          frameToBuffer(
+            item,
+            item.width ?? data.width,
+            item.height ?? data.height,
+            data.palette,
+          ),
         );
         changed = true;
       }
@@ -663,7 +763,7 @@ export function EditorScreen() {
     const neighbors: FrameBuffer[] = [];
     for (const offset of [-1, 1]) {
       const item = asset.data.frames[index + offset];
-      if (item) {
+      if (item && item.kind !== "social") {
         neighbors.push(
           frameToBuffer(item, asset.data.width, asset.data.height, asset.data.palette),
         );
@@ -705,6 +805,371 @@ export function EditorScreen() {
         }),
       });
     },
+  });
+
+  function cachedAsset(): AssetDto | undefined {
+    return client.getQueryData<AssetDto>(["asset", assetId]) ?? asset.data;
+  }
+
+  function patchCachedFrame(
+    id: string,
+    patch: Partial<AssetDto["frames"][number]>,
+  ): void {
+    client.setQueryData(["asset", assetId], (current: AssetDto | undefined) =>
+      current
+        ? {
+            ...current,
+            frames: current.frames.map((item) =>
+              item.id === id ? { ...item, ...patch } : item,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function socialFrameNow(id: string) {
+    return cachedAsset()?.frames.find((item) => item.id === id);
+  }
+
+  function flushSocialSave(id: string): void {
+    const timer = socialSaveTimers.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      socialSaveTimers.current.delete(id);
+    }
+    const previous = socialSaveChains.current.get(id) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = socialFrameNow(id);
+        if (!current || current.kind !== "social" || !current.scene) return;
+        if (running) return;
+        const sentScene = current.scene;
+        try {
+          const updated = await api<AssetDto>(
+            `/api/assets/${assetId}/frames/${id}/scene`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                version: current.version ?? 1,
+                scene: current.scene,
+                copyOverride: current.copyOverride ?? {},
+                status: current.status ?? "draft",
+                name: current.name,
+              }),
+            },
+          );
+          const serverFrame = updated.frames.find((item) => item.id === id);
+          if (!serverFrame) return;
+          client.setQueryData(["asset", assetId], (live: AssetDto | undefined) => {
+            if (!live) return updated;
+            return {
+              ...live,
+              copy: updated.copy ?? live.copy,
+              frames: live.frames.map((item) => {
+                if (item.id !== id) return item;
+                const sceneChanged =
+                  JSON.stringify(item.scene) !== JSON.stringify(sentScene);
+                return {
+                  ...item,
+                  version: serverFrame.version,
+                  status: serverFrame.status,
+                  updatedAt: serverFrame.updatedAt,
+                  ...(sceneChanged
+                    ? {}
+                    : {
+                        scene: serverFrame.scene,
+                        copyOverride: serverFrame.copyOverride,
+                        name: serverFrame.name,
+                      }),
+                };
+              }),
+            };
+          });
+        } catch (reason) {
+          if (reason instanceof ApiError && reason.status === 409) {
+            void asset.refetch();
+            notify({
+              title: "That frame changed elsewhere",
+              description: "Reloaded the latest version.",
+            });
+          } else {
+            notify({
+              title: "Could not save the social frame",
+              description: reason instanceof Error ? reason.message : "Unknown error",
+            });
+          }
+        }
+      });
+    socialSaveChains.current.set(id, next);
+  }
+
+  function queueSocialSave(id: string): void {
+    const previous = socialSaveTimers.current.get(id);
+    if (previous !== undefined) window.clearTimeout(previous);
+    socialSaveTimers.current.set(
+      id,
+      window.setTimeout(() => flushSocialSave(id), 500),
+    );
+  }
+
+  function updateSocialScene(scene: ArtboardScene): void {
+    if (!socialFrame) return;
+    patchCachedFrame(socialFrame.id, { scene });
+    queueSocialSave(socialFrame.id);
+  }
+
+  function updateSocialElement(elementId: string, patch: Partial<Element>): void {
+    if (!socialFrame) return;
+    const current = socialFrameNow(socialFrame.id);
+    if (!current?.scene) return;
+    patchCachedFrame(current.id, {
+      scene: {
+        ...current.scene,
+        elements: current.scene.elements.map((element) =>
+          element.id === elementId ? ({ ...element, ...patch } as Element) : element,
+        ),
+      },
+    });
+    queueSocialSave(current.id);
+  }
+
+  function setSocialText(elementId: string, text: string, key?: keyof CopyDeck): void {
+    if (!socialFrame?.scene) return;
+    const override: CopyOverride = { ...(socialFrame.copyOverride ?? {}) };
+    if (key !== undefined) {
+      if (text.trim() === (socialCopy[key] ?? "").trim()) delete override[key];
+      else override[key] = text;
+    }
+    const elements = socialFrame.scene.elements.map((element) => {
+      if (element.id !== elementId || element.kind !== "text") return element;
+      const nextTextY = socialFrame.scene?.elements
+        .filter(
+          (candidate) =>
+            candidate.kind === "text" &&
+            candidate.id !== element.id &&
+            candidate.y > element.y &&
+            candidate.x < element.x + element.width &&
+            candidate.x + candidate.width > element.x,
+        )
+        .sort((a, b) => a.y - b.y)[0]?.y;
+      return fitTextToSlot(
+        { ...element, text },
+        nextTextY !== undefined ? Math.max(8, nextTextY - element.y - 2) : undefined,
+      );
+    });
+    patchCachedFrame(socialFrame.id, {
+      scene: { ...socialFrame.scene, elements },
+      copyOverride: override,
+    });
+    queueSocialSave(socialFrame.id);
+  }
+
+  function applySocialTemplate(template: TemplateId): void {
+    if (!socialFrame || !socialPreset || !asset.data) return;
+    const source =
+      [...socialSprites.values()].find((item) => item.assetId === asset.data.id) ??
+      [...socialSprites.values()][0];
+    const scene = buildTemplateScene({
+      preset: socialPreset,
+      template,
+      copy: socialCopy,
+      palette: asset.data.palette,
+      ...(source ? { sprite: source } : {}),
+    });
+    patchCachedFrame(socialFrame.id, {
+      scene,
+      copyOverride: {},
+      status: "draft",
+    });
+    setSocialTab("layout");
+    queueSocialSave(socialFrame.id);
+  }
+
+  function addSocialText(): void {
+    if (!socialFrame?.scene || !asset.data) return;
+    const roles = paletteRoles(asset.data.palette);
+    const id = `text-${crypto.randomUUID().slice(0, 8)}`;
+    const element: Element = {
+      id,
+      kind: "text",
+      text: "Your words",
+      face: "silkscreen",
+      weight: 700,
+      size: 48,
+      color: roles.ink,
+      x: Math.round((socialFrame.width ?? 1080) * 0.06),
+      y: Math.round((socialFrame.height ?? 1080) * 0.12),
+      width: Math.round((socialFrame.width ?? 1080) * 0.56),
+      height: Math.round((socialFrame.height ?? 1080) * 0.12),
+      align: "left",
+      maxLines: 3,
+    };
+    updateSocialScene({
+      ...socialFrame.scene,
+      elements: [...socialFrame.scene.elements, element],
+    });
+    setSocialElementId(id);
+  }
+
+  function addSocialElement(kind: "rect" | "pattern" | "frame"): void {
+    if (!socialFrame?.scene || !asset.data) return;
+    const roles = paletteRoles(asset.data.palette);
+    const width = socialFrame.width ?? socialPreset?.width ?? 1080;
+    const height = socialFrame.height ?? socialPreset?.height ?? 1080;
+    const id = `${kind}-${crypto.randomUUID().slice(0, 8)}`;
+    const element: Element =
+      kind === "rect"
+        ? {
+            id,
+            kind: "rect",
+            x: 0,
+            y: 0,
+            width,
+            height: Math.max(4, Math.round(height * 0.12)),
+            color: roles.accent,
+          }
+        : kind === "pattern"
+          ? {
+              id,
+              kind: "pattern",
+              x: 0,
+              y: 0,
+              width,
+              height,
+              colorA: roles.background,
+              colorB: roles.muted,
+              unit: socialPreset?.pixelUnit ?? 4,
+              mode: "checker",
+            }
+          : {
+              id,
+              kind: "frame",
+              x: 0,
+              y: 0,
+              width,
+              height,
+              thickness: Math.max(2, (socialPreset?.pixelUnit ?? 4) * 2),
+              color: roles.accent,
+            };
+    updateSocialScene({
+      ...socialFrame.scene,
+      elements: [...socialFrame.scene.elements, element],
+    });
+    setSocialElementId(id);
+  }
+
+  function removeSocialElement(elementId: string): void {
+    if (!socialFrame?.scene) return;
+    updateSocialScene({
+      ...socialFrame.scene,
+      elements: socialFrame.scene.elements.filter((element) => element.id !== elementId),
+    });
+    if (socialElementId === elementId) setSocialElementId(null);
+  }
+
+  async function applySocialCopy(copy: CopyDeck): Promise<void> {
+    try {
+      await flushSocialSaves();
+      const updated = await api<AssetDto>(`/api/assets/${assetId}/copy`, {
+        method: "PATCH",
+        body: JSON.stringify({ copy }),
+      });
+      client.setQueryData(["asset", assetId], updated);
+      notify({
+        title: "Copy applied",
+        description: "Every social frame that did not override it.",
+      });
+    } catch (reason) {
+      notify({
+        title: "Could not update the copy",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
+  function clearSocialOverrides(): void {
+    if (!socialFrame?.scene) return;
+    updateSocialScene(syncCopyScene(socialFrame.scene, socialCopy, {}));
+    patchCachedFrame(socialFrame.id, { copyOverride: {} });
+    queueSocialSave(socialFrame.id);
+  }
+
+  async function flushSocialSaves(): Promise<void> {
+    for (const id of [...socialSaveTimers.current.keys()]) flushSocialSave(id);
+    await Promise.all([...socialSaveChains.current.values()]);
+  }
+
+  const addSocialFrame = useMutation({
+    mutationFn: (presetId: string) =>
+      api<AssetDto>(`/api/assets/${assetId}/frames`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "social", presetId }),
+      }),
+    onSuccess: (data) => {
+      const previous = new Set(asset.data?.frames.map((item) => item.id) ?? []);
+      const created = data.frames.find((item) => !previous.has(item.id));
+      client.setQueryData(["asset", assetId], data);
+      if (created) {
+        setFrameId(created.id);
+        setSocialElementId(null);
+        setSocialTab("layout");
+      }
+      setSocialPickerOpen(false);
+      notify({
+        title: "Social frame added",
+        description: "Native size and safe areas are ready.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not add the format",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const importFrame = useMutation({
+    mutationFn: (input: { sourceAssetId: string; sourceFrameId: string }) =>
+      api<{ asset: AssetDto; frameId: string }>(`/api/assets/${assetId}/frames/import`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data.asset);
+      setImportFrameOpen(false);
+      if (data.frameId) {
+        setFrameId(data.frameId);
+        setSocialElementId(null);
+      }
+      notify({ title: "Frame imported", description: "Palette colours were mapped." });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not import the frame",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const importPalette = useMutation({
+    mutationFn: (sourceAssetId: string) =>
+      api<AssetDto>(`/api/assets/${assetId}/palette/import`, {
+        method: "POST",
+        body: JSON.stringify({ sourceAssetId }),
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data);
+      setDrafts({});
+      setPaletteImportOpen(false);
+      notify({
+        title: "Palette imported",
+        description: "Frame pixels and social scenes were remapped.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not import the palette",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
   });
 
   const present = history?.present;
@@ -952,13 +1417,19 @@ export function EditorScreen() {
         queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
       })
       .then((data) => {
+        client.setQueryData(["asset", assetId], data);
         setDrafts((current) => {
           let changed = false;
           const next = { ...current };
           for (const item of data.frames) {
-            if (next[item.id]) continue;
+            if (next[item.id] || item.kind === "social") continue;
             next[item.id] = createHistory(
-              frameToBuffer(item, data.width, data.height, data.palette),
+              frameToBuffer(
+                item,
+                item.width ?? data.width,
+                item.height ?? data.height,
+                data.palette,
+              ),
             );
             changed = true;
           }
@@ -2006,10 +2477,12 @@ export function EditorScreen() {
       try {
         // Local edits made before the run must land before the agent starts.
         await flush();
+        await flushSocialSaves();
         await api("/api/preferences", {
           method: "PATCH",
           body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
         });
+        const social = frame?.kind === "social";
         const started = await api<{ runId: string; kind?: "task" | "run" }>("/api/runs", {
           method: "POST",
           body: JSON.stringify({
@@ -2018,6 +2491,7 @@ export function EditorScreen() {
             prompt: text,
             modelId,
             reasoningEffort: effort,
+            ...(social ? { social: true } : {}),
             ...(staged.length > 0
               ? {
                   attachments: staged.map(({ mediaType, data }) => ({
@@ -2283,6 +2757,40 @@ export function EditorScreen() {
   );
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
 
+  const socialSummary = summarizeChecks(socialChecks);
+  const socialPanels =
+    socialFrame && socialArtboard && socialPreset ? (
+      <Inspector
+        board={socialArtboard}
+        preset={socialPreset}
+        copy={socialCopy}
+        checks={socialChecks}
+        palette={asset.data?.palette ?? []}
+        spriteChoices={spriteChoices}
+        selectedElementId={socialElementId}
+        tab={socialTab}
+        onTab={setSocialTab}
+        onTemplate={applySocialTemplate}
+        onRename={(name) => {
+          patchCachedFrame(socialFrame.id, { name });
+          queueSocialSave(socialFrame.id);
+        }}
+        onBackground={(background) => {
+          if (!socialFrame.scene) return;
+          updateSocialScene({ ...socialFrame.scene, background });
+        }}
+        onUpdateElement={updateSocialElement}
+        onText={setSocialText}
+        onRemoveElement={removeSocialElement}
+        onCopy={(copy) => void applySocialCopy(copy)}
+        onClearOverrides={clearSocialOverrides}
+        onSelectElement={setSocialElementId}
+        onAddText={addSocialText}
+        onAddElement={addSocialElement}
+        running={running}
+      />
+    ) : null;
+
   const leftPanels = (
     <>
       <FramePanel
@@ -2291,6 +2799,8 @@ export function EditorScreen() {
         pixelWidth={asset.data?.width}
         pixelHeight={asset.data?.height}
         liveFrames={liveFrames}
+        asset={asset.data}
+        sprites={socialSprites}
         activeId={frameId}
         playing={playing}
         locked={running}
@@ -2354,43 +2864,49 @@ export function EditorScreen() {
           setFrameId(id);
           setSelection(null);
           setPreview(null);
+          setSocialElementId(null);
+          setSocialTab("layout");
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
         onAdd={() => void frameAction("add")}
+        onAddSocial={() => setSocialPickerOpen(true)}
+        onImport={() => setImportFrameOpen(true)}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
         onRename={(id, name) => void frameAction("rename", name, id)}
         onDelete={(id) => void frameAction("delete", undefined, id)}
         onReorder={(id, index) => frameReorder(id, index)}
       />
-      <LayerPanel
-        buffer={buffer}
-        activeId={panelLayerId}
-        locked={locked}
-        onSelect={setActiveLayerId}
-        onToggleVisible={(layerId, visible) =>
-          frameId &&
-          edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
-        }
-        onAdd={() =>
-          frameId &&
-          edit(frameId, drafts[frameId], {
-            type: "addLayer",
-            id: crypto.randomUUID(),
-            name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
-          })
-        }
-        onRename={(layerId, name) =>
-          frameId &&
-          edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
-        }
-        onDelete={(layerId) =>
-          frameId &&
-          edit(frameId, drafts[frameId], {
-            type: "removeLayer",
-            layerId,
-          })
-        }
-      />
+      {socialFrame ? null : (
+        <LayerPanel
+          buffer={buffer}
+          activeId={panelLayerId}
+          locked={locked}
+          onSelect={setActiveLayerId}
+          onToggleVisible={(layerId, visible) =>
+            frameId &&
+            edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
+          }
+          onAdd={() =>
+            frameId &&
+            edit(frameId, drafts[frameId], {
+              type: "addLayer",
+              id: crypto.randomUUID(),
+              name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+            })
+          }
+          onRename={(layerId, name) =>
+            frameId &&
+            edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
+          }
+          onDelete={(layerId) =>
+            frameId &&
+            edit(frameId, drafts[frameId], {
+              type: "removeLayer",
+              layerId,
+            })
+          }
+        />
+      )}
     </>
   );
 
@@ -2403,6 +2919,10 @@ export function EditorScreen() {
         color={color}
         usedColors={usedColors}
         onPick={setColor}
+        onImportPalette={() => {
+          setPaletteSourceId("");
+          setPaletteImportOpen(true);
+        }}
         onAdd={(hex) => {
           if (!buffer) return;
           if (buffer.palette.includes(hex)) {
@@ -2577,18 +3097,6 @@ export function EditorScreen() {
           >
             Delete
           </Button>
-          <Link
-            to="/projects/$projectId/assets/$assetId/studio"
-            params={{ projectId: asset.data?.projectId ?? "", assetId }}
-            aria-label="Open the social kit"
-            className="inline-flex min-h-9 items-center border-2 border-line px-2 py-1.5 text-pixel-label text-muted hover:border-line-strong hover:text-ink sm:px-2.5"
-            aria-disabled={!asset.data || running}
-          >
-            <span aria-hidden className="sm:hidden">
-              ◫
-            </span>
-            <span className="hidden sm:inline">Social</span>
-          </Link>
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-pixel-label"
@@ -2610,22 +3118,70 @@ export function EditorScreen() {
           </aside>
 
           <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
-            <div className="order-2 min-w-0 border-t-2 border-line bg-panel px-2 pt-2 pb-1.5 sm:order-1 sm:border-t-0 sm:border-b-2">
-              <Toolbar
-                tool={tool}
-                brushSize={brushSize}
-                selectionActive={selection !== null}
-                locked={locked}
-                onTool={setTool}
-                onBrush={setBrushSize}
-                onSelectionFill={() => selectionCommand("fill")}
-                onSelectionClear={() => selectionCommand("clear")}
-                onDeselect={() => setSelection(null)}
-              />
+            <div
+              className={`${socialFrame ? "order-1 border-b-2" : "order-2 border-t-2 sm:border-t-0 sm:border-b-2"} min-w-0 border-line bg-panel px-2 pt-2 pb-1.5 sm:order-1`}
+            >
+              {socialFrame ? (
+                <div className="flex min-h-9 flex-wrap items-center gap-1.5">
+                  <span className="truncate text-pixel-mono text-accent uppercase">
+                    {socialPreset?.label ?? "Social frame"}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted">
+                    {socialFrame.width}×{socialFrame.height}
+                    {socialSummary.errors > 0
+                      ? ` · ${socialSummary.errors} errors`
+                      : socialSummary.warnings > 0
+                        ? ` · ${socialSummary.warnings} warnings`
+                        : " · ready"}
+                  </span>
+                  <span className="ml-auto flex items-center gap-1">
+                    <Button
+                      tone={socialFit ? "solid" : "ghost"}
+                      className="px-2 py-1 text-pixel-label"
+                      onClick={() => setSocialFit(true)}
+                    >
+                      Fit
+                    </Button>
+                    <Button
+                      tone={!socialFit ? "solid" : "ghost"}
+                      className="px-2 py-1 text-pixel-label"
+                      onClick={() => setSocialFit(false)}
+                    >
+                      1:1
+                    </Button>
+                    <Button
+                      tone={socialZones ? "solid" : "ghost"}
+                      className="px-2 py-1 text-pixel-label"
+                      onClick={() => setSocialZones((value) => !value)}
+                    >
+                      Zones
+                    </Button>
+                    <Button
+                      tone="ghost"
+                      className="px-2 py-1 text-pixel-label"
+                      onClick={() => setSocialPickerOpen(true)}
+                    >
+                      + Format
+                    </Button>
+                  </span>
+                </div>
+              ) : (
+                <Toolbar
+                  tool={tool}
+                  brushSize={brushSize}
+                  selectionActive={selection !== null}
+                  locked={locked}
+                  onTool={setTool}
+                  onBrush={setBrushSize}
+                  onSelectionFill={() => selectionCommand("fill")}
+                  onSelectionClear={() => selectionCommand("clear")}
+                  onDeselect={() => setSelection(null)}
+                />
+              )}
             </div>
             <div
               ref={viewRef}
-              className="relative order-1 min-h-0 min-w-0 flex-1 [view-transition-name:asset-flight] sm:order-2"
+              className={`relative ${socialFrame ? "order-2" : "order-1"} min-h-0 min-w-0 flex-1 [view-transition-name:asset-flight] sm:order-2`}
               data-flight-frame=""
             >
               {asset.isPending ? (
@@ -2644,6 +3200,40 @@ export function EditorScreen() {
                       Try again
                     </Button>
                   </div>
+                </Centered>
+              ) : socialFrame &&
+                socialArtboard &&
+                socialPreset &&
+                asset.data &&
+                socialSpritesReady ? (
+                <div
+                  className="h-full overflow-hidden bg-screen px-3 pt-3"
+                  style={{
+                    paddingBottom: consoleOpen ? "min(46vh, 26rem)" : "9rem",
+                  }}
+                >
+                  <div className="flex h-full min-h-0 w-full items-center justify-center">
+                    <ArtboardCanvas
+                      artboard={socialArtboard}
+                      preset={socialPreset}
+                      asset={asset.data}
+                      sprites={socialSprites}
+                      fit={socialFit}
+                      showZones={socialZones}
+                      selectedId={socialElementId}
+                      onSelect={setSocialElementId}
+                      onMove={(id, x, y) =>
+                        updateSocialElement(id, { x, y } as Partial<Element>)
+                      }
+                      locked={running}
+                    />
+                  </div>
+                </div>
+              ) : socialFrame ? (
+                <Centered>
+                  <p className="max-w-sm text-center text-sm text-muted">
+                    Loading the project's sprite frames so this social scene can render.
+                  </p>
                 </Centered>
               ) : frames.length === 0 ? (
                 <Centered>
@@ -2709,78 +3299,80 @@ export function EditorScreen() {
                   </button>
                 </div>
               ) : null}
-              <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
-                <span className="w-full text-center text-pixel-mono text-muted">
-                  {Math.round(camera.zoom * 100)}%
-                </span>
-                <IconButton
-                  label="Zoom out"
-                  size="sm"
-                  onClick={() => {
-                    setViewMode("free");
-                    setCamera((current) => ({
-                      ...current,
-                      zoom: stepZoom(current.zoom, -1),
-                    }));
-                  }}
-                >
-                  <Minus />
-                </IconButton>
-                <IconButton
-                  label="Zoom in"
-                  size="sm"
-                  onClick={() => {
-                    setViewMode("free");
-                    setCamera((current) => ({
-                      ...current,
-                      zoom: stepZoom(current.zoom, 1),
-                    }));
-                  }}
-                >
-                  <Plus />
-                </IconButton>
-                <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
-                <button
-                  type="button"
-                  aria-label="Fit to view"
-                  aria-pressed={viewMode === "fit"}
-                  title="Fit to view (Ctrl+0)"
-                  onClick={() => {
-                    fit();
-                    setViewMode("fit");
-                  }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                    viewMode === "fit"
-                      ? "border-accent text-accent"
-                      : "border-line text-muted hover:text-ink"
-                  }`}
-                >
-                  Fit
-                </button>
-                <button
-                  type="button"
-                  aria-label="Actual size"
-                  aria-pressed={viewMode === "actual"}
-                  title="Actual size (Ctrl+1)"
-                  onClick={() => {
-                    const rect = viewRef.current?.getBoundingClientRect();
-                    const doc = bufferRef.current;
-                    if (rect && doc) {
-                      setCamera(
-                        centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
-                      );
-                    }
-                    setViewMode("actual");
-                  }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                    viewMode === "actual"
-                      ? "border-accent text-accent"
-                      : "border-line text-muted hover:text-ink"
-                  }`}
-                >
-                  1:1
-                </button>
-              </div>
+              {socialFrame ? null : (
+                <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
+                  <span className="w-full text-center text-pixel-mono text-muted">
+                    {Math.round(camera.zoom * 100)}%
+                  </span>
+                  <IconButton
+                    label="Zoom out"
+                    size="sm"
+                    onClick={() => {
+                      setViewMode("free");
+                      setCamera((current) => ({
+                        ...current,
+                        zoom: stepZoom(current.zoom, -1),
+                      }));
+                    }}
+                  >
+                    <Minus />
+                  </IconButton>
+                  <IconButton
+                    label="Zoom in"
+                    size="sm"
+                    onClick={() => {
+                      setViewMode("free");
+                      setCamera((current) => ({
+                        ...current,
+                        zoom: stepZoom(current.zoom, 1),
+                      }));
+                    }}
+                  >
+                    <Plus />
+                  </IconButton>
+                  <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                  <button
+                    type="button"
+                    aria-label="Fit to view"
+                    aria-pressed={viewMode === "fit"}
+                    title="Fit to view (Ctrl+0)"
+                    onClick={() => {
+                      fit();
+                      setViewMode("fit");
+                    }}
+                    className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                      viewMode === "fit"
+                        ? "border-accent text-accent"
+                        : "border-line text-muted hover:text-ink"
+                    }`}
+                  >
+                    Fit
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Actual size"
+                    aria-pressed={viewMode === "actual"}
+                    title="Actual size (Ctrl+1)"
+                    onClick={() => {
+                      const rect = viewRef.current?.getBoundingClientRect();
+                      const doc = bufferRef.current;
+                      if (rect && doc) {
+                        setCamera(
+                          centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
+                        );
+                      }
+                      setViewMode("actual");
+                    }}
+                    className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                      viewMode === "actual"
+                        ? "border-accent text-accent"
+                        : "border-line text-muted hover:text-ink"
+                    }`}
+                  >
+                    1:1
+                  </button>
+                </div>
+              )}
             </div>
             <div className="pointer-events-none absolute inset-x-0 top-3 bottom-3 z-20 flex flex-col items-center justify-end overflow-hidden px-3">
               {/* One 40rem column holds the console, the queue, and the
@@ -3026,8 +3618,14 @@ export function EditorScreen() {
           </div>
 
           <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
-            <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
-            {historyPanel("min-h-0 flex-1")}
+            {socialFrame ? (
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">{socialPanels}</div>
+            ) : (
+              <>
+                <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
+                {historyPanel("min-h-0 flex-1")}
+              </>
+            )}
           </aside>
         </div>
       </div>
@@ -3045,17 +3643,71 @@ export function EditorScreen() {
           <Sheet
             open={rightSheet}
             onOpenChange={setRightSheet}
-            title="Palette, style, and history"
+            title={socialFrame ? "Social frame" : "Palette, style, and history"}
             side="right"
           >
             <div className="grid gap-4">
-              {topPanels}
-              {historyPanel()}
+              {socialFrame ? socialPanels : topPanels}
+              {socialFrame ? null : historyPanel()}
             </div>
           </Sheet>
         </>
       )}
 
+      <Dialog
+        open={paletteImportOpen}
+        onOpenChange={setPaletteImportOpen}
+        title="Import a project palette"
+        description="The source palette becomes this asset's palette. Sprite pixels and social scenes map to the nearest colour."
+        width="34rem"
+      >
+        <Field label="Source asset" htmlFor="palette-source">
+          <SelectControl
+            id="palette-source"
+            label="Source asset"
+            value={paletteSourceId}
+            options={(resources.data?.assets ?? []).map((item) => ({
+              value: item.id,
+              label: item.name,
+            }))}
+            onChange={setPaletteSourceId}
+          />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button tone="ghost" onClick={() => setPaletteImportOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!paletteSourceId || importPalette.isPending}
+            onClick={() => importPalette.mutate(paletteSourceId)}
+          >
+            {importPalette.isPending ? "Importing" : "Import palette"}
+          </Button>
+        </div>
+      </Dialog>
+      <ImportFrameDialog
+        open={importFrameOpen}
+        onOpenChange={setImportFrameOpen}
+        assets={resources.data?.assets ?? []}
+        currentAssetId={assetId}
+        busy={importFrame.isPending}
+        onImport={(sourceAssetId, sourceFrameId) =>
+          importFrame.mutate({ sourceAssetId, sourceFrameId })
+        }
+      />
+      <FormatPicker
+        open={socialPickerOpen}
+        onOpenChange={setSocialPickerOpen}
+        existing={
+          new Set(
+            frames
+              .filter((item) => item.kind === "social" && item.presetId)
+              .map((item) => item.presetId as string),
+          )
+        }
+        onPick={(presetId) => addSocialFrame.mutate(presetId)}
+        busy={addSocialFrame.isPending}
+      />
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
@@ -3064,7 +3716,11 @@ export function EditorScreen() {
         frameId={frameId ?? ""}
         frameName={frame?.name ?? ""}
         assetName={asset.data?.name ?? ""}
-        onBeforeExport={flush}
+        social={socialFrame !== null}
+        onBeforeExport={async () => {
+          await flush();
+          await flushSocialSaves();
+        }}
       />
       <ConfirmDialog
         open={deleteOpen}

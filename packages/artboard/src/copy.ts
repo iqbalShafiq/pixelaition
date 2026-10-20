@@ -82,7 +82,8 @@ export function syncCopyScene(
       )
       .sort((a, b) => a.y - b.y)[0]?.y;
     const slotHeight =
-      nextTextY !== undefined ? Math.max(8, nextTextY - element.y - 2) : undefined;
+      element.height ??
+      (nextTextY !== undefined ? Math.max(8, nextTextY - element.y - 2) : undefined);
     elements.push(fitTextToSlot({ ...element, text: value }, slotHeight));
   }
   return { ...scene, elements };
@@ -103,7 +104,7 @@ export function fitTextToSlot(element: TextElement, limit?: number): TextElement
   // slot can hold two or three lines. Let a shared-copy edit use the room it
   // actually has, but never turn a label into a paragraph.
   const cap = element.id === "headline" || element.id === "subhead" ? 3 : 2;
-  const maxSize = Math.max(effective, Math.min(128, Math.floor(slotHeight / 1.1)));
+  const maxSize = Math.min(effective, Math.min(128, Math.floor(slotHeight / 1.1)));
   const sizes = availableSizes(element.face, element.weight)
     .filter((size) => size <= maxSize)
     .sort((a, b) => b - a);

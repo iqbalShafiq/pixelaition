@@ -3,6 +3,18 @@
 Date: 2026-10-20
 Branch: `feat/social-artboards`
 
+> **Update — one asset, mixed frames.** The first implementation put social
+> boards in a separate `artboard_sets` surface and a separate `/studio` route.
+> The product now treats an asset as one mixed document: `frames.kind` is
+> `sprite` or `social`, both live in the same frame rail and editor, and the
+> Studio route only redirects to the editor. `0027_mixed_asset_frames` migrates
+> the old sets into the asset and copies the latest shared deck onto
+> `assets.copy`; the legacy tables remain read-only for old URLs. A compose run
+> is now bound to the asset, not the set, and `GET
+/api/projects/:id/resources` plus frame/palette import make project resources
+> reusable across assets. The sections below describe the original artboard
+> engine; the route and set boundaries are superseded.
+
 ## The question
 
 Can Pixelaition turn one pixel sprite and a project palette into every social
@@ -143,6 +155,12 @@ checked at 1440, 1100, 720 and 390 px.
 - A second real run on a two-format kit verified the plan gate, text-size
   snapping, save/version path and the shared-copy refit. The final state was
   0 errors, 0 warnings.
+- After unification, a real MiniMax M3.1 Flash run on a mixed asset (two sprite
+  frames + one LinkedIn cover) planned a LinkedIn cover and an Instagram post,
+  waited for plan approval, created both social frames inside the same asset,
+  saved them with shared copy and finished 0 errors/0 warnings. The Langfuse
+  trace had 73 observations and no refused tool calls.
+  `node tools/trace-check.mjs --run <durableRunId>` reads it back.
 - A 44-format creation probe built every preset with a real sprite and the
   default template: 44 artboards, 0 errors, 0 warnings.
 - `pnpm eval:social` makes a real MiniMax M3.1 Flash planning call, retries a
@@ -151,10 +169,9 @@ checked at 1440, 1100, 720 and 390 px.
 
 ## Limits and next work
 
-- The Studio is a separate route rather than a mode inside the editor shell. The
-  shared renderer, canvas and composer keep the behavior consistent, but a
-  future `Sprite | Social` switch inside the editor would remove one navigation
-  step.
+- The first version used a separate Studio route. That boundary is gone: the
+  editor frame rail, stage, inspector, composer and export switch on the selected
+  frame's kind. The legacy set tables remain only for migration safety.
 - A shared copy edit refits text into the slots the composition reserved. A very
   long headline can therefore be legible but smaller than the original
   hierarchy; per-board overrides remain the escape hatch.

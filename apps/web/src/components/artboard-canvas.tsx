@@ -44,6 +44,7 @@ export function ArtboardCanvas({
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [compact, setCompact] = useState(false);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const image = useMemo<PaletteImage>(() => {
     const rendered = renderArtboard(artboard, preset, asset, sprites);
     return thumbnail ? downsamplePalette(rendered, 520) : rendered;
@@ -59,7 +60,10 @@ export function ArtboardCanvas({
     const stage = stageRef.current;
     if (!stage) return;
     const observer = new ResizeObserver(([entry]) => {
-      setCompact((entry?.contentRect.width ?? 0) < 420);
+      const width = entry?.contentRect.width ?? 0;
+      const height = entry?.contentRect.height ?? 0;
+      setCompact(width < 420);
+      setStageSize({ width, height });
     });
     observer.observe(stage);
     return () => observer.disconnect();
@@ -77,6 +81,10 @@ export function ArtboardCanvas({
     ? artboard.scene.elements.find((item) => item.id === selectedId)
     : undefined;
   const selectedBounds = selected ? bounds.get(selected.id) : undefined;
+  const fitScale =
+    stageSize.width > 0 && stageSize.height > 0
+      ? Math.min(stageSize.width / image.width, stageSize.height / image.height)
+      : 1;
   const scaleX = 100 / artboard.width;
   const scaleY = 100 / artboard.height;
 
@@ -135,14 +143,18 @@ export function ArtboardCanvas({
   return (
     <div
       ref={stageRef}
-      className={`relative ${fit ? "flex max-h-full max-w-full items-center justify-center" : "inline-block"}`}
+      className={`relative ${fit ? "flex h-full w-full items-center justify-center" : "inline-block"}`}
       style={fit ? undefined : { width: image.width, height: image.height }}
     >
       <div
         className="relative"
         style={
           fit
-            ? { maxWidth: "100%", maxHeight: "100%" }
+            ? {
+                width: Math.max(1, image.width * fitScale),
+                height: Math.max(1, image.height * fitScale),
+                visibility: stageSize.width > 0 ? "visible" : "hidden",
+              }
             : { width: image.width, height: image.height }
         }
       >
@@ -161,7 +173,7 @@ export function ArtboardCanvas({
             thumbnail
               ? { width: "100%", height: "100%", objectFit: "contain" }
               : fit
-                ? { maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto" }
+                ? { width: "100%", height: "100%" }
                 : { width: image.width, height: image.height }
           }
         />

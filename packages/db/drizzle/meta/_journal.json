@@ -190,6 +190,20 @@
       "when": 1792500100000,
       "tag": "0026_minimax_eval_model",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792500200000,
+      "tag": "0027_mixed_asset_frames",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792500300000,
+      "tag": "0028_run_mode",
+      "breakpoints": true
     }
   ]
 }

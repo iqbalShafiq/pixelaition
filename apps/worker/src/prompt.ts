@@ -34,7 +34,12 @@ export function buildRunPrompt(input: {
   prompt: string;
   style: unknown;
   frameName?: string;
-  frames?: Array<{ name: string; current: boolean }>;
+  frames?: Array<{
+    name: string;
+    current: boolean;
+    kind?: "sprite" | "social";
+    presetId?: string | null;
+  }>;
   palette?: string[];
   attachments?: number;
   projectSummary?: string;
@@ -56,7 +61,12 @@ export function buildRunPrompt(input: {
   if (input.frames !== undefined && input.frames.length > 0) {
     lines.push(
       `Frames: ${input.frames
-        .map((frame) => (frame.current ? `${frame.name}*` : frame.name))
+        .map(
+          (frame) =>
+            `${frame.name}${frame.current ? "*" : ""}${
+              frame.kind === "social" ? ` [social ${frame.presetId ?? "artboard"}]` : ""
+            }`,
+        )
         .join(", ")} (* = current)`,
     );
   }

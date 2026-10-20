@@ -1,8 +1,10 @@
 import {
   checkScene,
+  getPreset,
   renderScene,
   type Artboard,
   type ArtboardCheck,
+  type ArtboardScene,
   type CopyDeck,
   type FormatPreset,
   type PaletteImage,
@@ -15,12 +17,15 @@ import type { AssetDto } from "./types.js";
 export function spritesForAsset(asset: AssetDto): Map<string, SpriteSource> {
   const sprites = new Map<string, SpriteSource>();
   for (const frame of asset.frames) {
+    if (frame.kind === "social") continue;
+    const width = frame.width ?? asset.width;
+    const height = frame.height ?? asset.height;
     sprites.set(`${asset.id}:${frame.id}`, {
       assetId: asset.id,
       assetName: asset.name,
       frameId: frame.id,
       frameName: frame.name,
-      buffer: frameToBuffer(frame, asset.width, asset.height, asset.palette),
+      buffer: frameToBuffer(frame, width, height, asset.palette),
     });
   }
   return sprites;
@@ -118,4 +123,83 @@ function hexToRgba(hex: string): [number, number, number, number] {
     Number.parseInt(value.slice(4, 6), 16),
     value.length === 8 ? Number.parseInt(value.slice(6, 8), 16) : 255,
   ];
+}
+
+/** The shared artboard engine's view of one social frame. */
+export function artboardForFrame(
+  asset: AssetDto,
+  frame: AssetDto["frames"][number],
+): Artboard | null {
+  if (frame.kind !== "social" || !frame.presetId || !frame.scene) return null;
+  return {
+    id: frame.id,
+    setId: asset.id,
+    presetId: frame.presetId,
+    name: frame.name,
+    width: frame.width ?? getPreset(frame.presetId).width,
+    height: frame.height ?? getPreset(frame.presetId).height,
+    pixelUnit: getPreset(frame.presetId).pixelUnit,
+    scene: frame.scene,
+    copyOverride: frame.copyOverride ?? {},
+    status:
+      frame.status === "ready" || frame.status === "needs-fix" ? frame.status : "draft",
+    version: frame.version ?? 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export type ProjectResourceAsset = {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  palette: string[];
+  frames: Array<{
+    id: string;
+    name: string;
+    index: number;
+    kind: "sprite" | "social";
+    width: number | null;
+    height: number | null;
+    presetId: string | null;
+    layers: Array<{ id: string; name: string; visible: boolean; pixels: string }>;
+  }>;
+};
+
+/** Every sprite frame in a project, keyed for the shared artboard renderer. */
+export function spritesForResources(
+  assets: ProjectResourceAsset[],
+): Map<string, SpriteSource> {
+  const sprites = new Map<string, SpriteSource>();
+  for (const asset of assets) {
+    for (const frame of asset.frames) {
+      if (frame.kind !== "sprite") continue;
+      sprites.set(`${asset.id}:${frame.id}`, {
+        assetId: asset.id,
+        assetName: asset.name,
+        frameId: frame.id,
+        frameName: frame.name,
+        buffer: frameToBuffer(
+          { ...frame, layers: frame.layers },
+          frame.width ?? asset.width,
+          frame.height ?? asset.height,
+          asset.palette,
+        ),
+      });
+    }
+  }
+  return sprites;
+}
+
+/** A scene can render only when every sprite it names is in the project map. */
+export function sceneSpritesReady(
+  scene: ArtboardScene,
+  sprites: Map<string, SpriteSource>,
+): boolean {
+  return scene.elements.every((element) => {
+    if (element.kind !== "sprite") return true;
+    if (element.frameId) return sprites.has(`${element.assetId}:${element.frameId}`);
+    return [...sprites.values()].some((source) => source.assetId === element.assetId);
+  });
 }

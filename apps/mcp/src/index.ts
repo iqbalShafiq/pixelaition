@@ -29,6 +29,11 @@ type AssetFrame = {
   id: string;
   name: string;
   index: number;
+  kind?: "sprite" | "social";
+  width?: number | null;
+  height?: number | null;
+  presetId?: string | null;
+  scene?: unknown;
   layers: Array<{ id: string; name: string; visible: boolean; pixels: string }>;
 };
 type AssetRecord = {
@@ -321,6 +326,65 @@ server.registerTool(
 );
 
 const transport = new StdioServerTransport();
+server.registerTool(
+  "list_project_resources",
+  {
+    description:
+      "List every asset and frame in a project, including social frames, palettes and dimensions. Use it before reusing another asset's frame or palette.",
+    inputSchema: { projectId: z.string() },
+  },
+  async ({ projectId }) => text(await call(`/api/projects/${projectId}/resources`)),
+);
+
+server.registerTool(
+  "import_frame",
+  {
+    description:
+      "Copy a sprite or social frame from another asset in the same project. Sprite colours map through the target palette; a social frame keeps its native preset size.",
+    inputSchema: {
+      assetId: z.string(),
+      sourceAssetId: z.string(),
+      sourceFrameId: z.string(),
+      name: z.string().optional(),
+    },
+  },
+  async ({ assetId, sourceAssetId, sourceFrameId, name }) =>
+    text(
+      await call(`/api/assets/${assetId}/frames/import`, {
+        method: "POST",
+        body: JSON.stringify({
+          sourceAssetId,
+          sourceFrameId,
+          ...(name !== undefined ? { name } : {}),
+        }),
+      }),
+    ),
+);
+
+server.registerTool(
+  "create_social_frame",
+  {
+    description:
+      "Add a native-size social frame to an existing asset. The asset can also hold sprite frames.",
+    inputSchema: {
+      assetId: z.string(),
+      presetId: z.string(),
+      name: z.string().optional(),
+    },
+  },
+  async ({ assetId, presetId, name }) =>
+    text(
+      await call(`/api/assets/${assetId}/frames`, {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "social",
+          presetId,
+          ...(name !== undefined ? { name } : {}),
+        }),
+      }),
+    ),
+);
+
 await server.connect(transport);
 
 // ---- Social artboards -------------------------------------------------------

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Read one task's Langfuse traces back and judge whether every generation got
-// the context it needed. Usage: node tools/trace-check.mjs <durableTaskId>
+// Read one task's or one compose run's Langfuse traces back and judge whether
+// every generation got the context it needed.
+// Usage: node tools/trace-check.mjs <durableTaskId>
+//        node tools/trace-check.mjs --run <durableRunId>
 // Env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL (from .env).
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -31,15 +33,19 @@ const traceIdFor = (runId) => createHash("sha256").update(runId).digest("hex").s
  * worker restart is still found.
  */
 const taskArg = process.argv.indexOf("--task");
-const taskId = taskArg === -1 ? process.argv[2] : process.argv[taskArg + 1];
-if (!taskId) {
-  console.error("usage: node tools/trace-check.mjs [--task] <durableTaskId>");
+const runArg = process.argv.indexOf("--run");
+const taskId = taskArg === -1 ? (runArg === -1 ? process.argv[2] : undefined) : process.argv[taskArg + 1];
+const durableRunId = runArg === -1 ? undefined : process.argv[runArg + 1];
+if (!taskId && !durableRunId) {
+  console.error(
+    "usage: node tools/trace-check.mjs [--task] <durableTaskId> | --run <durableRunId>",
+  );
   process.exit(2);
 }
 
 // Every child run id of the task, from the durable store.
 const sqlite = "apps/worker/data/anvia-runs.sqlite";
-const children = execFileSync(
+const children = durableRunId ? "[]" : execFileSync(
   "sqlite3",
   ["-json", sqlite, `select key, json_extract(record,'$.agentRunId') as runId from anvia_durable_tasks where root_id='${taskId}' and json_extract(record,'$.agentRunId') is not null order by rowid`],
   { encoding: "utf8" },
@@ -49,10 +55,12 @@ const childRows = children.trim()
   : [];
 const roleOf = (key) =>
   key.startsWith("plan") ? "draw-plan" : key.startsWith("w") ? "draw-worker" : key.startsWith("review") ? "draw-review" : "draw-fix";
-const traces = [
-  { id: taskId, role: "draw-task" },
-  ...childRows.map((row) => ({ id: row.runId, role: roleOf(row.key) })),
-];
+const traces = durableRunId
+  ? [{ id: durableRunId, role: "social-compose" }]
+  : [
+      { id: taskId, role: "draw-task" },
+      ...childRows.map((row) => ({ id: row.runId, role: roleOf(row.key) })),
+    ];
 
 /** What each role's first generation must carry, to judge its context. */
 const MARKERS = {
@@ -63,6 +71,7 @@ const MARKERS = {
   // A fix prompt names its frame and layers, quotes the review, carries the
   // work log, and bounds the writer to the ordered layers.
   "draw-fix": ["Frame:", "The review asks:", "Paint only"],
+  "social-compose": ["social frames", "list_formats", "list_project_sprites"],
 };
 /** Tool failures the model sees as `error-*`; every one is a refused call worth naming. */
 const REFUSAL = /"type":"error-(text|json)"/;

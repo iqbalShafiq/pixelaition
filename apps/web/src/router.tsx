@@ -10,7 +10,6 @@ import { authClient } from "./lib/auth.js";
 import { AuthScreen } from "./screens/auth.js";
 import { EditorScreen } from "./screens/editor.js";
 import { ProjectsScreen } from "./screens/projects.js";
-import { lazy, Suspense } from "react";
 
 function Layout() {
   return (
@@ -92,27 +91,15 @@ const editorRoute = createRoute({
   component: EditorScreen,
 });
 
-const StudioScreen = lazy(() => import("./screens/studio.js"));
-
-function StudioRoute() {
-  return (
-    <Suspense
-      fallback={
-        <main className="grid min-h-dvh place-items-center bg-paper">
-          <p className="text-pixel-body text-muted">Loading the social studio…</p>
-        </main>
-      }
-    >
-      <StudioScreen />
-    </Suspense>
-  );
-}
-
 const studioRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId/assets/$assetId/studio",
-  beforeLoad: requireSession,
-  component: StudioRoute,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/projects/$projectId/assets/$assetId",
+      params,
+    });
+  },
 });
 
 const routeTree = rootRoute.addChildren([

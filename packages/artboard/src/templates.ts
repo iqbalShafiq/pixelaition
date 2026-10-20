@@ -1,3 +1,4 @@
+import { syncCopyScene } from "./copy.js";
 import { availableSizes, nearestSize } from "./font.js";
 import { layoutText } from "./text.js";
 import type {
@@ -30,6 +31,10 @@ export type TemplateInput = {
  * that clips on one platform and not another.
  */
 export function buildTemplateScene(input: TemplateInput): ArtboardScene {
+  return syncCopyScene(buildTemplateSceneRaw(input), input.copy);
+}
+
+function buildTemplateSceneRaw(input: TemplateInput): ArtboardScene {
   const { preset, template, palette } = input;
   const colors = paletteRoles(palette);
   const safe = preset.safeZones[0] ?? {

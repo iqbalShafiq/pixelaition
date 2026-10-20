@@ -231,6 +231,27 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
     },
   });
 
+  const listProjectSprites = createTool({
+    name: "list_project_sprites",
+    description:
+      "List every sprite frame available in the project with its asset and dimensions. Use these ids in place_sprite to reuse another asset's artwork.",
+    inputSchema: z.object({}),
+    execute: (_input, context) => {
+      const run = requireArtboardRun(context.operationId);
+      return {
+        sprites: [...run.sprites.values()].map((sprite) => ({
+          assetId: sprite.assetId,
+          assetName: sprite.assetName,
+          frameId: sprite.frameId,
+          frameName: sprite.frameName,
+          width: sprite.buffer.width,
+          height: sprite.buffer.height,
+          palette: sprite.buffer.palette,
+        })),
+      };
+    },
+  });
+
   const readArtboard = createTool({
     name: "read_artboard",
     description:
@@ -824,6 +845,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   return [
     listFormats,
     readSet,
+    listProjectSprites,
     readArtboard,
     checkArtboard,
     previewArtboard,

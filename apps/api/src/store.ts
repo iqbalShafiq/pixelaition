@@ -17,19 +17,30 @@ import {
   type VersionScope,
 } from "@pixelaition/db";
 import {
-  addFrame,
   applyCommand,
   assetFrameBuffer,
+  bufferToFrame,
   createAsset,
+  createBuffer,
   decodePixels,
   defaultStyle,
-  duplicateFrame,
-  moveFrame,
+  frameToBuffer,
   writeFrame,
   type Asset,
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
+import {
+  buildTemplateScene,
+  getPreset,
+  renderScene,
+  sceneSchema,
+  type ArtboardScene,
+  type CopyDeck,
+  type PaletteImage,
+  type SpriteSource,
+  syncCopyScene,
+} from "@pixelaition/artboard";
 import {
   and,
   count,
@@ -109,10 +120,15 @@ export async function createAssetRecord(
       name: frame.name,
       index: frame.index,
       layers: frame.layers,
+      kind: "sprite",
+      width: asset.width,
+      height: asset.height,
     });
   }
   return asset;
 }
+
+type StoredFrame = typeof frames.$inferSelect & { layers: Frame["layers"] };
 
 export async function getAssetRecord(db: Database, userId: string, assetId: string) {
   const [row] = await db
@@ -137,7 +153,7 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
     style: row.style as StyleGuide,
     projectId: row.projectId,
     projectName: row.projectName,
-    frames: frameRows as Array<Frame & { assetId: string; summary: string }>,
+    frames: frameRows as StoredFrame[],
   };
 }
 
@@ -148,6 +164,46 @@ export type StoreFailure = { code: string; message: string };
 /** Frame-scoped snapshot shape: the name and layers a restore replays. */
 function frameSnapshot(name: string, layers: Frame["layers"]) {
   return { name, layers };
+}
+
+function socialSnapshot(frame: {
+  name: string;
+  presetId: string | null;
+  width: number | null;
+  height: number | null;
+  scene: unknown;
+  copyOverride: unknown;
+  status: string;
+}) {
+  return {
+    name: frame.name,
+    layers: [],
+    social: {
+      presetId: frame.presetId,
+      width: frame.width,
+      height: frame.height,
+      scene: frame.scene,
+      copyOverride: frame.copyOverride,
+      status: frame.status,
+    },
+  };
+}
+
+async function recordSocialVersion(
+  db: Database,
+  assetId: string,
+  frameId: string,
+  kind: string,
+  frame: Parameters<typeof socialSnapshot>[0],
+) {
+  await createVersion(db, {
+    assetId,
+    frameId,
+    scope: "frame",
+    kind,
+    author: "user",
+    snapshot: socialSnapshot(frame),
+  });
 }
 
 /** Asset-scoped snapshot shape: the metadata plus the frames that existed. */
@@ -221,9 +277,20 @@ export async function saveFrame(
       asset: undefined,
       failure: { code: "NOT_FOUND", message: "That frame is not available." },
     };
+  if (frame.kind === "social") {
+    return {
+      asset: undefined,
+      failure: {
+        code: "NOT_A_SPRITE_FRAME",
+        message: "A social frame is edited through its scene, not through pixels.",
+      },
+    };
+  }
   // A buffer sized for another canvas would make every later read of this asset
   // throw, so it is refused here instead of stored.
-  const expected = asset.width * asset.height;
+  const frameWidth = frame.width ?? asset.width;
+  const frameHeight = frame.height ?? asset.height;
+  const expected = frameWidth * frameHeight;
   try {
     for (const layer of layers) decodePixels(layer.pixels, expected);
   } catch {
@@ -231,7 +298,7 @@ export async function saveFrame(
       asset: undefined,
       failure: {
         code: "FRAME_SIZE_MISMATCH",
-        message: `Those pixels are not ${asset.width} by ${asset.height}. Reload the asset and try again.`,
+        message: `Those pixels are not ${frameWidth} by ${frameHeight}. Reload the asset and try again.`,
       },
     };
   }
@@ -251,12 +318,14 @@ function asPixelAsset(record: AssetRecord): Asset {
     width: record.width,
     height: record.height,
     palette: record.palette as string[],
-    frames: record.frames.map((frame) => ({
-      id: frame.id,
-      name: frame.name,
-      index: frame.index,
-      layers: frame.layers,
-    })),
+    frames: record.frames
+      .filter((frame) => frame.kind !== "social")
+      .map((frame) => ({
+        id: frame.id,
+        name: frame.name,
+        index: frame.index,
+        layers: frame.layers,
+      })),
   };
 }
 
@@ -299,19 +368,194 @@ export async function addFrameRecord(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
-  const next = addFrame(asPixelAsset(record), name);
-  const added = next.frames.at(-1);
-  if (!added) return { asset: undefined };
+  const index =
+    record.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+  const blank = createBuffer({
+    width: record.width,
+    height: record.height,
+    palette: record.palette as string[],
+    layerName: "pixels",
+  });
+  const added = bufferToFrame(blank, {
+    id: randomUUID(),
+    name: name.trim() || `frame-${index + 1}`,
+    index,
+  });
   await db.insert(frames).values({
     id: added.id,
     assetId,
     name: added.name,
     index: added.index,
     layers: added.layers,
+    kind: "sprite",
+    width: record.width,
+    height: record.height,
   });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+function spriteSources(record: AssetRecord): Map<string, SpriteSource> {
+  const sprites = new Map<string, SpriteSource>();
+  for (const frame of record.frames) {
+    if (frame.kind === "social") continue;
+    const width = frame.width ?? record.width;
+    const height = frame.height ?? record.height;
+    sprites.set(`${record.id}:${frame.id}`, {
+      assetId: record.id,
+      assetName: record.name,
+      frameId: frame.id,
+      frameName: frame.name,
+      buffer: frameToBuffer(frame, width, height, record.palette as string[]),
+    });
+  }
+  return sprites;
+}
+
+export async function addSocialFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  input: { presetId: string; name?: string; template?: string; copy?: CopyDeck },
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return { asset: undefined };
+  let preset;
+  try {
+    preset = getPreset(input.presetId);
+  } catch (reason) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "UNKNOWN_FORMAT",
+        message: reason instanceof Error ? reason.message : "Unknown format.",
+      },
+    };
+  }
+  const sprites = spriteSources(record);
+  const source = [...sprites.values()][0];
+  const copy = input.copy ?? (record.copy as CopyDeck);
+  const template = (input.template ??
+    preset.defaultTemplate) as typeof preset.defaultTemplate;
+  const scene = buildTemplateScene({
+    preset,
+    template,
+    copy,
+    palette: record.palette as string[],
+    ...(source ? { sprite: source } : {}),
+  });
+  const index =
+    record.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+  await db.insert(frames).values({
+    id: randomUUID(),
+    assetId,
+    name: input.name?.trim() || preset.label,
+    index,
+    layers: [],
+    kind: "social",
+    width: preset.width,
+    height: preset.height,
+    presetId: preset.id,
+    scene,
+    copyOverride: {},
+    status: "draft",
+    version: 1,
+  });
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function saveSocialFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  input: {
+    version: number;
+    scene?: unknown;
+    copyOverride?: Record<string, string>;
+    status?: "draft" | "ready" | "needs-fix";
+    name?: string;
+  },
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const [row] = await db
+    .select({ frame: frames })
+    .from(frames)
+    .innerJoin(assets, eq(frames.assetId, assets.id))
+    .innerJoin(projects, eq(assets.projectId, projects.id))
+    .where(
+      and(
+        eq(frames.id, frameId),
+        eq(frames.assetId, assetId),
+        eq(projects.userId, userId),
+      ),
+    );
+  if (!row || row.frame.kind !== "social") {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+    };
+  }
+  if (row.frame.version !== input.version) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "VERSION_CONFLICT",
+        message: `This frame changed (expected version ${input.version}, current ${row.frame.version}). Reload it.`,
+      },
+    };
+  }
+  const scene =
+    input.scene === undefined ? row.frame.scene : sceneSchema.parse(input.scene);
+  const [updated] = await db
+    .update(frames)
+    .set({
+      ...(input.name !== undefined ? { name: input.name.trim().slice(0, 80) } : {}),
+      ...(input.copyOverride !== undefined ? { copyOverride: input.copyOverride } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      scene,
+      version: row.frame.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(frames.id, frameId), eq(frames.version, input.version)))
+    .returning({ id: frames.id });
+  if (!updated) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "VERSION_CONFLICT",
+        message: "This frame changed while it was being saved. Reload it.",
+      },
+    };
+  }
+  await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}
+
+export async function updateAssetCopyRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  copy: CopyDeck,
+): Promise<AssetRecord | undefined> {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record) return undefined;
+  await db
+    .update(assets)
+    .set({ copy, updatedAt: new Date() })
+    .where(eq(assets.id, assetId));
+  for (const frame of record.frames) {
+    if (frame.kind !== "social") continue;
+    const scene = sceneSchema.parse(frame.scene);
+    const next = syncCopyScene(scene, copy, frame.copyOverride as Record<string, string>);
+    if (JSON.stringify(next) === JSON.stringify(scene)) continue;
+    await db
+      .update(frames)
+      .set({ scene: next, version: frame.version + 1, updatedAt: new Date() })
+      .where(eq(frames.id, frame.id));
+  }
+  return getAssetRecord(db, userId, assetId);
 }
 
 export async function duplicateFrameRecord(
@@ -323,23 +567,55 @@ export async function duplicateFrameRecord(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
-  const next = duplicateFrame(asPixelAsset(record), frameId, name ?? "");
-  if (!next)
+  const source = record.frames.find((frame) => frame.id === frameId);
+  if (!source)
     return {
       asset: undefined,
       failure: { code: "NOT_FOUND", message: "That frame is gone." },
     };
-  const added = next.frames.at(-1);
-  if (!added) return { asset: undefined };
-  await db.insert(frames).values({
-    id: added.id,
-    assetId,
-    name: added.name,
-    index: added.index,
-    layers: added.layers,
-  });
+  const index =
+    record.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+  if (source.kind === "social") {
+    await db.insert(frames).values({
+      id: randomUUID(),
+      assetId,
+      name: name?.trim() || `${source.name} copy`,
+      index,
+      layers: [],
+      kind: "social",
+      width: source.width,
+      height: source.height,
+      presetId: source.presetId,
+      scene: source.scene,
+      copyOverride: source.copyOverride,
+      status: "draft",
+      version: 1,
+    });
+  } else {
+    const buffer = frameToBuffer(
+      source,
+      source.width ?? record.width,
+      source.height ?? record.height,
+      record.palette as string[],
+    );
+    const copy = bufferToFrame(buffer, {
+      id: randomUUID(),
+      name: name?.trim() || `${source.name} copy`,
+      index,
+    });
+    copy.layers = copy.layers.map((layer) => ({ ...layer, id: randomUUID() }));
+    await db.insert(frames).values({
+      id: copy.id,
+      assetId,
+      name: copy.name,
+      index: copy.index,
+      layers: copy.layers,
+      kind: "sprite",
+      width: source.width ?? record.width,
+      height: source.height ?? record.height,
+    });
+  }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
-  await recordFrameVersion(db, assetId, added.id, "frame-add", added.name, added.layers);
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -352,30 +628,35 @@ export async function moveFrameRecord(
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
-  const before = asPixelAsset(record);
-  const next = moveFrame(before, frameId, toIndex);
-  if (!next)
+  const ordered = [...record.frames].sort((a, b) => a.index - b.index);
+  const from = ordered.findIndex((frame) => frame.id === frameId);
+  if (from === -1)
     return {
       asset: undefined,
       failure: { code: "NOT_FOUND", message: "That frame is gone." },
     };
+  const target = Math.max(0, Math.min(ordered.length - 1, toIndex));
+  const [moving] = ordered.splice(from, 1);
+  if (moving) ordered.splice(target, 0, moving);
   await db.transaction(async (tx) => {
-    // A unique index guards (asset, index), so a direct renumber might collide
-    // with a row that has not moved yet. Park every frame far above the final
-    // range first, then write the dense 0..n-1 order.
+    // A unique index guards (asset, index), so park the whole list above the
+    // final range before writing the dense order.
     await tx
       .update(frames)
       .set({ index: sql`${frames.index} + 1000`, updatedAt: new Date() })
       .where(eq(frames.assetId, assetId));
-    for (const frame of next.frames) {
+    for (const [index, frame] of ordered.entries()) {
       await tx
         .update(frames)
-        .set({ index: frame.index, updatedAt: new Date() })
+        .set({ index, updatedAt: new Date() })
         .where(and(eq(frames.id, frame.id), eq(frames.assetId, assetId)));
     }
     await tx.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   });
-  await recordAssetVersion(db, assetId, "frame-move", next);
+  await recordAssetVersion(db, assetId, "frame-move", {
+    ...record,
+    frames: ordered,
+  });
   return { asset: await getAssetRecord(db, userId, assetId) };
 }
 
@@ -413,21 +694,27 @@ export async function deleteFrameRecord(
   // An asset keeps at least one frame: removing the last one replaces it with a
   // fresh blank frame instead of refusing, so delete always means delete.
   if (record.frames.length <= 1) {
-    const previous = asPixelAsset(record);
-    const next = addFrame(
-      { ...previous, frames: previous.frames.filter((frame) => frame.id !== frameId) },
-      "",
-    );
-    const added = next.frames.at(-1);
-    if (added) {
-      await db.insert(frames).values({
-        id: added.id,
-        assetId,
-        name: added.name,
-        index: added.index,
-        layers: added.layers,
-      });
-    }
+    const blank = createBuffer({
+      width: record.width,
+      height: record.height,
+      palette: record.palette as string[],
+      layerName: "pixels",
+    });
+    const added = bufferToFrame(blank, {
+      id: randomUUID(),
+      name: `frame-1`,
+      index: 0,
+    });
+    await db.insert(frames).values({
+      id: added.id,
+      assetId,
+      name: added.name,
+      index: added.index,
+      layers: added.layers,
+      kind: "sprite",
+      width: record.width,
+      height: record.height,
+    });
   }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   const after = await getAssetRecord(db, userId, assetId);
@@ -566,7 +853,13 @@ function frameSnapshotFrom(
   const name = item.name.trim();
   if (!name || name.length > 80) return undefined;
   const layers = item.layers;
-  if (!Array.isArray(layers) || layers.length === 0) return undefined;
+  if (!Array.isArray(layers)) return undefined;
+  if (layers.length === 0) {
+    // Social snapshots carry a scene instead of pixel layers.
+    return typeof item === "object" && "social" in item
+      ? { name, layers: [] }
+      : undefined;
+  }
   for (const layer of layers) {
     if (typeof layer !== "object" || layer === null) return undefined;
     const entry = layer as Record<string, unknown>;
@@ -629,6 +922,35 @@ async function reorderFrames(db: Database, assetId: string, frameIds: string[]) 
  * Replays a snapshot as the new current state and records the replay as a new
  * `restore` version. Never destructive, and never while a run owns the asset.
  */
+function socialSnapshotFrom(snapshot: unknown):
+  | {
+      scene: ArtboardScene;
+      copyOverride: Record<string, string>;
+      status: "draft" | "ready" | "needs-fix";
+    }
+  | undefined {
+  if (typeof snapshot !== "object" || snapshot === null) return undefined;
+  const social = (snapshot as { social?: unknown }).social;
+  if (typeof social !== "object" || social === null) return undefined;
+  const item = social as {
+    scene?: unknown;
+    copyOverride?: unknown;
+    status?: unknown;
+  };
+  try {
+    const scene = sceneSchema.parse(item.scene);
+    const copyOverride =
+      typeof item.copyOverride === "object" && item.copyOverride !== null
+        ? (item.copyOverride as Record<string, string>)
+        : {};
+    const status =
+      item.status === "ready" || item.status === "needs-fix" ? item.status : "draft";
+    return { scene, copyOverride, status };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function restoreVersion(
   db: Database,
   userId: string,
@@ -670,6 +992,34 @@ export async function restoreVersion(
         asset: undefined,
         failure: { code: "NOT_FOUND", message: "That version's frame is gone." },
       };
+    if (frame.kind === "social") {
+      const social = socialSnapshotFrom(version.snapshot);
+      if (!social) {
+        return {
+          asset: undefined,
+          failure: {
+            code: "INVALID_VERSION",
+            message: "That social version's scene is malformed.",
+          },
+        };
+      }
+      await db
+        .update(frames)
+        .set({
+          name: frame.name,
+          scene: social.scene,
+          copyOverride: social.copyOverride,
+          status: social.status,
+          version: frame.version + 1,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
+      await db
+        .update(assets)
+        .set({ updatedAt: new Date() })
+        .where(eq(assets.id, assetId));
+      return { asset: await getAssetRecord(db, userId, assetId) };
+    }
     const snapshot = frameSnapshotFrom(version.snapshot);
     if (!snapshot)
       return {
@@ -895,6 +1245,7 @@ export async function insertRun(
     prompt?: string;
     durableRunId?: string;
     status: string;
+    mode?: "draw" | "ask" | "compose";
   },
 ) {
   const id = randomUUID();
@@ -1283,4 +1634,333 @@ export async function listVersions(
     .where(and(...conditions))
     .orderBy(desc(versions.createdAt), desc(versions.id))
     .limit(limit);
+}
+
+function paletteIndexMap(source: string[], target: string[]): number[] {
+  const normalize = (hex: string) => hex.trim().toLowerCase();
+  const targetByHex = new Map<string, number>();
+  for (let index = 1; index < target.length; index += 1) {
+    const hex = normalize(target[index] ?? "");
+    if (hex) targetByHex.set(hex, index);
+  }
+  const rgb = (hex: string): [number, number, number] => {
+    const value = hex.replace("#", "");
+    return [
+      Number.parseInt(value.slice(0, 2), 16),
+      Number.parseInt(value.slice(2, 4), 16),
+      Number.parseInt(value.slice(4, 6), 16),
+    ];
+  };
+  return source.map((hex, index) => {
+    if (index === 0) return 0;
+    const exact = targetByHex.get(normalize(hex));
+    if (exact !== undefined) return exact;
+    const [r, g, b] = rgb(hex);
+    let best = 0;
+    let distance = Number.POSITIVE_INFINITY;
+    for (let candidate = 1; candidate < target.length; candidate += 1) {
+      const [cr, cg, cb] = rgb(target[candidate] ?? "#000000");
+      const next = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+      if (next < distance) {
+        distance = next;
+        best = candidate;
+      }
+    }
+    return best;
+  });
+}
+
+function mapScenePalette(
+  scene: ArtboardScene,
+  source: string[],
+  target: string[],
+): ArtboardScene {
+  const mapping = paletteIndexMap(source, target);
+  const mapColor = (value: number) => mapping[value] ?? 0;
+  return {
+    ...scene,
+    background:
+      scene.background.kind === "solid"
+        ? { ...scene.background, color: mapColor(scene.background.color) }
+        : scene.background.kind === "pattern"
+          ? {
+              ...scene.background,
+              colorA: mapColor(scene.background.colorA),
+              colorB: mapColor(scene.background.colorB),
+            }
+          : scene.background,
+    elements: scene.elements.map((element) => {
+      switch (element.kind) {
+        case "rect":
+        case "frame":
+          return { ...element, color: mapColor(element.color) };
+        case "pattern":
+          return {
+            ...element,
+            colorA: mapColor(element.colorA),
+            colorB: mapColor(element.colorB),
+          };
+        case "text":
+          return { ...element, color: mapColor(element.color) };
+        default:
+          return element;
+      }
+    }),
+  };
+}
+
+export async function importFrameRecord(
+  db: Database,
+  userId: string,
+  targetAssetId: string,
+  sourceAssetId: string,
+  sourceFrameId: string,
+  name?: string,
+): Promise<{ asset: AssetRecord | undefined; frameId?: string; failure?: StoreFailure }> {
+  const target = await getAssetRecord(db, userId, targetAssetId);
+  const source = await getAssetRecord(db, userId, sourceAssetId);
+  if (!target || !source) {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  }
+  const sourceFrame = source.frames.find((frame) => frame.id === sourceFrameId);
+  if (!sourceFrame) {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That source frame is not available." },
+    };
+  }
+  const index =
+    target.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+  const id = randomUUID();
+  if (sourceFrame.kind === "social") {
+    if (!sourceFrame.scene || !sourceFrame.presetId) {
+      return {
+        asset: undefined,
+        failure: { code: "INVALID_FRAME", message: "That social frame has no scene." },
+      };
+    }
+    const scene = mapScenePalette(
+      sceneSchema.parse(sourceFrame.scene),
+      source.palette as string[],
+      target.palette as string[],
+    );
+    const preset = getPreset(sourceFrame.presetId);
+    await db.insert(frames).values({
+      id,
+      assetId: targetAssetId,
+      name: name?.trim() || `${sourceFrame.name} (${source.name})`,
+      index,
+      layers: [],
+      kind: "social",
+      width: sourceFrame.width ?? preset.width,
+      height: sourceFrame.height ?? preset.height,
+      presetId: preset.id,
+      scene,
+      copyOverride: sourceFrame.copyOverride,
+      status: "draft",
+      version: 1,
+    });
+    await recordSocialVersion(db, targetAssetId, id, "import", {
+      name: name?.trim() || `${sourceFrame.name} (${source.name})`,
+      presetId: preset.id,
+      width: sourceFrame.width ?? preset.width,
+      height: sourceFrame.height ?? preset.height,
+      scene,
+      copyOverride: sourceFrame.copyOverride,
+      status: "draft",
+    });
+    if (
+      Object.keys(target.copy as CopyDeck).length === 0 &&
+      Object.keys(source.copy as CopyDeck).length > 0
+    ) {
+      await db
+        .update(assets)
+        .set({ copy: source.copy, updatedAt: new Date() })
+        .where(eq(assets.id, targetAssetId));
+    }
+  } else {
+    const width = sourceFrame.width ?? source.width;
+    const height = sourceFrame.height ?? source.height;
+    if (width !== target.width || height !== target.height) {
+      return {
+        asset: undefined,
+        failure: {
+          code: "FRAME_SIZE_MISMATCH",
+          message: `That sprite is ${width}×${height}; this asset's sprite canvas is ${target.width}×${target.height}.`,
+        },
+      };
+    }
+    const buffer = frameToBuffer(sourceFrame, width, height, source.palette as string[]);
+    const mapping = paletteIndexMap(
+      source.palette as string[],
+      target.palette as string[],
+    );
+    const mapped = {
+      ...buffer,
+      palette: [...(target.palette as string[])],
+      layers: buffer.layers.map((layer) => ({
+        ...layer,
+        id: randomUUID(),
+        pixels: layer.pixels.map((value) => mapping[value] ?? 0),
+      })),
+    };
+    const copy = bufferToFrame(mapped, {
+      id,
+      name: name?.trim() || `${sourceFrame.name} (${source.name})`,
+      index,
+    });
+    await db.insert(frames).values({
+      id: copy.id,
+      assetId: targetAssetId,
+      name: copy.name,
+      index: copy.index,
+      layers: copy.layers,
+      kind: "sprite",
+      width,
+      height,
+    });
+  }
+  await db
+    .update(assets)
+    .set({ updatedAt: new Date() })
+    .where(eq(assets.id, targetAssetId));
+  return { asset: await getAssetRecord(db, userId, targetAssetId), frameId: id };
+}
+
+export async function importPaletteRecord(
+  db: Database,
+  userId: string,
+  targetAssetId: string,
+  sourceAssetId: string,
+): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
+  const target = await getAssetRecord(db, userId, targetAssetId);
+  const source = await getAssetRecord(db, userId, sourceAssetId);
+  if (!target || !source) {
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  }
+  const nextPalette = source.palette as string[];
+  if (nextPalette.length < 2) {
+    return {
+      asset: undefined,
+      failure: { code: "INVALID_PALETTE", message: "The source palette is empty." },
+    };
+  }
+  const mapping = paletteIndexMap(target.palette as string[], nextPalette);
+  for (const frame of target.frames) {
+    if (frame.kind === "social") {
+      if (!frame.scene) continue;
+      const scene = mapScenePalette(
+        sceneSchema.parse(frame.scene),
+        target.palette as string[],
+        nextPalette,
+      );
+      await db
+        .update(frames)
+        .set({ scene, version: frame.version + 1, updatedAt: new Date() })
+        .where(eq(frames.id, frame.id));
+      continue;
+    }
+    const width = frame.width ?? target.width;
+    const height = frame.height ?? target.height;
+    const buffer = frameToBuffer(frame, width, height, target.palette as string[]);
+    const mapped = {
+      ...buffer,
+      palette: [...nextPalette],
+      layers: buffer.layers.map((layer) => ({
+        ...layer,
+        pixels: layer.pixels.map((value) => mapping[value] ?? 0),
+      })),
+    };
+    const copy = bufferToFrame(mapped, {
+      id: frame.id,
+      name: frame.name,
+      index: frame.index,
+    });
+    await db
+      .update(frames)
+      .set({ layers: copy.layers, updatedAt: new Date() })
+      .where(eq(frames.id, frame.id));
+  }
+  await db
+    .update(assets)
+    .set({ palette: nextPalette, updatedAt: new Date() })
+    .where(eq(assets.id, targetAssetId));
+  return { asset: await getAssetRecord(db, userId, targetAssetId) };
+}
+
+async function projectSpriteSources(
+  db: Database,
+  userId: string,
+  projectId: string,
+): Promise<Map<string, SpriteSource>> {
+  const project = await getProjectRecord(db, userId, projectId);
+  if (!project) return new Map();
+  const sprites = new Map<string, SpriteSource>();
+  for (const summary of project.assets) {
+    const asset = await getAssetRecord(db, userId, summary.id);
+    if (!asset) continue;
+    for (const frame of asset.frames) {
+      if (frame.kind === "social") continue;
+      const width = frame.width ?? asset.width;
+      const height = frame.height ?? asset.height;
+      sprites.set(`${asset.id}:${frame.id}`, {
+        assetId: asset.id,
+        assetName: asset.name,
+        frameId: frame.id,
+        frameName: frame.name,
+        buffer: frameToBuffer(frame, width, height, asset.palette as string[]),
+      });
+    }
+  }
+  return sprites;
+}
+
+export async function renderSocialFrameRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+): Promise<
+  | { image: PaletteImage; name: string; width: number; height: number; failure?: never }
+  | { failure: StoreFailure }
+> {
+  const asset = await getAssetRecord(db, userId, assetId);
+  if (!asset) {
+    return { failure: { code: "NOT_FOUND", message: "That asset is not available." } };
+  }
+  const frame = asset.frames.find((item) => item.id === frameId);
+  if (!frame || frame.kind !== "social" || !frame.presetId || !frame.scene) {
+    return {
+      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+    };
+  }
+  const preset = getPreset(frame.presetId);
+  const sprites = await projectSpriteSources(db, userId, asset.projectId);
+  try {
+    const rendered = renderScene({
+      scene: sceneSchema.parse(frame.scene),
+      preset,
+      palette: asset.palette as string[],
+      sprites,
+    });
+    return {
+      image: rendered.image,
+      name: frame.name,
+      width: preset.width,
+      height: preset.height,
+    };
+  } catch (reason) {
+    return {
+      failure: {
+        code: "RENDER_FAILED",
+        message: reason instanceof Error ? reason.message : "The frame could not render.",
+      },
+    };
+  }
 }
