@@ -1,4 +1,5 @@
-import { nearestSize } from "./font.js";
+import { availableSizes, nearestSize } from "./font.js";
+import { layoutText } from "./text.js";
 import type {
   ArtboardScene,
   CopyDeck,
@@ -68,10 +69,18 @@ function profileTemplate(
   colors: PaletteRoles,
 ): ArtboardScene {
   const elements: ArtboardScene["elements"] = [];
+  // A square mark inside a circle: the box is inscribed, not merely inset, or
+  // the circle crop clips its corners.
+  const side = Math.round(Math.min(safe.width, safe.height) * 0.7);
   const sprite = input.sprite
     ? makeSprite({
         input,
-        box: { x: safe.x, y: safe.y, width: safe.width, height: safe.height },
+        box: {
+          x: Math.round((input.preset.width - side) / 2),
+          y: Math.round((input.preset.height - side) / 2),
+          width: side,
+          height: side,
+        },
         anchor: "center",
         id: "mark",
       })
@@ -319,7 +328,7 @@ function thumbnailTemplate(
         box: {
           x: safe.x + copyWidth + Math.round(safe.width * 0.03),
           y: safe.y,
-          width: safe.width - copyWidth,
+          width: safe.width - copyWidth - Math.round(safe.width * 0.03),
           height: safe.height,
         },
         anchor: "center",
@@ -425,7 +434,7 @@ function copyStack(
       face: "silkscreen",
       weight: 700,
       color: colors.ink,
-      share: 0.48,
+      share: 0.42,
       maxLines: 3,
     },
     {
@@ -434,7 +443,7 @@ function copyStack(
       face: "pixelify",
       weight: 400,
       color: colors.muted,
-      share: 0.24,
+      share: 0.22,
       maxLines: 3,
     },
     {
@@ -443,7 +452,7 @@ function copyStack(
       face: "mono",
       weight: 400,
       color: colors.accent,
-      share: 0.1,
+      share: 0.12,
       maxLines: 1,
     },
     {
@@ -452,7 +461,7 @@ function copyStack(
       face: "mono",
       weight: 400,
       color: colors.muted,
-      share: 0.08,
+      share: 0.12,
       maxLines: 1,
     },
   ];
@@ -465,32 +474,69 @@ function copyStack(
       8,
       Math.floor((box.height * part.share) / Math.max(weightTotal, 0.001)),
     );
-    const size =
+    const desired =
       part.id === "headline"
-        ? pickSize(part.face, part.weight, headlineSize)
+        ? headlineSize
         : part.id === "subhead"
-          ? pickSize(part.face, part.weight, Math.max(24, Math.round(headlineSize * 0.5)))
-          : pickSize(
-              part.face,
-              part.weight,
-              Math.max(22, Math.round(headlineSize * 0.45)),
-            );
-    elements.push(
-      makeText({
-        id: part.id,
-        text: part.text ?? "",
-        face: part.face,
-        weight: part.weight,
-        color: part.color,
-        box: { x: box.x, y, width: box.width, height },
-        align,
-        size,
-        maxLines: part.maxLines,
-      }),
-    );
+          ? Math.max(24, Math.round(headlineSize * 0.5))
+          : Math.max(22, Math.round(headlineSize * 0.55));
+    const element = makeFittedText({
+      id: part.id,
+      text: part.text ?? "",
+      face: part.face,
+      weight: part.weight,
+      color: part.color,
+      box: { x: box.x, y, width: box.width, height },
+      align,
+      desired,
+      maxLines: part.maxLines,
+    });
+    elements.push(element);
     y += height;
   }
   return elements;
+}
+
+/** Choose the largest atlas size that actually fits the slot. */
+function makeFittedText(input: {
+  id: string;
+  text: string;
+  face: TextFace;
+  weight: TextWeight;
+  color: number;
+  box: Rect;
+  align: "left" | "center" | "right";
+  desired: number;
+  maxLines: number;
+}): TextElement {
+  const sizes = availableSizes(input.face, input.weight)
+    .filter((size) => size <= Math.max(8, input.desired))
+    .sort((a, b) => b - a);
+  let fallback: TextElement | undefined;
+  for (const size of sizes.length > 0 ? sizes : [input.desired]) {
+    const element = makeText({
+      id: input.id,
+      text: input.text,
+      face: input.face,
+      weight: input.weight,
+      color: input.color,
+      box: input.box,
+      align: input.align,
+      size,
+      maxLines: input.maxLines,
+      lineHeight: Math.round(
+        size * (input.id === "headline" ? 1.15 : input.id === "subhead" ? 1.2 : 1.1),
+      ),
+    });
+    const layout = layoutText(element);
+    fallback = element;
+    if (layout.height <= input.box.height && layout.lines.length <= input.maxLines) {
+      return element;
+    }
+  }
+  return (
+    fallback ?? makeText({ ...input, size: input.box.height, maxLines: input.maxLines })
+  );
 }
 
 function makeText(input: {
@@ -503,6 +549,7 @@ function makeText(input: {
   align: "left" | "center" | "right";
   size: number;
   maxLines: number;
+  lineHeight?: number;
 }): TextElement {
   const { size, scale } = fontSpec(input.face, input.weight, input.size);
   return {
@@ -517,8 +564,9 @@ function makeText(input: {
     x: input.box.x,
     y: input.box.y,
     width: input.box.width,
+    height: input.box.height,
     align: input.align,
-    lineHeight: Math.round(size * scale * 1.22),
+    lineHeight: input.lineHeight ?? Math.round(size * scale * 1.22),
     maxLines: input.maxLines,
   };
 }

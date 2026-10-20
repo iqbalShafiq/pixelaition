@@ -91,6 +91,8 @@ export type TextElement = {
   x: number;
   y: number;
   width: number;
+  /** The slot height the template reserved; copy edits refit inside it. */
+  height?: number;
   align: TextAlign;
   lineHeight?: number;
   maxLines?: number;
@@ -319,6 +321,7 @@ const textElementSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0),
   width: z.number().int().min(1),
+  height: z.number().int().min(1).optional(),
   align: z.enum(textAligns),
   lineHeight: z.number().int().min(1).optional(),
   maxLines: z.number().int().min(1).max(50).optional(),

@@ -1,7 +1,13 @@
 export * from "./types.js";
 export * from "./presets.js";
 export * from "./font.js";
-export { resolveCopy, hasImageCopy, copyLines, syncCopyScene } from "./copy.js";
+export {
+  resolveCopy,
+  hasImageCopy,
+  copyLines,
+  syncCopyScene,
+  fitTextToSlot,
+} from "./copy.js";
 export { buildTemplateScene, paletteRoles, type TemplateInput } from "./templates.js";
 export {
   renderScene,
@@ -28,6 +34,7 @@ export {
   nearestSize,
   resolveFont,
   missingGlyphs,
+  snapTextSize,
   type ResolvedFont,
 } from "./font.js";
 export {

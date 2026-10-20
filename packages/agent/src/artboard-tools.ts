@@ -12,6 +12,7 @@ import {
   layoutText,
   missingGlyphs,
   resolveFont,
+  snapTextSize,
   summarizeChecks,
   type Artboard,
   type ArtboardCheck,
@@ -182,7 +183,21 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
           source: preset.source,
           verifiedAt: preset.verifiedAt,
         }));
-      return { presets };
+      return {
+        presets,
+        fonts: {
+          silkscreen: {
+            400: availableSizes("silkscreen", 400),
+            700: availableSizes("silkscreen", 700),
+          },
+          pixelify: {
+            400: availableSizes("pixelify", 400),
+            600: availableSizes("pixelify", 600),
+          },
+          mono: { 400: availableSizes("mono", 400) },
+        },
+        note: "`size` is the final pixel height. The tool snaps it to the smallest atlas size at or above the request, or grows the largest by whole pixels; the result reports size/scale/effectiveSize.",
+      };
     },
   });
 
@@ -456,14 +471,9 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         return { removed: input.elementId, checks: checksJson(checksFor(run, next)) };
       }
       const resolvedWeight = input.weight ?? (input.face === "silkscreen" ? 700 : 400);
-      const sizes = availableSizes(input.face, resolvedWeight);
-      if (!sizes.includes(input.size)) {
-        throw new Error(
-          `No ${input.size}px ${input.face} ${resolvedWeight} atlas. Use one of: ${sizes.join(", ")}; \`scale\` grows it by whole pixels.`,
-        );
-      }
       requireColor(input.color, run, "text");
-      const font = resolveFont(input.face, resolvedWeight, input.size);
+      const snapped = snapTextSize(input.face, resolvedWeight, input.size);
+      const font = resolveFont(input.face, resolvedWeight, snapped.size);
       const missing = missingGlyphs(font, input.text);
       if (missing.length > 0) {
         throw new Error(
@@ -476,8 +486,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         text: input.text,
         face: input.face,
         weight: resolvedWeight,
-        size: input.size,
-        ...(input.scale > 1 ? { scale: input.scale } : {}),
+        size: snapped.size,
+        ...(snapped.scale > 1 ? { scale: snapped.scale } : {}),
         color: input.color,
         x: input.x,
         y: input.y,
@@ -502,6 +512,9 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         lines: layout.lines.length,
         width: layout.width,
         height: layout.height,
+        size: snapped.size,
+        scale: snapped.scale,
+        effectiveSize: snapped.effective,
         checks: checksJson(checksFor(run, next)),
       };
     },

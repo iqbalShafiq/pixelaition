@@ -1,4 +1,6 @@
-import type { CopyDeck, CopyOverride } from "./types.js";
+import { availableSizes } from "./font.js";
+import { layoutText } from "./text.js";
+import type { CopyDeck, CopyOverride, TextElement } from "./types.js";
 
 /** The copy an artboard renders: the set's deck with only its explicit overrides. */
 export function resolveCopy(copy: CopyDeck, override?: CopyOverride): CopyDeck {
@@ -63,7 +65,33 @@ export function syncCopyScene(
       continue;
     }
     const value = copy[key]?.trim();
-    if (value) elements.push({ ...element, text: value });
+    if (value) elements.push(fitTextToSlot({ ...element, text: value }));
   }
   return { ...scene, elements };
+}
+
+/**
+ * Refit a text element inside the slot the template reserved. A longer copy
+ * steps down the atlas instead of growing into the next element; the box,
+ * alignment and position stay the author's.
+ */
+export function fitTextToSlot(element: TextElement): TextElement {
+  const sizes = availableSizes(element.face, element.weight)
+    .filter((size) => size <= element.size)
+    .sort((a, b) => b - a);
+  const slotHeight =
+    element.height ?? (element.maxLines ?? 3) * (element.lineHeight ?? element.size);
+  let chosen = element;
+  for (const size of sizes.length > 0 ? sizes : [element.size]) {
+    const candidate = { ...element, size };
+    const layout = layoutText(candidate);
+    chosen = candidate;
+    if (
+      layout.height <= slotHeight &&
+      (element.maxLines === undefined || layout.lines.length <= element.maxLines)
+    ) {
+      return candidate;
+    }
+  }
+  return chosen;
 }

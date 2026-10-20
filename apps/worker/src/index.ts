@@ -3171,8 +3171,8 @@ function buildArtboardPrompt(request: string, loaded: LoadedArtboardSet): string
     "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
     "After approval: create the planned boards that do not exist with create_artboard, keep the shared copy with set_copy, and compose each board with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent across the family; adapt the layout, not the identity.",
     "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
-    "Every sprite scale is a whole number. Every colour is a palette index. Text sizes must be in the face's atlas; if a size is rejected, use one the tool lists.",
-    "Fix every check error before saving. Save each finished board with save_artboard, then answer in the language of the request with a short summary of the family and what still needs the user's words.",
+    "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
+    "Fix every check error before saving. Save each finished board with save_artboard immediately, then answer in the language of the request with a short summary of the family and what still needs the user's words. Do not call set_copy after composing: it re-syncs text and can undo per-board layout. If copy must change, change it before the boards.",
     `Current boards:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
     `Request: ${request}`,
   ].join("\n");

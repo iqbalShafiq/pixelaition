@@ -142,3 +142,25 @@ export function missingGlyphs(font: ResolvedFont, text: string): string[] {
   }
   return [...missing];
 }
+
+/**
+ * Turn a requested final size into an atlas face plus whole-pixel scale. The
+ * smallest atlas size that is at least the request wins, so a minimum-size
+ * rule never silently shrinks the copy; a request above the largest atlas grows
+ * by whole pixels instead of resampling.
+ */
+export function snapTextSize(
+  face: TextFace,
+  weight: TextWeight,
+  requested: number,
+): { size: number; scale: number; effective: number } {
+  const sizes = availableSizes(face, weight);
+  if (sizes.length === 0) throw new Error(`No atlas sizes for ${face} ${weight}.`);
+  const above = sizes.find((size) => size >= requested);
+  if (above !== undefined) {
+    return { size: above, scale: 1, effective: above };
+  }
+  const base = sizes[sizes.length - 1] ?? requested;
+  const scale = Math.max(1, Math.ceil(requested / base));
+  return { size: base, scale, effective: base * scale };
+}

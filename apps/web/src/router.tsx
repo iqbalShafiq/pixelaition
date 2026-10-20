@@ -10,6 +10,7 @@ import { authClient } from "./lib/auth.js";
 import { AuthScreen } from "./screens/auth.js";
 import { EditorScreen } from "./screens/editor.js";
 import { ProjectsScreen } from "./screens/projects.js";
+import { StudioScreen } from "./screens/studio.js";
 
 function Layout() {
   return (
@@ -91,12 +92,20 @@ const editorRoute = createRoute({
   component: EditorScreen,
 });
 
+const studioRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$projectId/assets/$assetId/studio",
+  beforeLoad: requireSession,
+  component: StudioScreen,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   registerRoute,
   projectsRoute,
   editorRoute,
+  studioRoute,
 ]);
 
 export const router = createRouter({ routeTree, defaultNotFoundComponent: NotFound });

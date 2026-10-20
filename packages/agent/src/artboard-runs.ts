@@ -90,8 +90,12 @@ export function resolveArtboard(run: ArtboardRunBinding, id?: string): Artboard 
       (candidate) => candidate.name.trim().toLowerCase() === wanted.trim().toLowerCase(),
     );
   if (!artboard) {
+    const byPreset = [...run.artboards.values()].find(
+      (candidate) => candidate.presetId === wanted.trim(),
+    );
+    if (byPreset) return byPreset;
     throw new Error(
-      `No artboard named or identified by "${wanted}". Artboards: ${[...run.artboards.values()].map((item) => item.name).join(", ")}.`,
+      `No artboard named or identified by "${wanted}". Artboards: ${[...run.artboards.values()].map((item) => `${item.name} (${item.presetId})`).join(", ")}.`,
     );
   }
   return artboard;

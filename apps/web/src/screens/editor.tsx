@@ -2577,6 +2577,14 @@ export function EditorScreen() {
           >
             Delete
           </Button>
+          <Link
+            to="/projects/$projectId/assets/$assetId/studio"
+            params={{ projectId: asset.data?.projectId ?? "", assetId }}
+            className="hidden min-h-9 items-center border-2 border-line px-2.5 py-1.5 text-pixel-label text-muted hover:border-line-strong hover:text-ink sm:inline-flex"
+            aria-disabled={!asset.data || running}
+          >
+            Social
+          </Link>
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-pixel-label"

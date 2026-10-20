@@ -40,6 +40,7 @@ export type StagedPlanExtras = {
   workers?: Array<{ key: string; frames: string[] }>;
   palette?: Array<{ color: string; name: string }>;
   references?: Array<{ url: string; note: string }>;
+  formats?: string[];
 };
 
 /** steps(4, end): the card lands on whole pixels, never a smooth glide. */
@@ -54,18 +55,19 @@ function planInput(
 ): { summary: string; frames: StagedPlanFrame[]; extras: StagedPlanExtras } | null {
   if (!input || typeof input !== "object") return null;
   const value = input as Record<string, unknown>;
-  if (!Array.isArray(value.frames)) return null;
   const frames: StagedPlanFrame[] = [];
-  for (const item of value.frames) {
-    if (!item || typeof item !== "object") continue;
-    const frame = item as Record<string, unknown>;
-    if (typeof frame.name !== "string" || typeof frame.description !== "string") continue;
-    frames.push({
-      ...(typeof frame.frameId === "string" ? { frameId: frame.frameId } : {}),
-      name: frame.name,
-      description: frame.description,
-    });
-  }
+  if (Array.isArray(value.frames))
+    for (const item of value.frames) {
+      if (!item || typeof item !== "object") continue;
+      const frame = item as Record<string, unknown>;
+      if (typeof frame.name !== "string" || typeof frame.description !== "string")
+        continue;
+      frames.push({
+        ...(typeof frame.frameId === "string" ? { frameId: frame.frameId } : {}),
+        name: frame.name,
+        description: frame.description,
+      });
+    }
   const extras: StagedPlanExtras = {};
   if (Array.isArray(value.workers)) {
     const workers = value.workers
@@ -96,6 +98,12 @@ function planInput(
       .map((item) => ({ color: item.color, name: item.name }));
     if (palette.length > 0) extras.palette = palette;
   }
+  if (Array.isArray(value.formats)) {
+    const formats = value.formats.filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+    if (formats.length > 0) extras.formats = formats;
+  }
   if (Array.isArray(value.references)) {
     const references = value.references
       .filter(
@@ -113,6 +121,7 @@ function planInput(
       }));
     if (references.length > 0) extras.references = references;
   }
+  if (frames.length === 0 && extras.formats === undefined) return null;
   return {
     summary: typeof value.summary === "string" ? value.summary : "",
     frames,
@@ -284,6 +293,18 @@ function ApprovalBody({
                       style={{ backgroundColor: entry.color }}
                     />
                     {entry.name}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {plan.extras.formats !== undefined ? (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {plan.extras.formats.map((format) => (
+                  <span
+                    key={format}
+                    className="border-2 border-line px-1.5 py-0.5 font-mono text-[10px] text-muted"
+                  >
+                    {format}
                   </span>
                 ))}
               </div>
