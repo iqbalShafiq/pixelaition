@@ -59,6 +59,7 @@ export function Inspector({
   onAddElement,
   onImportPalette,
   onImportBackground,
+  showName = true,
   running,
 }: {
   board: Artboard;
@@ -88,6 +89,8 @@ export function Inspector({
   onAddElement: (kind: "rect" | "pattern" | "frame") => void;
   onImportPalette?: () => void;
   onImportBackground?: () => void;
+  /** The shared frame header owns the name in the unified rail. */
+  showName?: boolean;
   running: boolean;
 }) {
   const [elementId, setElementId] = useState<string | null>(
@@ -106,15 +109,17 @@ export function Inspector({
 
   return (
     <div className="grid gap-3">
-      <Field label="Frame name" htmlFor="artboard-name">
-        <TextInput
-          id="artboard-name"
-          value={nameDraft}
-          disabled={running}
-          onChange={(event) => setNameDraft(event.target.value)}
-          onBlur={() => onRename(nameDraft)}
-        />
-      </Field>
+      {showName ? (
+        <Field label="Frame name" htmlFor="artboard-name">
+          <TextInput
+            id="artboard-name"
+            value={nameDraft}
+            disabled={running}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onBlur={() => onRename(nameDraft)}
+          />
+        </Field>
+      ) : null}
       <SegmentedControl
         label="Inspector section"
         value={tab}

@@ -288,6 +288,16 @@ describe.skipIf(!db)("API routes", () => {
       expect(
         saved.body.frames.find((frame: { id: string }) => frame.id === social.id).name,
       ).toBe("Launch cover");
+      const versions = await request(app)
+        .get(`/api/assets/${asset.body.id}/versions?frameId=${social.id}`)
+        .set("authorization", `Bearer ${token}`);
+      expect(versions.status).toBe(200);
+      expect(
+        versions.body.versions.some(
+          (version: { snapshot?: { social?: unknown } }) =>
+            version.snapshot !== undefined && version.snapshot.social !== undefined,
+        ),
+      ).toBe(true);
 
       const stale = await request(app)
         .patch(`/api/assets/${asset.body.id}/frames/${social.id}/scene`)

@@ -435,7 +435,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
           <Wordmark size="display" flight />
         </div>
         <div className="mt-10 max-w-md">
-          <p className="text-pixel-mono text-accent">Sprite families</p>
+          <p className="text-pixel-mono text-accent">Image families</p>
           <p className="mt-3 max-w-[14ch] text-pixel-hero text-balance text-ink">
             One palette. A whole cast.
           </p>

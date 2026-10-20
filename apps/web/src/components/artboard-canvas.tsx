@@ -150,11 +150,17 @@ export function ArtboardCanvas({
         className="relative"
         style={
           fit
-            ? {
-                width: Math.max(1, image.width * fitScale),
-                height: Math.max(1, image.height * fitScale),
-                visibility: stageSize.width > 0 ? "visible" : "hidden",
-              }
+            ? thumbnail
+              ? {
+                  width: "100%",
+                  height: "100%",
+                  visibility: stageSize.width > 0 ? "visible" : "hidden",
+                }
+              : {
+                  width: Math.max(1, image.width * fitScale),
+                  height: Math.max(1, image.height * fitScale),
+                  visibility: stageSize.width > 0 ? "visible" : "hidden",
+                }
             : { width: image.width, height: image.height }
         }
       >
@@ -171,7 +177,7 @@ export function ArtboardCanvas({
           }`}
           style={
             thumbnail
-              ? { width: "100%", height: "100%", objectFit: "contain" }
+              ? { width: "100%", height: "100%", objectFit: "cover" }
               : fit
                 ? { width: "100%", height: "100%" }
                 : { width: image.width, height: image.height }

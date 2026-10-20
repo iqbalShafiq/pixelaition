@@ -168,6 +168,8 @@ export function ViewPanel({
   onGrid,
   onChecker,
   onOnion,
+  zones,
+  onZones,
 }: {
   grid: boolean;
   checker: boolean;
@@ -175,7 +177,26 @@ export function ViewPanel({
   onGrid: (next: boolean) => void;
   onChecker: (next: boolean) => void;
   onOnion: (next: boolean) => void;
+  /** Scene-backed frames show safe-zone visibility instead of pixel layers. */
+  zones?: boolean;
+  onZones?: (next: boolean) => void;
 }) {
+  if (onZones) {
+    return (
+      <Panel title="View">
+        <div className="flex items-center gap-1">
+          <Button
+            tone={zones ? "solid" : "ghost"}
+            className="px-2 py-1 text-pixel-label"
+            onClick={() => onZones(!zones)}
+          >
+            Safe zones
+          </Button>
+          <span className="text-pixel-mono text-muted">guides only</span>
+        </div>
+      </Panel>
+    );
+  }
   return (
     <Panel title="View">
       <div className="flex items-center gap-1">

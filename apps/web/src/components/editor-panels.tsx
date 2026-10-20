@@ -10,7 +10,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import { getPreset, presetAspect, type SpriteSource } from "@pixelaition/artboard";
 import { ArtboardCanvas } from "./artboard-canvas.js";
-import { artboardForFrame, sceneSpritesReady } from "../lib/artboard.js";
+import { artboardForFrame } from "../lib/artboard.js";
 import type { AssetDto } from "../lib/types.js";
 import {
   Check,
@@ -235,18 +235,13 @@ function FrameRow({
           className="pointer-events-none relative shrink-0 overflow-hidden"
           style={{ height: 36 }}
         >
-          {frame.kind === "social" &&
-          asset &&
-          sprites &&
-          frame.presetId &&
-          frame.scene &&
-          sceneSpritesReady(frame.scene, sprites) ? (
+          {frame.kind === "social" && asset && frame.presetId && frame.scene ? (
             <span className="grid h-9 w-9 place-items-center overflow-hidden border-2 border-line bg-screen">
               <ArtboardCanvas
                 artboard={artboardForFrame(asset, frame)!}
                 preset={getPreset(frame.presetId)}
                 asset={asset}
-                sprites={sprites}
+                sprites={sprites ?? new Map()}
                 fit
                 showZones={false}
                 thumbnail
@@ -624,6 +619,66 @@ export function FramePanel({
   );
 }
 
+/* ------------------------------------------------------------------ inspector */
+
+export function FrameHeaderPanel({
+  name,
+  width,
+  height,
+  meta,
+  detail,
+  disabled,
+  onRename,
+}: {
+  name: string;
+  width: number;
+  height: number;
+  meta?: string;
+  detail?: string;
+  disabled?: boolean;
+  onRename: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+
+  useEffect(() => setDraft(name), [name]);
+
+  function commit() {
+    const next = draft.trim();
+    if (next && next !== name) onRename(next);
+    else setDraft(name);
+  }
+
+  return (
+    <Panel
+      title="Frame"
+      action={
+        <span className="shrink-0 font-mono text-[10px] text-muted">
+          {width}×{height}
+        </span>
+      }
+    >
+      <Field label="Name" htmlFor="frame-header-name">
+        <TextInput
+          id="frame-header-name"
+          value={draft}
+          disabled={disabled}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setDraft(name);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      </Field>
+      {meta ? <p className="text-pixel-mono text-muted">{meta}</p> : null}
+      {detail ? <p className="text-pixel-mono text-accent">{detail}</p> : null}
+    </Panel>
+  );
+}
+
 /* ------------------------------------------------------------------ layers */
 
 export function LayerPanel({
@@ -799,7 +854,9 @@ export function LayerPanel({
         </ul>
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-pixel-mono text-muted">{layers.length} layers</span>
+        <span className="text-pixel-mono text-muted">
+          {layers.length} {layers.length === 1 ? "layer" : "layers"}
+        </span>
       </div>
 
       <ConfirmDialog

@@ -89,6 +89,7 @@ import {
   type QueuedRun,
 } from "../lib/run-queue.js";
 import {
+  FrameHeaderPanel,
   FramePanel,
   LayerPanel,
   PalettePanel,
@@ -399,6 +400,9 @@ export function EditorScreen() {
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
   const [socialTab, setSocialTab] = useState<"layout" | "copy" | "checks">("layout");
+  const [inspectorTab, setInspectorTab] = useState<"frame" | "content" | "history">(
+    "frame",
+  );
   const [socialElementId, setSocialElementId] = useState<string | null>(null);
   const [socialFit, setSocialFit] = useState(true);
   const [socialZones, setSocialZones] = useState(true);
@@ -630,10 +634,6 @@ export function EditorScreen() {
     }
     return asset.data ? spritesForAsset(asset.data) : new Map();
   }, [asset.data, resources.data]);
-  const socialSpritesReady = useMemo(
-    () => !socialArtboard || sceneSpritesReady(socialArtboard.scene, socialSprites),
-    [socialArtboard, socialSprites],
-  );
   const spriteChoices = useMemo(
     () =>
       (resources.data?.assets ?? []).flatMap((item) =>
@@ -2785,6 +2785,18 @@ export function EditorScreen() {
     [runModels, modelNames],
   );
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
+  const activePalette = buffer?.palette ?? asset.data?.palette ?? [];
+  const socialSelectedElement = socialArtboard?.scene.elements.find(
+    (element) => element.id === socialElementId,
+  );
+  const socialUsedColors = useMemo(() => {
+    if (!socialArtboard) return 0;
+    const used = new Set<number>();
+    for (const element of socialArtboard.scene.elements) {
+      if ("color" in element) used.add(element.color);
+    }
+    return used.size;
+  }, [socialArtboard]);
 
   const socialSummary = summarizeChecks(socialChecks);
   const socialPanels =
@@ -2816,11 +2828,8 @@ export function EditorScreen() {
         onSelectElement={setSocialElementId}
         onAddText={addSocialText}
         onAddElement={addSocialElement}
-        onImportPalette={() => {
-          setPaletteSourceId("");
-          setPaletteImportOpen(true);
-        }}
         onImportBackground={() => setBackgroundImportOpen(true)}
+        showName={false}
         running={running}
       />
     ) : null;
@@ -2910,69 +2919,108 @@ export function EditorScreen() {
         onDelete={(id) => void frameAction("delete", undefined, id)}
         onReorder={(id, index) => frameReorder(id, index)}
       />
-      {socialFrame ? null : (
-        <LayerPanel
-          buffer={buffer}
-          activeId={panelLayerId}
-          locked={locked}
-          onSelect={setActiveLayerId}
-          onToggleVisible={(layerId, visible) =>
-            frameId &&
-            edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
-          }
-          onAdd={() =>
-            frameId &&
-            edit(frameId, drafts[frameId], {
-              type: "addLayer",
-              id: crypto.randomUUID(),
-              name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
-            })
-          }
-          onRename={(layerId, name) =>
-            frameId &&
-            edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
-          }
-          onDelete={(layerId) =>
-            frameId &&
-            edit(frameId, drafts[frameId], {
-              type: "removeLayer",
-              layerId,
-            })
-          }
-        />
-      )}
     </>
   );
 
-  // The upper panels keep their height; only the history list scrolls, so the
-  // desktop column never turns into one long scroll surface.
-  const topPanels = (
-    <>
-      <PalettePanel
-        palette={buffer?.palette ?? []}
-        color={color}
-        usedColors={usedColors}
-        onPick={setColor}
-        onImportPalette={() => {
-          setPaletteSourceId("");
-          setPaletteImportOpen(true);
-        }}
-        onAdd={(hex) => {
-          if (!buffer) return;
-          if (buffer.palette.includes(hex)) {
-            setColor(buffer.palette.indexOf(hex));
-            return;
-          }
-          void updateAsset({ palette: [...buffer.palette, hex] });
-        }}
-      />
-      <ViewPanel
-        grid={grid}
-        checker={checker}
-        onion={onion}
-        onGrid={setGrid}
-        onChecker={setChecker}
-        onOnion={setOnion}
+  const frameHeaderPanel = frame ? (
+    <FrameHeaderPanel
+      name={frame.name}
+      width={socialFrame?.width ?? asset.data?.width ?? buffer?.width ?? 0}
+      height={socialFrame?.height ?? asset.data?.height ?? buffer?.height ?? 0}
+      meta={
+        socialFrame
+          ? socialPreset
+            ? `${socialPreset.label} · ${socialFrame.width}×${socialFrame.height}`
+            : "Native-size canvas"
+          : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"} · ${asset.data?.width ?? 0}×${asset.data?.height ?? 0}`
+      }
+      detail={
+        socialFrame
+          ? `${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"} · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
+          : undefined
+      }
+      disabled={locked}
+      onRename={(name) => void frameAction("rename", name, frame.id)}
+    />
+  ) : null;
+
+  const palettePanel = (
+    <PalettePanel
+      palette={activePalette}
+      color={color}
+      usedColors={socialFrame ? socialUsedColors : usedColors}
+      onPick={(index) => {
+        setColor(index);
+        if (socialSelectedElement && "color" in socialSelectedElement) {
+          updateSocialElement(socialSelectedElement.id, { color: index });
+        }
+      }}
+      onImportPalette={() => {
+        setPaletteSourceId("");
+        setPaletteImportOpen(true);
+      }}
+      onAdd={(hex) => {
+        if (activePalette.includes(hex)) {
+          setColor(activePalette.indexOf(hex));
+          return;
+        }
+        void updateAsset({ palette: [...activePalette, hex] });
+      }}
+    />
+  );
+
+  const viewPanel = socialFrame ? (
+    <ViewPanel
+      grid={grid}
+      checker={checker}
+      onion={onion}
+      onGrid={setGrid}
+      onChecker={setChecker}
+      onOnion={setOnion}
+      zones={socialZones}
+      onZones={(next) => setSocialZones(next)}
+    />
+  ) : (
+    <ViewPanel
+      grid={grid}
+      checker={checker}
+      onion={onion}
+      onGrid={setGrid}
+      onChecker={setChecker}
+      onOnion={setOnion}
+    />
+  );
+
+  const pixelContent = (
+    <div className="grid gap-4">
+      <LayerPanel
+        buffer={buffer}
+        activeId={panelLayerId}
+        locked={locked}
+        onSelect={setActiveLayerId}
+        onToggleVisible={(layerId, visible) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
+        }
+        onAdd={() =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "addLayer",
+            id: crypto.randomUUID(),
+            name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+          })
+        }
+        onRename={(layerId, name) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
+        }
+        onDelete={(layerId) =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "removeLayer",
+            layerId,
+          })
+        }
       />
       <StylePanel
         style={style}
@@ -2980,7 +3028,53 @@ export function EditorScreen() {
         height={asset.data?.height ?? 32}
         onResize={(width, height) => void updateAsset({ width, height })}
       />
-    </>
+    </div>
+  );
+
+  const frameTabBody = (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+      {frameHeaderPanel}
+      {palettePanel}
+      {viewPanel}
+    </div>
+  );
+
+  const contentTabBody = (
+    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      {socialFrame
+        ? (socialPanels ?? (
+            <EmptyState
+              title="No content yet"
+              body="Choose a canvas size to add a frame, then compose it here."
+            />
+          ))
+        : pixelContent}
+    </div>
+  );
+
+  const inspectorTabs = (
+    <div
+      role="tablist"
+      aria-label="Frame inspector"
+      className="grid shrink-0 grid-cols-3 border-2 border-line"
+    >
+      {(["frame", "content", "history"] as const).map((value) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={inspectorTab === value}
+          onClick={() => setInspectorTab(value)}
+          className={`px-2 py-1.5 text-pixel-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
+            inspectorTab === value
+              ? "bg-accent text-coffee"
+              : "text-muted hover:bg-raised hover:text-ink"
+          }`}
+        >
+          {value}
+        </button>
+      ))}
+    </div>
   );
 
   const historyPanel = (className?: string) => (
@@ -2997,6 +3091,17 @@ export function EditorScreen() {
       onRestore={reloadAfterRestore}
     />
   );
+
+  const historyTabBody = (
+    <div className="flex min-h-0 flex-1 flex-col">{historyPanel("min-h-0 flex-1")}</div>
+  );
+
+  const inspectorBody =
+    inspectorTab === "frame"
+      ? frameTabBody
+      : inspectorTab === "content"
+        ? contentTabBody
+        : historyTabBody;
 
   /**
    * Back to the home: the artwork itself shrinks into its thumbnail in the
@@ -3152,44 +3257,52 @@ export function EditorScreen() {
           </aside>
 
           <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
-            <div
-              className={`${socialFrame ? "order-1 border-b-2" : "order-2 border-t-2 sm:border-t-0 sm:border-b-2"} min-w-0 border-line bg-panel px-2 pt-2 pb-1.5 sm:order-1`}
-            >
-              {socialFrame ? (
-                <div className="flex min-h-9 flex-wrap items-center gap-1.5">
-                  <span className="truncate text-pixel-mono text-accent uppercase">
-                    {socialPreset?.label ?? "Frame"}
+            <div className="order-1 min-w-0 border-b-2 border-line bg-panel px-2 pt-2 pb-1.5">
+              <div className="flex min-h-9 min-w-0 items-center gap-2">
+                <span className="hidden min-w-0 shrink-0 items-baseline gap-1.5 xl:flex">
+                  <span className="max-w-[9rem] truncate text-pixel-mono text-accent uppercase">
+                    {frame?.name ?? "Frame"}
                   </span>
-                  <span className="font-mono text-[10px] text-muted">
-                    {socialFrame.width}×{socialFrame.height}
-                    {socialSummary.errors > 0
-                      ? ` · ${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"}`
-                      : socialSummary.warnings > 0
-                        ? ` · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
-                        : " · ready"}
+                  <span className="font-mono text-[10px] whitespace-nowrap text-muted">
+                    · {socialFrame?.width ?? buffer?.width ?? asset.data?.width ?? 0}×
+                    {socialFrame?.height ?? buffer?.height ?? asset.data?.height ?? 0}
                   </span>
-                  <span className="ml-auto flex items-center gap-1">
-                    <Button
-                      tone="ghost"
-                      className="px-2 py-1 text-pixel-label"
-                      onClick={() => setSocialPickerOpen(true)}
-                    >
-                      + Frame
-                    </Button>
+                  <span className="font-mono text-[10px] whitespace-nowrap text-muted">
+                    ·{" "}
+                    {socialFrame
+                      ? `${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"} · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
+                      : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`}
                   </span>
-                </div>
-              ) : (
-                <div className="flex min-h-9 min-w-0 items-center gap-2">
-                  <span className="hidden min-w-0 shrink-0 items-baseline gap-1.5 xl:flex">
-                    <span className="max-w-[10rem] truncate text-pixel-mono text-accent uppercase">
-                      {frame?.name ?? "Frame"}
-                    </span>
-                    <span className="font-mono text-[10px] text-muted">
-                      {buffer?.width ?? asset.data?.width ?? 0}×
-                      {buffer?.height ?? asset.data?.height ?? 0}
-                    </span>
-                  </span>
-                  <div className="min-w-0 flex-1">
+                </span>
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                  {socialFrame ? (
+                    <>
+                      <Button
+                        tone="ghost"
+                        className="shrink-0 px-2 py-1 text-pixel-label"
+                        disabled={running}
+                        onClick={addSocialText}
+                      >
+                        + Text
+                      </Button>
+                      <Button
+                        tone="ghost"
+                        className="shrink-0 px-2 py-1 text-pixel-label"
+                        disabled={running}
+                        onClick={() => addSocialElement("rect")}
+                      >
+                        + Block
+                      </Button>
+                      <Button
+                        tone="ghost"
+                        className="shrink-0 px-2 py-1 text-pixel-label"
+                        disabled={running}
+                        onClick={() => addSocialElement("pattern")}
+                      >
+                        + Pattern
+                      </Button>
+                    </>
+                  ) : (
                     <Toolbar
                       tool={tool}
                       brushSize={brushSize}
@@ -3201,9 +3314,16 @@ export function EditorScreen() {
                       onSelectionClear={() => selectionCommand("clear")}
                       onDeselect={() => setSelection(null)}
                     />
-                  </div>
+                  )}
                 </div>
-              )}
+                <Button
+                  tone="ghost"
+                  className="shrink-0 px-2 py-1 text-pixel-label"
+                  onClick={() => setSocialPickerOpen(true)}
+                >
+                  + Frame
+                </Button>
+              </div>
             </div>
             <div
               ref={viewRef}
@@ -3227,11 +3347,7 @@ export function EditorScreen() {
                     </Button>
                   </div>
                 </Centered>
-              ) : socialFrame &&
-                socialArtboard &&
-                socialPreset &&
-                asset.data &&
-                socialSpritesReady ? (
+              ) : socialFrame && socialArtboard && socialPreset && asset.data ? (
                 <div
                   className="checkerboard h-full w-full overflow-hidden"
                   style={{
@@ -3700,15 +3816,9 @@ export function EditorScreen() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
-            {socialFrame ? (
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1">{socialPanels}</div>
-            ) : (
-              <>
-                <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
-                {historyPanel("min-h-0 flex-1")}
-              </>
-            )}
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
+            {inspectorTabs}
+            {inspectorBody}
           </aside>
         </div>
       </div>
@@ -3725,8 +3835,8 @@ export function EditorScreen() {
             side="right"
           >
             <div className="grid gap-4">
-              {socialFrame ? socialPanels : topPanels}
-              {socialFrame ? null : historyPanel()}
+              {inspectorTabs}
+              {inspectorBody}
             </div>
           </Sheet>
         </>

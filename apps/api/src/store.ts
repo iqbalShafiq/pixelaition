@@ -529,6 +529,15 @@ export async function saveSocialFrameRecord(
       },
     };
   }
+  await recordSocialVersion(db, assetId, frameId, "edit", {
+    name: input.name?.trim().slice(0, 80) ?? row.frame.name,
+    presetId: row.frame.presetId,
+    width: row.frame.width,
+    height: row.frame.height,
+    scene,
+    copyOverride: input.copyOverride ?? row.frame.copyOverride,
+    status: input.status ?? row.frame.status,
+  });
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   return { asset: await getAssetRecord(db, userId, assetId) };
 }

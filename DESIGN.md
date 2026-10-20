@@ -4,17 +4,22 @@ Pixelaition looks like a drafting table at night. The canvas is the product. Chr
 
 ## One frame canvas
 
-Every frame uses the same editor layout. The frame rail holds small pixel
-canvases and output-size canvases together; the centre is one canvas well on the
-same checkerboard, with the same frame label, view controls and composer dock.
-There is no separate Studio route, navigation item or visual mode.
+Every frame uses the same editor layout. The left rail is the frame list for
+every asset; the centre is one canvas well on the same checkerboard, with the
+same frame label, tool strip, `+ Frame` action and composer dock; the right rail
+is one inspector with the same `Frame`, `Content` and `History` tabs for every
+frame. There is no separate Studio route, navigation item or visual mode, and
+selecting a frame never swaps the inspector shell.
 
-An output-size frame fills that well with its native image, contained at its own
-aspect; the inspector switches to name, layout/copy/checks, background,
-elements, template and source frame. The rail and inspector become sheets below
+The `Frame` tab always holds the same three panels: name and size, palette, and
+view. The `Content` tab adapts to the frame's backing data — layers and canvas
+style for a pixel canvas, layout/copy/checks, background, elements, template and
+source for an output-size canvas. `History` is the same version timeline for
+both, with scene snapshots restored through the same route and a placeholder
+thumb instead of pixel preview. The rail and inspector become sheets below
 1100 px, and the stage reserves room above the docked composer so a 9:16 frame
-remains reachable. The view controls are the same container for every frame:
-`Fit`, `1:1` and, on output-size frames, `Z` for safe zones.
+remains reachable. Canvas view controls share one container: `Fit`, `1:1` and,
+on output-size frames, `Z` for safe zones.
 
 Safe-zone, crop and exclusion overlays are 1 px dashed `line-strong` guides with
 `mono` labels on `coffee`; they are guides, not artwork. A selected element uses
