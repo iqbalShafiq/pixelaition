@@ -3019,6 +3019,7 @@ export function createApp() {
         );
       }
       const files: Record<string, Uint8Array | string> = {};
+      const requestedFormat = body.format === "jpg" ? "jpg" : "png";
       const manifest = {
         format: "pixelaition-social",
         version: 1,
@@ -3035,14 +3036,14 @@ export function createApp() {
           width: item.artboard.width,
           height: item.artboard.height,
           bytes: item.bytes,
-          format: item.format,
+          format: requestedFormat,
           checks: item.checks,
         })),
       };
       for (const item of result.rendered) {
-        const name = `${slug(item.artboard.name)}-${item.artboard.width}x${item.artboard.height}.${item.format}`;
+        const name = `${slug(item.artboard.name)}-${item.artboard.width}x${item.artboard.height}.${requestedFormat}`;
         files[name] =
-          item.format === "png"
+          requestedFormat === "png"
             ? encodeArtboard(item.image, "png")
             : encodeArtboard(item.image, "jpg", "#0a0a09");
       }
