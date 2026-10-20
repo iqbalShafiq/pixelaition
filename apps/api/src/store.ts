@@ -891,6 +891,7 @@ export async function insertRun(
     modelId: string;
     reasoningEffort: string;
     frameId?: string;
+    setId?: string;
     prompt?: string;
     durableRunId?: string;
     status: string;

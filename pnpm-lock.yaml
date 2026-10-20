@@ -290,6 +290,9 @@ importers:
       '@anvia/openai':
         specifier: ^1.3.0
         version: 1.3.0(patch_hash=dcf6094e95d096d6d5763448038f8eea117eb26323a662fbd1e3a27af7491356)(@anvia/core@1.14.0(zod@4.6.5))(zod@4.6.5)
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../artboard
       '@pixelaition/export':
         specifier: workspace:*
         version: link:../export

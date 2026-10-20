@@ -20,3 +20,17 @@ export function askSessionId(
 ): string {
   return `${threadId}:ask:${modelId}:${api}`;
 }
+
+/**
+ * The durable session a compose run continues. A set is a conversation of its
+ * own even though it hangs off the same asset thread; keeping the set id in
+ * the session prevents one set's layout history replaying into another's.
+ */
+export function composeSessionId(
+  threadId: string,
+  setId: string,
+  modelId: string,
+  api: "chat" | "responses",
+): string {
+  return `${threadId}:compose:${setId}:${modelId}:${api}`;
+}

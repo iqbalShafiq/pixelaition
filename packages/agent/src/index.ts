@@ -129,3 +129,26 @@ export type {
 } from "./tasks/asset-draw.js";
 export { routeSteering, STEERING_CONFIDENCE } from "./steering.js";
 export type { SteeringContext, SteeringRoute } from "./steering.js";
+
+export {
+  assertOwnedArtboard,
+  artboardRunIdFromOperation,
+  bindArtboardRun,
+  getArtboardRun,
+  releaseArtboardRun,
+  requireArtboardRun,
+  resolveArtboard,
+  spriteFor,
+  writeArtboard,
+} from "./artboard-runs.js";
+export type { ArtboardRunBinding } from "./artboard-runs.js";
+export {
+  ARTBOARD_DIRECTOR_TOOLS,
+  ARTBOARD_LAYOUT_TOOLS,
+  artboardToolNamesForRole,
+  artboardToolsForRole,
+  artboardDirectorInstructions,
+  artboardLayoutInstructions,
+} from "./artboard-roles.js";
+export type { ArtboardRole } from "./artboard-roles.js";
+export { createArtboardTools, textSizes, textWeights } from "./artboard-tools.js";

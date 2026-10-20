@@ -391,7 +391,9 @@ async function startRunViaWorker(
       | { scope: "workspace"; projectId: string };
     threadId: string;
     requestId: string;
-    mode: "draw" | "ask";
+    mode: "draw" | "ask" | "compose";
+    /** The social set a compose run lays out. */
+    setId?: string;
     /** Jev's task shape; present for draw runs. */
     shape?: { workers: number; review: boolean; source?: string } | undefined;
     usage: {
@@ -413,7 +415,7 @@ async function startRunViaWorker(
   // One task per asset: the guard runs here as well as in the worker, because
   // a task's child rows may not exist yet when the second request arrives.
   if (
-    input.mode === "draw" &&
+    (input.mode === "draw" || input.mode === "compose") &&
     input.target.scope === "asset" &&
     (await assetHasActiveRun(db, input.target.assetId))
   ) {
@@ -440,6 +442,7 @@ async function startRunViaWorker(
           modelId: input.modelId,
           reasoningEffort: input.reasoningEffort,
           ...(input.target.scope === "asset" ? { frameId: input.target.frameId } : {}),
+          ...(input.setId !== undefined ? { setId: input.setId } : {}),
           prompt: input.prompt,
           status: "queued",
         });
@@ -466,6 +469,7 @@ async function startRunViaWorker(
           userId: input.userId,
           threadId: input.threadId,
           mode: input.mode,
+          ...(input.setId !== undefined ? { setId: input.setId } : {}),
           ...(input.shape !== undefined ? { shape: input.shape } : {}),
           ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           usage: input.usage,
@@ -2548,6 +2552,113 @@ export function createApp() {
       // The whole asset conversation's settled spend: the console header's
       // session totals, composed with the live run's own stream on the client.
       session: await sessionUsageForThread(db, thread.id),
+    });
+  });
+
+  app.post("/api/sets/:id/compose", async (req, res) => {
+    const body = z
+      .object({
+        prompt: z.string().min(1).max(4000),
+        modelId: z.string().min(1),
+        reasoningEffort: z.string().min(1),
+        attachments: z
+          .array(
+            z.object({
+              mediaType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+              data: z.string().min(16).max(1_500_000),
+            }),
+          )
+          .max(4)
+          .refine(
+            (list) => list.reduce((sum, item) => sum + item.data.length, 0) <= 5_000_000,
+            { message: "The attachments are too large together." },
+          )
+          .optional(),
+      })
+      .parse(req.body);
+    const userId = res.locals.userId as string;
+    const set = await getArtboardSet(db, userId, req.params.id ?? "");
+    if (!set) return fail(res, 404, "NOT_FOUND", "That set is not available.");
+    const asset = await getAssetRecord(db, userId, set.assetId);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "The set's asset is missing.");
+    const frame = asset.frames[0];
+    if (!frame) return fail(res, 422, "EMPTY_ASSET", "The set's asset has no frames.");
+    if (await activeRunFor(set.assetId)) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "This set already has an unfinished run; wait for it to finish or cancel it first.",
+      );
+    }
+    const pair = await modelPairFor(
+      res,
+      body.modelId,
+      body.reasoningEffort,
+      body.attachments?.length ?? 0,
+    );
+    if (!pair) return;
+    const decisionModel = process.env.DECISION_MODEL?.trim();
+    const decisionBaseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
+    const decisionApiKey = process.env.DECISION_MODEL_API_KEY?.trim();
+    if (!decisionModel || !decisionBaseUrl || !decisionApiKey) {
+      return fail(
+        res,
+        503,
+        "DECISION_UNCONFIGURED",
+        "Set DECISION_MODEL, DECISION_MODEL_BASE_URL, and DECISION_MODEL_API_KEY before generating.",
+      );
+    }
+    let guardrail: GuardrailReport;
+    try {
+      guardrail = await screenInput(body.prompt, {
+        apiKey: decisionApiKey,
+        model: decisionModel,
+        baseUrl: decisionBaseUrl,
+      });
+    } catch (reason) {
+      if (reason instanceof JevNotConfiguredError) {
+        return fail(res, 503, "DECISION_UNCONFIGURED", reason.message);
+      }
+      return fail(
+        res,
+        502,
+        "GUARDRAIL_FAILED",
+        reason instanceof Error ? reason.message : "The content guardrail failed.",
+      );
+    }
+    if (guardrail.action === "block") {
+      return fail(
+        res,
+        422,
+        "POLICY_BLOCKED",
+        `This request breaks the content policy (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}, severity=${guardrail.severity.toFixed(2)}).`,
+      );
+    }
+    if (guardrail.action === "review") {
+      return fail(
+        res,
+        422,
+        "POLICY_REVIEW",
+        `This request was flagged for review (${guardrail.top.hazard}=${guardrail.top.probability.toFixed(2)}). Rephrase it and try again.`,
+      );
+    }
+    const thread = await ensureThread(db, userId, { assetId: set.assetId });
+    const requestId = crypto.randomUUID();
+    await startRunViaWorker(res, {
+      userId,
+      prompt: body.prompt,
+      modelId: body.modelId,
+      reasoningEffort: body.reasoningEffort,
+      ...(body.attachments !== undefined ? { attachments: body.attachments } : {}),
+      target: { scope: "asset", assetId: set.assetId, frameId: frame.id },
+      threadId: thread.id,
+      requestId,
+      mode: "compose",
+      setId: set.id,
+      usage: usageSeedFromSpend({
+        ...(guardrail.usage !== undefined ? { guardrailUsage: guardrail.usage } : {}),
+      }),
     });
   });
 

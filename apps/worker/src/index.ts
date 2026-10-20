@@ -47,6 +47,11 @@ import {
   screenOutput,
   seesUserImages,
   selectRunTarget,
+  artboardDirectorInstructions,
+  ARTBOARD_DIRECTOR_TOOLS,
+  bindArtboardRun,
+  createArtboardTools,
+  releaseArtboardRun,
   stagedOverrideSchema,
   traceIdFor,
   PLAN_TOOL_NAMES,
@@ -65,6 +70,8 @@ import {
 import {
   createDatabase,
   createVersion,
+  artboardSets,
+  artboards,
   assets,
   frames,
   generationRuns,
@@ -73,6 +80,17 @@ import {
   projects,
   runTasks,
 } from "@pixelaition/db";
+import {
+  buildTemplateScene,
+  getPreset,
+  sceneSchema,
+  syncCopyScene,
+  type Artboard,
+  type CopyDeck,
+  type CopyOverride,
+  type FormatPreset,
+  type SpriteSource,
+} from "@pixelaition/artboard";
 import {
   MAX_COLORS,
   bufferToFrame,
@@ -105,7 +123,7 @@ import {
 } from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
 import { parseDurableRecord } from "./prior-context.js";
-import { askSessionId } from "./sessions.js";
+import { askSessionId, composeSessionId } from "./sessions.js";
 import {
   buildTaskDeps,
   loadPriorContextFor,
@@ -520,13 +538,14 @@ const observability = {
  * agent that carries the painting, transfer and reading tools and nothing
  * structural — a worker is never offered a tool it may not call.
  */
-const AGENT_ROLES = ["supervisor", "painter", "ask"] as const;
+const AGENT_ROLES = ["supervisor", "painter", "ask", "art-director"] as const;
 export type AgentRoleName = (typeof AGENT_ROLES)[number];
 
 const ROLE_TOOLS: Record<AgentRoleName, ReadonlySet<string>> = {
   supervisor: PLAN_TOOL_NAMES,
   painter: WORKER_TOOL_NAMES,
   ask: ASK_TOOL_NAMES,
+  "art-director": ARTBOARD_DIRECTOR_TOOLS,
 };
 
 /**
@@ -556,6 +575,7 @@ function compactionFor(model: CompletionModel, window: number | undefined) {
 const agents = completions.flatMap(({ spec, model }) => {
   const questionTool = createQuestionTool();
   const catalogue = createPixelTools({ vision: spec.vision, webSearch });
+  const artboardCatalogue = createArtboardTools({ vision: spec.vision });
   const tool = (name: string) => {
     const entry = catalogue.find((candidate) => candidate.name === name);
     if (entry === undefined) return [];
@@ -575,17 +595,22 @@ const agents = completions.flatMap(({ spec, model }) => {
     AGENT_ROLES.map((role) => {
       // Registration order matters for the ask agent only in that its tool
       // list is explicit; every role filters the same catalogue.
-      const roleTools = catalogue.filter((entry) =>
-        role === "ask"
-          ? ROLE_TOOLS.ask.has(entry.name)
-          : ROLE_TOOLS[role].has(entry.name),
-      );
+      const roleTools =
+        role === "art-director"
+          ? artboardCatalogue.filter((entry) => ROLE_TOOLS[role].has(entry.name))
+          : catalogue.filter((entry) =>
+              role === "ask"
+                ? ROLE_TOOLS.ask.has(entry.name)
+                : ROLE_TOOLS[role].has(entry.name),
+            );
       // `ask_user` belongs to the roles that talk to the user; the review
       // answers with its verdict and never interrupts.
       const tools =
-        role === "ask" || role === "painter"
-          ? [...roleTools, ...tool(questionTool.name)]
-          : roleTools;
+        role === "art-director"
+          ? [...roleTools, questionTool]
+          : role === "ask" || role === "painter"
+            ? [...roleTools, ...tool(questionTool.name)]
+            : roleTools;
       const id = `${agentPrefix}:${role}:${spec.id}:${effort}`;
       return {
         id,
@@ -596,7 +621,12 @@ const agents = completions.flatMap(({ spec, model }) => {
         agent: new Agent({
           id,
           model,
-          instructions: role === "ask" ? askInstructions : pixelInstructions,
+          instructions:
+            role === "ask"
+              ? askInstructions
+              : role === "art-director"
+                ? artboardDirectorInstructions
+                : pixelInstructions,
           tools,
           // A painting run needs room for many tool rounds; a question is one
           // or two turns. Floor and per-run `maxModelTurns` do the bounding.
@@ -624,11 +654,14 @@ export function agentRoleForKey(key: string): AgentRoleName {
 
 function agentForTarget(
   target: RunTarget,
-  mode: "draw" | "ask",
+  mode: "draw" | "ask" | "compose",
   role: AgentRoleName = "supervisor",
 ): Agent | undefined {
   if (mode === "ask")
     return agents.find((entry) => entry.id === drawAgentId("ask", target))?.agent;
+  if (mode === "compose")
+    return agents.find((entry) => entry.id === drawAgentId("art-director", target))
+      ?.agent;
   return agents.find((entry) => entry.id === drawAgentId(role, target))?.agent;
 }
 
@@ -1575,7 +1608,9 @@ app.post("/internal/runs", async (req, res) => {
       userId: z.string(),
       threadId: z.string(),
       // The decision chooses the mode; the run picks the matching agent.
-      mode: z.enum(["draw", "ask"]).default("draw"),
+      mode: z.enum(["draw", "ask", "compose"]).default("draw"),
+      /** The social set a compose run lays out. */
+      setId: z.string().optional(),
       // Jev's shape for the task: how many workers, whether a review round is
       // worth it. The API always sends it; a missing one fails loud below.
       shape: z
@@ -1638,6 +1673,88 @@ app.post("/internal/runs", async (req, res) => {
     return res.status(503).json({ message: "Add AGENT_API_KEY to generate." });
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
+
+  if (body.mode === "compose") {
+    if (!body.setId || !body.assetId) {
+      return res
+        .status(422)
+        .json({ message: "A compose run needs a setId and an assetId." });
+    }
+    const loaded = await loadArtboardSetForRun(body.setId, body.assetId, body.userId);
+    if (!loaded) {
+      return res.status(404).json({ message: "That social set was not found." });
+    }
+    bindArtboardRunFor({
+      durableRunId: "",
+      publicRunId: body.runId,
+      loaded,
+      userId: body.userId,
+    });
+    const promptText = buildArtboardPrompt(body.prompt, loaded);
+    const mediaParts = body.attachments ?? [];
+    const prompt: AgentPrompt =
+      mediaParts.length > 0
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              ...mediaParts.map((attachment) => ({
+                type: "image" as const,
+                image: { type: "data" as const, data: attachment.data },
+                mediaType: attachment.mediaType,
+              })),
+            ],
+          }
+        : promptText;
+    let run: Awaited<ReturnType<typeof runtime.submit>>;
+    try {
+      run = await runtime.submit({
+        agentId: drawAgentId("art-director", target),
+        sessionId: composeSessionId(
+          body.threadId,
+          body.setId,
+          target.modelId,
+          targetSpec.api,
+        ),
+        requestId: body.requestId,
+        prompt,
+      });
+    } catch (reason) {
+      if (reason instanceof DurableConflictError) {
+        return res.status(409).json({
+          message:
+            "This social set already has an unfinished run; wait for it to finish.",
+        });
+      }
+      return res.status(502).json({
+        message: `The compose run could not start: ${boundedReason(reason)}`,
+      });
+    }
+    // Rebind with the real durable id; the first bind exists so a very fast
+    // first tool call cannot race the submission.
+    bindArtboardRunFor({
+      durableRunId: run.id,
+      publicRunId: body.runId,
+      loaded,
+      userId: body.userId,
+    });
+    publicIdByDurable.set(run.id, body.runId);
+    seedUsage(run.id, body.usage);
+    telemetry?.setTraceContext(run.id, {
+      name: "artboard-compose",
+      userId: body.userId,
+      sessionId: body.threadId,
+      tags: ["pixelaition", "social", "compose"],
+      metadata: {
+        setId: body.setId,
+        assetId: loaded.asset.id,
+        modelId: target.modelId,
+        reasoningEffort: target.effort,
+      },
+    });
+    void follow(runtime, run.id, body.runId, target.effort);
+    return res.status(202).json({ durableRunId: run.id });
+  }
 
   // An asset run binds its asset up front. A workspace run stays unbound until
   // a tool picks an asset, so its drawing tools fail closed in the meantime.
@@ -2576,6 +2693,7 @@ async function follow(
     }
   } finally {
     releaseRun(durableId);
+    releaseArtboardRun(durableId);
     clearGateOutcomes(durableId);
     clearSteerQueue(durableId);
     usageByRun.delete(durableId);
@@ -2862,6 +2980,254 @@ function bindAssetRun(options: {
       summarizer?.queue("frame", frameId);
     },
   });
+}
+
+type LoadedArtboardSet = {
+  set: typeof artboardSets.$inferSelect;
+  artboards: Artboard[];
+  asset: LoadedAsset;
+};
+
+function artboardFromRow(row: typeof artboards.$inferSelect): Artboard {
+  return {
+    id: row.id,
+    setId: row.setId,
+    presetId: row.presetId,
+    name: row.name,
+    width: row.width,
+    height: row.height,
+    pixelUnit: row.pixelUnit,
+    scene: sceneSchema.parse(row.scene),
+    copyOverride: row.copyOverride as CopyOverride,
+    status: row.status as Artboard["status"],
+    version: row.version,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function loadArtboardSetForRun(
+  setId: string,
+  assetId: string,
+  userId: string,
+): Promise<LoadedArtboardSet | undefined> {
+  const [set] = await db
+    .select()
+    .from(artboardSets)
+    .where(and(eq(artboardSets.id, setId), eq(artboardSets.assetId, assetId)));
+  if (!set) return undefined;
+  const rows = await db
+    .select()
+    .from(artboards)
+    .where(eq(artboards.setId, setId))
+    .orderBy(asc(artboards.createdAt), asc(artboards.id));
+  const asset = await loadAsset(assetId, userId);
+  if (!asset) return undefined;
+  return { set, artboards: rows.map(artboardFromRow), asset };
+}
+
+function spritesForAsset(asset: LoadedAsset): Map<string, SpriteSource> {
+  const sprites = new Map<string, SpriteSource>();
+  for (const frame of asset.frames) {
+    const buffer = frameToBuffer(frame, asset.width, asset.height, asset.palette);
+    sprites.set(`${asset.id}:${frame.id}`, {
+      assetId: asset.id,
+      assetName: asset.name,
+      frameId: frame.id,
+      frameName: frame.name,
+      buffer,
+    });
+  }
+  return sprites;
+}
+
+function setDtoFromRow(row: typeof artboardSets.$inferSelect) {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    assetId: row.assetId,
+    name: row.name,
+    copy: row.copy as CopyDeck,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function saveArtboardRecord(artboard: Artboard): Promise<Artboard> {
+  const scene = sceneSchema.parse(artboard.scene);
+  const [row] = await db
+    .update(artboards)
+    .set({
+      scene,
+      name: artboard.name,
+      copyOverride: artboard.copyOverride,
+      status: artboard.status,
+      version: artboard.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(artboards.id, artboard.id), eq(artboards.version, artboard.version)))
+    .returning();
+  if (!row) {
+    throw new Error(
+      `Artboard "${artboard.name}" changed while the agent was working; reload it before saving.`,
+    );
+  }
+  await db
+    .update(artboardSets)
+    .set({ updatedAt: new Date() })
+    .where(eq(artboardSets.id, artboard.setId));
+  return artboardFromRow(row);
+}
+
+async function createArtboardRecord(input: {
+  setId: string;
+  presetId: string;
+  name?: string;
+  template?: string;
+  copy?: CopyDeck;
+  palette: string[];
+  sprites: Map<string, SpriteSource>;
+  assetId: string;
+}): Promise<Artboard> {
+  const preset: FormatPreset = getPreset(input.presetId);
+  const template = (input.template ??
+    preset.defaultTemplate) as FormatPreset["defaultTemplate"];
+  const primary = [...input.sprites.values()].find(
+    (source) => source.assetId === input.assetId,
+  );
+  const scene = buildTemplateScene({
+    preset,
+    template,
+    copy: input.copy ?? {},
+    palette: input.palette,
+    ...(primary ? { sprite: primary } : {}),
+  });
+  const id = randomUUID();
+  const [row] = await db
+    .insert(artboards)
+    .values({
+      id,
+      setId: input.setId,
+      presetId: preset.id,
+      name: input.name?.trim() || preset.label,
+      width: preset.width,
+      height: preset.height,
+      pixelUnit: preset.pixelUnit,
+      scene,
+      copyOverride: {},
+      status: "draft",
+      version: 1,
+    })
+    .returning();
+  if (!row) throw new Error("The artboard could not be created.");
+  await db
+    .update(artboardSets)
+    .set({ updatedAt: new Date() })
+    .where(eq(artboardSets.id, input.setId));
+  return artboardFromRow(row);
+}
+
+async function setCopyRecord(
+  setId: string,
+  copy: CopyDeck,
+): Promise<{ set: ReturnType<typeof setDtoFromRow>; artboards: Artboard[] }> {
+  const [set] = await db
+    .update(artboardSets)
+    .set({ copy, updatedAt: new Date() })
+    .where(eq(artboardSets.id, setId))
+    .returning();
+  if (!set) throw new Error("The set was not found.");
+  const rows = await db.select().from(artboards).where(eq(artboards.setId, setId));
+  const next: Artboard[] = [];
+  for (const row of rows) {
+    const current = artboardFromRow(row);
+    const scene = syncCopyScene(current.scene, copy, current.copyOverride);
+    if (JSON.stringify(scene) === JSON.stringify(current.scene)) {
+      next.push(current);
+      continue;
+    }
+    const [updated] = await db
+      .update(artboards)
+      .set({ scene, version: current.version + 1, updatedAt: new Date() })
+      .where(eq(artboards.id, current.id))
+      .returning();
+    if (updated) next.push(artboardFromRow(updated));
+  }
+  return { set: setDtoFromRow(set), artboards: next };
+}
+
+function buildArtboardPrompt(request: string, loaded: LoadedArtboardSet): string {
+  const boards = loaded.artboards
+    .map(
+      (artboard) =>
+        `- ${artboard.name} [${artboard.presetId}] ${artboard.width}×${artboard.height} (${artboard.status})`,
+    )
+    .join("\n");
+  return [
+    "You are the art director and layout worker for one social kit. Compose it, then stop.",
+    `Set: ${loaded.set.name}. Mark: ${loaded.asset.name} [${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours].`,
+    "The set is the deliverable: profile, cover, feed post, vertical video, thumbnail or banner, each at its native size.",
+    "Call list_formats before choosing a layout. Call read_set to see the current boards and shared copy.",
+    "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
+    "After approval: create the planned boards that do not exist with create_artboard, keep the shared copy with set_copy, and compose each board with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent across the family; adapt the layout, not the identity.",
+    "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
+    "Every sprite scale is a whole number. Every colour is a palette index. Text sizes must be in the face's atlas; if a size is rejected, use one the tool lists.",
+    "Fix every check error before saving. Save each finished board with save_artboard, then answer in the language of the request with a short summary of the family and what still needs the user's words.",
+    `Current boards:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
+    `Request: ${request}`,
+  ].join("\n");
+}
+
+function bindArtboardRunFor(options: {
+  durableRunId: string;
+  publicRunId: string;
+  loaded: LoadedArtboardSet;
+  userId: string;
+}): void {
+  const { loaded, durableRunId, publicRunId, userId } = options;
+  const sprites = spritesForAsset(loaded.asset);
+  bindArtboardRun(durableRunId, {
+    setId: loaded.set.id,
+    setName: loaded.set.name,
+    projectId: loaded.set.projectId,
+    assetId: loaded.asset.id,
+    assetName: loaded.asset.name,
+    palette: [...loaded.asset.palette],
+    copy: loaded.set.copy as CopyDeck,
+    artboards: new Map(loaded.artboards.map((artboard) => [artboard.id, artboard])),
+    sprites,
+    planApproved: false,
+    onSave: (artboard) => saveArtboardRecord(artboard),
+    onCreate: (input) =>
+      createArtboardRecord({
+        setId: loaded.set.id,
+        assetId: loaded.asset.id,
+        palette: loaded.asset.palette,
+        sprites,
+        presetId: input.presetId,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.template !== undefined ? { template: input.template } : {}),
+        ...(input.copy !== undefined ? { copy: input.copy } : {}),
+      }),
+    onDelete: async (artboardId) => {
+      await db.delete(artboards).where(eq(artboards.id, artboardId));
+      await db
+        .update(artboardSets)
+        .set({ updatedAt: new Date() })
+        .where(eq(artboardSets.id, loaded.set.id));
+    },
+    onSetCopy: (copy) => setCopyRecord(loaded.set.id, copy),
+    onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
+    onLoadSprite: async (assetId, frameId) => {
+      if (assetId !== loaded.asset.id) return undefined;
+      if (frameId) return sprites.get(`${assetId}:${frameId}`);
+      return [...sprites.values()].find((source) => source.assetId === assetId);
+    },
+  });
+  // A compose run is not a drawing child; keep the console's frame focus on
+  // the primary frame so a refresh has a stable anchor.
+  void publicRunId;
+  void userId;
 }
 
 /**
