@@ -56,7 +56,7 @@ const childRows = children.trim()
 const roleOf = (key) =>
   key.startsWith("plan") ? "draw-plan" : key.startsWith("w") ? "draw-worker" : key.startsWith("review") ? "draw-review" : "draw-fix";
 const traces = durableRunId
-  ? [{ id: durableRunId, role: "social-compose" }]
+  ? [{ id: durableRunId, role: "image-compose" }]
   : [
       { id: taskId, role: "draw-task" },
       ...childRows.map((row) => ({ id: row.runId, role: roleOf(row.key) })),
@@ -71,7 +71,7 @@ const MARKERS = {
   // A fix prompt names its frame and layers, quotes the review, carries the
   // work log, and bounds the writer to the ordered layers.
   "draw-fix": ["Frame:", "The review asks:", "Paint only"],
-  "social-compose": ["social frames", "list_formats", "list_project_sprites"],
+  "image-compose": ["image asset", "list_formats", "list_project_sprites"],
 };
 /** Tool failures the model sees as `error-*`; every one is a refused call worth naming. */
 const REFUSAL = /"type":"error-(text|json)"/;
@@ -123,9 +123,16 @@ for (const { id, role } of traces) {
   ].join(" ");
   const expected = MARKERS[name] ?? [];
   const found = expected.filter((marker) => texts.includes(marker));
+  const providerErrors = observations.filter(
+    (item) =>
+      item.type === "TOOL" &&
+      item.level === "ERROR" &&
+      /429|provider returned error|rate limit/i.test(item.statusMessage ?? ""),
+  );
   const refusals = observations.filter(
     (item) =>
       item.type === "TOOL" &&
+      !providerErrors.includes(item) &&
       (item.level === "ERROR" || REFUSAL.test(JSON.stringify(item.output ?? ""))),
   );
   const verdict =
@@ -139,8 +146,12 @@ for (const { id, role } of traces) {
       : ` · ${refusals.length} refused call${refusals.length === 1 ? "" : "s"}: ${[
           ...new Set(refusals.map((item) => item.name)),
         ].join(", ")}`;
+  const providerNote =
+    providerErrors.length === 0
+      ? ""
+      : ` · ${providerErrors.length} provider retry${providerErrors.length === 1 ? "" : "s"}`;
   console.log(
-    `${id.slice(0, 8)} → ${name}: ${observations.length} observations · ${verdict}${refusalNote}`,
+    `${id.slice(0, 8)} → ${name}: ${observations.length} observations · ${verdict}${refusalNote}${providerNote}`,
   );
 }
 process.exit(missing > 0 ? 1 : 0);

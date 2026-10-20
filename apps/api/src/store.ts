@@ -282,7 +282,7 @@ export async function saveFrame(
       asset: undefined,
       failure: {
         code: "NOT_A_SPRITE_FRAME",
-        message: "A social frame is edited through its scene, not through pixels.",
+        message: "This frame is edited through its scene, not through pixels.",
       },
     };
   }
@@ -494,7 +494,7 @@ export async function saveSocialFrameRecord(
   if (!row || row.frame.kind !== "social") {
     return {
       asset: undefined,
-      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
     };
   }
   if (row.frame.version !== input.version) {
@@ -999,7 +999,7 @@ export async function restoreVersion(
           asset: undefined,
           failure: {
             code: "INVALID_VERSION",
-            message: "That social version's scene is malformed.",
+            message: "That frame version's scene is malformed.",
           },
         };
       }
@@ -1739,7 +1739,7 @@ export async function importFrameRecord(
     if (!sourceFrame.scene || !sourceFrame.presetId) {
       return {
         asset: undefined,
-        failure: { code: "INVALID_FRAME", message: "That social frame has no scene." },
+        failure: { code: "INVALID_FRAME", message: "That frame has no scene." },
       };
     }
     const scene = mapScenePalette(
@@ -1789,7 +1789,7 @@ export async function importFrameRecord(
         asset: undefined,
         failure: {
           code: "FRAME_SIZE_MISMATCH",
-          message: `That sprite is ${width}×${height}; this asset's sprite canvas is ${target.width}×${target.height}.`,
+          message: `That frame is ${width}×${height}; this asset's canvas is ${target.width}×${target.height}.`,
         },
       };
     }
@@ -1937,7 +1937,7 @@ export async function renderSocialFrameRecord(
   const frame = asset.frames.find((item) => item.id === frameId);
   if (!frame || frame.kind !== "social" || !frame.presetId || !frame.scene) {
     return {
-      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
     };
   }
   const preset = getPreset(frame.presetId);
@@ -1990,7 +1990,7 @@ export async function copySocialBackgroundRecord(
   if (!frame || !sourceFrame?.scene) {
     return {
       asset: undefined,
-      failure: { code: "NOT_FOUND", message: "That social frame is not available." },
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
     };
   }
   const sourceScene = sceneSchema.parse(sourceFrame.scene);

@@ -2,27 +2,24 @@
 
 Pixelaition looks like a drafting table at night. The canvas is the product. Chrome stays quiet.
 
-## Social frames in the editor
+## One frame canvas
 
-A social frame is the same editor stage, not a second app. The frame rail shows
-sprite and social frames together; a social frame adds its preset label and
-native dimensions, and the centre becomes a **field** well holding the artboard
-at its own aspect. The right rail switches to the artboard inspector: name,
-layout/copy/checks, background, elements, template and the sprite source picker.
-There is no separate Studio route or navigation item.
+Every frame uses the same editor layout. The frame rail holds small pixel
+canvases and output-size canvases together; the centre is one canvas well on the
+same checkerboard, with the same frame label, view controls and composer dock.
+There is no separate Studio route, navigation item or visual mode.
+
+An output-size frame fills that well with its native image, contained at its own
+aspect; the inspector switches to name, layout/copy/checks, background,
+elements, template and source frame. The rail and inspector become sheets below
+1100 px, and the stage reserves room above the docked composer so a 9:16 frame
+remains reachable. The view controls are the same container for every frame:
+`Fit`, `1:1` and, on output-size frames, `Z` for safe zones.
 
 Safe-zone, crop and exclusion overlays are 1 px dashed `line-strong` guides with
-`mono` labels on `coffee`; they are guides, not artwork. The selected element
-uses only `accent` for its bounds. Native-size artboards are contained, never
-stretched: a 4:1 cover sits in its own letterboxed box with the stage's `screen`
-behind it. On narrow screens the rails become sheets, the inspector becomes a
-"Social frame" sheet, and the stage reserves room above the docked composer so
-the bottom of a 9:16 frame is still reachable.
-
-The social toolbar keeps Fit / 1:1 / Zones / + Format. Fit computes whole-pixel
-scale from the measured stage, including height, so a vertical frame is never
-cropped by the viewport; zones are positioned in the same displayed box. Social
-frames are not shown through the sprite zoom control.
+`mono` labels on `coffee`; they are guides, not artwork. A selected element uses
+only `accent` for its bounds. Native-size images are never stretched: a 4:1
+cover sits in its own letterboxed box on the stage's checkerboard.
 
 ## Color
 
@@ -79,7 +76,7 @@ were caught.
 
 The artwork's palette is the artist's. The palette panel still offers Sweetie 16
 as a starting point, but the chrome draws no colour from an asset palette and no
-interface token is added to one: the sprite is the only colour on the page.
+interface token is added to one: the artwork is the only colour on the page.
 
 Base rules live in `@layer base` in `apps/web/src/styles.css`. Unlayered CSS
 beats Tailwind utilities, so a bare `button { color: inherit }` silently defeats
@@ -168,13 +165,13 @@ The home and the editor are joined by one bar. It keeps its flight name across t
 
 ## Editor
 
-Wide screens keep frames and layers on the left, the canvas in the center, and the palette and style guide on the right. The header and both rails share the `panel` surface and meet the canvas on a `line` border. The canvas column is the `field` well, so the sprite reads as the stage and the chrome stays quiet. Rails flex between 240px and their caps (280px left, 300px right) so a narrow laptop does not crush the canvas. Below 1100px both columns become sheets opened from the header, because a hidden rail with no way to reach it is a dead end rather than a layout choice. Below 720px the toolbar becomes a bottom dock above the composer, and the canvas stays the main surface.
+Wide screens keep frames and layers on the left, the canvas in the center, and the palette and style guide on the right. The header and both rails share the `panel` surface and meet the canvas on a `line` border. The canvas column is the `field` well, so the image reads as the stage and the chrome stays quiet. Rails flex between 240px and their caps (280px left, 300px right) so a narrow laptop does not crush the canvas. Below 1100px both columns become sheets opened from the header, because a hidden rail with no way to reach it is a dead end rather than a layout choice. Below 720px the toolbar becomes a bottom dock above the composer, and the canvas stays the main surface.
 
 The signed-in home is the same shell: a sticky bar that starts as part of the page — no background, no hairline, so the wordmark floats on `paper` — and gains its `panel` container and `line` hairline as soon as the library scrolls under it, over 200ms ease-out (`prefers-reduced-motion` keeps the switch instant). Its content shares the page's `max-w-7xl` container. Below it sit the project list (a sticky rail from 1024px, a scrolling chip row under that), the library, and recent runs. The bar ends in the account cluster — the signed-in monogram, the name, and a menu that owns Sign out — so the destructive action is not a loose button in the chrome, and the rails stick below the 64px bar (`top-20`) instead of under it. The page has no hero and no graph-paper background. The composer stays the dock the editor uses.
 
 The signed-out page puts the account form in a full-height `panel` column, from 28rem up to 36rem. The other column is a slide. Branding stays on flat paper at the left. A `pixel-grid-slide` covers the rest of the slide, at 12px so the squares read as a field, and fades out before the type. Assets sit where they belong in that field: a cloud and a bird high, the knight, potion, and slime on the ground. Each asset has two poses and at least two layers. The first pose paints layer by layer. Later poses replace it at once. The name under an asset stays put, with the pose name beside it. Two marks show which pose is on screen, and another set shows how many layers of the current pose are drawn. Below 1024px the same picture is a short band above the form. `prefers-reduced-motion` shows every asset on its second pose, finished.
 
-Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32, and always aims at the cursor. Opening an asset frames the whole sprite instead of a corner of it.
+Zoom snaps to 1, 2, 3, 4, 6, 8, 12, 16, 24, and 32, and always aims at the cursor. Opening an asset frames the whole image instead of a corner of it.
 
 `set_palette` replaces the **asset's** palette and persists it, exactly like the
 editor's palette panel: every frame adopts the change, the run's `read_project`
@@ -216,7 +213,7 @@ everything else.
 
 ## Composer and run console
 
-The composer floats over the canvas column: max width 40rem, `field` surface, 2px `line-strong` border, pixel-corners, the standard solid lift bar, and 28 units of canvas padding underneath so the sprite keeps a resting area. Enter generates, Shift+Enter breaks the line, Escape blurs. When the key or the catalog is missing the composer says so in one mono line; the card that used to explain manual editing is gone. Toasts sit above the composer band (`bottom-32`), so a toast never covers the Generate button.
+The composer floats over the canvas column: max width 40rem, `field` surface, 2px `line-strong` border, pixel-corners, the standard solid lift bar, and 28 units of canvas padding underneath so the image keeps a resting area. Enter generates, Shift+Enter breaks the line, Escape blurs. When the key or the catalog is missing the composer says so in one mono line; the card that used to explain manual editing is gone. Toasts sit above the composer band (`bottom-32`), so a toast never covers the Generate button.
 
 The run console sits above the composer in the same width and surface family. It shows the agent's real steps — thinking phases (reasoning text only when the provider sends it; encrypted reasoning stays a timed phase), tool rows with argument summaries and results, and the assistant message. It opens while a run is live, collapses to a summary bar when it ends, and never animates a step that did not happen. The summary bar is two fixed lines: the state beside the whole asset conversation's elapsed and cost, then the context window as a ten-cell accent bar with its percent, `used / window`, and the model that declared it. Phase progress (`reviewing 2/4`) appears only while the run is live, and a model with no declared window shows `context —`. The agent's reply is a bordered `field` card headed `agent`, apart from tool rows and thinking notes; a settled turn prints the send time and billed input under the user's message and the model, output tokens, cost, and duration under the reply. A streamed answer that matches the run's closing message is shown once — by the transcript row — never twice.
 

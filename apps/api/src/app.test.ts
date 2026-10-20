@@ -170,7 +170,7 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
-  it("creates, edits, checks, previews, and exports a social kit", async () => {
+  it("creates, edits, checks, previews, and exports native-size frames", async () => {
     const project = await request(app)
       .post("/api/projects")
       .set("authorization", `Bearer ${token}`)

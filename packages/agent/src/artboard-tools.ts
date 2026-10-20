@@ -156,7 +156,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const listFormats = createTool({
     name: "list_formats",
     description:
-      "List every social format with its exact output size, safe areas, crops, exclusions, byte limit and notes. Read this before choosing a layout; never invent a dimension.",
+      "List every canvas size with its exact output dimensions, safe areas, crops, exclusions, byte limit and notes. Read this before choosing a layout; never invent a size.",
     inputSchema: z.object({
       group: z
         .enum(["profile", "cover", "post", "vertical", "video", "banner"])
@@ -205,7 +205,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const readSet = createTool({
     name: "read_set",
     description:
-      "Read the set: its name, shared copy, mark, palette and every artboard's scene and status. This is the composition before any edit.",
+      "Read the asset: its name, shared copy, mark, palette and every frame's scene and status. This is the composition before any edit.",
     inputSchema: z.object({}),
     execute: (_input, context) => {
       const run = requireArtboardRun(context.operationId);
@@ -661,7 +661,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
 
   const removeElement = createTool({
     name: "remove_element",
-    description: "Remove one element from an artboard by id.",
+    description: "Remove one element from a frame by id.",
     inputSchema: z.object({ artboardId, elementId: z.string().min(1) }),
     execute: (input, context) => {
       const run = requireArtboardRun(context.operationId);
@@ -740,7 +740,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const createArtboard = createTool({
     name: "create_artboard",
     description:
-      "Add a format to the set after the plan is approved. The preset owns its exact size and safe areas.",
+      "Add a native-size frame after the plan is approved. The size preset owns its exact dimensions and safe areas.",
     inputSchema: z.object({
       presetId: z.string().min(1),
       name: z.string().min(1).max(80).optional(),
@@ -779,7 +779,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
 
   const deleteArtboard = createTool({
     name: "delete_artboard",
-    description: "Remove an artboard from the set. The director's structural call.",
+    description: "Remove a frame from the asset. The director's structural call.",
     inputSchema: z.object({ artboardId: z.string().min(1) }),
     execute: async (input, context) => {
       const run = requireArtboardRun(context.operationId);
@@ -814,7 +814,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const presentPlan = createTool({
     name: "present_artboard_plan",
     description:
-      "Ask the user to approve the set plan. Use it once, after writing the plan JSON in your reply and before creating or editing any artboard.",
+      "Ask the user to approve the asset plan. Use it once, after writing the plan JSON in your reply and before creating or editing any frame.",
     inputSchema: z.object({
       summary: z.string().min(1).max(400),
       formats: z.array(z.string().min(1)).max(40).default([]),
@@ -827,7 +827,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         approved: true,
         summary: input.summary,
         formats: input.formats,
-        next: "Create the planned boards with create_artboard, then compose each one.",
+        next: "Create the planned frames with create_artboard, then compose each one.",
       };
     },
   });

@@ -395,7 +395,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
   if (compact) {
     return (
       <aside
-        aria-label="A cast of sprites drawing themselves"
+        aria-label="A cast of characters drawing themselves"
         className="bg-paper px-4 pt-4"
       >
         <Wordmark flight />
@@ -417,7 +417,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
 
   return (
     <aside
-      aria-label="A cast of sprites drawing themselves"
+      aria-label="A cast of characters drawing themselves"
       className="relative h-dvh min-h-0 overflow-hidden bg-paper"
     >
       <div

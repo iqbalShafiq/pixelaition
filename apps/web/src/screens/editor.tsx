@@ -896,7 +896,7 @@ export function EditorScreen() {
             });
           } else {
             notify({
-              title: "Could not save the social frame",
+              title: "Could not save the frame",
               description: reason instanceof Error ? reason.message : "Unknown error",
             });
           }
@@ -1079,7 +1079,7 @@ export function EditorScreen() {
       client.setQueryData(["asset", assetId], updated);
       notify({
         title: "Copy applied",
-        description: "Every social frame that did not override it.",
+        description: "Every frame that did not override it.",
       });
     } catch (reason) {
       notify({
@@ -1118,13 +1118,13 @@ export function EditorScreen() {
       }
       setSocialPickerOpen(false);
       notify({
-        title: "Social frame added",
+        title: "Frame added",
         description: "Native size and safe areas are ready.",
       });
     },
     onError: (reason: unknown) =>
       notify({
-        title: "Could not add the format",
+        title: "Could not add the frame",
         description: reason instanceof Error ? reason.message : "Unknown error",
       }),
   });
@@ -1163,7 +1163,7 @@ export function EditorScreen() {
       setPaletteImportOpen(false);
       notify({
         title: "Palette imported",
-        description: "Frame pixels and social scenes were remapped.",
+        description: "Frame pixels and scenes were remapped.",
       });
     },
     onError: (reason: unknown) =>
@@ -1175,7 +1175,7 @@ export function EditorScreen() {
 
   const copyBackground = useMutation({
     mutationFn: (input: { sourceAssetId: string; sourceFrameId: string }) => {
-      if (!socialFrame) throw new Error("Open a social frame first.");
+      if (!socialFrame) throw new Error("Open a frame first.");
       return api<AssetDto>(`/api/assets/${assetId}/frames/${socialFrame.id}/background`, {
         method: "POST",
         body: JSON.stringify(input),
@@ -3110,14 +3110,14 @@ export function EditorScreen() {
         </p>
         <span data-flight="bar-actions" className="ml-auto flex items-center gap-1.5">
           <IconButton
-            label="Frames and layers"
+            label="Frames"
             className="lg:hidden"
             onClick={() => setLeftSheet(true)}
           >
             ☰
           </IconButton>
           <IconButton
-            label="Palette, style, and history"
+            label="Inspector"
             className="lg:hidden"
             onClick={() => setRightSheet(true)}
           >
@@ -3158,7 +3158,7 @@ export function EditorScreen() {
               {socialFrame ? (
                 <div className="flex min-h-9 flex-wrap items-center gap-1.5">
                   <span className="truncate text-pixel-mono text-accent uppercase">
-                    {socialPreset?.label ?? "Social frame"}
+                    {socialPreset?.label ?? "Frame"}
                   </span>
                   <span className="font-mono text-[10px] text-muted">
                     {socialFrame.width}×{socialFrame.height}
@@ -3170,47 +3170,39 @@ export function EditorScreen() {
                   </span>
                   <span className="ml-auto flex items-center gap-1">
                     <Button
-                      tone={socialFit ? "solid" : "ghost"}
-                      className="px-2 py-1 text-pixel-label"
-                      onClick={() => setSocialFit(true)}
-                    >
-                      Fit
-                    </Button>
-                    <Button
-                      tone={!socialFit ? "solid" : "ghost"}
-                      className="px-2 py-1 text-pixel-label"
-                      onClick={() => setSocialFit(false)}
-                    >
-                      1:1
-                    </Button>
-                    <Button
-                      tone={socialZones ? "solid" : "ghost"}
-                      className="px-2 py-1 text-pixel-label"
-                      onClick={() => setSocialZones((value) => !value)}
-                    >
-                      Zones
-                    </Button>
-                    <Button
                       tone="ghost"
                       className="px-2 py-1 text-pixel-label"
                       onClick={() => setSocialPickerOpen(true)}
                     >
-                      + Format
+                      + Frame
                     </Button>
                   </span>
                 </div>
               ) : (
-                <Toolbar
-                  tool={tool}
-                  brushSize={brushSize}
-                  selectionActive={selection !== null}
-                  locked={locked}
-                  onTool={setTool}
-                  onBrush={setBrushSize}
-                  onSelectionFill={() => selectionCommand("fill")}
-                  onSelectionClear={() => selectionCommand("clear")}
-                  onDeselect={() => setSelection(null)}
-                />
+                <div className="flex min-h-9 min-w-0 items-center gap-2">
+                  <span className="hidden min-w-0 shrink-0 items-baseline gap-1.5 xl:flex">
+                    <span className="max-w-[10rem] truncate text-pixel-mono text-accent uppercase">
+                      {frame?.name ?? "Frame"}
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {buffer?.width ?? asset.data?.width ?? 0}×
+                      {buffer?.height ?? asset.data?.height ?? 0}
+                    </span>
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Toolbar
+                      tool={tool}
+                      brushSize={brushSize}
+                      selectionActive={selection !== null}
+                      locked={locked}
+                      onTool={setTool}
+                      onBrush={setBrushSize}
+                      onSelectionFill={() => selectionCommand("fill")}
+                      onSelectionClear={() => selectionCommand("clear")}
+                      onDeselect={() => setSelection(null)}
+                    />
+                  </div>
+                </div>
               )}
             </div>
             <div
@@ -3241,9 +3233,9 @@ export function EditorScreen() {
                 asset.data &&
                 socialSpritesReady ? (
                 <div
-                  className="h-full overflow-hidden bg-screen px-3 pt-3"
+                  className="checkerboard h-full w-full overflow-hidden"
                   style={{
-                    paddingBottom: consoleOpen ? "min(46vh, 26rem)" : "9rem",
+                    paddingBottom: consoleOpen ? "min(56vh, 32rem)" : "9rem",
                   }}
                 >
                   <div className="flex h-full min-h-0 w-full items-center justify-center">
@@ -3333,80 +3325,137 @@ export function EditorScreen() {
                   </button>
                 </div>
               ) : null}
-              {socialFrame ? null : (
-                <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
-                  <span className="w-full text-center text-pixel-mono text-muted">
-                    {Math.round(camera.zoom * 100)}%
-                  </span>
-                  <IconButton
-                    label="Zoom out"
-                    size="sm"
-                    onClick={() => {
-                      setViewMode("free");
-                      setCamera((current) => ({
-                        ...current,
-                        zoom: stepZoom(current.zoom, -1),
-                      }));
-                    }}
-                  >
-                    <Minus />
-                  </IconButton>
-                  <IconButton
-                    label="Zoom in"
-                    size="sm"
-                    onClick={() => {
-                      setViewMode("free");
-                      setCamera((current) => ({
-                        ...current,
-                        zoom: stepZoom(current.zoom, 1),
-                      }));
-                    }}
-                  >
-                    <Plus />
-                  </IconButton>
-                  <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
-                  <button
-                    type="button"
-                    aria-label="Fit to view"
-                    aria-pressed={viewMode === "fit"}
-                    title="Fit to view (Ctrl+0)"
-                    onClick={() => {
-                      fit();
-                      setViewMode("fit");
-                    }}
-                    className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                      viewMode === "fit"
-                        ? "border-accent text-accent"
-                        : "border-line text-muted hover:text-ink"
-                    }`}
-                  >
-                    Fit
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Actual size"
-                    aria-pressed={viewMode === "actual"}
-                    title="Actual size (Ctrl+1)"
-                    onClick={() => {
-                      const rect = viewRef.current?.getBoundingClientRect();
-                      const doc = bufferRef.current;
-                      if (rect && doc) {
-                        setCamera(
-                          centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
-                        );
-                      }
-                      setViewMode("actual");
-                    }}
-                    className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                      viewMode === "actual"
-                        ? "border-accent text-accent"
-                        : "border-line text-muted hover:text-ink"
-                    }`}
-                  >
-                    1:1
-                  </button>
-                </div>
-              )}
+              <div className="absolute top-3 right-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1 lg:top-auto lg:bottom-3">
+                {socialFrame ? (
+                  <>
+                    <span className="w-full text-center text-pixel-mono text-muted">
+                      {socialFit ? "FIT" : "1:1"}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Fit to view"
+                      aria-pressed={socialFit}
+                      title="Fit to view"
+                      onClick={() => setSocialFit(true)}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        socialFit
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Actual size"
+                      aria-pressed={!socialFit}
+                      title="Actual size"
+                      onClick={() => setSocialFit(false)}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        !socialFit
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      1:1
+                    </button>
+                    <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                    <button
+                      type="button"
+                      aria-label="Toggle safe zones"
+                      aria-pressed={socialZones}
+                      title="Toggle safe zones"
+                      onClick={() => setSocialZones((value) => !value)}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        socialZones
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      Z
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-full text-center text-pixel-mono text-muted">
+                      {Math.round(camera.zoom * 100)}%
+                    </span>
+                    <IconButton
+                      label="Zoom out"
+                      size="sm"
+                      onClick={() => {
+                        setViewMode("free");
+                        setCamera((current) => ({
+                          ...current,
+                          zoom: stepZoom(current.zoom, -1),
+                        }));
+                      }}
+                    >
+                      <Minus />
+                    </IconButton>
+                    <IconButton
+                      label="Zoom in"
+                      size="sm"
+                      onClick={() => {
+                        setViewMode("free");
+                        setCamera((current) => ({
+                          ...current,
+                          zoom: stepZoom(current.zoom, 1),
+                        }));
+                      }}
+                    >
+                      <Plus />
+                    </IconButton>
+                    <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                    <button
+                      type="button"
+                      aria-label="Fit to view"
+                      aria-pressed={viewMode === "fit"}
+                      title="Fit to view (Ctrl+0)"
+                      onClick={() => {
+                        fit();
+                        setViewMode("fit");
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        viewMode === "fit"
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Actual size"
+                      aria-pressed={viewMode === "actual"}
+                      title="Actual size (Ctrl+1)"
+                      onClick={() => {
+                        const rect = viewRef.current?.getBoundingClientRect();
+                        const doc = bufferRef.current;
+                        if (rect && doc) {
+                          setCamera(
+                            centerCamera(
+                              rect.width,
+                              rect.height,
+                              doc.width,
+                              doc.height,
+                              1,
+                            ),
+                          );
+                        }
+                        setViewMode("actual");
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        viewMode === "actual"
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      1:1
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <div className="pointer-events-none absolute inset-x-0 top-3 bottom-3 z-20 flex flex-col items-center justify-end overflow-hidden px-3">
               {/* One 40rem column holds the console, the queue, and the
@@ -3666,18 +3715,13 @@ export function EditorScreen() {
 
       {wide ? null : (
         <>
-          <Sheet
-            open={leftSheet}
-            onOpenChange={setLeftSheet}
-            title="Frames and layers"
-            side="left"
-          >
+          <Sheet open={leftSheet} onOpenChange={setLeftSheet} title="Frames" side="left">
             <div className="grid gap-4">{leftPanels}</div>
           </Sheet>
           <Sheet
             open={rightSheet}
             onOpenChange={setRightSheet}
-            title={socialFrame ? "Social frame" : "Palette, style, and history"}
+            title="Inspector"
             side="right"
           >
             <div className="grid gap-4">
@@ -3692,7 +3736,7 @@ export function EditorScreen() {
         open={paletteImportOpen}
         onOpenChange={setPaletteImportOpen}
         title="Import a project palette"
-        description="The source palette becomes this asset's palette. Sprite pixels and social scenes map to the nearest colour."
+        description="The source palette becomes this asset's palette. Pixels and scene colours map to the nearest colour."
         width="34rem"
       >
         <Field label="Source asset" htmlFor="palette-source">

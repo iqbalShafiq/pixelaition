@@ -111,7 +111,7 @@ export function ExportDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Export"
-      description={`${assetName} · ${frameName}${social ? " · native social size" : ""}`}
+      description={`${assetName} · ${frameName}${social ? " · native frame size" : ""}`}
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Scope" htmlFor="export-scope">

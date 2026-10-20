@@ -8,7 +8,7 @@ import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
-import { getPreset, type SpriteSource } from "@pixelaition/artboard";
+import { getPreset, presetAspect, type SpriteSource } from "@pixelaition/artboard";
 import { ArtboardCanvas } from "./artboard-canvas.js";
 import { artboardForFrame, sceneSpritesReady } from "../lib/artboard.js";
 import type { AssetDto } from "../lib/types.js";
@@ -301,8 +301,8 @@ function FrameRow({
             ) : frame.kind === "social" ? (
               <span className="truncate font-mono text-[9px] text-muted">
                 {frame.presetId
-                  ? `${getPreset(frame.presetId).platform} · ${frame.width}×${frame.height}`
-                  : "social"}
+                  ? `${frame.width}×${frame.height} · ${presetAspect(getPreset(frame.presetId))}`
+                  : "frame"}
               </span>
             ) : null}
           </span>
@@ -530,7 +530,7 @@ export function FramePanel({
             <Plus />
           </IconButton>
           {onAddSocial ? (
-            <IconButton label="Add social format" disabled={locked} onClick={onAddSocial}>
+            <IconButton label="Add frame size" disabled={locked} onClick={onAddSocial}>
               <Square />
             </IconButton>
           ) : null}
@@ -540,7 +540,7 @@ export function FramePanel({
       {frames.length === 0 ? (
         <EmptyState
           title="No frames"
-          body="A frame holds the pixels for one state of this asset."
+          body="A frame holds one image state of this asset."
         />
       ) : (
         <div
@@ -612,7 +612,7 @@ export function FramePanel({
         title="Delete this frame?"
         description={
           pendingDelete
-            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            ? `“${pendingDelete.name}” and its content will be removed. This cannot be undone.`
             : ""
         }
         onConfirm={() => {
@@ -810,7 +810,7 @@ export function LayerPanel({
         title="Delete this layer?"
         description={
           pendingDelete
-            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            ? `“${pendingDelete.name}” and its content will be removed. This cannot be undone.`
             : ""
         }
         onConfirm={() => {

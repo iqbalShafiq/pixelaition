@@ -56,11 +56,11 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
         <div className="mx-auto w-full max-w-md">
           <p className="text-pixel-mono text-muted">Account</p>
           <h1 className="mt-2 text-pixel-display text-balance text-ink">
-            {login ? "Sign in" : "Create your studio"}
+            {login ? "Sign in" : "Create your workspace"}
           </h1>
           <p className="mt-3 text-pixel-body text-muted">
             {login
-              ? "Pick up the sprite family you left."
+              ? "Pick up the image family you left."
               : "One account holds every project, palette, and style guide."}
           </p>
 
@@ -90,7 +90,7 @@ export function AuthScreen({ mode }: { mode: "login" | "register" }) {
                 autoFocus={login}
                 required
                 invalid={Boolean(error) && !login}
-                placeholder="you@studio.example"
+                placeholder="you@example.com"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
               />

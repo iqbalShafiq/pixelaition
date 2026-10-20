@@ -15,7 +15,7 @@
   <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10.30.3-F69220?logo=pnpm&logoColor=white" alt="pnpm 10.30.3"></a>
 </p>
 
-Pixelaition is a pixel-asset studio. You draw on a canvas, or describe a sprite and watch the pixels appear while an agent works. A project keeps one palette and one style guide, so every asset inside it stays related. A finished asset can grow a new state, such as another facing or another action, from a frame that already exists.
+Pixelaition is a pixel-asset studio. You draw on a canvas, or describe an image and watch it appear while an agent works. A project keeps one palette and one style guide, so every asset inside it stays related. A finished asset can grow a new state, such as another facing or another action, from a frame that already exists.
 
 Before any generation starts, a decision layer reads the thread and picks the mode. A drawing run gets painting tools. An answering-only run gets read-only tools. That one call is the difference between the product working and the product politely explaining why it will not.
 
@@ -33,25 +33,28 @@ It runs on [Anvia](https://github.com/anvia-hq/anvia), the agent runtime behind 
 
 The same screen holds projects, assets, frames, layers and the run history. A composer docks at the bottom of both the workspace and the editor, so a new request and a follow-up are the same motion.
 
-## One asset, sprite and social frames
+## One image asset, many frames
 
-An asset is a mixed document. A frame can be a **sprite** — palette-indexed
-layers on the asset canvas, made for animation — or a **social** frame rendered
-at a platform's native size with safe zones, crops, deterministic checks and a
-shared copy deck. One asset can hold sprite X, sprite Y, a Facebook cover, a
-Reels thumbnail and a YouTube thumbnail as different frames.
+An asset is an image document. Every frame lives in the same editor and uses the
+same frame rail, canvas well, view controls, composer and export sheet. A frame
+can be **pixel-backed** — a small palette-indexed raster canvas with layers —
+or **output-size** — a native canvas for a cover, post, thumbnail or story with
+safe zones, crops, deterministic checks and a shared copy deck. One asset can
+hold a 32×32 pixel frame, a Facebook cover, a Reels thumbnail and a YouTube
+thumbnail as different frames.
 
-All frames stay in the same editor. Select a sprite to draw; select a social
-frame and the same stage becomes its native-size artboard, with a layout/copy/
-checks inspector. Formats come from 44 official presets. The art director is one
-compose run for the asset: it plans the frames, waits for approval, composes and
-saves each one through the same composer and console as a sprite run.
+Select a small canvas and draw; select an output-size canvas and the same stage
+shows its native-size image, its layout/copy/checks inspector and the same
+`Fit / 1:1 / Zones` controls. Sizes come from 44 official presets, and adding a
+frame from a size creates another frame in the same asset. The layout agent is
+one compose run for the asset: it plans the frames, waits for approval, composes
+and saves each one through the same composer and console as any other edit.
 
-Project resources are reusable without copying a whole asset. Sprite elements
-name an `assetId`/`frameId`, the sprite picker lists every frame in the project,
-frame import copies a sprite or social frame, and palette import remaps both
-sprite layers and social scenes. Social frames export as PNG or JPG at native
-size; sprite export keeps PNG/JPG/SVG/ZIP and `.pxl`.
+Project resources are reusable without copying a whole asset. Image elements
+name an `assetId`/`frameId`, the source picker lists every frame in the project,
+frame import copies any frame, palette import remaps pixels and scenes, and a
+frame's background can be copied from another project frame. Output-size frames
+export as PNG or JPG at native size; pixel frames keep PNG/JPG/SVG/ZIP and `.pxl`.
 
 The architecture and the trade-offs are in
 [docs/reports/2026-10-20-social-artboards.md](docs/reports/2026-10-20-social-artboards.md).
@@ -164,7 +167,7 @@ Three columns on a wide screen. Frames and layers on the left, the canvas in the
 | `E` | Eraser    | `L` | Line       |
 | `R` | Rectangle | `H` | Pan        |
 
-Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the sprite at one to one. The wheel zooms toward the cursor.
+Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the image at one to one. The wheel zooms toward the cursor.
 
 A frame keeps up to four layers. Frames are added, duplicated, renamed and deleted from the left column, and the play button steps through them. Onion skin draws the neighbouring frames underneath the one you are editing, at display opacity only. Drawing is saved 500ms after you stop.
 

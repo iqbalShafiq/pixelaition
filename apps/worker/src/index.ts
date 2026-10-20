@@ -1696,7 +1696,7 @@ app.post("/internal/runs", async (req, res) => {
       ? undefined
       : await loadSocialAssetForRun(body.assetId, body.userId);
     if (body.setId && !legacy) {
-      return res.status(404).json({ message: "That social set was not found." });
+      return res.status(404).json({ message: "That layout was not found." });
     }
     if (!legacy && !social) {
       return res.status(404).json({ message: "That asset was not found." });
@@ -1753,8 +1753,7 @@ app.post("/internal/runs", async (req, res) => {
     } catch (reason) {
       if (reason instanceof DurableConflictError) {
         return res.status(409).json({
-          message:
-            "This social set already has an unfinished run; wait for it to finish.",
+          message: "This asset already has an unfinished run; wait for it to finish.",
         });
       }
       return res.status(502).json({
@@ -1767,10 +1766,10 @@ app.post("/internal/runs", async (req, res) => {
     publicIdByDurable.set(run.id, body.runId);
     seedUsage(run.id, body.usage);
     telemetry?.setTraceContext(run.id, {
-      name: "social-compose",
+      name: "image-compose",
       userId: body.userId,
       sessionId: body.threadId,
-      tags: ["pixelaition", "social", "compose"],
+      tags: ["pixelaition", "image", "compose"],
       metadata: {
         ...(body.setId ? { setId: body.setId } : {}),
         assetId: body.assetId,
@@ -3425,7 +3424,7 @@ async function saveSocialFrameRecord(artboard: Artboard): Promise<Artboard> {
     })
     .where(and(eq(frames.id, artboard.id), eq(frames.version, artboard.version)))
     .returning();
-  if (!row) throw new Error("That social frame changed while it was saving.");
+  if (!row) throw new Error("That frame changed while it was saving.");
   await db
     .update(assets)
     .set({ updatedAt: new Date() })
@@ -3517,7 +3516,7 @@ async function createSocialFrameRecord(input: {
       version: 1,
     })
     .returning();
-  if (!row) throw new Error("The social frame could not be created.");
+  if (!row) throw new Error("The frame could not be created.");
   await db
     .update(assets)
     .set({ updatedAt: new Date() })
@@ -3595,16 +3594,17 @@ function buildSocialPrompt(request: string, loaded: LoadedSocialAsset): string {
     )
     .join("\n");
   return [
-    "You are the art director and layout worker for one asset. Compose the social frames inside that asset, then stop.",
-    `Asset: ${loaded.asset.name}. Sprite canvas: ${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours.`,
-    "The asset holds sprite frames and social frames together. Sprite frames are ingredients and animation; social frames are native-size deliverables.",
-    "Call list_formats before choosing a layout. Call read_set to see the current social frames and shared copy. Call list_project_sprites to reuse any sprite frame from this project; place_sprite accepts its assetId/frameId.",
+    "You are the art director and layout worker for one image asset. Compose its frames, then stop.",
+    "Write to the user in image, frame and canvas language. Never call frames sprites, social media, a kit or artboards; those are internal storage/tool names.",
+    `Asset: ${loaded.asset.name}. Base canvas: ${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours.`,
+    "The asset holds frames together. Some frames are pixel images used as ingredients; others are native-size canvases for covers, posts, thumbnails and stories.",
+    "Call list_formats before choosing a canvas size. Call read_set to see the current frames and shared copy. Call list_project_sprites to reuse any image frame from this project; place_sprite accepts its assetId/frameId.",
     "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
-    "After approval: create the planned social frames with create_artboard, keep the shared copy with set_copy, and compose each with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent; adapt the layout, not the identity.",
+    "After approval: create the planned frames with create_artboard, keep the shared copy with set_copy, and compose each with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent; adapt the layout, not the identity.",
     "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
     "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
-    "Fix every check error before saving. Save each finished social frame with save_artboard immediately, then answer in the language of the request with a short summary and what still needs the user's words. Do not call set_copy after composing.",
-    `Current social frames:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
+    "Fix every check error before saving. Save each finished frame with save_artboard immediately, then answer in the language of the request with a short summary and what still needs the user's words. Do not call set_copy after composing.",
+    `Current frames:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
     `Request: ${request}`,
   ].join("\n");
 }

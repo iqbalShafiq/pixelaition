@@ -1085,7 +1085,7 @@ export function ProjectsScreen() {
               </span>
             </div>
             <p className="text-pixel-label text-muted">
-              Describe a sprite in the composer, or open one from the grid.
+              Describe an image in the composer, or open one from the grid.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">

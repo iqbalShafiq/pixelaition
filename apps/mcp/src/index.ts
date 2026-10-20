@@ -330,7 +330,7 @@ server.registerTool(
   "list_project_resources",
   {
     description:
-      "List every asset and frame in a project, including social frames, palettes and dimensions. Use it before reusing another asset's frame or palette.",
+      "List every asset and frame in a project, including native-size frames, palettes and dimensions. Use it before reusing another asset's frame or palette.",
     inputSchema: { projectId: z.string() },
   },
   async ({ projectId }) => text(await call(`/api/projects/${projectId}/resources`)),
@@ -340,7 +340,7 @@ server.registerTool(
   "import_frame",
   {
     description:
-      "Copy a sprite or social frame from another asset in the same project. Sprite colours map through the target palette; a social frame keeps its native preset size.",
+      "Copy a frame from another asset in the same project. Pixel colours map through the target palette; a native-size frame keeps its output size.",
     inputSchema: {
       assetId: z.string(),
       sourceAssetId: z.string(),
@@ -365,7 +365,7 @@ server.registerTool(
   "create_social_frame",
   {
     description:
-      "Add a native-size social frame to an existing asset. The asset can also hold sprite frames.",
+      "Add a native-size frame to an existing asset. The asset can also hold pixel frames.",
     inputSchema: {
       assetId: z.string(),
       presetId: z.string(),

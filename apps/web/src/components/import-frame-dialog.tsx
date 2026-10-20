@@ -36,8 +36,8 @@ export function ImportFrameDialog({
       }
       description={
         mode === "background"
-          ? "Use the background of another social frame. Colours map through this asset's palette."
-          : "Copy a sprite or a social frame into this asset. Colours map through the palette."
+          ? "Use the background of another frame. Colours map through this asset's palette."
+          : "Copy a frame into this asset. Colours map through the palette."
       }
       width="44rem"
     >
@@ -70,8 +70,8 @@ export function ImportFrameDialog({
                       {frame.name}
                     </span>
                     <span className="block font-mono text-[10px] text-muted">
-                      {frame.kind === "social" ? "social" : "sprite"} ·{" "}
-                      {frame.width ?? source.width}×{frame.height ?? source.height}
+                      frame · {frame.width ?? source.width}×
+                      {frame.height ?? source.height}
                       {frame.presetId ? ` · ${frame.presetId}` : ""}
                     </span>
                   </span>

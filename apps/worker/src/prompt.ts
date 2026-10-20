@@ -64,7 +64,7 @@ export function buildRunPrompt(input: {
         .map(
           (frame) =>
             `${frame.name}${frame.current ? "*" : ""}${
-              frame.kind === "social" ? ` [social ${frame.presetId ?? "artboard"}]` : ""
+              frame.kind === "social" ? ` [native ${frame.presetId ?? "size"}]` : ""
             }`,
         )
         .join(", ")} (* = current)`,

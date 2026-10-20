@@ -205,7 +205,9 @@ export function Inspector({
                   <span className="truncate font-mono text-[11px]">
                     {element.kind === "text"
                       ? `“${element.text.slice(0, 22)}”`
-                      : element.kind}
+                      : element.kind === "sprite"
+                        ? "image"
+                        : element.kind}
                   </span>
                   <span className="font-mono text-[9px] text-muted">
                     {element.id.slice(0, 8)}
@@ -304,8 +306,8 @@ export function Inspector({
             Shared copy
           </p>
           <p className="text-[11px] text-muted">
-            This deck feeds every format that has not overridden a field. A text edit on a
-            board creates an override, not a fork.
+            This copy is shared by every frame that has not overridden a field. A text
+            edit on a frame creates an override, not a fork.
           </p>
           {(
             [
@@ -329,7 +331,7 @@ export function Inspector({
           ))}
           <div className="flex flex-wrap gap-1">
             <Button onClick={() => onCopy(copyDraft)} disabled={running}>
-              Apply to all formats
+              Apply to all frames
             </Button>
             <Button tone="ghost" onClick={onClearOverrides} disabled={running}>
               Reset overrides
@@ -398,7 +400,7 @@ function ElementEditor({
     <section className="grid gap-2 border-2 border-line bg-field p-2">
       <div className="flex items-center justify-between gap-2">
         <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
-          {element.kind} · {element.id}
+          {element.kind === "sprite" ? "image" : element.kind} · {element.id}
         </p>
         <Button
           tone="danger"
@@ -410,10 +412,10 @@ function ElementEditor({
         </Button>
       </div>
       {element.kind === "sprite" && spriteChoices && spriteChoices.length > 0 ? (
-        <Field label="Source sprite" htmlFor="element-sprite-source">
+        <Field label="Source frame" htmlFor="element-sprite-source">
           <SelectControl
             id="element-sprite-source"
-            label="Source sprite"
+            label="Source frame"
             value={`${element.assetId}:${element.frameId ?? ""}`}
             options={spriteChoices.map((choice) => ({
               value: `${choice.assetId}:${choice.frameId}`,
@@ -717,8 +719,8 @@ export function FormatPicker({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Add a format"
-      description="Native output sizes, safe areas and byte limits come from the format registry."
+      title="Add a frame size"
+      description="Native canvas sizes, safe areas and byte limits come from the size registry."
       width="54rem"
     >
       <Field label="Search" htmlFor="format-search">

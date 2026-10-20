@@ -804,7 +804,7 @@ export function createApp() {
         copy: copyDeckSchema.optional(),
       })
       .refine((value) => value.kind !== "social" || value.presetId !== undefined, {
-        message: "A social frame needs a format preset.",
+        message: "A native-size frame needs a canvas size.",
       })
       .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {
@@ -3329,7 +3329,7 @@ export function createApp() {
         res,
         422,
         "INVALID",
-        "Social artboards export as PNG, JPG, or ZIP; SVG is for pixel documents.",
+        "Native-size frames export as PNG, JPG, or ZIP; SVG is for pixel documents.",
       );
     }
     if (body.format === "pxl" && (body.scope === "artboard" || body.scope === "set")) {
@@ -3337,7 +3337,7 @@ export function createApp() {
         res,
         422,
         "INVALID",
-        "A .pxl document holds a project. Choose PNG, JPG, or ZIP for a social set.",
+        "A .pxl document holds a project. Choose PNG, JPG, or ZIP for native-size frames.",
       );
     }
     if (body.scope === "artboard") {

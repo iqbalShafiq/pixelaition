@@ -183,7 +183,7 @@ export function Composer({
             ? "Starting the run…"
             : running
               ? "The agent is working — type a follow-up to queue it"
-              : "Describe the pixel asset, ask a question, or attach a reference image"
+              : "Describe the image asset, ask a question, or attach a reference image"
         }
         className="min-h-[3.5rem] px-3 py-2.5"
         onKeyDown={(event) => {

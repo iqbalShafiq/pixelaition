@@ -55,52 +55,53 @@ pnpm db:migrate
 - Interface type comes from the pixel scale in `apps/web/src/styles.css` (`text-pixel-hero/display/title/label/body/mono`, each face on its design grid); pixel craft comes from the utilities there (`pixel-corners`, `pixel-window`, `bevel`, `shadow-pixel-*`, `pixel-grid`, `dither-*`). Components use both instead of hand-rolling sizes, radii, or soft shadows.
 - Commit messages follow Conventional Commits.
 
-- One asset is one mixed document: `frames.kind` is `sprite` or `social`. A
-  sprite frame holds palette-indexed layers at the asset canvas; a social frame
-  holds a palette-indexed scene graph at its preset's native size and shares
-  the asset palette and copy deck. There is no separate Social surface or
-  Studio route: the editor's frame rail, canvas, inspector, agent and export
-  switch on the selected frame's kind.
+- One asset is one image document. Every frame shares the editor's rail, canvas
+  shell, view controls, composer and export; the internal `frames.kind` values
+  `sprite` and `social` are storage details, never product language. A
+  pixel-backed frame holds palette-indexed layers at the asset canvas; an
+  output-size frame holds a palette-indexed scene graph at its size preset and
+  shares the asset palette and copy deck. There is no separate Studio surface.
 - `packages/artboard` is shared by the web, API, worker and MCP; do not fork the
-  renderer or the preset registry. A social format's dimensions, safe zones,
-  crops, exclusions, minimum text size and byte budget come from
+  renderer or the preset registry. An output-size frame's dimensions, safe
+  zones, crops, exclusions, minimum text size and byte budget come from
   `packages/artboard/src/presets.ts`. A check error is a real geometry failure,
   never a warning to wave through.
-- Jev still chooses the mode from the prompt: a drawing request on a social
-  frame becomes a compose run, and a question stays an ask run with the
-  artboard read tools (`list_formats`, `read_set`, `read_artboard`,
-  `check_artboard`, `list_project_sprites`) bound to the asset.
-- The art director is one compose run per asset, bound to the asset's social
-  frames and the project's sprite frames; it plans through
-  `present_artboard_plan`, writes only after approval, saves each social frame
-  with optimistic versioning, and leaves a version snapshot. Boot recovery
-  re-binds the asset and artboard tools from `generation_runs.mode`.
-- A social frame is created with `POST /api/assets/:id/frames`
-  (`kind: social`), edited through its scene route, and exported at native size.
-  `GET /api/projects/:id/resources` is the project-wide read: assets, sprite
-  frames, social frames, palettes and dimensions. Cross-asset reuse is explicit:
-  sprite elements name `assetId/frameId`; frame import maps the palette; palette
-  import remaps every sprite layer and social scene.
-- Social frames are not extra pixel canvases: their `layers` are `[]`, and every
-  sprite-only helper (`frameToBuffer`, version preview, pixel PUT) must filter
-  `kind !== "social"` or refuse it with a named cause.
+- Jev chooses the mode from the prompt: an edit on an output-size frame becomes
+  a compose run, and a question stays an ask run with the artboard read tools
+  (`list_formats`, `read_set`, `read_artboard`, `check_artboard`,
+  `list_project_sprites`) bound to the asset.
+- The layout agent is one compose run per asset, bound to the asset's
+  output-size frames and the project's pixel frames; it plans through
+  `present_artboard_plan`, writes only after approval, saves each frame with
+  optimistic versioning, and leaves a version snapshot. Boot recovery re-binds
+  the asset and artboard tools from `generation_runs.mode`.
+- An output-size frame is created with `POST /api/assets/:id/frames`
+  (`kind: social` internally), edited through its scene route, and exported at
+  native size. `GET /api/projects/:id/resources` is the project-wide read:
+  assets, pixel frames, output-size frames, palettes and dimensions. Cross-asset
+  reuse is explicit: image elements name `assetId/frameId`; frame import maps the
+  palette; palette import remaps every pixel layer and scene; background import
+  copies one frame's backdrop.
+- Output-size frames are not extra pixel canvases: their `layers` are `[]`, and
+  every pixel-only helper (`frameToBuffer`, version preview, pixel PUT) must
+  filter `kind !== "social"` or refuse it with a named cause.
 - The migration from `artboard_sets`/`artboards` is one-way and idempotent:
-  `0027_mixed_asset_frames` moves rows into `frames` and copies the latest set
-  copy onto the asset. Legacy tables stay read-only for old URLs until removal.
+  `0027_mixed_asset_frames` moves rows into `frames` and copies the latest copy
+  deck onto the asset. Legacy tables stay read-only for old URLs until removal.
 
 ## Packages
 
-| Path                | Role                                   |
-| ------------------- | -------------------------------------- |
-| `packages/pixel`    | Document, commands, camera, critique   |
-| `packages/artboard` | Social scene renderer, presets, checks |
-| `packages/export`   | `.pxl`, PNG, JPG, SVG, ZIP             |
-| `packages/agent`    | Tools, decisions, instructions, evals  |
-| `packages/db`       | Drizzle schema                         |
-| `apps/web`          | Editor                                 |
-| `apps/api`          | Auth, CRUD, export, run proxy          |
-| `apps/worker`       | Durable runtime                        |
-| `apps/mcp`          | Stdio MCP                              |
+| Path                | Role                                        |
+| ------------------- | ------------------------------------------- |
+| `packages/pixel`    | Document, commands, camera, critique        |
+| `packages/artboard` | Native-size scene renderer, presets, checks |
+| `packages/export`   | `.pxl`, PNG, JPG, SVG, ZIP                  |
+| `packages/agent`    | Tools, decisions, instructions, evals       |
+| `packages/db`       | Drizzle schema                              |
+| `apps/web`          | Editor                                      |
+| `apps/api`          | Auth, CRUD, export, run proxy               |
+| `apps/worker`       | Durable runtime                             |
+| `apps/mcp`          | Stdio MCP                                   |
 
 <!-- BEGIN:turborepo-agent-rules -->
 

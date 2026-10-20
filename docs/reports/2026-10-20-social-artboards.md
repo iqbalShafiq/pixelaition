@@ -3,8 +3,10 @@
 Date: 2026-10-20
 Branch: `feat/social-artboards`
 
-> **Update — one asset, mixed frames.** The first implementation put social
-> boards in a separate `artboard_sets` surface and a separate `/studio` route.
+> **Update — one image asset, mixed frames.** Product language is now image,
+> frame and canvas; "sprite"/"social" survive only as historical/internal names
+> for storage and this report. The first implementation put social boards in a
+> separate `artboard_sets` surface and a separate `/studio` route.
 > The product now treats an asset as one mixed document: `frames.kind` is
 > `sprite` or `social`, both live in the same frame rail and editor, and the
 > Studio route only redirects to the editor. `0027_mixed_asset_frames` migrates
@@ -167,6 +169,13 @@ layout was checked at 1440, 1100, 720 and 390 px.
   read tools bound it answered the safe-area bounds and 0 error/0 warning
   result without editing the frame. Cross-asset frame, palette and background
   copy were exercised through the API and UI.
+- After the image/frame language pass, a fresh MiniMax free run on a test asset
+  planned and saved one Instagram post (1080×1080) from the imported idle
+  image. It finished with 0 errors and 0 warnings. Its trace
+  (`511109b5-5373-4dee-b501-d29f82918f50`, durable id) had 44 observations and
+  passed `trace-check`; its only error was a provider 429 on
+  `preview_artboard`, which the run retried successfully, so it reports one
+  provider retry and zero refused tool calls.
 - A 44-format creation probe built every preset with a real sprite and the
   default template: 44 artboards, 0 errors, 0 warnings.
 - `pnpm eval:social` makes a real MiniMax M3.1 Flash planning call, retries a

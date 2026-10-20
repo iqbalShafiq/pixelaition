@@ -430,7 +430,7 @@ export function Panel({
         {/* Micro-label decision: panel headers are Silkscreen 16, the same
             display face as dialog and sheet titles (see DESIGN.md). */}
         <div className="min-w-0">
-          <h2 className="text-pixel-title text-ink">{title}</h2>
+          <h2 className="truncate text-pixel-title text-ink">{title}</h2>
           {subtitle ? (
             <p className="flex items-center gap-1 text-pixel-mono text-accent uppercase">
               <span className="worker-blink inline-block h-1.5 w-1.5 bg-accent" />
