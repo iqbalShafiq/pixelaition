@@ -20,6 +20,7 @@ export function ArtboardCanvas({
   asset,
   sprites,
   fit,
+  zoom = 1,
   showZones,
   selectedId,
   onSelect,
@@ -32,6 +33,7 @@ export function ArtboardCanvas({
   asset: AssetDto;
   sprites: Map<string, SpriteSource>;
   fit: boolean;
+  zoom?: number;
   showZones: boolean;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
@@ -83,8 +85,10 @@ export function ArtboardCanvas({
   const selectedBounds = selected ? bounds.get(selected.id) : undefined;
   const fitScale =
     stageSize.width > 0 && stageSize.height > 0
-      ? Math.min(stageSize.width / image.width, stageSize.height / image.height)
-      : 1;
+      ? Math.min(stageSize.width / image.width, stageSize.height / image.height) * zoom
+      : zoom;
+  const freeWidth = image.width * zoom;
+  const freeHeight = image.height * zoom;
   const scaleX = 100 / artboard.width;
   const scaleY = 100 / artboard.height;
 
@@ -144,10 +148,10 @@ export function ArtboardCanvas({
     <div
       ref={stageRef}
       className={`relative ${fit ? "flex h-full w-full items-center justify-center" : "inline-block"}`}
-      style={fit ? undefined : { width: image.width, height: image.height }}
+      style={fit ? undefined : { width: freeWidth, height: freeHeight }}
     >
       <div
-        className="relative"
+        className="relative outline outline-2 outline-accent"
         style={
           fit
             ? thumbnail
@@ -161,7 +165,7 @@ export function ArtboardCanvas({
                   height: Math.max(1, image.height * fitScale),
                   visibility: stageSize.width > 0 ? "visible" : "hidden",
                 }
-            : { width: image.width, height: image.height }
+            : { width: freeWidth, height: freeHeight }
         }
       >
         <canvas
@@ -180,7 +184,7 @@ export function ArtboardCanvas({
               ? { width: "100%", height: "100%", objectFit: "cover" }
               : fit
                 ? { width: "100%", height: "100%" }
-                : { width: image.width, height: image.height }
+                : { width: freeWidth, height: freeHeight }
           }
         />
         {showZones ? (

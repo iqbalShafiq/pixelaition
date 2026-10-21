@@ -5,6 +5,7 @@ import {
   type Camera,
   type FrameBuffer,
 } from "@pixelaition/pixel";
+import type { PaletteImage } from "@pixelaition/artboard";
 import { useEffect, useRef, useState } from "react";
 
 export type Point = { x: number; y: number };
@@ -38,6 +39,8 @@ type Props = {
   ghost?: FrameBuffer | null;
   selection: Rect | null;
   locked: boolean;
+  /** Scene elements drawn over the pixel base, in document coordinates. */
+  overlay?: PaletteImage | null;
   /** The cell the agent is about to ink. Drawn with the same border as a hover. */
   agentCursor?: Point | null;
   onAction: (action: CanvasAction) => void;
@@ -153,6 +156,34 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
   return canvas;
 }
 
+function overlayBitmapFor(
+  image: PaletteImage,
+  cache: WeakMap<PaletteImage, HTMLCanvasElement>,
+) {
+  const cached = cache.get(image);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const pixels = context.createImageData(image.width, image.height);
+    for (let index = 0; index < image.indices.length; index += 1) {
+      const value = image.indices[index] ?? 0;
+      if (value === 0) continue;
+      const [r, g, b, a] = rgba(image.palette[value] ?? "#000000");
+      const offset = index * 4;
+      pixels.data[offset] = r;
+      pixels.data[offset + 1] = g;
+      pixels.data[offset + 2] = b;
+      pixels.data[offset + 3] = a;
+    }
+    context.putImageData(pixels, 0, 0);
+  }
+  cache.set(image, canvas);
+  return canvas;
+}
+
 function brushPoints(point: Point, size: number): Point[] {
   if (size <= 1) return [point];
   const offsets = size === 2 ? [0, 1] : [-1, 0, 1];
@@ -240,6 +271,7 @@ export function PixelCanvas({
   selection,
   locked,
   agentCursor = null,
+  overlay = null,
   onAction,
   onCamera,
 }: Props) {
@@ -259,10 +291,29 @@ export function PixelCanvas({
   const field = useRef(new Map<number, CanvasPattern | null>());
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
   const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
+  const overlayBitmaps = useRef(new WeakMap<PaletteImage, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
-  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera, ghost });
-  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera, ghost };
+  const latest = useRef({
+    camera,
+    buffer,
+    tool,
+    brushSize,
+    onAction,
+    onCamera,
+    ghost,
+    overlay,
+  });
+  latest.current = {
+    camera,
+    buffer,
+    tool,
+    brushSize,
+    onAction,
+    onCamera,
+    ghost,
+    overlay,
+  };
 
   useEffect(() => {
     function down(event: KeyboardEvent) {
@@ -386,6 +437,17 @@ export function PixelCanvas({
         );
       }
 
+      const sceneOverlay = latest.current.overlay;
+      if (sceneOverlay) {
+        context.drawImage(
+          overlayBitmapFor(sceneOverlay, overlayBitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+      }
+
       // The writable area is the document: an accent border marks exactly the
       // region the tools and the agent may touch.
       const edge = 2;
@@ -461,7 +523,18 @@ export function PixelCanvas({
 
     repaint.current = draw;
     draw();
-  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked, agentCursor]);
+  }, [
+    buffer,
+    camera,
+    grid,
+    checker,
+    onionSkin,
+    ghost,
+    selection,
+    locked,
+    agentCursor,
+    overlay,
+  ]);
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;

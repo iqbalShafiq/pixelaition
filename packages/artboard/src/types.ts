@@ -76,6 +76,7 @@ export type SpriteElement = {
   anchor: Anchor;
   /** Essential content must stay inside the format's safe area. */
   safe?: boolean;
+  visible?: boolean;
 };
 
 export type TextElement = {
@@ -98,6 +99,7 @@ export type TextElement = {
   maxLines?: number;
   letterSpacing?: number;
   safe?: boolean;
+  visible?: boolean;
 };
 
 export type RectElement = {
@@ -109,6 +111,7 @@ export type RectElement = {
   height: number;
   color: number;
   safe?: boolean;
+  visible?: boolean;
 };
 
 export type PatternElement = {
@@ -123,6 +126,7 @@ export type PatternElement = {
   unit: number;
   mode: "checker" | "50";
   safe?: boolean;
+  visible?: boolean;
 };
 
 export type FrameElement = {
@@ -135,6 +139,7 @@ export type FrameElement = {
   thickness: number;
   color: number;
   safe?: boolean;
+  visible?: boolean;
 };
 
 export type Element =
@@ -296,6 +301,7 @@ const backgroundSchema = z.discriminatedUnion("kind", [
 const elementBase = {
   id: z.string().min(1).max(80),
   safe: z.boolean().optional(),
+  visible: z.boolean().optional(),
 };
 
 const spriteElementSchema = z.object({

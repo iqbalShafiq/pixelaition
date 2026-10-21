@@ -25,6 +25,7 @@ export function renderScene(input: RenderInput): RenderResult {
     }
   }
   for (const element of scene.elements) {
+    if (element.visible === false) continue;
     paintElement(target, width, height, element, palette, input.sprites);
     if ("color" in element) used.add(element.color);
     if (element.kind === "pattern") {

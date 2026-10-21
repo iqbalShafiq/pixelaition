@@ -491,7 +491,7 @@ export async function saveSocialFrameRecord(
         eq(projects.userId, userId),
       ),
     );
-  if (!row || row.frame.kind !== "social") {
+  if (!row) {
     return {
       asset: undefined,
       failure: { code: "NOT_FOUND", message: "That frame is not available." },
@@ -529,15 +529,19 @@ export async function saveSocialFrameRecord(
       },
     };
   }
-  await recordSocialVersion(db, assetId, frameId, "edit", {
-    name: input.name?.trim().slice(0, 80) ?? row.frame.name,
-    presetId: row.frame.presetId,
-    width: row.frame.width,
-    height: row.frame.height,
-    scene,
-    copyOverride: input.copyOverride ?? row.frame.copyOverride,
-    status: input.status ?? row.frame.status,
-  });
+  // Pixel-backed frames can carry a scene overlay too; only native-size
+  // frames use the scene version timeline for now.
+  if (row.frame.kind === "social") {
+    await recordSocialVersion(db, assetId, frameId, "edit", {
+      name: input.name?.trim().slice(0, 80) ?? row.frame.name,
+      presetId: row.frame.presetId,
+      width: row.frame.width,
+      height: row.frame.height,
+      scene,
+      copyOverride: input.copyOverride ?? row.frame.copyOverride,
+      status: input.status ?? row.frame.status,
+    });
+  }
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   return { asset: await getAssetRecord(db, userId, assetId) };
 }

@@ -692,6 +692,8 @@ export function FrameHeaderPanel({
 
 export function LayerPanel({
   buffer,
+  elements = [],
+  selectedElementId = null,
   activeId,
   locked,
   onSelect,
@@ -699,15 +701,22 @@ export function LayerPanel({
   onAdd,
   onRename,
   onDelete,
+  onSelectElement,
+  onToggleElement,
 }: {
   buffer: FrameBuffer | undefined;
+  /** Scene content sits in the same list as the pixel layers. */
+  elements?: Element[];
+  selectedElementId?: string | null;
   activeId: string;
   locked: boolean;
   onSelect: (layerId: string) => void;
   onToggleVisible: (layerId: string, visible: boolean) => void;
-  onAdd: () => void;
+  onAdd?: () => void;
   onRename: (layerId: string, name: string) => void;
   onDelete: (layerId: string) => void;
+  onSelectElement?: (id: string) => void;
+  onToggleElement?: (id: string, visible: boolean) => void;
 }) {
   const layers = buffer?.layers ?? [];
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -732,15 +741,53 @@ export function LayerPanel({
       className="min-h-0 flex-1"
       title="Layers"
       action={
-        <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
-          <Plus />
-        </IconButton>
+        buffer && onAdd ? (
+          <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
+            <Plus />
+          </IconButton>
+        ) : undefined
       }
     >
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
         {/* The layer list fills what is left and scrolls on its own, apart
             from the frame list. */}
         <ul className="grid gap-1">
+          {elements.map((element) => {
+            const visible = element.visible !== false;
+            const current = selectedElementId === element.id;
+            return (
+              <li
+                key={element.id}
+                className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                  current
+                    ? "border-accent bg-raised"
+                    : "border-transparent hover:border-line hover:bg-raised"
+                } ${visible ? "" : "opacity-55"}`}
+              >
+                <Checkbox
+                  label={`Show ${elementLabel(element)}`}
+                  hideLabel
+                  checked={visible}
+                  disabled={locked}
+                  onChange={(next) => onToggleElement?.(element.id, next)}
+                />
+                <button
+                  type="button"
+                  aria-current={current}
+                  disabled={locked}
+                  onClick={() => onSelectElement?.(element.id)}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                >
+                  <span className="truncate font-mono text-[11px]">
+                    {elementLabel(element)}
+                  </span>
+                  <span className="shrink-0 font-mono text-[9px] text-muted">
+                    {element.id.slice(0, 8)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
           {layers.map((layer) => {
             const current = layer.id === activeId;
             return (
@@ -864,7 +911,8 @@ export function LayerPanel({
       </div>
       <div className="flex items-center justify-between">
         <span className="text-pixel-mono text-muted">
-          {layers.length} {layers.length === 1 ? "layer" : "layers"}
+          {layers.length + elements.length}{" "}
+          {layers.length + elements.length === 1 ? "layer" : "layers"}
         </span>
       </div>
 
@@ -906,14 +954,17 @@ export function ElementLayerPanel({
   selectedId,
   disabled,
   onSelect,
+  onToggle,
 }: {
   elements: Element[];
   selectedId: string | null;
   disabled: boolean;
   onSelect: (id: string) => void;
+  onToggle: (id: string, visible: boolean) => void;
 }) {
   return (
     <Panel
+      className="min-h-0 flex-1"
       title="Layers"
       action={
         <span className="text-pixel-mono text-muted">
@@ -927,28 +978,44 @@ export function ElementLayerPanel({
           body="Add text, a block, or a pattern from the top bar."
         />
       ) : (
-        <div className="grid max-h-[18rem] gap-1 overflow-y-auto overscroll-contain pr-0.5">
-          {elements.map((element) => (
-            <button
-              key={element.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect(element.id)}
-              className={`flex min-w-0 items-center justify-between gap-2 border-2 px-2 py-1.5 text-left ${
-                selectedId === element.id
-                  ? "border-accent text-ink"
-                  : "border-transparent text-muted hover:border-line hover:text-ink"
-              }`}
-            >
-              <span className="truncate font-mono text-[11px]">
-                {elementLabel(element)}
-              </span>
-              <span className="shrink-0 font-mono text-[9px] text-muted">
-                {element.id.slice(0, 8)}
-              </span>
-            </button>
-          ))}
-        </div>
+        <ul className="grid gap-1">
+          {elements.map((element) => {
+            const current = selectedId === element.id;
+            const visible = element.visible !== false;
+            return (
+              <li
+                key={element.id}
+                className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                  current
+                    ? "border-accent bg-raised"
+                    : "border-transparent hover:border-line hover:bg-raised"
+                } ${visible ? "" : "opacity-55"}`}
+              >
+                <Checkbox
+                  label={`Show ${elementLabel(element)}`}
+                  hideLabel
+                  checked={visible}
+                  disabled={disabled}
+                  onChange={(next) => onToggle(element.id, next)}
+                />
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onSelect(element.id)}
+                  aria-current={current}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                >
+                  <span className="truncate font-mono text-[11px]">
+                    {elementLabel(element)}
+                  </span>
+                  <span className="shrink-0 font-mono text-[9px] text-muted">
+                    {element.id.slice(0, 8)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </Panel>
   );

@@ -125,21 +125,64 @@ function hexToRgba(hex: string): [number, number, number, number] {
   ];
 }
 
-/** The shared artboard engine's view of one social frame. */
+export function emptyScene(): ArtboardScene {
+  return { version: 1, background: { kind: "transparent" }, elements: [] };
+}
+
+/**
+ * Every frame can carry scene content. A pixel-backed frame uses a synthetic
+ * preset at its own canvas size; a native-size frame uses its named preset.
+ */
+export function presetForFrame(
+  asset: AssetDto,
+  frame: AssetDto["frames"][number],
+): FormatPreset {
+  if (frame.presetId) {
+    try {
+      return getPreset(frame.presetId);
+    } catch {
+      // A removed preset must not make an old frame unopenable.
+    }
+  }
+  const width = frame.width ?? asset.width;
+  const height = frame.height ?? asset.height;
+  return {
+    id: `frame-${frame.id}`,
+    platform: "Pixelaition",
+    group: "post",
+    label: "Frame",
+    width,
+    height,
+    pixelUnit: 1,
+    minTextSize: 4,
+    maxBytes: null,
+    shape: "rect",
+    safeZones: [],
+    crops: [],
+    exclusions: [],
+    defaultTemplate: "blank",
+    notes: [],
+    source: "Frame canvas",
+    verifiedAt: "",
+    official: false,
+  };
+}
+
+/** The shared artboard engine's view of any frame. */
 export function artboardForFrame(
   asset: AssetDto,
   frame: AssetDto["frames"][number],
-): Artboard | null {
-  if (frame.kind !== "social" || !frame.presetId || !frame.scene) return null;
+): Artboard {
+  const preset = presetForFrame(asset, frame);
   return {
     id: frame.id,
     setId: asset.id,
-    presetId: frame.presetId,
+    presetId: frame.presetId ?? preset.id,
     name: frame.name,
-    width: frame.width ?? getPreset(frame.presetId).width,
-    height: frame.height ?? getPreset(frame.presetId).height,
-    pixelUnit: getPreset(frame.presetId).pixelUnit,
-    scene: frame.scene,
+    width: frame.width ?? asset.width,
+    height: frame.height ?? asset.height,
+    pixelUnit: preset.pixelUnit,
+    scene: frame.scene ?? emptyScene(),
     copyOverride: frame.copyOverride ?? {},
     status:
       frame.status === "ready" || frame.status === "needs-fix" ? frame.status : "draft",
