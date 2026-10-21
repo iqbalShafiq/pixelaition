@@ -703,6 +703,10 @@ export function LayerPanel({
   onDelete,
   onSelectElement,
   onToggleElement,
+  background,
+  onSelectBackground,
+  onToggleBackground,
+  onDeleteElement,
 }: {
   buffer: FrameBuffer | undefined;
   /** Scene content sits in the same list as the pixel layers. */
@@ -717,6 +721,10 @@ export function LayerPanel({
   onDelete: (layerId: string) => void;
   onSelectElement?: (id: string) => void;
   onToggleElement?: (id: string, visible: boolean) => void;
+  background?: { visible: boolean };
+  onSelectBackground?: () => void;
+  onToggleBackground?: () => void;
+  onDeleteElement?: (id: string) => void;
 }) {
   const layers = buffer?.layers ?? [];
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -752,6 +760,39 @@ export function LayerPanel({
         {/* The layer list fills what is left and scrolls on its own, apart
             from the frame list. */}
         <ul className="grid gap-1">
+          {background ? (
+            <li
+              className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                background.visible
+                  ? "border-transparent hover:border-line hover:bg-raised"
+                  : "border-transparent opacity-55"
+              }`}
+            >
+              <Checkbox
+                label="Show background"
+                hideLabel
+                checked={background.visible}
+                disabled={locked}
+                onChange={() => onToggleBackground?.()}
+              />
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() => onSelectBackground?.()}
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+              >
+                <span className="truncate font-mono text-[11px]">Background</span>
+                <span className="shrink-0 font-mono text-[9px] text-muted">layer 1</span>
+              </button>
+              <IconButton
+                label="Edit background"
+                disabled={locked}
+                onClick={() => onSelectBackground?.()}
+              >
+                <Pencil />
+              </IconButton>
+            </li>
+          ) : null}
           {elements.map((element) => {
             const visible = element.visible !== false;
             const current = selectedElementId === element.id;
@@ -785,6 +826,21 @@ export function LayerPanel({
                     {element.id.slice(0, 8)}
                   </span>
                 </button>
+                <IconButton
+                  label={`Edit ${elementLabel(element)}`}
+                  disabled={locked}
+                  onClick={() => onSelectElement?.(element.id)}
+                >
+                  <Pencil />
+                </IconButton>
+                <Menu label={`Actions for ${elementLabel(element)}`}>
+                  <MenuItem
+                    disabled={locked}
+                    onClick={() => onDeleteElement?.(element.id)}
+                  >
+                    <Trash /> Delete
+                  </MenuItem>
+                </Menu>
               </li>
             );
           })}

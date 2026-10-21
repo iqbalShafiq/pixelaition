@@ -3079,6 +3079,27 @@ export function EditorScreen() {
           setSocialTab("layout");
         }}
         onToggleElement={(id, visible) => updateSocialElement(id, { visible })}
+        background={
+          sceneArtboard
+            ? { visible: sceneArtboard.scene.background.kind !== "transparent" }
+            : undefined
+        }
+        onSelectBackground={() => setSocialTab("layout")}
+        onToggleBackground={() => {
+          if (!sceneArtboard) return;
+          const base = sceneFrame?.scene ?? emptyScene();
+          updateSocialScene({
+            ...base,
+            background:
+              base.background.kind === "transparent"
+                ? {
+                    kind: "solid",
+                    color: paletteRoles(asset.data?.palette ?? []).background,
+                  }
+                : { kind: "transparent" },
+          });
+        }}
+        onDeleteElement={removeSocialElement}
       />
     </>
   );

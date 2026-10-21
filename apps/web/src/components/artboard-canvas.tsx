@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   elementBounds,
   type Artboard,
@@ -131,6 +131,14 @@ export function ArtboardCanvas({
       : zoom;
   const freeWidth = image.width * zoom;
   const freeHeight = image.height * zoom;
+  const checkerCell = Math.max(4, Math.round(12 * zoom));
+  const checkerStyle: CSSProperties = {
+    backgroundColor: "var(--color-panel)",
+    backgroundImage:
+      "linear-gradient(45deg, var(--color-raised) 25%, transparent 25%), linear-gradient(-45deg, var(--color-raised) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--color-raised) 75%), linear-gradient(-45deg, transparent 75%, var(--color-raised) 75%)",
+    backgroundPosition: `0 0, 0 ${checkerCell}px, ${checkerCell}px -${checkerCell}px, -${checkerCell}px 0`,
+    backgroundSize: `${checkerCell * 2}px ${checkerCell * 2}px`,
+  };
   const scaleX = 100 / artboard.width;
   const scaleY = 100 / artboard.height;
 
@@ -274,7 +282,7 @@ export function ArtboardCanvas({
           onPointerMove={onPointerMove}
           onPointerUp={() => finishDrag(true)}
           onPointerCancel={() => finishDrag(false)}
-          className={`block checkerboard [image-rendering:pixelated] ${
+          className={`block [image-rendering:pixelated] ${
             locked
               ? "cursor-progress"
               : panTool
@@ -283,20 +291,21 @@ export function ArtboardCanvas({
                   ? "cursor-grab touch-none active:cursor-grabbing"
                   : ""
           }`}
-          style={
-            thumbnail
-              ? { width: "100%", height: "100%", objectFit: "cover" }
+          style={{
+            ...checkerStyle,
+            ...(thumbnail
+              ? { width: "100%", height: "100%", objectFit: "cover" as const }
               : fit
                 ? { width: "100%", height: "100%" }
-                : { width: freeWidth, height: freeHeight }
-          }
+                : { width: freeWidth, height: freeHeight }),
+          }}
         />
         {checker ? (
           <div className="pointer-events-none absolute inset-0" aria-hidden>
-            <span className="checkerboard absolute inset-x-0 top-0 h-3" />
-            <span className="checkerboard absolute inset-x-0 bottom-0 h-3" />
-            <span className="checkerboard absolute inset-y-0 left-0 w-3" />
-            <span className="checkerboard absolute inset-y-0 right-0 w-3" />
+            <span className="absolute inset-x-0 top-0 h-3" style={checkerStyle} />
+            <span className="absolute inset-x-0 bottom-0 h-3" style={checkerStyle} />
+            <span className="absolute inset-y-0 left-0 w-3" style={checkerStyle} />
+            <span className="absolute inset-y-0 right-0 w-3" style={checkerStyle} />
           </div>
         ) : null}
         {showZones ? (
