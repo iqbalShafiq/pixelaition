@@ -63,8 +63,9 @@ export function viewOfAsset(asset: ProjectAsset, frameId: string): FrameView | u
     assetName: asset.name,
     frameId: frame.id,
     frameName: frame.name,
-    width: asset.width,
-    height: asset.height,
+    // Native-size frames share the asset palette but not its canvas size.
+    width: frame.buffer.width,
+    height: frame.buffer.height,
     palette: asset.palette,
     layers: frame.buffer.layers,
   };

@@ -3996,7 +3996,12 @@ function bindWorkspaceRun(options: {
         name: frame.name,
         summary: frame.summary,
         index: frame.index,
-        buffer: frameToBuffer(frame, asset.width, asset.height, asset.palette),
+        buffer: frameToBuffer(
+          frame,
+          frame.width ?? asset.width,
+          frame.height ?? asset.height,
+          asset.palette,
+        ),
       })),
     };
   };

@@ -33,6 +33,9 @@ export type Frame = {
   id: string;
   name: string;
   index: number;
+  /** Native-size frames carry their own canvas; absent means the asset size. */
+  width?: number | null;
+  height?: number | null;
   layers: Array<Omit<Layer, "pixels"> & { pixels: string }>;
 };
 

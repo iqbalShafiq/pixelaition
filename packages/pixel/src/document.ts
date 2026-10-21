@@ -44,7 +44,12 @@ export function createAsset(input: {
 export function assetFrameBuffer(asset: Asset, frameId: string): FrameBuffer | undefined {
   const frame = asset.frames.find((item) => item.id === frameId);
   if (!frame) return undefined;
-  return frameToBuffer(frame, asset.width, asset.height, asset.palette);
+  return frameToBuffer(
+    frame,
+    frame.width ?? asset.width,
+    frame.height ?? asset.height,
+    asset.palette,
+  );
 }
 
 export function writeFrame(asset: Asset, frameId: string, buffer: FrameBuffer): Asset {

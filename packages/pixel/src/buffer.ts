@@ -112,12 +112,17 @@ export function frameToBuffer(
 
 export function bufferToFrame(
   buffer: FrameBuffer,
-  frame: Pick<Frame, "id" | "name" | "index">,
+  frame: Pick<Frame, "id" | "name" | "index"> & {
+    width?: number | null;
+    height?: number | null;
+  },
 ): Frame {
   return {
     id: frame.id,
     name: frame.name,
     index: frame.index,
+    ...(frame.width !== undefined ? { width: frame.width } : {}),
+    ...(frame.height !== undefined ? { height: frame.height } : {}),
     layers: buffer.layers.map((layer) => ({
       id: layer.id,
       name: layer.name,

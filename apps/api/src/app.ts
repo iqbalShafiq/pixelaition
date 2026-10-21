@@ -3630,15 +3630,17 @@ async function documentForScope(
       width: full.width,
       height: full.height,
       palette: full.palette as string[],
-      frames: frames.map((frame) =>
-        bufferToFrame(
+      frames: frames.map((frame) => {
+        const width = frame.width ?? full.width;
+        const height = frame.height ?? full.height;
+        return bufferToFrame(
           withSceneOverlay(
             frame,
-            frameToBuffer(frame, full.width, full.height, full.palette as string[]),
+            frameToBuffer(frame, width, height, full.palette as string[]),
           ),
-          frame,
-        ),
-      ),
+          { ...frame, width, height },
+        );
+      }),
     });
   }
   if (built.assets.length === 0) return undefined;
