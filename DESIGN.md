@@ -11,12 +11,14 @@ is one inspector with the same `Frame`, `Content` and `History` tabs for every
 frame. There is no separate Studio route, navigation item or visual mode, and
 selecting a frame never swaps the inspector shell.
 
-The `Frame` tab always holds the same three panels: name and size, palette, and
-view. The `Content` tab adapts to the frame's backing data — layers and canvas
-style for a pixel canvas, layout/copy/checks, background, elements, template and
-source for an output-size canvas. `History` is the same version timeline for
-both, with scene snapshots restored through the same route and a placeholder
-thumb instead of pixel preview. The rail and inspector become sheets below
+The `Frame` tab always holds the same panels: name and size, palette, view and
+the project style guide. The frame list and its layers live in the left rail for
+every frame: pixel layers for an image canvas, scene elements for a native-size
+canvas. The `Content` tab uses the same `Layout / Copy / Checks` tabs for both;
+its sections describe the backing content, while the shared copy deck and
+deterministic checks keep the same names and positions. `History` is the same
+version timeline for both, with scene snapshots restored through the same route
+and a placeholder thumb instead of pixel preview. The rail and inspector become sheets below
 1100 px, and the stage reserves room above the docked composer so a 9:16 frame
 remains reachable. Canvas view controls share one container: `Fit`, `1:1` and,
 on output-size frames, `Z` for safe zones.
