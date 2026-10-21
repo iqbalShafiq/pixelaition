@@ -1632,6 +1632,14 @@ function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
     plan: "safe" as const,
     present_plan: "safe" as const,
     preview_frame: "safe" as const,
+    // Artboard inspection is read-only too. An interrupted preview must be
+    // replayed, not parked behind "uncertain outcome" forever.
+    list_formats: "safe" as const,
+    read_set: "safe" as const,
+    read_artboard: "safe" as const,
+    preview_artboard: "safe" as const,
+    check_artboard: "safe" as const,
+    list_project_sprites: "safe" as const,
     // A repeated search or image fetch is a read: safe to replay.
     web_search: "safe" as const,
     view_image: "safe" as const,
