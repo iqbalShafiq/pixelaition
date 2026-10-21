@@ -230,17 +230,33 @@ function strokeCell(
   cell: number,
   point: Point,
 ) {
+  context.lineWidth = 1;
+  // A 1080px document can fit at well under one screen pixel per cell. The
+  // cell itself then has no area to stroke, so mark its centre with a small
+  // fixed-size target instead of letting the hover feedback disappear.
+  if (cell < 4) {
+    const centerX = originX + (point.x + 0.5) * cell;
+    const centerY = originY + (point.y + 0.5) * cell;
+    const radius = 4;
+    context.strokeStyle = "#0b0906";
+    context.strokeRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+    context.strokeStyle = "rgba(216, 166, 78, 0.95)";
+    context.strokeRect(
+      centerX - radius + 1,
+      centerY - radius + 1,
+      radius * 2 - 2,
+      radius * 2 - 2,
+    );
+    return;
+  }
   const x = originX + point.x * cell + 0.5;
   const y = originY + point.y * cell + 0.5;
-  const size = Math.max(0, cell - 1);
-  context.lineWidth = 1;
+  const size = Math.max(1, cell - 1);
   context.strokeStyle = "#0b0906";
   context.strokeRect(x, y, size, size);
   context.strokeStyle = "rgba(216, 166, 78, 0.95)";
   if (cell >= 8) {
     context.strokeRect(x + 1, y + 1, Math.max(0, size - 2), Math.max(0, size - 2));
-  } else {
-    context.strokeRect(x, y, size, size);
   }
 }
 
@@ -457,21 +473,21 @@ export function PixelCanvas({
       context.fillRect(originX - edge, originY, edge, docHeight);
       context.fillRect(originX + docWidth, originY, edge, docHeight);
 
-      // The grid only appears once a cell is wide enough that a boundary line
-      // adds information. Below that it eats a pixel out of every cell, so an
-      // 8px cell becomes 1px line plus 7px body, and over a two-tone checker the
-      // line blends two different colours — three tones per cell, which reads as
-      // texture rather than as a pixel grid. The checker already shows the grid
-      // at those zooms.
-      if (grid && cell >= 12) {
-        context.strokeStyle = "rgba(241, 239, 233, 0.16)";
+      // Below one screen pixel per document cell a per-pixel grid turns into a
+      // flat wash (or vanishes), which is why a native 1080px frame appeared to
+      // ignore View Grid. Draw the finest power-of-two grid that still leaves
+      // readable cells, so the same toggle shows a square grid at every zoom.
+      if (grid) {
+        let step = 1;
+        while (step * cell < 8 && step < 4096) step *= 2;
+        context.strokeStyle = "rgba(241, 239, 233, 0.18)";
         context.beginPath();
-        for (let x = 1; x < doc.width; x += 1) {
+        for (let x = step; x < doc.width; x += step) {
           const px = Math.round(originX + x * cell) + 0.5;
           context.moveTo(px, originY);
           context.lineTo(px, originY + docHeight);
         }
-        for (let y = 1; y < doc.height; y += 1) {
+        for (let y = step; y < doc.height; y += step) {
           const py = Math.round(originY + y * cell) + 0.5;
           context.moveTo(originX, py);
           context.lineTo(originX + docWidth, py);

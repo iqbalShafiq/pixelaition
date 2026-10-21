@@ -309,7 +309,7 @@ export function EditorScreen() {
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
   const [viewMode, setViewMode] = useState<"fit" | "actual" | "free">("fit");
   const [selection, setSelection] = useState<Rect | null>(null);
-  const [grid, setGrid] = useState(false);
+  const [grid, setGrid] = useState(true);
   const [checker, setChecker] = useState(true);
   const [onion, setOnion] = useState(false);
   const [playing, setPlaying] = useState(false);
