@@ -3380,7 +3380,7 @@ export function EditorScreen() {
                     paddingBottom: consoleOpen ? "min(56vh, 32rem)" : "9rem",
                   }}
                 >
-                  <div className="flex h-full min-h-0 w-full items-center justify-center">
+                  <div className="flex h-full min-h-0 w-full items-center justify-center p-3">
                     <ArtboardCanvas
                       artboard={socialArtboard}
                       preset={socialPreset}

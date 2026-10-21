@@ -47,6 +47,10 @@ export function ArtboardCanvas({
     id: string;
     dx: number;
     dy: number;
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
     startX: number;
     startY: number;
     x: number;
@@ -139,12 +143,18 @@ export function ArtboardCanvas({
     if (!box) return;
     dragRef.current = {
       id: hit.id,
-      dx: point.x - box.x,
-      dy: point.y - box.y,
+      // Drag against the element's own origin, not the rendered text box:
+      // centered text has a visual offset that must stay constant.
+      dx: point.x - hit.x,
+      dy: point.y - hit.y,
+      offsetX: box.x - hit.x,
+      offsetY: box.y - hit.y,
+      width: box.width,
+      height: box.height,
       startX: event.clientX,
       startY: event.clientY,
-      x: box.x,
-      y: box.y,
+      x: hit.x,
+      y: hit.y,
       moved: false,
     };
     setDragging(hit.id);
@@ -168,11 +178,14 @@ export function ArtboardCanvas({
     const y = Math.max(0, Math.min(artboard.height, Math.round(point.y - drag.dy)));
     drag.x = x;
     drag.y = y;
-    const box = bounds.get(drag.id);
-    if (!box) return;
     // Move a cheap ghost while the pointer moves; commit the scene once on
     // release so a 1080px canvas is not re-rendered on every pointer event.
-    setDragPreview({ x, y, width: box.width, height: box.height });
+    setDragPreview({
+      x: x + drag.offsetX,
+      y: y + drag.offsetY,
+      width: drag.width,
+      height: drag.height,
+    });
   }
 
   function finishDrag(commit: boolean) {
