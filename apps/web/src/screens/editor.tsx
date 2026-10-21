@@ -3464,6 +3464,8 @@ export function EditorScreen() {
                       sprites={socialSprites}
                       fit={socialFit}
                       zoom={socialZoom}
+                      panTool={tool === "pan"}
+                      checker={checker}
                       onZoom={(direction) =>
                         setSocialZoom((value) => stepSocialZoom(value, direction))
                       }

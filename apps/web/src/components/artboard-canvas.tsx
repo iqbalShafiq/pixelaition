@@ -22,6 +22,8 @@ export function ArtboardCanvas({
   fit,
   zoom = 1,
   onZoom,
+  panTool = false,
+  checker = true,
   showZones,
   selectedId,
   onSelect,
@@ -36,6 +38,9 @@ export function ArtboardCanvas({
   fit: boolean;
   zoom?: number;
   onZoom?: (direction: 1 | -1) => void;
+  /** The hand tool pans the canvas instead of moving an element. */
+  panTool?: boolean;
+  checker?: boolean;
   showZones: boolean;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
@@ -47,6 +52,11 @@ export function ArtboardCanvas({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const zoomRef = useRef(onZoom);
   zoomRef.current = onZoom;
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(
+    null,
+  );
+  useEffect(() => setPan({ x: 0, y: 0 }), [artboard.id]);
   const dragRef = useRef<{
     id: string;
     dx: number;
@@ -147,6 +157,16 @@ export function ArtboardCanvas({
 
   function onPointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     if (locked) return;
+    if (panTool) {
+      panRef.current = {
+        x: pan.x,
+        y: pan.y,
+        startX: event.clientX,
+        startY: event.clientY,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     const point = pointInCanvas(event);
     if (!point) return;
     const hit = hitTest(point.x, point.y);
@@ -175,6 +195,14 @@ export function ArtboardCanvas({
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    const moving = panRef.current;
+    if (moving) {
+      setPan({
+        x: moving.x + event.clientX - moving.startX,
+        y: moving.y + event.clientY - moving.startY,
+      });
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || !onMove) return;
     // A click should select, not nudge. Only a deliberate move starts a drag.
@@ -202,6 +230,10 @@ export function ArtboardCanvas({
   }
 
   function finishDrag(commit: boolean) {
+    if (panRef.current) {
+      panRef.current = null;
+      return;
+    }
     const drag = dragRef.current;
     if (commit && drag?.moved) onMove?.(drag.id, drag.x, drag.y);
     dragRef.current = null;
@@ -217,8 +249,9 @@ export function ArtboardCanvas({
     >
       <div
         className="relative shrink-0 outline outline-2 outline-accent"
-        style={
-          fit
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
+          ...(fit
             ? thumbnail
               ? {
                   width: "100%",
@@ -230,8 +263,8 @@ export function ArtboardCanvas({
                   height: Math.max(1, image.height * fitScale),
                   visibility: stageSize.width > 0 ? "visible" : "hidden",
                 }
-            : { width: freeWidth, height: freeHeight }
-        }
+            : { width: freeWidth, height: freeHeight }),
+        }}
       >
         <canvas
           ref={canvasRef}
@@ -241,12 +274,14 @@ export function ArtboardCanvas({
           onPointerMove={onPointerMove}
           onPointerUp={() => finishDrag(true)}
           onPointerCancel={() => finishDrag(false)}
-          className={`block bg-field [image-rendering:pixelated] ${
+          className={`block checkerboard [image-rendering:pixelated] ${
             locked
               ? "cursor-progress"
-              : onMove
+              : panTool
                 ? "cursor-grab touch-none active:cursor-grabbing"
-                : ""
+                : onMove
+                  ? "cursor-grab touch-none active:cursor-grabbing"
+                  : ""
           }`}
           style={
             thumbnail
@@ -256,6 +291,14 @@ export function ArtboardCanvas({
                 : { width: freeWidth, height: freeHeight }
           }
         />
+        {checker ? (
+          <div className="pointer-events-none absolute inset-0" aria-hidden>
+            <span className="checkerboard absolute inset-x-0 top-0 h-3" />
+            <span className="checkerboard absolute inset-x-0 bottom-0 h-3" />
+            <span className="checkerboard absolute inset-y-0 left-0 w-3" />
+            <span className="checkerboard absolute inset-y-0 right-0 w-3" />
+          </div>
+        ) : null}
         {showZones ? (
           <div className="pointer-events-none absolute inset-0">
             {preset.safeZones.map((zone) => (
