@@ -8,7 +8,12 @@ import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
-import { getPreset, presetAspect, type SpriteSource } from "@pixelaition/artboard";
+import {
+  getPreset,
+  presetAspect,
+  type Element,
+  type SpriteSource,
+} from "@pixelaition/artboard";
 import { ArtboardCanvas } from "./artboard-canvas.js";
 import { artboardForFrame } from "../lib/artboard.js";
 import type { AssetDto } from "../lib/types.js";
@@ -293,13 +298,17 @@ function FrameRow({
               </span>
             ) : current && locked ? (
               <span className="text-pixel-mono">drawing</span>
-            ) : frame.kind === "social" ? (
+            ) : (
               <span className="truncate font-mono text-[9px] text-muted">
-                {frame.presetId
-                  ? `${frame.width}×${frame.height} · ${presetAspect(getPreset(frame.presetId))}`
-                  : "frame"}
+                {frame.kind === "social"
+                  ? frame.presetId
+                    ? `${frame.width}×${frame.height} · ${presetAspect(getPreset(frame.presetId))}`
+                    : "frame"
+                  : pixelWidth && pixelHeight
+                    ? `${pixelWidth}×${pixelHeight}`
+                    : null}
               </span>
-            ) : null}
+            )}
           </span>
         )}
         <span
@@ -879,6 +888,72 @@ export function LayerPanel({
   );
 }
 
+/* ----------------------------------------------------------------- elements */
+
+function elementLabel(element: Element): string {
+  if (element.kind === "text") return `“${element.text.slice(0, 22)}”`;
+  if (element.kind === "sprite") return "image";
+  if (element.kind === "rect") return "block";
+  return element.kind;
+}
+
+/**
+ * The left rail's layer list for a native-size frame. Scene elements are the
+ * layers here: selecting one drives the same element editor as the canvas.
+ */
+export function ElementLayerPanel({
+  elements,
+  selectedId,
+  disabled,
+  onSelect,
+}: {
+  elements: Element[];
+  selectedId: string | null;
+  disabled: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <Panel
+      title="Layers"
+      action={
+        <span className="text-pixel-mono text-muted">
+          {elements.length} {elements.length === 1 ? "layer" : "layers"}
+        </span>
+      }
+    >
+      {elements.length === 0 ? (
+        <EmptyState
+          title="No layers"
+          body="Add text, a block, or a pattern from the top bar."
+        />
+      ) : (
+        <div className="grid max-h-[18rem] gap-1 overflow-y-auto overscroll-contain pr-0.5">
+          {elements.map((element) => (
+            <button
+              key={element.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(element.id)}
+              className={`flex min-w-0 items-center justify-between gap-2 border-2 px-2 py-1.5 text-left ${
+                selectedId === element.id
+                  ? "border-accent text-ink"
+                  : "border-transparent text-muted hover:border-line hover:text-ink"
+              }`}
+            >
+              <span className="truncate font-mono text-[11px]">
+                {elementLabel(element)}
+              </span>
+              <span className="shrink-0 font-mono text-[9px] text-muted">
+                {element.id.slice(0, 8)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 /* ----------------------------------------------------------------- palette */
 
 export function PalettePanel({
@@ -1067,11 +1142,14 @@ export function StylePanel({
   width,
   height,
   onResize,
+  readOnly = false,
 }: {
   style: StyleGuide;
   width: number;
   height: number;
-  onResize: (width: number, height: number) => void;
+  onResize?: (width: number, height: number) => void;
+  /** Native-size frames show their real output size and cannot be resized. */
+  readOnly?: boolean;
 }) {
   const [w, setW] = useState(String(width));
   const [h, setH] = useState(String(height));
@@ -1098,45 +1176,54 @@ export function StylePanel({
       </dl>
       {style.notes ? <p className="text-[12px] text-muted">{style.notes}</p> : null}
 
-      <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 128">
-        <div className="flex items-center gap-1.5">
-          <TextInput
-            id="canvas-width"
-            value={w}
-            inputMode="numeric"
-            aria-label="Canvas width"
-            placeholder="32"
-            onChange={(event) => setW(event.target.value)}
-            onBlur={() => {
-              const next = Number(w);
-              if (next !== width) onResize(next, height);
-              else setW(String(width));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") setW(String(width));
-            }}
-          />
-          <span className="text-pixel-mono text-muted">×</span>
-          <TextInput
-            id="canvas-height"
-            value={h}
-            inputMode="numeric"
-            aria-label="Canvas height"
-            placeholder="32"
-            onChange={(event) => setH(event.target.value)}
-            onBlur={() => {
-              const next = Number(h);
-              if (next !== height) onResize(width, next);
-              else setH(String(height));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") setH(String(height));
-            }}
-          />
+      {readOnly ? (
+        <div className="flex items-baseline justify-between gap-2 border-t-2 border-line pt-1.5 text-pixel-mono">
+          <span className="text-muted">canvas</span>
+          <span className="text-ink">
+            {width}×{height}
+          </span>
         </div>
-      </Field>
+      ) : (
+        <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 128">
+          <div className="flex items-center gap-1.5">
+            <TextInput
+              id="canvas-width"
+              value={w}
+              inputMode="numeric"
+              aria-label="Canvas width"
+              placeholder="32"
+              onChange={(event) => setW(event.target.value)}
+              onBlur={() => {
+                const next = Number(w);
+                if (next !== width) onResize?.(next, height);
+                else setW(String(width));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") setW(String(width));
+              }}
+            />
+            <span className="text-pixel-mono text-muted">×</span>
+            <TextInput
+              id="canvas-height"
+              value={h}
+              inputMode="numeric"
+              aria-label="Canvas height"
+              placeholder="32"
+              onChange={(event) => setH(event.target.value)}
+              onBlur={() => {
+                const next = Number(h);
+                if (next !== height) onResize?.(width, next);
+                else setH(String(height));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") setH(String(height));
+              }}
+            />
+          </div>
+        </Field>
+      )}
       <p className="text-xs text-muted">
         The style guide belongs to the project, so every asset in it stays related.
       </p>

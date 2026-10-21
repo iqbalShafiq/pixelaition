@@ -89,6 +89,7 @@ import {
   type QueuedRun,
 } from "../lib/run-queue.js";
 import {
+  ElementLayerPanel,
   FrameHeaderPanel,
   FramePanel,
   LayerPanel,
@@ -96,7 +97,13 @@ import {
   StylePanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import { Minus, Plus } from "../components/pixel-icons.js";
+import {
+  Grid,
+  Minus,
+  Plus,
+  Square,
+  Text as TextIcon,
+} from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -113,8 +120,10 @@ import {
   Dialog,
   Field,
   IconButton,
+  SegmentedControl,
   SelectControl,
   Sheet,
+  TextInput,
   Wordmark,
   useToast,
   useToastCloser,
@@ -649,6 +658,8 @@ export function EditorScreen() {
     [resources.data],
   );
   const socialCopy = (asset.data?.copy ?? {}) as CopyDeck;
+  const [copyDraft, setCopyDraft] = useState<CopyDeck>(socialCopy);
+  useEffect(() => setCopyDraft(socialCopy), [socialCopy]);
   const socialChecks = useMemo<ArtboardCheck[]>(() => {
     if (!asset.data || !socialFrame || !socialPreset || !socialArtboard) return [];
     if (!sceneSpritesReady(socialArtboard.scene, socialSprites)) return [];
@@ -2830,6 +2841,7 @@ export function EditorScreen() {
         onAddElement={addSocialElement}
         onImportBackground={() => setBackgroundImportOpen(true)}
         showName={false}
+        showElements={false}
         running={running}
       />
     ) : null;
@@ -2919,6 +2931,47 @@ export function EditorScreen() {
         onDelete={(id) => void frameAction("delete", undefined, id)}
         onReorder={(id, index) => frameReorder(id, index)}
       />
+      {socialFrame ? (
+        <ElementLayerPanel
+          elements={socialArtboard?.scene.elements ?? []}
+          selectedId={socialElementId}
+          disabled={locked}
+          onSelect={(id) => {
+            setSocialElementId(id);
+            setSocialTab("layout");
+          }}
+        />
+      ) : (
+        <LayerPanel
+          buffer={buffer}
+          activeId={panelLayerId}
+          locked={locked}
+          onSelect={setActiveLayerId}
+          onToggleVisible={(layerId, visible) =>
+            frameId &&
+            edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
+          }
+          onAdd={() =>
+            frameId &&
+            edit(frameId, drafts[frameId], {
+              type: "addLayer",
+              id: crypto.randomUUID(),
+              name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+            })
+          }
+          onRename={(layerId, name) =>
+            frameId &&
+            edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
+          }
+          onDelete={(layerId) =>
+            frameId &&
+            edit(frameId, drafts[frameId], {
+              type: "removeLayer",
+              layerId,
+            })
+          }
+        />
+      )}
     </>
   );
 
@@ -2929,10 +2982,8 @@ export function EditorScreen() {
       height={socialFrame?.height ?? asset.data?.height ?? buffer?.height ?? 0}
       meta={
         socialFrame
-          ? socialPreset
-            ? `${socialPreset.label} · ${socialFrame.width}×${socialFrame.height}`
-            : "Native-size canvas"
-          : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"} · ${asset.data?.width ?? 0}×${asset.data?.height ?? 0}`
+          ? (socialPreset?.label ?? "Frame")
+          : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`
       }
       detail={
         socialFrame
@@ -2992,42 +3043,74 @@ export function EditorScreen() {
   );
 
   const pixelContent = (
-    <div className="grid gap-4">
-      <LayerPanel
-        buffer={buffer}
-        activeId={panelLayerId}
-        locked={locked}
-        onSelect={setActiveLayerId}
-        onToggleVisible={(layerId, visible) =>
-          frameId &&
-          edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
-        }
-        onAdd={() =>
-          frameId &&
-          edit(frameId, drafts[frameId], {
-            type: "addLayer",
-            id: crypto.randomUUID(),
-            name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
-          })
-        }
-        onRename={(layerId, name) =>
-          frameId &&
-          edit(frameId, drafts[frameId], { type: "renameLayer", layerId, name })
-        }
-        onDelete={(layerId) =>
-          frameId &&
-          edit(frameId, drafts[frameId], {
-            type: "removeLayer",
-            layerId,
-          })
-        }
+    <div className="grid gap-3">
+      <SegmentedControl
+        label="Inspector section"
+        value={socialTab}
+        options={[
+          { value: "layout", label: "Layout" },
+          { value: "copy", label: "Copy" },
+          { value: "checks", label: `Checks 0` },
+        ]}
+        onChange={(next) => setSocialTab(next as "layout" | "copy" | "checks")}
       />
-      <StylePanel
-        style={style}
-        width={asset.data?.width ?? 32}
-        height={asset.data?.height ?? 32}
-        onResize={(width, height) => void updateAsset({ width, height })}
-      />
+      {socialTab === "layout" ? (
+        <section className="grid gap-2 border-2 border-line bg-field p-2">
+          <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+            Canvas
+          </p>
+          <p className="text-[12px] text-muted">
+            This frame is drawn directly on its pixel canvas. Its layers live in the left
+            rail.
+          </p>
+        </section>
+      ) : null}
+      {socialTab === "copy" ? (
+        <section className="grid gap-2 border-2 border-line bg-field p-2">
+          <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+            Shared copy
+          </p>
+          <p className="text-[11px] text-muted">
+            This copy is shared by every frame that has not overridden a field.
+          </p>
+          {(
+            [
+              ["eyebrow", "Eyebrow"],
+              ["headline", "Headline"],
+              ["subhead", "Subhead"],
+              ["cta", "CTA"],
+              ["handle", "Handle"],
+              ["caption", "Post caption"],
+            ] as Array<[keyof CopyDeck, string]>
+          ).map(([key, label]) => (
+            <Field key={key} label={label} htmlFor={`frame-copy-${key}`}>
+              <TextInput
+                id={`frame-copy-${key}`}
+                value={copyDraft[key] ?? ""}
+                onChange={(event) =>
+                  setCopyDraft({ ...copyDraft, [key]: event.target.value })
+                }
+              />
+            </Field>
+          ))}
+          <div className="flex flex-wrap gap-1">
+            <Button onClick={() => void applySocialCopy(copyDraft)} disabled={running}>
+              Apply to all frames
+            </Button>
+            <Button tone="ghost" onClick={clearSocialOverrides} disabled={running}>
+              Reset overrides
+            </Button>
+          </div>
+        </section>
+      ) : null}
+      {socialTab === "checks" ? (
+        <section className="grid gap-2 border-2 border-line bg-field p-2">
+          <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+            0 errors · 0 warnings
+          </p>
+          <p className="text-[12px] text-muted">No deterministic findings.</p>
+        </section>
+      ) : null}
     </div>
   );
 
@@ -3036,6 +3119,13 @@ export function EditorScreen() {
       {frameHeaderPanel}
       {palettePanel}
       {viewPanel}
+      <StylePanel
+        style={style}
+        width={socialFrame?.width ?? asset.data?.width ?? 32}
+        height={socialFrame?.height ?? asset.data?.height ?? 32}
+        readOnly={socialFrame !== null}
+        onResize={(width, height) => void updateAsset({ width, height })}
+      />
     </div>
   );
 
@@ -3259,63 +3349,41 @@ export function EditorScreen() {
           <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
             <div className="order-1 min-w-0 border-b-2 border-line bg-panel px-2 pt-2 pb-1.5">
               <div className="flex min-h-9 min-w-0 items-center gap-2">
-                <span className="hidden min-w-0 shrink-0 items-baseline gap-1.5 xl:flex">
-                  <span className="max-w-[9rem] truncate text-pixel-mono text-accent uppercase">
-                    {frame?.name ?? "Frame"}
-                  </span>
-                  <span className="font-mono text-[10px] whitespace-nowrap text-muted">
-                    · {socialFrame?.width ?? buffer?.width ?? asset.data?.width ?? 0}×
-                    {socialFrame?.height ?? buffer?.height ?? asset.data?.height ?? 0}
-                  </span>
-                  <span className="font-mono text-[10px] whitespace-nowrap text-muted">
-                    ·{" "}
-                    {socialFrame
-                      ? `${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"} · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
-                      : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`}
-                  </span>
-                </span>
-                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-                  {socialFrame ? (
-                    <>
-                      <Button
-                        tone="ghost"
-                        className="shrink-0 px-2 py-1 text-pixel-label"
-                        disabled={running}
-                        onClick={addSocialText}
-                      >
-                        + Text
-                      </Button>
-                      <Button
-                        tone="ghost"
-                        className="shrink-0 px-2 py-1 text-pixel-label"
-                        disabled={running}
-                        onClick={() => addSocialElement("rect")}
-                      >
-                        + Block
-                      </Button>
-                      <Button
-                        tone="ghost"
-                        className="shrink-0 px-2 py-1 text-pixel-label"
-                        disabled={running}
-                        onClick={() => addSocialElement("pattern")}
-                      >
-                        + Pattern
-                      </Button>
-                    </>
-                  ) : (
-                    <Toolbar
-                      tool={tool}
-                      brushSize={brushSize}
-                      selectionActive={selection !== null}
-                      locked={locked}
-                      onTool={setTool}
-                      onBrush={setBrushSize}
-                      onSelectionFill={() => selectionCommand("fill")}
-                      onSelectionClear={() => selectionCommand("clear")}
-                      onDeselect={() => setSelection(null)}
-                    />
-                  )}
+                <div className="min-w-0 flex-1 overflow-x-auto">
+                  <Toolbar
+                    tool={tool}
+                    brushSize={brushSize}
+                    selectionActive={selection !== null}
+                    locked={locked || socialFrame !== null}
+                    onTool={setTool}
+                    onBrush={setBrushSize}
+                    onSelectionFill={() => selectionCommand("fill")}
+                    onSelectionClear={() => selectionCommand("clear")}
+                    onDeselect={() => setSelection(null)}
+                  />
                 </div>
+                <span aria-hidden className="h-5 w-0.5 shrink-0 bg-line" />
+                <IconButton
+                  label="Add text"
+                  disabled={running || !socialFrame}
+                  onClick={addSocialText}
+                >
+                  <TextIcon />
+                </IconButton>
+                <IconButton
+                  label="Add block"
+                  disabled={running || !socialFrame}
+                  onClick={() => addSocialElement("rect")}
+                >
+                  <Square />
+                </IconButton>
+                <IconButton
+                  label="Add pattern"
+                  disabled={running || !socialFrame}
+                  onClick={() => addSocialElement("pattern")}
+                >
+                  <Grid />
+                </IconButton>
                 <Button
                   tone="ghost"
                   className="shrink-0 px-2 py-1 text-pixel-label"

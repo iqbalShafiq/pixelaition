@@ -60,6 +60,7 @@ export function Inspector({
   onImportPalette,
   onImportBackground,
   showName = true,
+  showElements = true,
   running,
 }: {
   board: Artboard;
@@ -91,6 +92,8 @@ export function Inspector({
   onImportBackground?: () => void;
   /** The shared frame header owns the name in the unified rail. */
   showName?: boolean;
+  /** The unified left rail owns the element/layer list. */
+  showElements?: boolean;
   running: boolean;
 }) {
   const [elementId, setElementId] = useState<string | null>(
@@ -188,65 +191,67 @@ export function Inspector({
             </Button>
           ) : null}
 
-          <section className="grid gap-2 border-2 border-line bg-field p-2">
-            <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
-              Elements
-            </p>
-            <div className="grid gap-1">
-              {board.scene.elements.map((element) => (
-                <button
-                  key={element.id}
-                  type="button"
-                  onClick={() => {
-                    setElementId(element.id);
-                    onSelectElement(element.id);
-                  }}
-                  className={`flex items-center justify-between gap-2 border-2 px-2 py-1 text-left ${
-                    selected?.id === element.id
-                      ? "border-accent text-ink"
-                      : "border-transparent text-muted hover:border-line hover:text-ink"
-                  }`}
+          {showElements ? (
+            <section className="grid gap-2 border-2 border-line bg-field p-2">
+              <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+                Elements
+              </p>
+              <div className="grid gap-1">
+                {board.scene.elements.map((element) => (
+                  <button
+                    key={element.id}
+                    type="button"
+                    onClick={() => {
+                      setElementId(element.id);
+                      onSelectElement(element.id);
+                    }}
+                    className={`flex items-center justify-between gap-2 border-2 px-2 py-1 text-left ${
+                      selected?.id === element.id
+                        ? "border-accent text-ink"
+                        : "border-transparent text-muted hover:border-line hover:text-ink"
+                    }`}
+                  >
+                    <span className="truncate font-mono text-[11px]">
+                      {element.kind === "text"
+                        ? `“${element.text.slice(0, 22)}”`
+                        : element.kind === "sprite"
+                          ? "image"
+                          : element.kind}
+                    </span>
+                    <span className="font-mono text-[9px] text-muted">
+                      {element.id.slice(0, 8)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <Button
+                  tone="ghost"
+                  className="px-2 py-1 text-pixel-label"
+                  onClick={onAddText}
+                  disabled={running}
                 >
-                  <span className="truncate font-mono text-[11px]">
-                    {element.kind === "text"
-                      ? `“${element.text.slice(0, 22)}”`
-                      : element.kind === "sprite"
-                        ? "image"
-                        : element.kind}
-                  </span>
-                  <span className="font-mono text-[9px] text-muted">
-                    {element.id.slice(0, 8)}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1">
-              <Button
-                tone="ghost"
-                className="px-2 py-1 text-pixel-label"
-                onClick={onAddText}
-                disabled={running}
-              >
-                + Text
-              </Button>
-              <Button
-                tone="ghost"
-                className="px-2 py-1 text-pixel-label"
-                onClick={() => onAddElement("rect")}
-                disabled={running}
-              >
-                + Block
-              </Button>
-              <Button
-                tone="ghost"
-                className="px-2 py-1 text-pixel-label"
-                onClick={() => onAddElement("pattern")}
-                disabled={running}
-              >
-                + Pattern
-              </Button>
-            </div>
-          </section>
+                  + Text
+                </Button>
+                <Button
+                  tone="ghost"
+                  className="px-2 py-1 text-pixel-label"
+                  onClick={() => onAddElement("rect")}
+                  disabled={running}
+                >
+                  + Block
+                </Button>
+                <Button
+                  tone="ghost"
+                  className="px-2 py-1 text-pixel-label"
+                  onClick={() => onAddElement("pattern")}
+                  disabled={running}
+                >
+                  + Pattern
+                </Button>
+              </div>
+            </section>
+          ) : null}
 
           <section className="grid gap-2 border-2 border-line bg-field p-2">
             <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
