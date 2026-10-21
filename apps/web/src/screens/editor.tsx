@@ -3055,15 +3055,34 @@ export function EditorScreen() {
         onChange={(next) => setSocialTab(next as "layout" | "copy" | "checks")}
       />
       {socialTab === "layout" ? (
-        <section className="grid gap-2 border-2 border-line bg-field p-2">
-          <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
-            Canvas
-          </p>
-          <p className="text-[12px] text-muted">
-            This frame is drawn directly on its pixel canvas. Its layers live in the left
-            rail.
-          </p>
-        </section>
+        <>
+          <section className="grid gap-2 border-2 border-line bg-field p-2">
+            <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+              Background
+            </p>
+            <p className="text-[12px] text-muted">
+              Transparent pixel canvas. Draw on the canvas; layers live in the left rail.
+            </p>
+          </section>
+          <section className="grid gap-2 border-2 border-line bg-field p-2">
+            <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+              Elements
+            </p>
+            <p className="text-[12px] text-muted">No layout elements on this frame.</p>
+          </section>
+          <section className="grid gap-2 border-2 border-line bg-field p-2">
+            <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+              Template
+            </p>
+            <p className="text-[12px] text-muted">No template for a pixel canvas.</p>
+          </section>
+          <section className="grid gap-1 border-2 border-line bg-field p-2 font-mono text-[10px] text-muted">
+            <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+              Format notes
+            </p>
+            <p>Pixel canvas · no safe areas or crops.</p>
+          </section>
+        </>
       ) : null}
       {socialTab === "copy" ? (
         <section className="grid gap-2 border-2 border-line bg-field p-2">
