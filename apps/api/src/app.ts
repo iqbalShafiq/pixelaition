@@ -406,14 +406,6 @@ type DrawTaskShape = {
   followUp?: SocialFollowUp;
 };
 
-const NATIVE_MARKETING =
-  /(instagram|linkedin|facebook|tiktok|youtube|twitter|threads|pinterest|social media|feed|stories|story|reel|carousel|cover|poster|thumbnail|banner)/i;
-
-/** A natural campaign ask changes the workflow, not the words the user types. */
-function asksForNativeMarketing(prompt: string): boolean {
-  return NATIVE_MARKETING.test(prompt);
-}
-
 async function startRunViaWorker(
   res: express.Response,
   input: {
@@ -466,20 +458,7 @@ async function startRunViaWorker(
   // worker records the durable task id on the row. An ask stays a single run.
   const taskShape: DrawTaskShape | undefined =
     input.mode === "draw"
-      ? {
-          ...(input.shape ?? { workers: 2, review: true, source: "default" }),
-          ...(input.target.scope === "asset" && asksForNativeMarketing(input.prompt)
-            ? {
-                followUp: {
-                  prompt: input.prompt,
-                  modelId: input.modelId,
-                  reasoningEffort: input.reasoningEffort,
-                  userId: input.userId,
-                  threadId: input.threadId,
-                } satisfies SocialFollowUp,
-              }
-            : {}),
-        }
+      ? (input.shape ?? { workers: 2, review: true, source: "default" })
       : undefined;
   const runId =
     input.mode === "draw"

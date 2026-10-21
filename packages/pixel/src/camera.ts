@@ -32,8 +32,9 @@ export function fitZoom(
   const availableWidth = Math.max(viewWidth - padding * 2, 1);
   const availableHeight = Math.max(viewHeight - padding * 2, 1);
   const raw = Math.min(availableWidth / canvasWidth, availableHeight / canvasHeight);
-  const steps = [...zoomSteps].reverse();
-  return steps.find((step) => step <= raw) ?? zoomSteps[0];
+  // Fit is an exact camera zoom, not a toolbar step: a 1080px canvas must be
+  // allowed to sit at 40% when that is what the viewport needs.
+  return Math.max(0.05, raw);
 }
 
 export function centerCamera(

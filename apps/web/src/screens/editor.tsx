@@ -28,25 +28,18 @@ import {
   type StyleGuide,
 } from "@pixelaition/pixel";
 import {
-  buildTemplateScene,
   checkScene,
-  fitTextToSlot,
   getPreset,
   paletteRoles,
+  renderScene,
   summarizeChecks,
-  syncCopyScene,
   type Artboard,
   type ArtboardCheck,
-  type ArtboardScene,
-  type CopyDeck,
-  type CopyOverride,
   type Element,
-  type TemplateId,
 } from "@pixelaition/artboard";
 import { ArtboardCanvas } from "../components/artboard-canvas.js";
 import {
   artboardForFrame,
-  emptyScene,
   presetForFrame,
   renderArtboard,
   type ProjectResourceAsset,
@@ -54,7 +47,7 @@ import {
   spritesForAsset,
   spritesForResources,
 } from "../lib/artboard.js";
-import { FormatPicker, Inspector } from "../components/artboard-panels.js";
+import { FormatPicker } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
@@ -424,7 +417,6 @@ export function EditorScreen() {
   const [earlierTurns, setEarlierTurns] = useState<ConsoleTurn[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
-  const [socialTab, setSocialTab] = useState<"layout" | "copy" | "checks">("layout");
   const [inspectorTab, setInspectorTab] = useState<"frame" | "content" | "history">(
     "frame",
   );
@@ -672,21 +664,6 @@ export function EditorScreen() {
     return renderArtboard(sceneArtboard, scenePreset, asset.data, socialSprites);
   }, [asset.data, sceneArtboard, scenePreset, socialSprites]);
 
-  const spriteChoices = useMemo(
-    () =>
-      (resources.data?.assets ?? []).flatMap((item) =>
-        item.frames
-          .filter((frame) => frame.kind === "sprite")
-          .map((frame) => ({
-            assetId: item.id,
-            assetName: item.name,
-            frameId: frame.id,
-            frameName: frame.name,
-          })),
-      ),
-    [resources.data],
-  );
-  const socialCopy = (asset.data?.copy ?? {}) as CopyDeck;
   const socialChecks = useMemo<ArtboardCheck[]>(() => {
     if (!asset.data || !sceneFrame || !scenePreset || !sceneArtboard) return [];
     if (!sceneSpritesReady(sceneArtboard.scene, socialSprites)) return [];
@@ -731,14 +708,27 @@ export function EditorScreen() {
 
   // Opening an asset should show the whole sprite, not a corner of it.
   useEffect(() => {
-    const key = asset.data ? `${assetId}:${asset.data.width}x${asset.data.height}` : null;
+    const key = asset.data
+      ? `${assetId}:${frameId}:${buffer?.width ?? asset.data.width}x${buffer?.height ?? asset.data.height}`
+      : null;
     if (!key || !buffer || fitted.current === key) return;
     const rect = viewRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return;
     fitted.current = key;
     fit();
     setViewMode("fit");
-  }, [assetId, asset.data, buffer, fit]);
+  }, [assetId, asset.data, buffer, fit, frameId]);
+
+  // The viewport may not have its measured size on the same tick the frame
+  // changes (native frames are much larger than a sprite). Re-fit once after
+  // layout so opening a 1080px frame never inherits the 32px camera.
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      fit();
+      setViewMode("fit");
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [frameId, buffer?.width, buffer?.height, fit]);
 
   // Seed a draft for every frame the server knows about, keeping local edits.
   useEffect(() => {
@@ -850,22 +840,6 @@ export function EditorScreen() {
     return client.getQueryData<AssetDto>(["asset", assetId]) ?? asset.data;
   }
 
-  function patchCachedFrame(
-    id: string,
-    patch: Partial<AssetDto["frames"][number]>,
-  ): void {
-    client.setQueryData(["asset", assetId], (current: AssetDto | undefined) =>
-      current
-        ? {
-            ...current,
-            frames: current.frames.map((item) =>
-              item.id === id ? { ...item, ...patch } : item,
-            ),
-          }
-        : current,
-    );
-  }
-
   function socialFrameNow(id: string) {
     return cachedAsset()?.frames.find((item) => item.id === id);
   }
@@ -943,204 +917,99 @@ export function EditorScreen() {
     socialSaveChains.current.set(id, next);
   }
 
-  function queueSocialSave(id: string): void {
-    const previous = socialSaveTimers.current.get(id);
-    if (previous !== undefined) window.clearTimeout(previous);
-    socialSaveTimers.current.set(
-      id,
-      window.setTimeout(() => flushSocialSave(id), 500),
-    );
-  }
-
-  function updateSocialScene(scene: ArtboardScene): void {
-    if (!sceneFrame) return;
-    patchCachedFrame(sceneFrame.id, { scene });
-    queueSocialSave(sceneFrame.id);
-  }
-
-  function updateSocialElement(elementId: string, patch: Partial<Element>): void {
-    if (!sceneFrame) return;
-    const current = socialFrameNow(sceneFrame.id);
-    if (!current?.scene) return;
-    patchCachedFrame(current.id, {
-      scene: {
-        ...current.scene,
-        elements: current.scene.elements.map((element) =>
-          element.id === elementId ? ({ ...element, ...patch } as Element) : element,
-        ),
-      },
-    });
-    queueSocialSave(current.id);
-  }
-
-  function setSocialText(elementId: string, text: string, key?: keyof CopyDeck): void {
-    if (!sceneFrame?.scene) return;
-    const override: CopyOverride = { ...(sceneFrame.copyOverride ?? {}) };
-    if (key !== undefined) {
-      if (text.trim() === (socialCopy[key] ?? "").trim()) delete override[key];
-      else override[key] = text;
-    }
-    const elements = sceneFrame.scene.elements.map((element) => {
-      if (element.id !== elementId || element.kind !== "text") return element;
-      const nextTextY = sceneFrame.scene?.elements
-        .filter(
-          (candidate) =>
-            candidate.kind === "text" &&
-            candidate.id !== element.id &&
-            candidate.y > element.y &&
-            candidate.x < element.x + element.width &&
-            candidate.x + candidate.width > element.x,
-        )
-        .sort((a, b) => a.y - b.y)[0]?.y;
-      return fitTextToSlot(
-        { ...element, text },
-        nextTextY !== undefined ? Math.max(8, nextTextY - element.y - 2) : undefined,
-      );
-    });
-    patchCachedFrame(sceneFrame.id, {
-      scene: { ...sceneFrame.scene, elements },
-      copyOverride: override,
-    });
-    queueSocialSave(sceneFrame.id);
-  }
-
-  function applySocialTemplate(template: TemplateId): void {
-    if (!sceneFrame || !scenePreset || !asset.data) return;
-    const source =
-      [...socialSprites.values()].find((item) => item.assetId === asset.data.id) ??
-      [...socialSprites.values()][0];
-    const scene = buildTemplateScene({
-      preset: scenePreset,
-      template,
-      copy: socialCopy,
+  function addRasterLayer(name: string, element: Element): void {
+    if (!asset.data || !frame || !buffer || !frameId) return;
+    const preset = presetForFrame(asset.data, frame);
+    const image = renderScene({
+      scene: { version: 1, background: { kind: "transparent" }, elements: [element] },
+      preset,
       palette: asset.data.palette,
-      ...(source ? { sprite: source } : {}),
+      sprites: socialSprites,
+    }).image;
+    const layerId = `${name.toLowerCase()}-${crypto.randomUUID().slice(0, 8)}`;
+    const added = applyCommand(buffer, { type: "addLayer", id: layerId, name });
+    if (!added.ok) {
+      setError(added.message);
+      return;
+    }
+    const stamped = applyCommand(added.buffer, {
+      type: "stamp",
+      layerId,
+      x: 0,
+      y: 0,
+      width: image.width,
+      height: image.height,
+      pixels: [...image.indices],
     });
-    patchCachedFrame(sceneFrame.id, {
-      scene,
-      copyOverride: {},
-      status: "draft",
-    });
-    setSocialTab("layout");
-    queueSocialSave(sceneFrame.id);
+    if (!stamped.ok) {
+      setError(stamped.message);
+      return;
+    }
+    update(frameId, pushHistory(drafts[frameId]!, stamped.buffer));
+    setActiveLayerId(layerId);
+    setError(null);
   }
 
-  function addSocialText(): void {
-    if (!sceneFrame || !asset.data) return;
-    const baseScene = sceneFrame.scene ?? emptyScene();
+  function addTextLayer(): void {
+    if (!asset.data || !frame) return;
     const roles = paletteRoles(asset.data.palette);
-    const id = `text-${crypto.randomUUID().slice(0, 8)}`;
-    const element: Element = {
-      id,
+    const width = frame.width ?? asset.data.width;
+    const height = frame.height ?? asset.data.height;
+    const size = [16, 24, 32, 48, 64, 96, 120].reduce(
+      (best, value) =>
+        Math.abs(value - height * 0.06) < Math.abs(best - height * 0.06) ? value : best,
+      16,
+    );
+    addRasterLayer("Text", {
+      id: `text-${crypto.randomUUID().slice(0, 8)}`,
       kind: "text",
-      text: (sceneFrame.width ?? 1080) <= 64 ? "Aa" : "Your words",
+      text: width <= 64 ? "Aa" : "Your words",
       face: "silkscreen",
       weight: 700,
-      size: [16, 24, 32, 48, 64, 96, 120].reduce(
-        (best, size) =>
-          Math.abs(size - (sceneFrame.height ?? 1080) * 0.06) <
-          Math.abs(best - (sceneFrame.height ?? 1080) * 0.06)
-            ? size
-            : best,
-        16,
-      ),
+      size,
       color: roles.ink,
-      x: Math.round((sceneFrame.width ?? 1080) * 0.06),
-      y: Math.round((sceneFrame.height ?? 1080) * 0.12),
-      width: Math.round((sceneFrame.width ?? 1080) * 0.8),
-      height: Math.max(16, Math.round((sceneFrame.height ?? 1080) * 0.35)),
+      x: Math.round(width * 0.06),
+      y: Math.round(height * 0.12),
+      width: Math.round(width * 0.8),
+      height: Math.max(16, Math.round(height * 0.35)),
       align: "left",
       maxLines: 3,
-    };
-    updateSocialScene({
-      ...baseScene,
-      elements: [...baseScene.elements, element],
     });
-    setSocialElementId(id);
   }
 
-  function addSocialElement(kind: "rect" | "pattern" | "frame"): void {
-    if (!sceneFrame || !asset.data) return;
-    const baseScene = sceneFrame.scene ?? emptyScene();
+  function addBlockLayer(): void {
+    if (!asset.data || !frame) return;
     const roles = paletteRoles(asset.data.palette);
-    const width = sceneFrame.width ?? scenePreset?.width ?? 1080;
-    const height = sceneFrame.height ?? scenePreset?.height ?? 1080;
-    const id = `${kind}-${crypto.randomUUID().slice(0, 8)}`;
-    const element: Element =
-      kind === "rect"
-        ? {
-            id,
-            kind: "rect",
-            x: 0,
-            y: 0,
-            width,
-            height: Math.max(4, Math.round(height * 0.12)),
-            color: roles.accent,
-          }
-        : kind === "pattern"
-          ? {
-              id,
-              kind: "pattern",
-              x: 0,
-              y: 0,
-              width,
-              height,
-              colorA: roles.background,
-              colorB: roles.muted,
-              unit: scenePreset?.pixelUnit ?? 4,
-              mode: "checker",
-            }
-          : {
-              id,
-              kind: "frame",
-              x: 0,
-              y: 0,
-              width,
-              height,
-              thickness: Math.max(2, (scenePreset?.pixelUnit ?? 4) * 2),
-              color: roles.accent,
-            };
-    updateSocialScene({
-      ...baseScene,
-      elements: [...baseScene.elements, element],
+    const width = frame.width ?? asset.data.width;
+    const height = frame.height ?? asset.data.height;
+    addRasterLayer("Block", {
+      id: `block-${crypto.randomUUID().slice(0, 8)}`,
+      kind: "rect",
+      x: 0,
+      y: 0,
+      width,
+      height: Math.max(4, Math.round(height * 0.14)),
+      color: roles.accent,
     });
-    setSocialElementId(id);
   }
 
-  function removeSocialElement(elementId: string): void {
-    if (!sceneFrame?.scene) return;
-    updateSocialScene({
-      ...sceneFrame.scene,
-      elements: sceneFrame.scene.elements.filter((element) => element.id !== elementId),
+  function addPatternLayer(): void {
+    if (!asset.data || !frame) return;
+    const roles = paletteRoles(asset.data.palette);
+    const width = frame.width ?? asset.data.width;
+    const height = frame.height ?? asset.data.height;
+    addRasterLayer("Pattern", {
+      id: `pattern-${crypto.randomUUID().slice(0, 8)}`,
+      kind: "pattern",
+      x: 0,
+      y: 0,
+      width,
+      height,
+      colorA: roles.background,
+      colorB: roles.muted,
+      unit: Math.max(4, Math.round(width / 64)),
+      mode: "checker",
     });
-    if (socialElementId === elementId) setSocialElementId(null);
-  }
-
-  async function applySocialCopy(copy: CopyDeck): Promise<void> {
-    try {
-      await flushSocialSaves();
-      const updated = await api<AssetDto>(`/api/assets/${assetId}/copy`, {
-        method: "PATCH",
-        body: JSON.stringify({ copy }),
-      });
-      client.setQueryData(["asset", assetId], updated);
-      notify({
-        title: "Copy applied",
-        description: "Every frame that did not override it.",
-      });
-    } catch (reason) {
-      notify({
-        title: "Could not update the copy",
-        description: reason instanceof Error ? reason.message : "Unknown error",
-      });
-    }
-  }
-
-  function clearSocialOverrides(): void {
-    if (!sceneFrame?.scene) return;
-    updateSocialScene(syncCopyScene(sceneFrame.scene, socialCopy, {}));
-    patchCachedFrame(sceneFrame.id, { copyOverride: {} });
-    queueSocialSave(sceneFrame.id);
   }
 
   async function flushSocialSaves(): Promise<void> {
@@ -1161,7 +1030,6 @@ export function EditorScreen() {
       if (created) {
         setFrameId(created.id);
         setSocialElementId(null);
-        setSocialTab("layout");
       }
       setSocialPickerOpen(false);
       notify({
@@ -2908,54 +2776,7 @@ export function EditorScreen() {
   );
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
   const activePalette = buffer?.palette ?? asset.data?.palette ?? [];
-  const socialSelectedElement = sceneArtboard?.scene.elements.find(
-    (element) => element.id === socialElementId,
-  );
-  const socialUsedColors = useMemo(() => {
-    if (!sceneArtboard) return 0;
-    const used = new Set<number>();
-    for (const element of sceneArtboard.scene.elements) {
-      if ("color" in element) used.add(element.color);
-    }
-    return used.size;
-  }, [sceneArtboard]);
-
   const socialSummary = summarizeChecks(socialChecks);
-  const socialPanels =
-    sceneFrame && sceneArtboard && scenePreset ? (
-      <Inspector
-        board={sceneArtboard}
-        preset={scenePreset}
-        copy={socialCopy}
-        checks={socialChecks}
-        palette={asset.data?.palette ?? []}
-        spriteChoices={spriteChoices}
-        selectedElementId={socialElementId}
-        tab={socialTab}
-        onTab={setSocialTab}
-        onTemplate={applySocialTemplate}
-        onRename={(name) => {
-          patchCachedFrame(sceneFrame.id, { name });
-          queueSocialSave(sceneFrame.id);
-        }}
-        onBackground={(background) => {
-          updateSocialScene({ ...(sceneFrame.scene ?? emptyScene()), background });
-        }}
-        onUpdateElement={updateSocialElement}
-        onText={setSocialText}
-        onRemoveElement={removeSocialElement}
-        onCopy={(copy) => void applySocialCopy(copy)}
-        onClearOverrides={clearSocialOverrides}
-        onSelectElement={setSocialElementId}
-        onAddText={addSocialText}
-        onAddElement={addSocialElement}
-        onImportBackground={() => setBackgroundImportOpen(true)}
-        showName={false}
-        showElements={false}
-        running={running}
-      />
-    ) : null;
-
   const leftPanels = (
     <>
       <FramePanel
@@ -3030,7 +2851,6 @@ export function EditorScreen() {
           setSelection(null);
           setPreview(null);
           setSocialElementId(null);
-          setSocialTab("layout");
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
         onAdd={() => void frameAction("add")}
@@ -3042,26 +2862,23 @@ export function EditorScreen() {
         onReorder={(id, index) => frameReorder(id, index)}
       />
       <LayerPanel
-        buffer={socialFrame ? undefined : buffer}
-        elements={sceneArtboard?.scene.elements ?? []}
-        selectedElementId={socialElementId}
-        activeId={socialFrame ? "" : panelLayerId}
+        buffer={buffer}
+        elements={[]}
+        selectedElementId={null}
+        activeId={panelLayerId}
         locked={locked}
         onSelect={setActiveLayerId}
         onToggleVisible={(layerId, visible) =>
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
         }
-        onAdd={
-          socialFrame
-            ? addSocialText
-            : () =>
-                frameId &&
-                edit(frameId, drafts[frameId], {
-                  type: "addLayer",
-                  id: crypto.randomUUID(),
-                  name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
-                })
+        onAdd={() =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "addLayer",
+            id: crypto.randomUUID(),
+            name: `layer-${(buffer?.layers.length ?? 0) + 1}`,
+          })
         }
         onRename={(layerId, name) =>
           frameId &&
@@ -3074,32 +2891,7 @@ export function EditorScreen() {
             layerId,
           })
         }
-        onSelectElement={(id) => {
-          setSocialElementId(id);
-          setSocialTab("layout");
-        }}
-        onToggleElement={(id, visible) => updateSocialElement(id, { visible })}
-        background={
-          sceneArtboard
-            ? { visible: sceneArtboard.scene.background.kind !== "transparent" }
-            : undefined
-        }
-        onSelectBackground={() => setSocialTab("layout")}
-        onToggleBackground={() => {
-          if (!sceneArtboard) return;
-          const base = sceneFrame?.scene ?? emptyScene();
-          updateSocialScene({
-            ...base,
-            background:
-              base.background.kind === "transparent"
-                ? {
-                    kind: "solid",
-                    color: paletteRoles(asset.data?.palette ?? []).background,
-                  }
-                : { kind: "transparent" },
-          });
-        }}
-        onDeleteElement={removeSocialElement}
+        onSelectElement={(id) => setSocialElementId(id)}
       />
     </>
   );
@@ -3107,13 +2899,9 @@ export function EditorScreen() {
   const frameHeaderPanel = frame ? (
     <FrameHeaderPanel
       name={frame.name}
-      width={socialFrame?.width ?? asset.data?.width ?? buffer?.width ?? 0}
-      height={socialFrame?.height ?? asset.data?.height ?? buffer?.height ?? 0}
-      meta={
-        socialFrame
-          ? (socialPreset?.label ?? "Frame")
-          : `${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`
-      }
+      width={frame?.width ?? asset.data?.width ?? buffer?.width ?? 0}
+      height={frame?.height ?? asset.data?.height ?? buffer?.height ?? 0}
+      meta={`${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`}
       detail={
         socialFrame
           ? `${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"} · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
@@ -3128,13 +2916,8 @@ export function EditorScreen() {
     <PalettePanel
       palette={activePalette}
       color={color}
-      usedColors={socialFrame ? socialUsedColors : usedColors}
-      onPick={(index) => {
-        setColor(index);
-        if (socialSelectedElement && "color" in socialSelectedElement) {
-          updateSocialElement(socialSelectedElement.id, { color: index });
-        }
-      }}
+      usedColors={usedColors}
+      onPick={(index) => setColor(index)}
       onImportPalette={() => {
         setPaletteSourceId("");
         setPaletteImportOpen(true);
@@ -3176,24 +2959,31 @@ export function EditorScreen() {
       {viewPanel}
       <StylePanel
         style={style}
-        width={socialFrame?.width ?? asset.data?.width ?? 32}
-        height={socialFrame?.height ?? asset.data?.height ?? 32}
-        readOnly={socialFrame !== null}
+        width={frame?.width ?? asset.data?.width ?? 32}
+        height={frame?.height ?? asset.data?.height ?? 32}
+        readOnly={frame !== null && frame.width !== asset.data?.width}
         onResize={(width, height) => void updateAsset({ width, height })}
       />
     </div>
   );
 
   const contentTabBody = (
-    <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-      {sceneFrame
-        ? (socialPanels ?? (
-            <EmptyState
-              title="No content yet"
-              body="Add text, a block, or a pattern from the top bar."
-            />
-          ))
-        : null}
+    <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1">
+      <section className="grid gap-2 border-2 border-line bg-field p-2">
+        <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+          Frame content
+        </p>
+        <p className="text-[12px] text-muted">
+          {buffer?.layers.length ?? 0} layers on a {buffer?.width ?? 0}×
+          {buffer?.height ?? 0} canvas. Every layer is edited in the left rail; use the
+          canvas tools to paint, or the top bar to add text, a block, or a pattern as a
+          new layer.
+        </p>
+      </section>
+      <section className="grid gap-2 border-2 border-line bg-field p-2">
+        <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">Checks</p>
+        <p className="text-[12px] text-muted">No deterministic findings.</p>
+      </section>
     </div>
   );
 
@@ -3420,22 +3210,22 @@ export function EditorScreen() {
                 <span aria-hidden className="h-5 w-0.5 shrink-0 bg-line" />
                 <IconButton
                   label="Add text"
-                  disabled={running || !sceneFrame}
-                  onClick={addSocialText}
+                  disabled={running || !buffer}
+                  onClick={addTextLayer}
                 >
                   <TextIcon />
                 </IconButton>
                 <IconButton
                   label="Add block"
-                  disabled={running || !sceneFrame}
-                  onClick={() => addSocialElement("rect")}
+                  disabled={running || !buffer}
+                  onClick={addBlockLayer}
                 >
                   <Square />
                 </IconButton>
                 <IconButton
                   label="Add pattern"
-                  disabled={running || !sceneFrame}
-                  onClick={() => addSocialElement("pattern")}
+                  disabled={running || !buffer}
+                  onClick={addPatternLayer}
                 >
                   <Grid />
                 </IconButton>
@@ -3493,9 +3283,6 @@ export function EditorScreen() {
                       showZones={false}
                       selectedId={socialElementId}
                       onSelect={setSocialElementId}
-                      onMove={(id, x, y) =>
-                        updateSocialElement(id, { x, y } as Partial<Element>)
-                      }
                       locked={running}
                     />
                   </div>

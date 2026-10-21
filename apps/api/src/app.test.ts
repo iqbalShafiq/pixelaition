@@ -241,7 +241,7 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
-  it("adds a social frame to a sprite asset, saves its scene, reads resources, and exports it", async () => {
+  it("adds a native-size layer frame, reads resources, and exports it", async () => {
     const project = await request(app)
       .post("/api/projects")
       .set("authorization", `Bearer ${token}`)
@@ -263,11 +263,13 @@ describe.skipIf(!db)("API routes", () => {
         });
       expect(added.status).toBe(201);
       const social = added.body.frames.find(
-        (frame: { kind?: string }) => frame.kind === "social",
+        (frame: { width?: number }) => frame.width === 1584,
       );
       expect(social.presetId).toBe("linkedin-cover");
       expect(social.width).toBe(1584);
-      expect(social.scene.elements.length).toBeGreaterThan(0);
+      expect(social.kind).toBe("sprite");
+      expect(social.layers.length).toBe(2);
+      expect(social.layers[0].name).toBe("Background");
 
       const resources = await request(app)
         .get(`/api/projects/${project.body.id}/resources`)
@@ -276,34 +278,19 @@ describe.skipIf(!db)("API routes", () => {
       expect(resources.body.assets[0].frames).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ kind: "sprite" }),
-          expect.objectContaining({ kind: "social", presetId: "linkedin-cover" }),
+          expect.objectContaining({ width: 1584, presetId: "linkedin-cover" }),
         ]),
       );
 
       const saved = await request(app)
-        .patch(`/api/assets/${asset.body.id}/frames/${social.id}/scene`)
+        .put(`/api/assets/${asset.body.id}/frames/${social.id}`)
         .set("authorization", `Bearer ${token}`)
-        .send({ version: social.version, name: "Launch cover", status: "ready" });
+        .send({ layers: social.layers });
       expect(saved.status).toBe(200);
       expect(
-        saved.body.frames.find((frame: { id: string }) => frame.id === social.id).name,
-      ).toBe("Launch cover");
-      const versions = await request(app)
-        .get(`/api/assets/${asset.body.id}/versions?frameId=${social.id}`)
-        .set("authorization", `Bearer ${token}`);
-      expect(versions.status).toBe(200);
-      expect(
-        versions.body.versions.some(
-          (version: { snapshot?: { social?: unknown } }) =>
-            version.snapshot !== undefined && version.snapshot.social !== undefined,
-        ),
-      ).toBe(true);
-
-      const stale = await request(app)
-        .patch(`/api/assets/${asset.body.id}/frames/${social.id}/scene`)
-        .set("authorization", `Bearer ${token}`)
-        .send({ version: social.version, status: "ready" });
-      expect(stale.status).toBe(409);
+        saved.body.frames.find((frame: { id: string }) => frame.id === social.id).layers
+          .length,
+      ).toBe(2);
 
       await request(app)
         .patch(`/api/assets/${asset.body.id}/copy`)
@@ -339,43 +326,6 @@ describe.skipIf(!db)("API routes", () => {
           (frame: { kind?: string }) => frame.kind === "sprite",
         ),
       ).toBe(true);
-      const importedSocial = await request(app)
-        .post(`/api/assets/${target.body.id}/frames/import`)
-        .set("authorization", `Bearer ${token}`)
-        .send({
-          sourceAssetId: asset.body.id,
-          sourceFrameId: social.id,
-        });
-      expect(importedSocial.status).toBe(201);
-      const copied = importedSocial.body.asset.frames.find(
-        (frame: { kind?: string; presetId?: string }) =>
-          frame.presetId === "linkedin-cover" && frame.kind === "social",
-      );
-      expect(copied.width).toBe(1584);
-      expect(copied.scene.elements.length).toBeGreaterThan(0);
-      expect(importedSocial.body.asset.copy.headline).toBe("Orbit is live");
-
-      const background = await request(app)
-        .post(
-          `/api/assets/${target.body.id}/frames/${importedSocial.body.frameId}/background`,
-        )
-        .set("authorization", `Bearer ${token}`)
-        .send({ sourceAssetId: asset.body.id, sourceFrameId: social.id });
-      expect(background.status).toBe(200);
-      expect(
-        background.body.frames.find(
-          (frame: { id: string }) => frame.id === importedSocial.body.frameId,
-        ).version,
-      ).toBeGreaterThan(copied.version);
-
-      const png = await request(app)
-        .post(`/api/assets/${asset.body.id}/social-export`)
-        .set("authorization", `Bearer ${token}`)
-        .send({ frameId: social.id, format: "png" });
-      expect(png.status).toBe(200);
-      expect(png.headers["content-type"]).toBe("image/png");
-      expect((png.body as Buffer).readUInt32BE(16)).toBe(1584);
-      expect((png.body as Buffer).readUInt32BE(20)).toBe(396);
     } finally {
       await live.delete(projects).where(eq(projects.id, project.body.id));
     }

@@ -256,8 +256,8 @@ function FrameRow({
             <FrameThumb
               frame={frame}
               palette={live?.palette ?? palette}
-              width={pixelWidth}
-              height={pixelHeight}
+              width={frame.width ?? pixelWidth}
+              height={frame.height ?? pixelHeight}
               live={live}
             />
           )}
@@ -304,8 +304,8 @@ function FrameRow({
                   ? frame.presetId
                     ? `${frame.width}×${frame.height} · ${presetAspect(getPreset(frame.presetId))}`
                     : "frame"
-                  : pixelWidth && pixelHeight
-                    ? `${pixelWidth}×${pixelHeight}`
+                  : (frame.width ?? pixelWidth) && (frame.height ?? pixelHeight)
+                    ? `${frame.width ?? pixelWidth}×${frame.height ?? pixelHeight}`
                     : null}
               </span>
             )}

@@ -157,4 +157,6 @@ export type CritiqueIssue = { code: string; message: string };
 
 export type Camera = { x: number; y: number; zoom: number };
 
-export const zoomSteps = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32] as const;
+export const zoomSteps = [
+  0.1, 0.25, 0.5, 0.75, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
+] as const;

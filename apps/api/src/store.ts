@@ -24,6 +24,7 @@ import {
   createBuffer,
   decodePixels,
   defaultStyle,
+  encodePixels,
   frameToBuffer,
   writeFrame,
   type Asset,
@@ -447,17 +448,45 @@ export async function addSocialFrameRecord(
   });
   const index =
     record.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+  // A native frame is still a pixel document: background is the first layer,
+  // the template artwork is the second. Nothing is stored as a scene.
+  const background = renderScene({
+    scene: { ...scene, elements: [] },
+    preset,
+    palette: record.palette as string[],
+    sprites,
+  }).image;
+  const artwork = renderScene({
+    scene: { ...scene, background: { kind: "transparent" } },
+    preset,
+    palette: record.palette as string[],
+    sprites,
+  }).image;
+  const layers = [
+    {
+      id: "background",
+      name: "Background",
+      visible: true,
+      pixels: encodePixels(background.indices),
+    },
+    {
+      id: "artwork",
+      name: "Artwork",
+      visible: true,
+      pixels: encodePixels(artwork.indices),
+    },
+  ];
   await db.insert(frames).values({
     id: randomUUID(),
     assetId,
     name: input.name?.trim() || preset.label,
     index,
-    layers: [],
-    kind: "social",
+    layers,
+    kind: "sprite",
     width: preset.width,
     height: preset.height,
     presetId: preset.id,
-    scene,
+    scene: null,
     copyOverride: {},
     status: "draft",
     version: 1,
