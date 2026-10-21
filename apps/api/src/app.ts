@@ -3,6 +3,7 @@ import {
   assetFrameBuffer,
   bufferToFrame,
   frameToBuffer,
+  type FrameBuffer,
   type PixelProject,
   type StyleGuide,
 } from "@pixelaition/pixel";
@@ -20,8 +21,11 @@ import {
   copyDeckSchema,
   formatPresets,
   presetsByGroup,
+  renderScene,
   setPatchSchema,
   templateIds,
+  type ArtboardScene,
+  type FormatPreset,
 } from "@pixelaition/artboard";
 import {
   createArtboard,
@@ -3560,6 +3564,58 @@ export function createApp() {
   return app;
 }
 
+/**
+ * Scene content on a pixel-backed frame is an overlay: export and downstream
+ * reads must see it, not only the editor canvas.
+ */
+function withSceneOverlay(frame: { scene?: unknown }, buffer: FrameBuffer): FrameBuffer {
+  const scene = frame.scene as ArtboardScene | undefined;
+  if (!scene || scene.elements.length === 0) return buffer;
+  try {
+    const preset: FormatPreset = {
+      id: "frame-overlay",
+      platform: "Pixelaition",
+      group: "post",
+      label: "Frame",
+      width: buffer.width,
+      height: buffer.height,
+      pixelUnit: 1,
+      minTextSize: 4,
+      maxBytes: null,
+      shape: "rect",
+      safeZones: [],
+      crops: [],
+      exclusions: [],
+      defaultTemplate: "blank",
+      notes: [],
+      source: "Frame canvas",
+      verifiedAt: "",
+      official: false,
+    };
+    const rendered = renderScene({
+      scene,
+      preset,
+      palette: buffer.palette,
+      sprites: new Map(),
+    }).image;
+    return {
+      ...buffer,
+      layers: [
+        ...buffer.layers,
+        {
+          id: "scene-overlay",
+          name: "Scene",
+          visible: true,
+          pixels: rendered.indices,
+        },
+      ],
+    };
+  } catch {
+    // A scene that refers to a missing sprite still exports its pixels.
+    return buffer;
+  }
+}
+
 async function documentForScope(
   userId: string,
   input: { projectId: string; assetId?: string; frameId?: string },
@@ -3597,7 +3653,10 @@ async function documentForScope(
       palette: full.palette as string[],
       frames: frames.map((frame) =>
         bufferToFrame(
-          frameToBuffer(frame, full.width, full.height, full.palette as string[]),
+          withSceneOverlay(
+            frame,
+            frameToBuffer(frame, full.width, full.height, full.palette as string[]),
+          ),
           frame,
         ),
       ),
