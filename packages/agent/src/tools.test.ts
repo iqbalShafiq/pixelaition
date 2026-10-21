@@ -124,6 +124,61 @@ describe("worker frame ownership", () => {
     );
     releaseRun("run-1");
   });
+  it("paints a native-size frame and emits its full-size stroke", async () => {
+    const native = new Uint8Array(1080 * 1080);
+    const strokes: Array<{ width: number; height: number; frameId: string }> = [];
+    bindRun("run-1", {
+      assetId: "asset-1",
+      assetName: "native",
+      originFrameId: "frame-1",
+      currentFrameId: "frame-1",
+      frames: new Map([
+        [
+          "frame-1",
+          {
+            name: "Instagram announcement",
+            index: 0,
+            buffer: {
+              width: 1080,
+              height: 1080,
+              palette: [...palette],
+              layers: [
+                {
+                  id: "artwork",
+                  name: "Artwork",
+                  visible: true,
+                  pixels: native,
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+      palette: [...palette],
+      width: 4,
+      height: 4,
+      style: { outline: "#f4f4f4", maxColors: 12 } as never,
+      approvedScope: new Set(["frame-1"]),
+      touchedFrames: new Set(),
+      strokes: [],
+      issues: [],
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+      onStroke: (_stroke, buffer, frameId) =>
+        strokes.push({ width: buffer.width, height: buffer.height, frameId }),
+    });
+    await tool("paint_stroke").call(
+      {
+        frameId: "frame-1",
+        layerId: "artwork",
+        label: "native dot",
+        points: [{ x: 540, y: 540, color: 1 }],
+      },
+      { operationId: "run-1" },
+    );
+    expect(strokes).toEqual([{ width: 1080, height: 1080, frameId: "frame-1" }]);
+    releaseRun("run-1");
+  });
   it("refuses a structural tool to a worker, with the cause named", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
