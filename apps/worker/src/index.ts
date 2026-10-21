@@ -1294,6 +1294,118 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
   publish(durableTaskId, "usage", { ...totals });
 }
 
+type SocialFollowUp = {
+  prompt: string;
+  modelId: string;
+  reasoningEffort: string;
+  userId: string;
+  threadId: string;
+  started?: boolean;
+};
+
+/**
+ * A natural campaign request draws first. Once those pixel frames are saved,
+ * the same asset gets the native-size phase: one compose run creates the
+ * Instagram/LinkedIn frames from the pixels the drawing pass just made. The
+ * follow-up is recorded on the task, so a restart can see it happened.
+ */
+async function startComposeFollowUp(
+  runtime: DurableRuntime,
+  taskId: string,
+  taskShape: Record<string, unknown>,
+  assetId: string,
+  followUp: SocialFollowUp,
+): Promise<void> {
+  const target = selectRunTarget(specs, followUp.modelId, followUp.reasoningEffort);
+  const targetSpec = target
+    ? specs.find((spec) => spec.id === target.modelId)
+    : undefined;
+  if (!target || !targetSpec || !openai) {
+    console.error("[compose-followup] the drawing model is no longer available");
+    return;
+  }
+  const nextShape = {
+    ...taskShape,
+    followUp: { ...followUp, started: true },
+  };
+  await db.update(runTasks).set({ shape: nextShape }).where(eq(runTasks.id, taskId));
+
+  const publicRunId = randomUUID();
+  const requestId = randomUUID();
+  const prompt = `${followUp.prompt}
+
+---
+The pixel frames for this request are already drawn and saved. Now compose only
+the native-size marketing frames the request named (Instagram post, LinkedIn
+cover, and similar) from those pixel frames. Do not create or repaint pixel
+frames; use them as the source images. Keep the shared copy short and quiet.`;
+  await db.insert(generationRuns).values({
+    id: publicRunId,
+    threadId: followUp.threadId,
+    requestId,
+    status: "queued",
+    modelId: target.modelId,
+    reasoningEffort: target.effort,
+    prompt,
+    mode: "compose",
+  });
+
+  const loaded = await loadSocialAssetForRun(assetId, followUp.userId);
+  if (!loaded) {
+    await db
+      .update(generationRuns)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(generationRuns.id, publicRunId));
+    console.error("[compose-followup] the asset disappeared before the social phase");
+    return;
+  }
+  const bind = (durableRunId: string) => {
+    bindSocialAssetRunFor({
+      durableRunId,
+      publicRunId,
+      loaded,
+      userId: followUp.userId,
+    });
+  };
+  bind("");
+  let run: Awaited<ReturnType<typeof runtime.submit>>;
+  try {
+    run = await runtime.submit({
+      agentId: drawAgentId("art-director", target),
+      sessionId: composeSessionId(
+        followUp.threadId,
+        `asset:${assetId}`,
+        target.modelId,
+        targetSpec.api,
+      ),
+      requestId,
+      prompt: buildSocialPrompt(prompt, loaded),
+    });
+  } catch (reason) {
+    await db
+      .update(generationRuns)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(generationRuns.id, publicRunId));
+    console.error(`[compose-followup] could not start: ${boundedReason(reason)}`);
+    return;
+  }
+  bind(run.id);
+  await db
+    .update(generationRuns)
+    .set({ durableRunId: run.id, status: "running" })
+    .where(eq(generationRuns.id, publicRunId));
+  publicIdByDurable.set(run.id, publicRunId);
+  seedUsage(run.id, undefined);
+  telemetry?.setTraceContext(run.id, {
+    name: "image-compose",
+    userId: followUp.userId,
+    sessionId: followUp.threadId,
+    tags: ["pixelaition", "image", "compose", "follow-up"],
+    metadata: { assetId, modelId: target.modelId, reasoningEffort: target.effort },
+  });
+  void follow(runtime, run.id, publicRunId, target.effort);
+}
+
 async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promise<void> {
   if (taskWatchers.has(durableTaskId)) return;
   const controller = new AbortController();
@@ -1371,6 +1483,17 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
             // verdict on a finished run, never a system failure.
             ...(reviewOfTaskRecord(record) ?? {}),
           });
+          if (record.status === "completed") {
+            const shape = (row.shape ?? {}) as {
+              followUp?: SocialFollowUp;
+              [key: string]: unknown;
+            };
+            const followUp = shape.followUp;
+            const followAssetId = plan?.assetId ?? row.assetId;
+            if (followUp && !followUp.started && followAssetId) {
+              void startComposeFollowUp(runtime, row.id, shape, followAssetId, followUp);
+            }
+          }
           break;
         }
       } catch (reason) {
@@ -3598,6 +3721,7 @@ function buildSocialPrompt(request: string, loaded: LoadedSocialAsset): string {
     "Write to the user in image, frame and canvas language. Never call frames sprites, social media, a kit or artboards; those are internal storage/tool names.",
     `Asset: ${loaded.asset.name}. Base canvas: ${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours.`,
     "The asset holds frames together. Some frames are pixel images used as ingredients; others are native-size canvases for covers, posts, thumbnails and stories.",
+    "This phase only creates or edits native-size frames. Pixel-backed frames already drawn are read-only ingredients; do not create, resize or repaint them.",
     "Call list_formats before choosing a canvas size. Call read_set to see the current frames and shared copy. Call list_project_sprites to reuse any image frame from this project; place_sprite accepts its assetId/frameId.",
     "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
     "After approval: create the planned frames with create_artboard, keep the shared copy with set_copy, and compose each with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent; adapt the layout, not the identity.",

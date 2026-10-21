@@ -1272,7 +1272,19 @@ export async function insertTaskRecord(
     id: string;
     threadId: string;
     assetId?: string;
-    shape: { workers: number; review: boolean; source?: string };
+    shape: {
+      workers: number;
+      review: boolean;
+      source?: string;
+      followUp?: {
+        prompt: string;
+        modelId: string;
+        reasoningEffort: string;
+        userId: string;
+        threadId: string;
+        started?: boolean;
+      };
+    };
   },
 ) {
   await db.insert(runTasks).values({

@@ -386,6 +386,30 @@ function sumUsage(
  * and leaves the row failed rather than queued. Shared by the editor route and
  * the home's confirm phase.
  */
+type SocialFollowUp = {
+  prompt: string;
+  modelId: string;
+  reasoningEffort: string;
+  userId: string;
+  threadId: string;
+  started?: boolean;
+};
+
+type DrawTaskShape = {
+  workers: number;
+  review: boolean;
+  source?: string;
+  followUp?: SocialFollowUp;
+};
+
+const NATIVE_MARKETING =
+  /(instagram|linkedin|facebook|tiktok|youtube|twitter|threads|pinterest|social media|feed|stories|story|reel|carousel|cover|poster|thumbnail|banner)/i;
+
+/** A natural campaign ask changes the workflow, not the words the user types. */
+function asksForNativeMarketing(prompt: string): boolean {
+  return NATIVE_MARKETING.test(prompt);
+}
+
 async function startRunViaWorker(
   res: express.Response,
   input: {
@@ -403,7 +427,7 @@ async function startRunViaWorker(
     /** The social set a compose run lays out. */
     setId?: string;
     /** Jev's task shape; present for draw runs. */
-    shape?: { workers: number; review: boolean; source?: string } | undefined;
+    shape?: DrawTaskShape | undefined;
     usage: {
       input: number;
       output: number;
@@ -436,13 +460,30 @@ async function startRunViaWorker(
   }
   // A drawing request is one durable task; the API owns its public id and the
   // worker records the durable task id on the row. An ask stays a single run.
+  const taskShape: DrawTaskShape | undefined =
+    input.mode === "draw"
+      ? {
+          ...(input.shape ?? { workers: 2, review: true, source: "default" }),
+          ...(input.target.scope === "asset" && asksForNativeMarketing(input.prompt)
+            ? {
+                followUp: {
+                  prompt: input.prompt,
+                  modelId: input.modelId,
+                  reasoningEffort: input.reasoningEffort,
+                  userId: input.userId,
+                  threadId: input.threadId,
+                } satisfies SocialFollowUp,
+              }
+            : {}),
+        }
+      : undefined;
   const runId =
     input.mode === "draw"
       ? await insertTaskRecord(db, {
           id: randomUUID(),
           threadId: input.threadId,
           ...(input.target.scope === "asset" ? { assetId: input.target.assetId } : {}),
-          shape: input.shape ?? { workers: 2, review: true, source: "default" },
+          shape: taskShape ?? { workers: 2, review: true, source: "default" },
         })
       : await insertRun(db, {
           threadId: input.threadId,
