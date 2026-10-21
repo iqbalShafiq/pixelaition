@@ -218,6 +218,21 @@ function steerOutcome(
   };
 }
 
+const SOCIAL_ZOOM_STEPS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
+
+function stepSocialZoom(value: number, direction: 1 | -1): number {
+  if (direction > 0) {
+    return (
+      SOCIAL_ZOOM_STEPS.find((step) => step > value) ?? SOCIAL_ZOOM_STEPS.at(-1) ?? value
+    );
+  }
+  return (
+    [...SOCIAL_ZOOM_STEPS].reverse().find((step) => step < value) ??
+    SOCIAL_ZOOM_STEPS[0] ??
+    value
+  );
+}
+
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
   const navigate = useNavigate();
@@ -3464,8 +3479,7 @@ export function EditorScreen() {
                       label="Zoom out"
                       size="sm"
                       onClick={() => {
-                        setSocialFit(false);
-                        setSocialZoom((value) => stepZoom(value, -1));
+                        setSocialZoom((value) => stepSocialZoom(value, -1));
                       }}
                     >
                       <Minus />
@@ -3474,8 +3488,7 @@ export function EditorScreen() {
                       label="Zoom in"
                       size="sm"
                       onClick={() => {
-                        setSocialFit(false);
-                        setSocialZoom((value) => stepZoom(value, 1));
+                        setSocialZoom((value) => stepSocialZoom(value, 1));
                       }}
                     >
                       <Plus />

@@ -43,8 +43,23 @@ export function ArtboardCanvas({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
+  const dragRef = useRef<{
+    id: string;
+    dx: number;
+    dy: number;
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    moved: boolean;
+  } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [compact, setCompact] = useState(false);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const image = useMemo<PaletteImage>(() => {
@@ -122,7 +137,16 @@ export function ArtboardCanvas({
     if (!hit || !onMove) return;
     const box = bounds.get(hit.id);
     if (!box) return;
-    dragRef.current = { id: hit.id, dx: point.x - box.x, dy: point.y - box.y };
+    dragRef.current = {
+      id: hit.id,
+      dx: point.x - box.x,
+      dy: point.y - box.y,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: box.x,
+      y: box.y,
+      moved: false,
+    };
     setDragging(hit.id);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -130,18 +154,33 @@ export function ArtboardCanvas({
   function onPointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const drag = dragRef.current;
     if (!drag || !onMove) return;
+    // A click should select, not nudge. Only a deliberate move starts a drag.
+    if (
+      !drag.moved &&
+      Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4
+    ) {
+      return;
+    }
+    drag.moved = true;
     const point = pointInCanvas(event);
     if (!point) return;
-    onMove(
-      drag.id,
-      Math.max(0, Math.min(artboard.width, Math.round(point.x - drag.dx))),
-      Math.max(0, Math.min(artboard.height, Math.round(point.y - drag.dy))),
-    );
+    const x = Math.max(0, Math.min(artboard.width, Math.round(point.x - drag.dx)));
+    const y = Math.max(0, Math.min(artboard.height, Math.round(point.y - drag.dy)));
+    drag.x = x;
+    drag.y = y;
+    const box = bounds.get(drag.id);
+    if (!box) return;
+    // Move a cheap ghost while the pointer moves; commit the scene once on
+    // release so a 1080px canvas is not re-rendered on every pointer event.
+    setDragPreview({ x, y, width: box.width, height: box.height });
   }
 
-  function endDrag() {
+  function finishDrag(commit: boolean) {
+    const drag = dragRef.current;
+    if (commit && drag?.moved) onMove?.(drag.id, drag.x, drag.y);
     dragRef.current = null;
     setDragging(null);
+    setDragPreview(null);
   }
 
   return (
@@ -174,10 +213,14 @@ export function ArtboardCanvas({
           aria-label={`${artboard.name} preview`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
+          onPointerUp={() => finishDrag(true)}
+          onPointerCancel={() => finishDrag(false)}
           className={`block bg-field [image-rendering:pixelated] ${
-            locked ? "cursor-progress" : onMove ? "cursor-crosshair touch-none" : ""
+            locked
+              ? "cursor-progress"
+              : onMove
+                ? "cursor-grab touch-none active:cursor-grabbing"
+                : ""
           }`}
           style={
             thumbnail
@@ -268,6 +311,17 @@ export function ArtboardCanvas({
               </span>
             )}
           </div>
+        ) : null}
+        {dragPreview ? (
+          <div
+            className="pointer-events-none absolute border-2 border-accent bg-accent/10"
+            style={{
+              left: `${dragPreview.x * scaleX}%`,
+              top: `${dragPreview.y * scaleY}%`,
+              width: `${dragPreview.width * scaleX}%`,
+              height: `${dragPreview.height * scaleY}%`,
+            }}
+          />
         ) : null}
       </div>
     </div>
