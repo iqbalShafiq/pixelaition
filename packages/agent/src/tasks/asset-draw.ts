@@ -48,6 +48,15 @@ export const assetDrawInputSchema = z.object({
   maxWorkers: z.number().int().min(1).max(4),
   review: z.boolean(),
   maxPalette: z.number().int().min(0).max(255),
+  /** The frame the user had open, so an edit names the real frame, not a stale summary. */
+  selectedFrame: z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      width: z.number().int().min(1),
+      height: z.number().int().min(1),
+    })
+    .optional(),
   /**
    * The public run_tasks id. Prior-turn loading uses it to skip this request.
    * Older tasks omit it; the loader then skips the newest live row instead.
@@ -276,6 +285,11 @@ export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): str
   return [
     input.request,
     planInstructions,
+    ...(input.selectedFrame
+      ? [
+          `The user has this frame open: ${input.selectedFrame.name} (${input.selectedFrame.id}), ${input.selectedFrame.width}×${input.selectedFrame.height}. For an edit to this frame, plan exactly this frame and its existing layers; do not create a replacement frame or rename it.`,
+        ]
+      : []),
     `Limits: at most ${input.maxWorkers} workers. The palette holds up to ${
       MAX_COLORS + 1
     } entries including transparent; ${input.maxPalette} more can be added.` +

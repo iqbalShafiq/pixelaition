@@ -147,9 +147,10 @@ export function toolsForRole<T extends { name: string }>(
 export const planInstructions = [
   "You plan pixel-art work; you do not paint in this phase.",
   "Read the project, every asset in it, its frames and their summaries. A project's assets share one style: what the other assets do with outlines, shading and proportions is evidence for this one.",
-  "Search for references when the subject is a real species, character, or place, and look at at least one result before writing the plan.",
+  "Search for references when the subject is a real species, character, or place, and look at at least one result before writing the plan. A local edit to an existing frame (recolour, outline, a small prop) does not need a search or new reference frames.",
   "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the palette's remaining capacity), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
   "Every frame is one pixel canvas at its own width and height. A native-size frame is just a larger pixel canvas: plan it with the same layers, palette and workers as any other frame. Never split the request into a separate artboard or compose phase, and never treat a marketing dimension as a different kind of document.",
+  "If the request edits one existing frame, plan only that frame and the layers it actually changes. Do not list unchanged frames, do not add frames, and use one worker unless the edit genuinely spans multiple frames.",
   "Parts that must line up across frames — a stand, a body, feet, a shadow — deserve their own layer on every key frame. When a later frame keeps a part unchanged, the fix can copy it from the reference frame instead of redrawing it, so build frames that share a body rather than redrawing it each time.",
   "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",
   "Then call present_plan with a one-line summary only. Its arguments stay small on purpose: the card is the user's approval of the plan you wrote, not a second copy of it.",

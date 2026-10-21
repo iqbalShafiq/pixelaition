@@ -695,10 +695,12 @@ async function loadFrameForSummary(frameId: string) {
       id: row.frame.id,
       name: row.frame.name,
       index: row.frame.index,
+      width: row.frame.width,
+      height: row.frame.height,
       layers: row.frame.layers as Frame["layers"],
     },
-    row.asset.width,
-    row.asset.height,
+    row.frame.width ?? row.asset.width,
+    row.frame.height ?? row.asset.height,
     palette,
   );
   return {
@@ -1499,7 +1501,7 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
       } catch (reason) {
         // A transient failure on one cycle must not end the whole watcher and
         // leave the task row non-terminal (and the asset locked).
-        console.error(`[task] watch ${durableTaskId} cycle: ${boundedReason(reason)}`);
+        console.error(`[task] watch ${durableTaskId} cycle`, reason);
       }
     }
   } catch (reason) {
@@ -2063,6 +2065,21 @@ app.post("/internal/runs", async (req, res) => {
           maxWorkers: shape.workers,
           review: shape.review,
           maxPalette: asset ? paletteCapacity(asset.palette.length) : MAX_COLORS,
+          ...(asset && originFrameId
+            ? (() => {
+                const selected = asset.frames.find((frame) => frame.id === originFrameId);
+                return selected
+                  ? {
+                      selectedFrame: {
+                        id: selected.id,
+                        name: selected.name,
+                        width: selected.width ?? asset.width,
+                        height: selected.height ?? asset.height,
+                      },
+                    }
+                  : {};
+              })()
+            : {}),
         },
       });
     } catch (reason) {
@@ -3898,9 +3915,16 @@ async function loadProjectAssetForRead(
       summary: frame.summary,
       index: frame.index,
       buffer: frameToBuffer(
-        { id: frame.id, name: frame.name, index: frame.index, layers: frame.layers },
-        loaded.width,
-        loaded.height,
+        {
+          id: frame.id,
+          name: frame.name,
+          index: frame.index,
+          width: frame.width,
+          height: frame.height,
+          layers: frame.layers,
+        },
+        frame.width ?? loaded.width,
+        frame.height ?? loaded.height,
         loaded.palette,
       ),
     })),
