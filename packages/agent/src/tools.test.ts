@@ -1045,6 +1045,65 @@ describe("layer tools", () => {
     releaseRun("run-1");
   });
 
+  it("add_text creates editable pixel text and edit_text rewrites it", async () => {
+    boundRun();
+    const added = (await tool("add_text").call(
+      { text: "A", x: 0, y: 0, size: 16, color: 1 },
+      { operationId: "run-1" },
+    )) as { layerId: string };
+    const run = getRun("run-1");
+    const before = run!.frames
+      .get("frame-1")!
+      .buffer.layers.find((layer) => layer.id === added.layerId);
+    expect(before?.text).toMatchObject({ text: "A", color: 1, size: 16 });
+    expect(before?.pixels).toHaveLength(16);
+
+    await tool("edit_text").call(
+      { layerId: added.layerId, text: "B", x: 1, y: 1, color: 2 },
+      { operationId: "run-1" },
+    );
+    const after = getRun("run-1")!
+      .frames.get("frame-1")!
+      .buffer.layers.find((layer) => layer.id === added.layerId);
+    expect(after?.text).toMatchObject({ text: "B", color: 2, x: 1, y: 1 });
+    expect(after?.pixels).toHaveLength(16);
+    releaseRun("run-1");
+  });
+
+  it("add_text rasterizes glyph pixels on a normal frame", async () => {
+    const pixels = new Uint8Array(32 * 32);
+    const nativeFrame = {
+      width: 32,
+      height: 32,
+      palette: [...palette],
+      layers: [{ id: "artwork", name: "Artwork", visible: true, pixels }],
+    };
+    boundRun(undefined, undefined, {
+      width: 32,
+      height: 32,
+      frames: new Map([
+        [
+          "frame-1",
+          {
+            name: "Instagram announcement",
+            index: 0,
+            buffer: nativeFrame,
+          },
+        ],
+      ]),
+    });
+    await tool("add_text").call(
+      { text: "A", x: 4, y: 4, size: 16, color: 1 },
+      { operationId: "run-1" },
+    );
+    const layer = getRun("run-1")!
+      .frames.get("frame-1")!
+      .buffer.layers.find((item) => item.text);
+    expect(layer?.text?.text).toBe("A");
+    expect(layer?.pixels.some((value) => value === 1)).toBe(true);
+    releaseRun("run-1");
+  });
+
   it("add_layer names the layer layer-3 by default", async () => {
     boundRun();
     const result = (await tool("add_layer").call({}, { operationId: "run-1" })) as {

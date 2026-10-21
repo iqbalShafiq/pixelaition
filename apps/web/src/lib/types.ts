@@ -1,4 +1,12 @@
-export type LayerDto = { id: string; name: string; visible: boolean; pixels: string };
+import type { TextLayerSpec } from "@pixelaition/pixel";
+
+export type LayerDto = {
+  id: string;
+  name: string;
+  visible: boolean;
+  pixels: string;
+  text?: TextLayerSpec;
+};
 
 import type { ArtboardScene, CopyOverride, CopyDeck } from "@pixelaition/artboard";
 

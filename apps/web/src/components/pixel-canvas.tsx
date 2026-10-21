@@ -27,6 +27,14 @@ type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean };
 
+export type CanvasTextBox = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type Props = {
   buffer: FrameBuffer;
   camera: Camera;
@@ -43,6 +51,13 @@ type Props = {
   overlay?: PaletteImage | null;
   /** The cell the agent is about to ink. Drawn with the same border as a hover. */
   agentCursor?: Point | null;
+  /** Editable text layers, in document coordinates, drawn as selection boxes. */
+  textBoxes?: CanvasTextBox[];
+  selectedTextBoxId?: string | null;
+  onSelectText?: (id: string) => void;
+  onTextDragStart?: (id: string) => void;
+  onMoveText?: (id: string, x: number, y: number) => void;
+  onTextDragEnd?: () => void;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
 };
@@ -288,6 +303,12 @@ export function PixelCanvas({
   locked,
   agentCursor = null,
   overlay = null,
+  textBoxes = [],
+  selectedTextBoxId = null,
+  onSelectText,
+  onTextDragStart,
+  onMoveText,
+  onTextDragEnd,
   onAction,
   onCamera,
 }: Props) {
@@ -300,6 +321,12 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  const hoverText = useRef<string | null>(null);
+  const textDrag = useRef<{
+    id: string;
+    start: Point;
+    origin: { x: number; y: number };
+  } | null>(null);
   // Pan is a ref because the gesture must not re-render; the cursor still has
   // to switch to grabbing, so the fact of panning is mirrored into state.
   const [panning, setPanning] = useState(false);
@@ -319,6 +346,13 @@ export function PixelCanvas({
     onCamera,
     ghost,
     overlay,
+    locked,
+    textBoxes,
+    selectedTextBoxId,
+    onSelectText,
+    onTextDragStart,
+    onMoveText,
+    onTextDragEnd,
   });
   latest.current = {
     camera,
@@ -329,6 +363,13 @@ export function PixelCanvas({
     onCamera,
     ghost,
     overlay,
+    locked,
+    textBoxes,
+    selectedTextBoxId,
+    onSelectText,
+    onTextDragStart,
+    onMoveText,
+    onTextDragEnd,
   };
 
   useEffect(() => {
@@ -495,6 +536,37 @@ export function PixelCanvas({
         context.stroke();
       }
 
+      // Editable text boxes sit above the pixel document: hover reads as a
+      // selectable object, selection as a moveable one with corner handles.
+      for (const box of latest.current.textBoxes) {
+        const selected = box.id === latest.current.selectedTextBoxId;
+        const hovered = box.id === hoverText.current;
+        if (!selected && !hovered) continue;
+        const x = originX + box.x * cell + 0.5;
+        const y = originY + box.y * cell + 0.5;
+        const width = Math.max(1, box.width * cell - 1);
+        const height = Math.max(1, box.height * cell - 1);
+        context.save();
+        context.lineWidth = selected ? 2 : 1;
+        context.strokeStyle = selected ? "#d8a64e" : "rgba(216, 166, 78, 0.6)";
+        context.setLineDash(selected ? [] : [4, 3]);
+        context.strokeRect(x, y, width, height);
+        if (selected) {
+          context.setLineDash([]);
+          context.fillStyle = "#d8a64e";
+          const handle = 4;
+          for (const [hx, hy] of [
+            [x - handle / 2, y - handle / 2],
+            [x + width - handle / 2, y - handle / 2],
+            [x - handle / 2, y + height - handle / 2],
+            [x + width - handle / 2, y + height - handle / 2],
+          ] as const) {
+            context.fillRect(hx, hy, handle, handle);
+          }
+        }
+        context.restore();
+      }
+
       const shape = preview.current;
       if (shape) {
         const cells =
@@ -550,7 +622,19 @@ export function PixelCanvas({
     locked,
     agentCursor,
     overlay,
+    selectedTextBoxId,
+    textBoxes,
   ]);
+
+  function textAt(point: Point) {
+    return latest.current.textBoxes.find(
+      (box) =>
+        point.x >= box.x &&
+        point.y >= box.y &&
+        point.x < box.x + box.width &&
+        point.y < box.y + box.height,
+    );
+  }
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;
@@ -572,6 +656,7 @@ export function PixelCanvas({
     preview.current = null;
     stroke.current = null;
     pan.current = null;
+    textDrag.current = null;
     setPanning(false);
   }
 
@@ -603,6 +688,23 @@ export function PixelCanvas({
       className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
+        if (event.button === 0 && !space.current) {
+          const point = localPoint(event);
+          const text = textAt(point);
+          if (text && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            textDrag.current = {
+              id: text.id,
+              start: point,
+              origin: { x: text.x, y: text.y },
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(text.id);
+            latest.current.onSelectText?.(text.id);
+            repaint.current();
+            return;
+          }
+        }
         if (event.button === 1 || active === "pan" || space.current) {
           pan.current = {
             x: event.clientX,
@@ -658,6 +760,23 @@ export function PixelCanvas({
           return;
         }
         const point = localPoint(event);
+        if (textDrag.current) {
+          const dragText = textDrag.current;
+          latest.current.onMoveText?.(
+            dragText.id,
+            dragText.origin.x + point.x - dragText.start.x,
+            dragText.origin.y + point.y - dragText.start.y,
+          );
+          return;
+        }
+        const hoveredText = textAt(point);
+        hoverText.current = hoveredText?.id ?? null;
+        event.currentTarget.style.cursor = hoveredText ? "move" : "";
+        if (hoveredText) {
+          hover.current = null;
+          repaint.current();
+          return;
+        }
         const start = drag.current;
         if (start) {
           start.to = point;
@@ -700,6 +819,16 @@ export function PixelCanvas({
       }}
       onPointerUp={(event) => {
         const { onAction: emit } = latest.current;
+        if (textDrag.current) {
+          textDrag.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
         const start = drag.current;
         if (start) {
           if (marquee.current) {
@@ -732,6 +861,7 @@ export function PixelCanvas({
       }}
       onPointerLeave={() => {
         hover.current = null;
+        hoverText.current = null;
         repaint.current();
       }}
     />

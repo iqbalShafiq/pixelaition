@@ -3,6 +3,7 @@ import {
   assetFrameBuffer,
   bufferToFrame,
   frameToBuffer,
+  textLayerSchema,
   type FrameBuffer,
   type PixelProject,
   type StyleGuide,
@@ -753,6 +754,7 @@ export function createApp() {
             id: z.string(),
             name: z.string(),
             visible: z.boolean(),
+            text: textLayerSchema.optional(),
             pixels: z.string(),
           }),
         ),
@@ -824,12 +826,18 @@ export function createApp() {
         kind: z.enum(["sprite", "social"]).default("sprite"),
         name: z.string().max(80).default(""),
         presetId: z.string().min(1).optional(),
+        width: z.number().int().min(8).max(4096).optional(),
+        height: z.number().int().min(8).max(4096).optional(),
         template: z.enum(templateIds).optional(),
         copy: copyDeckSchema.optional(),
       })
-      .refine((value) => value.kind !== "social" || value.presetId !== undefined, {
-        message: "A native-size frame needs a canvas size.",
-      })
+      .refine(
+        (value) =>
+          value.kind !== "social" ||
+          value.presetId !== undefined ||
+          (value.width !== undefined && value.height !== undefined),
+        { message: "A native-size frame needs a canvas size." },
+      )
       .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {
       return fail(
@@ -846,7 +854,9 @@ export function createApp() {
             res.locals.userId as string,
             req.params.id ?? "",
             {
-              presetId: body.presetId ?? "",
+              ...(body.presetId ? { presetId: body.presetId } : {}),
+              ...(body.width !== undefined ? { width: body.width } : {}),
+              ...(body.height !== undefined ? { height: body.height } : {}),
               ...(body.name ? { name: body.name } : {}),
               ...(body.template ? { template: body.template } : {}),
               ...(body.copy ? { copy: body.copy } : {}),

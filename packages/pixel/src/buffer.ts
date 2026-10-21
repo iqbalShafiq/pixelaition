@@ -105,6 +105,7 @@ export function frameToBuffer(
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
+      ...(layer.text ? { text: { ...layer.text } } : {}),
       pixels: decodePixels(layer.pixels, expected),
     })),
   };
@@ -127,6 +128,7 @@ export function bufferToFrame(
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
+      ...(layer.text ? { text: { ...layer.text } } : {}),
       pixels: encodePixels(layer.pixels),
     })),
   };

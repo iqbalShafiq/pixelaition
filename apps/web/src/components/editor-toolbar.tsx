@@ -11,6 +11,7 @@ import {
   Picker,
   Select,
   Square,
+  Text,
   Transparency,
   type IconProps,
 } from "./pixel-icons.js";
@@ -88,6 +89,8 @@ export function Toolbar({
   onSelectionFill,
   onSelectionClear,
   onDeselect,
+  onAddText,
+  addTextDisabled,
 }: {
   tool: Tool;
   brushSize: number;
@@ -98,6 +101,8 @@ export function Toolbar({
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onDeselect: () => void;
+  onAddText?: () => void;
+  addTextDisabled?: boolean;
 }) {
   return (
     <div className="relative flex min-w-0 items-center gap-1 overflow-x-auto bg-panel">
@@ -128,6 +133,15 @@ export function Toolbar({
           <PixelDot level={value} />
         </IconButton>
       ))}
+
+      {onAddText ? (
+        <>
+          <Separator vertical />
+          <IconButton label="Add text" disabled={addTextDisabled} onClick={onAddText}>
+            <Text />
+          </IconButton>
+        </>
+      ) : null}
 
       {selectionActive ? (
         <>

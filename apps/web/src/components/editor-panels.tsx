@@ -2,7 +2,9 @@ import {
   composite,
   frameToBuffer,
   type FrameBuffer,
+  type Layer,
   type StyleGuide,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
 import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
@@ -24,7 +26,6 @@ import {
   Pencil,
   Play,
   Plus,
-  Square,
   Stop,
   Trash,
 } from "./pixel-icons.js";
@@ -419,7 +420,6 @@ export function FramePanel({
   onSelect,
   onTogglePlay,
   onAdd,
-  onAddSocial,
   onImport,
   onDuplicate,
   onRename,
@@ -444,7 +444,6 @@ export function FramePanel({
   onSelect: (frameId: string) => void;
   onTogglePlay: () => void;
   onAdd: () => void;
-  onAddSocial?: () => void;
   onImport?: () => void;
   onDuplicate: (frameId: string) => void;
   onRename: (frameId: string, name: string) => void;
@@ -533,11 +532,6 @@ export function FramePanel({
           <IconButton label="Add frame" disabled={locked} onClick={onAdd}>
             <Plus />
           </IconButton>
-          {onAddSocial ? (
-            <IconButton label="Add frame size" disabled={locked} onClick={onAddSocial}>
-              <Square />
-            </IconButton>
-          ) : null}
         </div>
       }
     >
@@ -1350,6 +1344,94 @@ export function StylePanel({
       <p className="text-xs text-muted">
         The style guide belongs to the project, so every asset in it stays related.
       </p>
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------------------- text */
+
+/**
+ * A text layer keeps its layout while its pixels stay palette-indexed. The
+ * panel edits the spec; the canvas rasterizes it again, so text never leaves
+ * the pixel document.
+ */
+export function TextPanel({
+  layer,
+  palette,
+  locked,
+  onChange,
+  onRemove,
+}: {
+  layer: Layer;
+  palette: string[];
+  locked: boolean;
+  onChange: (patch: Partial<TextLayerSpec>) => void;
+  onRemove: () => void;
+}) {
+  const spec = layer.text;
+  if (!spec) return null;
+  const sizeOptions = [16, 24, 32, 48, 64, 96, 120];
+  return (
+    <Panel
+      title="Text"
+      className="shrink-0"
+      action={
+        <IconButton label="Delete text" disabled={locked} onClick={onRemove}>
+          <Trash />
+        </IconButton>
+      }
+    >
+      <div className="grid gap-2">
+        <Field label="Content" htmlFor="text-content">
+          <textarea
+            id="text-content"
+            value={spec.text}
+            disabled={locked}
+            rows={2}
+            onChange={(event) => onChange({ text: event.target.value })}
+            className="w-full resize-y border-2 border-line bg-field px-2 py-1.5 text-pixel-body text-ink outline-none focus-visible:border-accent disabled:opacity-50"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Size" htmlFor="text-size">
+            <select
+              id="text-size"
+              value={spec.size}
+              disabled={locked}
+              onChange={(event) => onChange({ size: Number(event.target.value) })}
+              className="w-full border-2 border-line bg-field px-2 py-1.5 font-mono text-[11px] text-ink outline-none focus-visible:border-accent disabled:opacity-50"
+            >
+              {sizeOptions.map((size) => (
+                <option key={size} value={size}>
+                  {size}px
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Colour" htmlFor="text-color">
+            <div id="text-color" className="flex flex-wrap gap-1">
+              {palette.map((hex, index) => (
+                <button
+                  key={hex}
+                  type="button"
+                  aria-label={`Text colour ${hex}`}
+                  aria-pressed={spec.color === index}
+                  disabled={locked}
+                  onClick={() => onChange({ color: index })}
+                  className={`h-5 w-5 border-2 ${
+                    spec.color === index ? "border-accent" : "border-line"
+                  } disabled:opacity-50`}
+                  style={{ background: hex }}
+                />
+              ))}
+            </div>
+          </Field>
+        </div>
+        <p className="text-[11px] leading-snug text-muted">
+          Click the text on the canvas to select it, then drag to move it. Every edit is
+          rasterized back into this pixel layer.
+        </p>
+      </div>
     </Panel>
   );
 }

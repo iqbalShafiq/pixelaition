@@ -24,9 +24,15 @@ export {
   layerById,
   usedColorCount,
 } from "./buffer.js";
-export { decodePixels, encodePixels, normalizeHex } from "./pixels.js";
+export { decodePixels, emptyPixels, encodePixels, normalizeHex } from "./pixels.js";
 export { createId } from "./ids.js";
-export { assetSchema, pixelProjectSchema, styleGuideSchema } from "./schema.js";
+export {
+  assetSchema,
+  layerSchema,
+  pixelProjectSchema,
+  styleGuideSchema,
+  textLayerSchema,
+} from "./schema.js";
 export {
   MAX_COLORS,
   MAX_HISTORY,
@@ -49,4 +55,5 @@ export type {
   Layer,
   PixelProject,
   StyleGuide,
+  TextLayerSpec,
 } from "./types.js";

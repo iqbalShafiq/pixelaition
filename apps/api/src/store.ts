@@ -24,6 +24,7 @@ import {
   createBuffer,
   decodePixels,
   defaultStyle,
+  emptyPixels,
   encodePixels,
   frameToBuffer,
   writeFrame,
@@ -418,10 +419,69 @@ export async function addSocialFrameRecord(
   db: Database,
   userId: string,
   assetId: string,
-  input: { presetId: string; name?: string; template?: string; copy?: CopyDeck },
+  input: {
+    presetId?: string;
+    width?: number;
+    height?: number;
+    name?: string;
+    template?: string;
+    copy?: CopyDeck;
+  },
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
+  if (input.width !== undefined && input.height !== undefined) {
+    const width = Math.round(input.width);
+    const height = Math.round(input.height);
+    if (width < 8 || height < 8 || width > 4096 || height > 4096) {
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_SIZE",
+          message: "A custom frame must be between 8 and 4096 pixels on each side.",
+        },
+      };
+    }
+    const index =
+      record.frames.reduce((highest, frame) => Math.max(highest, frame.index), -1) + 1;
+    const blank = emptyPixels(width, height);
+    await db.insert(frames).values({
+      id: randomUUID(),
+      assetId,
+      name: input.name?.trim() || `Custom ${width}×${height}`,
+      index,
+      layers: [
+        {
+          id: "background",
+          name: "Background",
+          visible: true,
+          pixels: encodePixels(blank),
+        },
+        {
+          id: "artwork",
+          name: "Artwork",
+          visible: true,
+          pixels: encodePixels(blank),
+        },
+      ],
+      kind: "sprite",
+      width,
+      height,
+      presetId: null,
+      scene: null,
+      copyOverride: {},
+      status: "draft",
+      version: 1,
+    });
+    await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
+    return { asset: await getAssetRecord(db, userId, assetId) };
+  }
+  if (!input.presetId) {
+    return {
+      asset: undefined,
+      failure: { code: "UNKNOWN_FORMAT", message: "A canvas size is required." },
+    };
+  }
   let preset;
   try {
     preset = getPreset(input.presetId);

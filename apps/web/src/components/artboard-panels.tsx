@@ -715,24 +715,87 @@ export function FormatPicker({
   onOpenChange,
   existing,
   onPick,
+  onCustom,
   busy,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   existing: Set<string>;
   onPick: (presetId: string) => void;
+  onCustom: (width: number, height: number) => void;
   busy: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const [customWidth, setCustomWidth] = useState("1080");
+  const [customHeight, setCustomHeight] = useState("1080");
   const query = search.trim().toLowerCase();
+  const width = Number.parseInt(customWidth, 10);
+  const height = Number.parseInt(customHeight, 10);
+  const customValid =
+    Number.isInteger(width) &&
+    Number.isInteger(height) &&
+    width >= 8 &&
+    height >= 8 &&
+    width <= 4096 &&
+    height <= 4096;
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Add a frame size"
-      description="Native canvas sizes, safe areas and byte limits come from the size registry."
+      title="Add a frame"
+      description="Pick a native canvas preset, or make a square/custom frame."
       width="54rem"
     >
+      <section className="grid gap-2 border-2 border-line bg-field p-2">
+        <p className="text-pixel-mono tracking-[0.16em] text-accent uppercase">
+          Custom canvas
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Width" htmlFor="custom-width">
+            <TextInput
+              id="custom-width"
+              type="number"
+              min={8}
+              max={4096}
+              value={customWidth}
+              disabled={busy}
+              onChange={(event) => setCustomWidth(event.target.value)}
+              className="w-24"
+            />
+          </Field>
+          <span className="pb-2 font-mono text-[11px] text-muted">×</span>
+          <Field label="Height" htmlFor="custom-height">
+            <TextInput
+              id="custom-height"
+              type="number"
+              min={8}
+              max={4096}
+              value={customHeight}
+              disabled={busy}
+              onChange={(event) => setCustomHeight(event.target.value)}
+              className="w-24"
+            />
+          </Field>
+          <Button
+            tone="solid"
+            disabled={busy || !customValid}
+            onClick={() => customValid && onCustom(width, height)}
+          >
+            Add custom frame
+          </Button>
+          <Button
+            tone="ghost"
+            disabled={busy}
+            onClick={() => {
+              setCustomWidth("1080");
+              setCustomHeight("1080");
+              onCustom(1080, 1080);
+            }}
+          >
+            Square 1080
+          </Button>
+        </div>
+      </section>
       <Field label="Search" htmlFor="format-search">
         <TextInput
           id="format-search"

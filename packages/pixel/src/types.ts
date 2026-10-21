@@ -15,11 +15,30 @@ export type StyleGuide = {
   notes: string;
 };
 
+export type TextLayerSpec = {
+  text: string;
+  face: "silkscreen" | "pixelify" | "mono";
+  weight: 400 | 700;
+  size: number;
+  color: number;
+  x: number;
+  y: number;
+  width: number;
+  align: "left" | "center" | "right";
+  lineHeight?: number;
+  maxLines?: number;
+  letterSpacing?: number;
+  scale?: number;
+  height?: number;
+};
+
 export type Layer = {
   id: string;
   name: string;
   visible: boolean;
   pixels: Uint8Array;
+  /** A text layer stays editable: this is the spec its pixels were painted from. */
+  text?: TextLayerSpec;
 };
 
 export type FrameBuffer = {
@@ -121,6 +140,12 @@ export type Command =
   | { type: "reindexPalette"; palette: string[]; mapping: Record<string, number> }
   | { type: "resize"; width: number; height: number }
   | { type: "addLayer"; id: string; name: string }
+  | {
+      type: "replaceLayer";
+      layerId: string;
+      pixels: Uint8Array;
+      text?: TextLayerSpec | null;
+    }
   | { type: "renameLayer"; layerId: string; name: string }
   | { type: "setLayerVisible"; layerId: string; visible: boolean }
   | { type: "removeLayer"; layerId: string }

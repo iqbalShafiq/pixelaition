@@ -12,12 +12,15 @@ import {
   frameToBuffer,
   linePoints,
   moveFrame,
+  emptyPixels,
   normalizeHex,
   type Asset,
   type Command,
   type Frame,
   type FrameBuffer,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
+import { drawText } from "@pixelaition/artboard";
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
@@ -1223,6 +1226,171 @@ export function createPixelTools(
     },
   });
 
+  const textSizes = [16, 24, 32, 48, 64, 96, 120];
+  function textSizeFor(height: number, requested?: number): number {
+    if (requested && textSizes.includes(requested)) return requested;
+    const preferred = height * 0.06;
+    return textSizes.reduce((best, value) =>
+      Math.abs(value - preferred) < Math.abs(best - preferred) ? value : best,
+    );
+  }
+
+  function textSpec(
+    buffer: FrameBuffer,
+    input: {
+      text: string;
+      x?: number;
+      y?: number;
+      size?: number;
+      color?: number;
+      width?: number;
+      align?: "left" | "center" | "right";
+      face?: "silkscreen" | "pixelify" | "mono";
+      weight?: 400 | 700;
+      lineHeight?: number;
+      maxLines?: number;
+      letterSpacing?: number;
+      scale?: number;
+      height?: number;
+    },
+  ): TextLayerSpec {
+    const color = input.color ?? 1;
+    if (!Number.isInteger(color) || color < 1 || color >= buffer.palette.length) {
+      throw new Error("That text colour is not in the palette.");
+    }
+    return {
+      text: input.text,
+      face: input.face ?? "silkscreen",
+      weight: input.weight ?? 700,
+      size: textSizeFor(buffer.height, input.size),
+      color,
+      x: Math.max(
+        0,
+        Math.min(input.x ?? Math.round(buffer.width * 0.06), buffer.width - 1),
+      ),
+      y: Math.max(
+        0,
+        Math.min(input.y ?? Math.round(buffer.height * 0.12), buffer.height - 1),
+      ),
+      width: Math.max(
+        1,
+        Math.min(input.width ?? Math.round(buffer.width * 0.8), buffer.width),
+      ),
+      align: input.align ?? "left",
+      ...(input.lineHeight !== undefined ? { lineHeight: input.lineHeight } : {}),
+      ...(input.maxLines !== undefined ? { maxLines: input.maxLines } : { maxLines: 3 }),
+      ...(input.letterSpacing !== undefined
+        ? { letterSpacing: input.letterSpacing }
+        : {}),
+      ...(input.scale !== undefined ? { scale: input.scale } : {}),
+      ...(input.height !== undefined ? { height: input.height } : {}),
+    };
+  }
+
+  function textPixels(buffer: FrameBuffer, spec: TextLayerSpec): Uint8Array {
+    const pixels = emptyPixels(buffer.width, buffer.height);
+    drawText(
+      pixels,
+      buffer.width,
+      buffer.height,
+      { ...spec, id: "text", kind: "text" },
+      buffer.palette.length,
+    );
+    return pixels;
+  }
+
+  const addTextTool = createTool({
+    name: "add_text",
+    description:
+      "Add editable pixel text to the current frame. Text survives as a text layer: its content, colour, size, width, alignment and position can be edited with edit_text later. Coordinates and size are document pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      text: z.string().min(1).max(500),
+      x: z.number().int().nonnegative().optional(),
+      y: z.number().int().nonnegative().optional(),
+      size: z.number().int().positive().optional(),
+      color: z.number().int().positive().optional(),
+      width: z.number().int().positive().optional(),
+      align: z.enum(["left", "center", "right"]).optional(),
+      layerName: z.string().min(1).max(40).optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const spec = textSpec(frame.buffer, input);
+      const layerId = crypto.randomUUID().slice(0, 8);
+      const added = editFrame(run, frame.id, {
+        type: "addLayer",
+        id: layerId,
+        name: input.layerName ?? "Text",
+      });
+      const edited = editFrame(run, frame.id, {
+        type: "replaceLayer",
+        layerId,
+        pixels: textPixels(added.buffer, spec),
+        text: spec,
+      });
+      run.onStroke?.({ label: "text", points: [] }, edited.buffer, edited.id);
+      return {
+        layerId,
+        text: spec.text,
+        box: { x: spec.x, y: spec.y, width: spec.width },
+      };
+    },
+  });
+
+  const editTextTool = createTool({
+    name: "edit_text",
+    description:
+      "Edit an editable text layer on the current frame: content, size, colour, width, alignment or position. layerId takes the layer id or its name. Moving x/y is a drag in the model; the pixels are rebuilt at the same canvas size.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      text: z.string().max(500).optional(),
+      x: z.number().int().nonnegative().optional(),
+      y: z.number().int().nonnegative().optional(),
+      size: z.number().int().positive().optional(),
+      color: z.number().int().positive().optional(),
+      width: z.number().int().positive().optional(),
+      align: z.enum(["left", "center", "right"]).optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const layerId = resolveLayerRef(frame.buffer, input.layerId);
+      const layer = frame.buffer.layers.find((item) => item.id === layerId);
+      if (!layer?.text) throw new Error("That layer is not editable text.");
+      const spec = textSpec(frame.buffer, {
+        ...layer.text,
+        ...(input.text !== undefined ? { text: input.text } : {}),
+        ...(input.x !== undefined ? { x: input.x } : {}),
+        ...(input.y !== undefined ? { y: input.y } : {}),
+        ...(input.size !== undefined ? { size: input.size } : {}),
+        ...(input.color !== undefined ? { color: input.color } : {}),
+        ...(input.width !== undefined ? { width: input.width } : {}),
+        ...(input.align !== undefined ? { align: input.align } : {}),
+      });
+      const edited = editFrame(run, frame.id, {
+        type: "replaceLayer",
+        layerId,
+        pixels: textPixels(frame.buffer, spec),
+        text: spec,
+      });
+      run.onStroke?.({ label: "text", points: [] }, edited.buffer, edited.id);
+      return {
+        layerId,
+        text: spec.text,
+        box: { x: spec.x, y: spec.y, width: spec.width },
+      };
+    },
+  });
+
   const addLayerTool = createTool({
     name: "add_layer",
     description:
@@ -2055,6 +2223,8 @@ export function createPixelTools(
     resizeCanvas,
     setPalette,
     addLayerTool,
+    addTextTool,
+    editTextTool,
     renameLayerTool,
     setLayerVisibleTool,
     removeLayerTool,

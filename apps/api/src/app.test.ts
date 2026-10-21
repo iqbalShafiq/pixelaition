@@ -271,6 +271,53 @@ describe.skipIf(!db)("API routes", () => {
       expect(social.layers.length).toBe(2);
       expect(social.layers[0].name).toBe("Background");
 
+      const custom = await request(app)
+        .post(`/api/assets/${asset.body.id}/frames`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ kind: "social", width: 320, height: 180 });
+      expect(custom.status).toBe(201);
+      const customFrame = custom.body.frames.find(
+        (frame: { width?: number }) => frame.width === 320,
+      );
+      expect(customFrame.height).toBe(180);
+      expect(customFrame.layers.map((layer: { name: string }) => layer.name)).toEqual([
+        "Background",
+        "Artwork",
+      ]);
+      const textSpec = {
+        text: "Hello",
+        face: "silkscreen",
+        weight: 700,
+        size: 16,
+        color: 1,
+        x: 8,
+        y: 8,
+        width: 200,
+        align: "left",
+        maxLines: 2,
+      };
+      const savedText = await request(app)
+        .put(`/api/assets/${asset.body.id}/frames/${customFrame.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          layers: [
+            ...customFrame.layers,
+            {
+              id: "text-layer",
+              name: "Text",
+              visible: true,
+              text: textSpec,
+              pixels: customFrame.layers[0].pixels,
+            },
+          ],
+        });
+      expect(savedText.status).toBe(200);
+      expect(
+        savedText.body.frames
+          .find((frame: { id: string }) => frame.id === customFrame.id)
+          .layers.find((layer: { id: string }) => layer.id === "text-layer").text,
+      ).toEqual(textSpec);
+
       const resources = await request(app)
         .get(`/api/projects/${project.body.id}/resources`)
         .set("authorization", `Bearer ${token}`);

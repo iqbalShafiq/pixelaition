@@ -26,16 +26,15 @@ import {
   type FrameBuffer,
   type History,
   type StyleGuide,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
 import {
   checkScene,
   getPreset,
   paletteRoles,
-  renderScene,
   summarizeChecks,
   type Artboard,
   type ArtboardCheck,
-  type Element,
 } from "@pixelaition/artboard";
 import { ArtboardCanvas } from "../components/artboard-canvas.js";
 import {
@@ -91,15 +90,11 @@ import {
   LayerPanel,
   PalettePanel,
   StylePanel,
+  TextPanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import {
-  Grid,
-  Minus,
-  Plus,
-  Square,
-  Text as TextIcon,
-} from "../components/pixel-icons.js";
+import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
+import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -423,6 +418,8 @@ export function EditorScreen() {
   const [socialElementId, setSocialElementId] = useState<string | null>(null);
   const [socialFit, setSocialFit] = useState(true);
   const [socialZoom, setSocialZoom] = useState(1);
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+  const textDragHistory = useRef<{ frameId: string; history: History } | null>(null);
   const [socialPickerOpen, setSocialPickerOpen] = useState(false);
   const [importFrameOpen, setImportFrameOpen] = useState(false);
   const [paletteImportOpen, setPaletteImportOpen] = useState(false);
@@ -690,6 +687,22 @@ export function EditorScreen() {
     buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
       ? activeLayerId
       : (buffer?.layers[0]?.id ?? "");
+  const selectedTextLayer =
+    buffer?.layers.find((layer) => layer.id === selectedTextId && layer.text) ?? null;
+  const textBoxes = useMemo(
+    () =>
+      buffer
+        ? buffer.layers.flatMap((layer) => {
+            if (!layer.text || !layer.visible) return [];
+            const box = textLayerBox(layer, buffer.width, buffer.height);
+            return box ? [{ id: layer.id, ...box }] : [];
+          })
+        : [],
+    [buffer],
+  );
+  useEffect(() => {
+    if (selectedTextId && !selectedTextLayer) setSelectedTextId(null);
+  }, [selectedTextId, selectedTextLayer]);
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // A live run can touch every frame of the asset, so the editor locks all of
   // them; runFrameId still marks the frame the agent is painting on.
@@ -829,6 +842,7 @@ export function EditorScreen() {
             id: layer.id,
             name: layer.name,
             visible: layer.visible,
+            ...(layer.text ? { text: layer.text } : {}),
             pixels: bytesToBase64(layer.pixels),
           })),
         }),
@@ -917,29 +931,24 @@ export function EditorScreen() {
     socialSaveChains.current.set(id, next);
   }
 
-  function addRasterLayer(name: string, element: Element): void {
+  function addTextLayer(): void {
     if (!asset.data || !frame || !buffer || !frameId) return;
-    const preset = presetForFrame(asset.data, frame);
-    const image = renderScene({
-      scene: { version: 1, background: { kind: "transparent" }, elements: [element] },
-      preset,
-      palette: asset.data.palette,
-      sprites: socialSprites,
-    }).image;
-    const layerId = `${name.toLowerCase()}-${crypto.randomUUID().slice(0, 8)}`;
-    const added = applyCommand(buffer, { type: "addLayer", id: layerId, name });
+    const roles = paletteRoles(asset.data.palette);
+    const width = frame.width ?? asset.data.width;
+    const height = frame.height ?? asset.data.height;
+    const spec = defaultTextSpec(width, height, roles.ink);
+    const layerId = `text-${crypto.randomUUID().slice(0, 8)}`;
+    const added = applyCommand(buffer, { type: "addLayer", id: layerId, name: "Text" });
     if (!added.ok) {
       setError(added.message);
       return;
     }
+    const pixels = renderTextSpec(spec, width, height, buffer.palette.length);
     const stamped = applyCommand(added.buffer, {
-      type: "stamp",
+      type: "replaceLayer",
       layerId,
-      x: 0,
-      y: 0,
-      width: image.width,
-      height: image.height,
-      pixels: [...image.indices],
+      pixels,
+      text: spec,
     });
     if (!stamped.ok) {
       setError(stamped.message);
@@ -947,68 +956,81 @@ export function EditorScreen() {
     }
     update(frameId, pushHistory(drafts[frameId]!, stamped.buffer));
     setActiveLayerId(layerId);
+    setSelectedTextId(layerId);
     setError(null);
   }
 
-  function addTextLayer(): void {
-    if (!asset.data || !frame) return;
-    const roles = paletteRoles(asset.data.palette);
-    const width = frame.width ?? asset.data.width;
-    const height = frame.height ?? asset.data.height;
-    const size = [16, 24, 32, 48, 64, 96, 120].reduce(
-      (best, value) =>
-        Math.abs(value - height * 0.06) < Math.abs(best - height * 0.06) ? value : best,
-      16,
+  function updateTextLayer(layerId: string, patch: Partial<TextLayerSpec>): void {
+    if (!buffer || !frameId) return;
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = { ...layer.text, ...patch };
+    const pixels = renderTextSpec(
+      spec,
+      buffer.width,
+      buffer.height,
+      buffer.palette.length,
     );
-    addRasterLayer("Text", {
-      id: `text-${crypto.randomUUID().slice(0, 8)}`,
-      kind: "text",
-      text: width <= 64 ? "Aa" : "Your words",
-      face: "silkscreen",
-      weight: 700,
-      size,
-      color: roles.ink,
-      x: Math.round(width * 0.06),
-      y: Math.round(height * 0.12),
-      width: Math.round(width * 0.8),
-      height: Math.max(16, Math.round(height * 0.35)),
-      align: "left",
-      maxLines: 3,
+    edit(frameId, drafts[frameId], {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
     });
   }
 
-  function addBlockLayer(): void {
-    if (!asset.data || !frame) return;
-    const roles = paletteRoles(asset.data.palette);
-    const width = frame.width ?? asset.data.width;
-    const height = frame.height ?? asset.data.height;
-    addRasterLayer("Block", {
-      id: `block-${crypto.randomUUID().slice(0, 8)}`,
-      kind: "rect",
-      x: 0,
-      y: 0,
-      width,
-      height: Math.max(4, Math.round(height * 0.14)),
-      color: roles.accent,
-    });
+  function beginTextDrag(layerId: string): void {
+    if (!frameId) return;
+    const history = draftsRef.current[frameId];
+    textDragHistory.current = history ? { frameId, history } : null;
+    setActiveLayerId(layerId);
+    setSelectedTextId(layerId);
   }
 
-  function addPatternLayer(): void {
-    if (!asset.data || !frame) return;
-    const roles = paletteRoles(asset.data.palette);
-    const width = frame.width ?? asset.data.width;
-    const height = frame.height ?? asset.data.height;
-    addRasterLayer("Pattern", {
-      id: `pattern-${crypto.randomUUID().slice(0, 8)}`,
-      kind: "pattern",
-      x: 0,
-      y: 0,
-      width,
-      height,
-      colorA: roles.background,
-      colorB: roles.muted,
-      unit: Math.max(4, Math.round(width / 64)),
-      mode: "checker",
+  function moveTextLayer(layerId: string, x: number, y: number): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      x: Math.max(0, Math.min(x, bufferNow.width - 1)),
+      y: Math.max(0, Math.min(y, bufferNow.height - 1)),
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
+    // A drag is one edit: update the present while the pointer moves, and fold
+    // the whole gesture into history when the pointer is released. The ref is
+    // updated immediately so a burst of pointer moves never reads a stale box.
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function endTextDrag(): void {
+    const start = textDragHistory.current;
+    textDragHistory.current = null;
+    if (!start || !frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    if (current.present === start.history.present) return;
+    update(frameId, {
+      past: [...start.history.past, start.history.present].slice(-100),
+      present: current.present,
+      future: [],
     });
   }
 
@@ -1036,6 +1058,27 @@ export function EditorScreen() {
         title: "Frame added",
         description: "Native size and safe areas are ready.",
       });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not add the frame",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const addCustomFrame = useMutation({
+    mutationFn: (input: { width: number; height: number }) =>
+      api<AssetDto>(`/api/assets/${assetId}/frames`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "social", ...input }),
+      }),
+    onSuccess: (data) => {
+      const previous = new Set(asset.data?.frames.map((item) => item.id) ?? []);
+      const created = data.frames.find((item) => !previous.has(item.id));
+      client.setQueryData(["asset", assetId], data);
+      if (created) setFrameId(created.id);
+      setSocialPickerOpen(false);
+      notify({ title: "Frame added", description: "Custom canvas is ready." });
     },
     onError: (reason: unknown) =>
       notify({
@@ -2853,8 +2896,7 @@ export function EditorScreen() {
           setSocialElementId(null);
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
-        onAdd={() => void frameAction("add")}
-        onAddSocial={() => setSocialPickerOpen(true)}
+        onAdd={() => setSocialPickerOpen(true)}
         onImport={() => setImportFrameOpen(true)}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
         onRename={(id, name) => void frameAction("rename", name, id)}
@@ -2867,7 +2909,11 @@ export function EditorScreen() {
         selectedElementId={null}
         activeId={panelLayerId}
         locked={locked}
-        onSelect={setActiveLayerId}
+        onSelect={(layerId) => {
+          setActiveLayerId(layerId);
+          const layer = buffer?.layers.find((item) => item.id === layerId);
+          setSelectedTextId(layer?.text ? layerId : null);
+        }}
         onToggleVisible={(layerId, visible) =>
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
@@ -2953,8 +2999,24 @@ export function EditorScreen() {
   );
 
   const frameTabBody = (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 [&>*]:shrink-0">
       {frameHeaderPanel}
+      {selectedTextLayer ? (
+        <TextPanel
+          layer={selectedTextLayer}
+          palette={activePalette}
+          locked={locked}
+          onChange={(patch) => updateTextLayer(selectedTextLayer.id, patch)}
+          onRemove={() => {
+            if (!frameId || !buffer) return;
+            edit(frameId, drafts[frameId], {
+              type: "removeLayer",
+              layerId: selectedTextLayer.id,
+            });
+            setSelectedTextId(null);
+          }}
+        />
+      ) : null}
       {palettePanel}
       {viewPanel}
       <StylePanel
@@ -2976,8 +3038,8 @@ export function EditorScreen() {
         <p className="text-[12px] text-muted">
           {buffer?.layers.length ?? 0} layers on a {buffer?.width ?? 0}×
           {buffer?.height ?? 0} canvas. Every layer is edited in the left rail; use the
-          canvas tools to paint, or the top bar to add text, a block, or a pattern as a
-          new layer.
+          canvas tools to paint, or Add Text beside the brush sizes to place editable
+          pixel text.
         </p>
       </section>
       <section className="grid gap-2 border-2 border-line bg-field p-2">
@@ -3205,37 +3267,10 @@ export function EditorScreen() {
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
                     onDeselect={() => setSelection(null)}
+                    onAddText={addTextLayer}
+                    addTextDisabled={running || !buffer}
                   />
                 </div>
-                <span aria-hidden className="h-5 w-0.5 shrink-0 bg-line" />
-                <IconButton
-                  label="Add text"
-                  disabled={running || !buffer}
-                  onClick={addTextLayer}
-                >
-                  <TextIcon />
-                </IconButton>
-                <IconButton
-                  label="Add block"
-                  disabled={running || !buffer}
-                  onClick={addBlockLayer}
-                >
-                  <Square />
-                </IconButton>
-                <IconButton
-                  label="Add pattern"
-                  disabled={running || !buffer}
-                  onClick={addPatternLayer}
-                >
-                  <Grid />
-                </IconButton>
-                <Button
-                  tone="ghost"
-                  className="shrink-0 px-2 py-1 text-pixel-label"
-                  onClick={() => setSocialPickerOpen(true)}
-                >
-                  + Frame
-                </Button>
               </div>
             </div>
             <div
@@ -3331,6 +3366,15 @@ export function EditorScreen() {
                     locked={locked || preview !== null}
                     agentCursor={frameId ? (agentCursors[frameId] ?? null) : null}
                     overlay={socialFrame ? null : sceneOverlay}
+                    textBoxes={textBoxes}
+                    selectedTextBoxId={selectedTextId}
+                    onSelectText={(id) => {
+                      setActiveLayerId(id);
+                      setSelectedTextId(id);
+                    }}
+                    onTextDragStart={beginTextDrag}
+                    onMoveText={moveTextLayer}
+                    onTextDragEnd={endTextDrag}
                     onAction={onAction}
                     onCamera={(next) => {
                       setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
@@ -3826,13 +3870,12 @@ export function EditorScreen() {
         onOpenChange={setSocialPickerOpen}
         existing={
           new Set(
-            frames
-              .filter((item) => item.kind === "social" && item.presetId)
-              .map((item) => item.presetId as string),
+            frames.filter((item) => item.presetId).map((item) => item.presetId as string),
           )
         }
         onPick={(presetId) => addSocialFrame.mutate(presetId)}
-        busy={addSocialFrame.isPending}
+        onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
+        busy={addSocialFrame.isPending || addCustomFrame.isPending}
       />
       <ExportDialog
         open={exportOpen}
