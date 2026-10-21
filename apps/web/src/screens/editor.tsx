@@ -35,6 +35,7 @@ import {
   paletteRoles,
   summarizeChecks,
   syncCopyScene,
+  type Artboard,
   type ArtboardCheck,
   type ArtboardScene,
   type CopyDeck,
@@ -1963,6 +1964,81 @@ export function EditorScreen() {
     },
     [assetId],
   );
+  const sceneStream = useRef<EventSource | null>(null);
+  useEffect(() => {
+    sceneStream.current?.close();
+    sceneStream.current = null;
+    if (!runId) return;
+    const source = new EventSource(`/api/runs/${runId}/stream?after=0`);
+    source.onmessage = (event) => {
+      const body = JSON.parse(event.data) as { type: string; data: unknown };
+      if (body.type === "frame-deleted") {
+        const frameId = (body.data as { frameId?: unknown }).frameId;
+        if (typeof frameId !== "string") return;
+        client.setQueryData(["asset", assetId], (current: AssetDto | undefined) => {
+          if (!current) return current;
+          return {
+            ...current,
+            frames: current.frames.filter((item) => item.id !== frameId),
+          };
+        });
+        setFrameId((active) => (active === frameId ? null : active));
+        return;
+      }
+      if (body.type !== "frame-scene") return;
+      const incoming = (body.data as { artboard?: Artboard }).artboard;
+      if (!incoming) return;
+      client.setQueryData(["asset", assetId], (current: AssetDto | undefined) => {
+        if (!current) return current;
+        const existing = current.frames.find((item) => item.id === incoming.id);
+        if (existing) {
+          return {
+            ...current,
+            frames: current.frames.map((item) =>
+              item.id === incoming.id
+                ? {
+                    ...item,
+                    name: incoming.name,
+                    scene: incoming.scene,
+                    copyOverride: incoming.copyOverride,
+                    status: incoming.status,
+                    version: incoming.version,
+                    updatedAt: incoming.updatedAt,
+                  }
+                : item,
+            ),
+          };
+        }
+        return {
+          ...current,
+          frames: [
+            ...current.frames,
+            {
+              id: incoming.id,
+              name: incoming.name,
+              index: current.frames.length,
+              layers: [],
+              kind: "social",
+              width: incoming.width,
+              height: incoming.height,
+              presetId: incoming.presetId,
+              scene: incoming.scene,
+              copyOverride: incoming.copyOverride,
+              status: incoming.status,
+              version: incoming.version,
+              updatedAt: incoming.updatedAt,
+            },
+          ],
+        };
+      });
+      setFrameId((active) => active ?? incoming.id);
+    };
+    sceneStream.current = source;
+    return () => {
+      source.close();
+      if (sceneStream.current === source) sceneStream.current = null;
+    };
+  }, [assetId, client, runId]);
 
   // task-complete is the live signal. A missed event still leaves the row
   // completed, and a run id that outlives that row keeps the editor locked
@@ -3380,7 +3456,7 @@ export function EditorScreen() {
                     paddingBottom: consoleOpen ? "min(56vh, 32rem)" : "9rem",
                   }}
                 >
-                  <div className="flex h-full min-h-0 w-full items-center justify-center p-3">
+                  <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
                     <ArtboardCanvas
                       artboard={socialArtboard}
                       preset={socialPreset}
@@ -3388,6 +3464,9 @@ export function EditorScreen() {
                       sprites={socialSprites}
                       fit={socialFit}
                       zoom={socialZoom}
+                      onZoom={(direction) =>
+                        setSocialZoom((value) => stepSocialZoom(value, direction))
+                      }
                       showZones={false}
                       selectedId={socialElementId}
                       onSelect={setSocialElementId}

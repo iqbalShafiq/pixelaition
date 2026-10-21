@@ -3391,6 +3391,7 @@ function buildArtboardPrompt(request: string, loaded: LoadedArtboardSet): string
     "Call list_formats before choosing a layout. Call read_set to see the current boards and shared copy. Call list_project_sprites to reuse any sprite frame from this project; place_sprite accepts its assetId/frameId.",
     "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
     "After approval: create the planned boards that do not exist with create_artboard, keep the shared copy with set_copy, and compose each board with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent across the family; adapt the layout, not the identity.",
+    "Work visibly: call those tools one edit at a time. Every call updates the frame for the user; never hold the whole layout in your head and reveal it only at save.",
     "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
     "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
     "Fix every check error before saving. Save each finished board with save_artboard immediately, then answer in the language of the request with a short summary of the family and what still needs the user's words. Do not call set_copy after composing: it re-syncs text and can undo per-board layout. If copy must change, change it before the boards.",
@@ -3734,6 +3735,7 @@ function buildSocialPrompt(request: string, loaded: LoadedSocialAsset): string {
     "Use assetId and frameId exactly as list_project_sprites returns them. Never shorten, reconstruct or guess an id; if place_sprite refuses a source, re-read the list and retry once with the exact pair.",
     "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
     "After approval: create the planned frames with create_artboard, keep the shared copy with set_copy, and compose each with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent; adapt the layout, not the identity.",
+    "Work visibly: call those tools one edit at a time. Every call updates the frame for the user; never hold the whole layout in your head and reveal it only at save.",
     "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
     "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
     "Fix every check error before saving. Save each finished frame with save_artboard immediately, then answer in the language of the request with a short summary and what still needs the user's words. Do not call set_copy after composing.",
@@ -3761,6 +3763,9 @@ function bindSocialAssetRunFor(options: {
     artboards: new Map(loaded.artboards.map((artboard) => [artboard.id, artboard])),
     sprites: loaded.sprites,
     planApproved: options.planApproved ?? false,
+    onChange: (artboard) => {
+      publish(publicRunId, "frame-scene", { artboard });
+    },
     onSave: (artboard) => saveSocialFrameRecord(artboard),
     onCreate: (input) =>
       createSocialFrameRecord({
@@ -3780,8 +3785,15 @@ function bindSocialAssetRunFor(options: {
         .update(assets)
         .set({ updatedAt: new Date() })
         .where(eq(assets.id, loaded.asset.id));
+      publish(publicRunId, "frame-deleted", { frameId: artboardId });
     },
-    onSetCopy: (copy) => setSocialCopyRecord(loaded.asset.id, copy),
+    onSetCopy: async (copy) => {
+      const result = await setSocialCopyRecord(loaded.asset.id, copy);
+      for (const artboard of result.artboards) {
+        publish(publicRunId, "frame-scene", { artboard });
+      }
+      return result;
+    },
     onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
     onLoadSprite: async (assetId, frameId) => {
       if (frameId) return loaded.sprites.get(`${assetId}:${frameId}`);

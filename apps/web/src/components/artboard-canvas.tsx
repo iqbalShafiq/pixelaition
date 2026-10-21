@@ -21,6 +21,7 @@ export function ArtboardCanvas({
   sprites,
   fit,
   zoom = 1,
+  onZoom,
   showZones,
   selectedId,
   onSelect,
@@ -34,6 +35,7 @@ export function ArtboardCanvas({
   sprites: Map<string, SpriteSource>;
   fit: boolean;
   zoom?: number;
+  onZoom?: (direction: 1 | -1) => void;
   showZones: boolean;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
@@ -43,6 +45,8 @@ export function ArtboardCanvas({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(onZoom);
+  zoomRef.current = onZoom;
   const dragRef = useRef<{
     id: string;
     dx: number;
@@ -87,7 +91,16 @@ export function ArtboardCanvas({
       setStageSize({ width, height });
     });
     observer.observe(stage);
-    return () => observer.disconnect();
+    const onWheel = (event: WheelEvent) => {
+      if (!zoomRef.current) return;
+      event.preventDefault();
+      zoomRef.current(event.deltaY < 0 ? 1 : -1);
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      observer.disconnect();
+      stage.removeEventListener("wheel", onWheel);
+    };
   }, []);
 
   const bounds = useMemo(() => {
@@ -203,7 +216,7 @@ export function ArtboardCanvas({
       style={fit ? undefined : { width: freeWidth, height: freeHeight }}
     >
       <div
-        className="relative outline outline-2 outline-accent"
+        className="relative shrink-0 outline outline-2 outline-accent"
         style={
           fit
             ? thumbnail

@@ -25,6 +25,8 @@ export type ArtboardRunBinding = {
   ownedArtboardIds?: ReadonlySet<string>;
   role?: "art-director" | "layout";
   planApproved?: boolean;
+  /** Every in-memory scene edit, before (and after) save. */
+  onChange?: (artboard: Artboard) => void;
   onSave?: (artboard: Artboard) => Promise<Artboard>;
   onCreate?: (input: {
     presetId: string;
@@ -119,6 +121,7 @@ export function writeArtboard(run: ArtboardRunBinding, artboard: Artboard): void
   assertPlanApproved(run);
   run.artboards.set(artboard.id, artboard);
   run.currentArtboardId = artboard.id;
+  run.onChange?.(artboard);
 }
 
 export function spriteFor(
