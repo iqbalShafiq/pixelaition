@@ -40,7 +40,6 @@ import {
   MenuItem,
   Panel,
   Popover,
-  SelectControl,
   TextInput,
 } from "./ui.js";
 import { hexToRgba } from "../lib/color.js";
@@ -908,6 +907,11 @@ export function LayerPanel({
                     }`}
                   >
                     {layer.name}
+                    {layer.text ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-accent">
+                        TEXT
+                      </span>
+                    ) : null}
                   </span>
                 )}
                 <span className="relative z-10 ml-auto flex w-[74px] shrink-0 items-center justify-end gap-0.5">
@@ -1392,7 +1396,6 @@ export function TextPanel({
     contentRef.current?.select();
   }, [layer.id]);
   if (!spec) return null;
-  const sizeOptions = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120];
   return (
     <Panel
       title="Text"
@@ -1416,16 +1419,45 @@ export function TextPanel({
           />
         </Field>
         <Field label="Size" htmlFor="text-size">
-          <SelectControl
-            id="text-size"
-            label="Text size"
-            value={String(spec.size)}
-            options={sizeOptions.map((size) => ({
-              value: String(size),
-              label: `${size}px`,
-            }))}
-            onChange={(value) => onChange({ size: Number(value) })}
-          />
+          <div className="flex items-stretch border-2 border-line bg-field focus-within:border-accent">
+            <input
+              id="text-size"
+              type="number"
+              min={1}
+              max={4096}
+              step={1}
+              value={spec.size}
+              disabled={locked}
+              aria-label="Text size"
+              onChange={(event) => {
+                const next = Number.parseInt(event.target.value, 10);
+                if (Number.isInteger(next) && next >= 1 && next <= 4096) {
+                  onChange({ size: next });
+                }
+              }}
+              className="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[13px] text-ink outline-none disabled:opacity-50"
+            />
+            <div className="flex w-7 shrink-0 flex-col border-l-2 border-line">
+              <button
+                type="button"
+                aria-label="Increase text size"
+                disabled={locked || spec.size >= 4096}
+                onClick={() => onChange({ size: Math.min(4096, spec.size + 1) })}
+                className="flex flex-1 items-center justify-center border-b-2 border-line text-[11px] leading-none text-muted hover:text-ink disabled:opacity-40"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                aria-label="Decrease text size"
+                disabled={locked || spec.size <= 1}
+                onClick={() => onChange({ size: Math.max(1, spec.size - 1) })}
+                className="flex flex-1 items-center justify-center text-[11px] leading-none text-muted hover:text-ink disabled:opacity-40"
+              >
+                −
+              </button>
+            </div>
+          </div>
         </Field>
         <Field label="Colour" htmlFor="text-color">
           <div id="text-color" className="flex flex-wrap gap-1">

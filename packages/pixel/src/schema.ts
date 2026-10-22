@@ -15,7 +15,7 @@ export const textLayerSchema = z.object({
   text: z.string().max(2000),
   face: z.enum(["silkscreen", "pixelify", "mono"]),
   weight: z.union([z.literal(400), z.literal(700)]),
-  size: z.number().int().min(4).max(120),
+  size: z.number().int().min(1).max(4096),
   color: z.number().int().nonnegative(),
   x: z.number().int(),
   y: z.number().int(),

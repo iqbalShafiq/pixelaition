@@ -1,9 +1,4 @@
-import {
-  drawText,
-  layoutText,
-  textBounds,
-  type TextElement,
-} from "@pixelaition/artboard";
+import { drawText, textBounds, type TextElement } from "@pixelaition/artboard";
 import { emptyPixels, type Layer, type TextLayerSpec } from "@pixelaition/pixel";
 
 /** Atlas sizes the Silkscreen face ships; the UI never invents a size. */
@@ -33,19 +28,29 @@ export function textLayerBox(
   layer: Layer,
   width: number,
   height: number,
-): { x: number; y: number; width: number; height: number } | null {
+): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  originX: number;
+  originY: number;
+  baseWidth: number;
+  baseHeight: number;
+} | null {
   const element = textElementOf(layer);
   if (!element) return null;
-  const layout = layoutText(element);
+  const base = textBounds({ ...element, rotation: 0 });
   const box = textBounds(element);
   return {
     x: Math.max(0, box.x),
     y: Math.max(0, box.y),
-    width: Math.min(width - Math.max(0, box.x), Math.max(1, box.width)),
-    height: Math.min(
-      height - Math.max(0, box.y),
-      Math.max(1, layer.text?.height ?? layout.height),
-    ),
+    width: Math.max(1, Math.min(width - Math.max(0, box.x), box.width)),
+    height: Math.max(1, Math.min(height - Math.max(0, box.y), box.height)),
+    originX: element.x,
+    originY: element.y,
+    baseWidth: Math.max(1, base.width),
+    baseHeight: Math.max(1, base.height),
   };
 }
 

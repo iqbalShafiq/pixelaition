@@ -93,12 +93,7 @@ import {
   TextPanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import {
-  defaultTextSpec,
-  renderTextSpec,
-  TEXT_SIZES,
-  textLayerBox,
-} from "../lib/text-layer.js";
+import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
 import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
@@ -306,6 +301,7 @@ export function EditorScreen() {
   const [brushSize, setBrushSize] = useState(1);
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
+  const [selectedLayerId, setSelectedLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
   const [viewMode, setViewMode] = useState<"fit" | "actual" | "free">("fit");
   const [selection, setSelection] = useState<Rect | null>(null);
@@ -689,9 +685,9 @@ export function EditorScreen() {
   // While playback cycles frames, the layer selection must not blink: fall back
   // to the first layer of whichever frame the panel is showing.
   const panelLayerId =
-    buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
-      ? activeLayerId
-      : (buffer?.layers[0]?.id ?? "");
+    buffer && buffer.layers.some((layer) => layer.id === selectedLayerId)
+      ? selectedLayerId
+      : "";
   const selectedTextLayer =
     buffer?.layers.find((layer) => layer.id === selectedTextId && layer.text) ?? null;
   const textBoxes = useMemo(
@@ -811,7 +807,10 @@ export function EditorScreen() {
     if (!layers.some((layer) => layer.id === activeLayerId)) {
       setActiveLayerId(layers[0]?.id ?? "");
     }
-  }, [buffer, activeLayerId]);
+    if (selectedLayerId && !layers.some((layer) => layer.id === selectedLayerId)) {
+      setSelectedLayerId("");
+    }
+  }, [buffer, activeLayerId, selectedLayerId]);
 
   const onionSkin = useMemo(() => {
     if (!onion || !asset.data || !frame) return [];
@@ -970,6 +969,7 @@ export function EditorScreen() {
     }
     update(frameId, pushHistory(drafts[frameId]!, stamped.buffer));
     setActiveLayerId(layerId);
+    setSelectedLayerId(layerId);
     setSelectedTextId(layerId);
     setError(null);
   }
@@ -998,6 +998,7 @@ export function EditorScreen() {
     const history = draftsRef.current[frameId];
     textDragHistory.current = history ? { frameId, history } : null;
     setActiveLayerId(layerId);
+    setSelectedLayerId(layerId);
     setSelectedTextId(layerId);
   }
 
@@ -1034,20 +1035,32 @@ export function EditorScreen() {
     update(frameId, next);
   }
 
-  function resizeTextLayer(layerId: string, width: number, fontSize: number): void {
+  function resizeTextLayer(
+    layerId: string,
+    width: number,
+    fontSize: number,
+    x?: number,
+    y?: number,
+  ): void {
     if (!frameId) return;
     const current = draftsRef.current[frameId];
     if (!current) return;
     const bufferNow = current.present;
     const layer = bufferNow.layers.find((item) => item.id === layerId);
     if (!layer?.text) return;
-    const size = TEXT_SIZES.reduce((best, value) =>
-      Math.abs(value - fontSize) < Math.abs(best - fontSize) ? value : best,
-    );
+    const size = Math.max(1, Math.min(4096, Math.round(fontSize)));
     const spec: TextLayerSpec = {
       ...layer.text,
       width: Math.max(1, Math.min(Math.round(width), bufferNow.width)),
       size,
+      x:
+        x !== undefined
+          ? Math.max(0, Math.min(Math.round(x), bufferNow.width - 1))
+          : layer.text.x,
+      y:
+        y !== undefined
+          ? Math.max(0, Math.min(Math.round(y), bufferNow.height - 1))
+          : layer.text.y,
       height: Math.max(1, Math.round(size * 1.5)),
     };
     const pixels = renderTextSpec(
@@ -2987,7 +3000,13 @@ export function EditorScreen() {
         activeId={panelLayerId}
         locked={locked}
         onSelect={(layerId) => {
+          if (selectedLayerId === layerId) {
+            setSelectedLayerId("");
+            setSelectedTextId(null);
+            return;
+          }
           setActiveLayerId(layerId);
+          setSelectedLayerId(layerId);
           const layer = buffer?.layers.find((item) => item.id === layerId);
           setSelectedTextId(layer?.text ? layerId : null);
           if (layer?.text) setInspectorTab("frame");
@@ -3448,6 +3467,7 @@ export function EditorScreen() {
                     selectedTextBoxId={selectedTextId}
                     onSelectText={(id) => {
                       setActiveLayerId(id);
+                      setSelectedLayerId(id);
                       setSelectedTextId(id);
                       setInspectorTab("frame");
                     }}
@@ -3456,6 +3476,10 @@ export function EditorScreen() {
                     onResizeText={resizeTextLayer}
                     onRotateText={rotateTextLayer}
                     onTextDragEnd={endTextDrag}
+                    onDeselect={() => {
+                      setSelectedLayerId("");
+                      setSelectedTextId(null);
+                    }}
                     onAction={onAction}
                     onCamera={(next) => {
                       setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));

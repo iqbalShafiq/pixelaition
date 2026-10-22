@@ -1228,7 +1228,7 @@ export function createPixelTools(
 
   const textSizes = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120];
   function textSizeFor(height: number, requested?: number): number {
-    if (requested && textSizes.includes(requested)) return requested;
+    if (requested) return Math.max(1, Math.round(requested));
     const preferred = height <= 64 ? Math.max(4, height * 0.25) : height * 0.06;
     return textSizes.reduce((best, value) =>
       Math.abs(value - preferred) < Math.abs(best - preferred) ? value : best,
@@ -1325,10 +1325,16 @@ export function createPixelTools(
       assertOwnedFrame(run, frame.id);
       const spec = textSpec(frame.buffer, input);
       const layerId = crypto.randomUUID().slice(0, 8);
+      const baseName = input.layerName ?? "Text";
+      const used = new Set(frame.buffer.layers.map((layer) => layer.name));
+      let layerName = baseName;
+      for (let suffix = 2; used.has(layerName); suffix += 1) {
+        layerName = `${baseName} ${suffix}`;
+      }
       const added = editFrame(run, frame.id, {
         type: "addLayer",
         id: layerId,
-        name: input.layerName ?? "Text",
+        name: layerName,
       });
       const edited = editFrame(run, frame.id, {
         type: "replaceLayer",

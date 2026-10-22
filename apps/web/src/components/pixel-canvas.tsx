@@ -27,6 +27,8 @@ type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean };
 
+export type TextResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+
 export type CanvasTextBox = {
   id: string;
   x: number;
@@ -36,6 +38,10 @@ export type CanvasTextBox = {
   /** Font size, so a corner drag can scale the text and its box together. */
   fontSize: number;
   rotation: number;
+  originX: number;
+  originY: number;
+  baseWidth: number;
+  baseHeight: number;
 };
 
 type Props = {
@@ -60,9 +66,17 @@ type Props = {
   onSelectText?: (id: string) => void;
   onTextDragStart?: (id: string) => void;
   onMoveText?: (id: string, x: number, y: number) => void;
-  onResizeText?: (id: string, width: number, fontSize: number) => void;
+  onResizeText?: (
+    id: string,
+    width: number,
+    fontSize: number,
+    x: number,
+    y: number,
+  ) => void;
   onRotateText?: (id: string, rotation: number) => void;
   onTextDragEnd?: () => void;
+  /** Clear the layer/text selection when the blank canvas or margin is hit. */
+  onDeselect?: () => void;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
 };
@@ -316,6 +330,7 @@ export function PixelCanvas({
   onResizeText,
   onRotateText,
   onTextDragEnd,
+  onDeselect,
   onAction,
   onCamera,
 }: Props) {
@@ -342,7 +357,12 @@ export function PixelCanvas({
   } | null>(null);
   const textResize = useRef<{
     id: string;
+    direction: TextResizeDirection;
     start: Point;
+    center: Point;
+    rotation: number;
+    originX: number;
+    originY: number;
     width: number;
     height: number;
     fontSize: number;
@@ -375,6 +395,7 @@ export function PixelCanvas({
     onResizeText,
     onRotateText,
     onTextDragEnd,
+    onDeselect,
   });
   latest.current = {
     camera,
@@ -394,6 +415,7 @@ export function PixelCanvas({
     onResizeText,
     onRotateText,
     onTextDragEnd,
+    onDeselect,
   };
 
   useEffect(() => {
@@ -560,35 +582,51 @@ export function PixelCanvas({
         context.stroke();
       }
 
-      // Editable text boxes sit above the pixel document: hover reads as a
-      // selectable object, selection as a moveable one with corner handles.
+      // Editable text boxes sit above the pixel document. The border is drawn
+      // in the text's own rotated frame, so rotating the glyphs rotates the
+      // selection and its handles with them.
       for (const box of latest.current.textBoxes) {
         const selected = box.id === latest.current.selectedTextBoxId;
         const hovered = box.id === hoverText.current;
         if (!selected && !hovered) continue;
-        const x = originX + box.x * cell + 0.5;
-        const y = originY + box.y * cell + 0.5;
-        const width = Math.max(1, box.width * cell - 1);
-        const height = Math.max(1, box.height * cell - 1);
+        const centerX = originX + (box.x + box.width / 2) * cell;
+        const centerY = originY + (box.y + box.height / 2) * cell;
+        const radians = (box.rotation * Math.PI) / 180;
+        const width = Math.max(1, box.baseWidth * cell);
+        const height = Math.max(1, box.baseHeight * cell);
         context.save();
+        context.translate(centerX, centerY);
+        context.rotate(radians);
         context.lineWidth = selected ? 2 : 1;
         context.strokeStyle = selected ? "#d8a64e" : "rgba(216, 166, 78, 0.6)";
         context.setLineDash(selected ? [] : [4, 3]);
-        context.strokeRect(x, y, width, height);
+        context.strokeRect(-width / 2, -height / 2, width, height);
         if (selected) {
           context.setLineDash([]);
           context.fillStyle = "#d8a64e";
+          const halfW = width / 2;
+          const halfH = height / 2;
           const handle = 6;
-          context.fillRect(x + width - handle / 2, y - handle / 2, handle, handle);
-          const rotateX = x + width / 2;
-          const rotateY = y - 14;
+          for (const [hx, hy] of [
+            [-halfW, -halfH],
+            [0, -halfH],
+            [halfW, -halfH],
+            [halfW, 0],
+            [halfW, halfH],
+            [0, halfH],
+            [-halfW, halfH],
+            [-halfW, 0],
+          ] as const) {
+            context.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
+          }
+          const rotateY = -halfH - 14;
           context.strokeStyle = "rgba(216, 166, 78, 0.8)";
           context.beginPath();
-          context.moveTo(rotateX, y);
-          context.lineTo(rotateX, rotateY);
+          context.moveTo(0, -halfH);
+          context.lineTo(0, rotateY);
           context.stroke();
           context.beginPath();
-          context.arc(rotateX, rotateY, 4, 0, Math.PI * 2);
+          context.arc(0, rotateY, 4, 0, Math.PI * 2);
           context.fill();
         }
         context.restore();
@@ -653,19 +691,43 @@ export function PixelCanvas({
     textBoxes,
   ]);
 
+  function textCenter(box: CanvasTextBox): Point {
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+
+  function textLocal(box: CanvasTextBox, point: Point): Point {
+    const center = textCenter(box);
+    const radians = (box.rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
+  }
+
+  function textHandleWorld(box: CanvasTextBox, localX: number, localY: number): Point {
+    const center = textCenter(box);
+    const radians = (box.rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return {
+      x: center.x + localX * cos - localY * sin,
+      y: center.y + localX * sin + localY * cos,
+    };
+  }
+
   function textAt(point: Point) {
-    return latest.current.textBoxes.find(
-      (box) =>
-        point.x >= box.x &&
-        point.y >= box.y &&
-        point.x < box.x + box.width &&
-        point.y < box.y + box.height,
-    );
+    return latest.current.textBoxes.find((box) => {
+      const local = textLocal(box, point);
+      return (
+        Math.abs(local.x) <= box.baseWidth / 2 && Math.abs(local.y) <= box.baseHeight / 2
+      );
+    });
   }
 
   function textRotateHandle(box: CanvasTextBox): Point {
     const zoom = latest.current.camera.zoom;
-    return { x: box.x + box.width / 2, y: box.y - 14 / zoom };
+    return textHandleWorld(box, 0, -box.baseHeight / 2 - 14 / zoom);
   }
 
   function nearTextRotateHandle(box: CanvasTextBox, point: Point): boolean {
@@ -675,12 +737,28 @@ export function PixelCanvas({
     return Math.abs(point.x - handle.x) <= pad && Math.abs(point.y - handle.y) <= pad;
   }
 
-  function nearTextResizeHandle(box: CanvasTextBox, point: Point): boolean {
-    const zoom = latest.current.camera.zoom;
-    const pad = 18 / zoom;
-    return (
-      Math.abs(point.x - (box.x + box.width)) <= pad && Math.abs(point.y - box.y) <= pad
-    );
+  function textResizeDirection(
+    box: CanvasTextBox,
+    point: Point,
+  ): TextResizeDirection | null {
+    const local = textLocal(box, point);
+    const pad = 10 / latest.current.camera.zoom;
+    const hw = box.baseWidth / 2;
+    const hh = box.baseHeight / 2;
+    const nearLeft = Math.abs(local.x + hw) <= pad;
+    const nearRight = Math.abs(local.x - hw) <= pad;
+    const nearTop = Math.abs(local.y + hh) <= pad;
+    const nearBottom = Math.abs(local.y - hh) <= pad;
+    if (Math.abs(local.x) > hw + pad || Math.abs(local.y) > hh + pad) return null;
+    if (nearTop && nearLeft) return "nw";
+    if (nearTop && nearRight) return "ne";
+    if (nearBottom && nearLeft) return "sw";
+    if (nearBottom && nearRight) return "se";
+    if (nearTop) return "n";
+    if (nearBottom) return "s";
+    if (nearLeft) return "w";
+    if (nearRight) return "e";
+    return null;
   }
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
@@ -746,10 +824,7 @@ export function PixelCanvas({
           );
           if (rotateBox && !latest.current.locked) {
             event.currentTarget.setPointerCapture(event.pointerId);
-            const center = {
-              x: rotateBox.x + rotateBox.width / 2,
-              y: rotateBox.y + rotateBox.height / 2,
-            };
+            const center = textCenter(rotateBox);
             textRotate.current = {
               id: rotateBox.id,
               startAngle: Math.atan2(point.y - center.y, point.x - center.x),
@@ -762,62 +837,36 @@ export function PixelCanvas({
             repaint.current();
             return;
           }
-          const resizeBox = latest.current.textBoxes.find((box) =>
-            nearTextResizeHandle(box, point),
-          );
-          if (resizeBox && !latest.current.locked) {
+          const resizeBox = latest.current.textBoxes
+            .map((box) => ({ box, direction: textResizeDirection(box, point) }))
+            .find((entry) => entry.direction !== null);
+          if (resizeBox?.direction && !latest.current.locked) {
             event.currentTarget.setPointerCapture(event.pointerId);
             textResize.current = {
-              id: resizeBox.id,
+              id: resizeBox.box.id,
+              direction: resizeBox.direction,
               start: point,
-              width: resizeBox.width,
-              height: resizeBox.height,
-              fontSize: resizeBox.fontSize,
+              center: textCenter(resizeBox.box),
+              rotation: resizeBox.box.rotation,
+              originX: resizeBox.box.originX,
+              originY: resizeBox.box.originY,
+              width: resizeBox.box.baseWidth,
+              height: resizeBox.box.baseHeight,
+              fontSize: resizeBox.box.fontSize,
             };
             hover.current = null;
-            latest.current.onTextDragStart?.(resizeBox.id);
-            latest.current.onSelectText?.(resizeBox.id);
+            latest.current.onTextDragStart?.(resizeBox.box.id);
+            latest.current.onSelectText?.(resizeBox.box.id);
             repaint.current();
             return;
           }
           const text = textAt(point);
           if (text && !latest.current.locked) {
             event.currentTarget.setPointerCapture(event.pointerId);
-            if (nearTextRotateHandle(text, point)) {
-              const center = {
-                x: text.x + text.width / 2,
-                y: text.y + text.height / 2,
-              };
-              textRotate.current = {
-                id: text.id,
-                startAngle: Math.atan2(point.y - center.y, point.x - center.x),
-                startRotation: text.rotation,
-                center,
-              };
-              hover.current = null;
-              latest.current.onTextDragStart?.(text.id);
-              latest.current.onSelectText?.(text.id);
-              repaint.current();
-              return;
-            }
-            if (nearTextResizeHandle(text, point)) {
-              textResize.current = {
-                id: text.id,
-                start: point,
-                width: text.width,
-                height: text.height,
-                fontSize: text.fontSize,
-              };
-              hover.current = null;
-              latest.current.onTextDragStart?.(text.id);
-              latest.current.onSelectText?.(text.id);
-              repaint.current();
-              return;
-            }
             textDrag.current = {
               id: text.id,
               start: point,
-              origin: { x: text.x, y: text.y },
+              origin: { x: text.originX, y: text.originY },
             };
             hover.current = null;
             latest.current.onTextDragStart?.(text.id);
@@ -825,6 +874,13 @@ export function PixelCanvas({
             repaint.current();
             return;
           }
+        }
+        if (
+          event.button === 0 &&
+          (active === "select" || active === "pan") &&
+          !space.current
+        ) {
+          latest.current.onDeselect?.();
         }
         if (event.button === 1 || active === "pan" || space.current) {
           pan.current = {
@@ -891,14 +947,57 @@ export function PixelCanvas({
         }
         if (textResize.current) {
           const resize = textResize.current;
-          const ratio =
-            resize.height > 0
-              ? (resize.height + point.y - resize.start.y) / resize.height
-              : 1;
+          const radians = (resize.rotation * Math.PI) / 180;
+          const cos = Math.cos(radians);
+          const sin = Math.sin(radians);
+          const startDx = resize.start.x - resize.center.x;
+          const startDy = resize.start.y - resize.center.y;
+          const dxPoint = point.x - resize.center.x;
+          const dyPoint = point.y - resize.center.y;
+          const startLocal = {
+            x: startDx * cos + startDy * sin,
+            y: -startDx * sin + startDy * cos,
+          };
+          const currentLocal = {
+            x: dxPoint * cos + dyPoint * sin,
+            y: -dxPoint * sin + dyPoint * cos,
+          };
+          const dx = currentLocal.x - startLocal.x;
+          const dy = currentLocal.y - startLocal.y;
+          const direction = resize.direction;
+          let width = resize.width;
+          let height = resize.height;
+          if (direction.includes("e")) width += dx;
+          if (direction.includes("w")) width -= dx;
+          if (direction.includes("s")) height += dy;
+          if (direction.includes("n")) height -= dy;
+          width = Math.max(1, width);
+          height = Math.max(1, height);
+          const fontSize =
+            direction === "n" ||
+            direction === "s" ||
+            direction === "ne" ||
+            direction === "nw" ||
+            direction === "se" ||
+            direction === "sw"
+              ? Math.max(1, Math.round(resize.fontSize * (height / resize.height)))
+              : resize.fontSize;
+          let x = resize.originX;
+          let y = resize.originY;
+          if (direction.includes("w")) {
+            x += dx * cos;
+            y += dx * sin;
+          }
+          if (direction.includes("n")) {
+            x -= dy * sin;
+            y += dy * cos;
+          }
           latest.current.onResizeText?.(
             resize.id,
-            Math.max(1, resize.width + point.x - resize.start.x),
-            Math.max(8, Math.round(resize.fontSize * ratio)),
+            Math.round(width),
+            fontSize,
+            Math.round(x),
+            Math.round(y),
           );
           return;
         }
@@ -913,12 +1012,21 @@ export function PixelCanvas({
         }
         const hoveredText = textAt(point);
         hoverText.current = hoveredText?.id ?? null;
+        const hoverDirection = hoveredText
+          ? textResizeDirection(hoveredText, point)
+          : null;
         event.currentTarget.style.cursor = hoveredText
           ? nearTextRotateHandle(hoveredText, point)
             ? "grab"
-            : nearTextResizeHandle(hoveredText, point)
-              ? "nesw-resize"
-              : "move"
+            : hoverDirection === "n" || hoverDirection === "s"
+              ? "ns-resize"
+              : hoverDirection === "e" || hoverDirection === "w"
+                ? "ew-resize"
+                : hoverDirection === "ne" || hoverDirection === "sw"
+                  ? "nesw-resize"
+                  : hoverDirection === "nw" || hoverDirection === "se"
+                    ? "nwse-resize"
+                    : "move"
           : "";
         if (hoveredText) {
           hover.current = null;

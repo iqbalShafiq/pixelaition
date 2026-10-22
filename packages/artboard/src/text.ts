@@ -44,7 +44,7 @@ export function resolveElementFont(
   const font = resolveFont(element.face, element.weight, atlasSize);
   return {
     ...font,
-    scale: Math.min(1, element.size / atlasSize),
+    scale: element.size / atlasSize,
   };
 }
 
@@ -231,7 +231,7 @@ function drawTextUpright(
         continue;
       }
       const bits = glyphBits(glyph);
-      if (scale < 1) {
+      if (scale !== 1) {
         // Sample the source glyph once per target pixel. This is nearest-
         // neighbour downscaling, so every output pixel still comes from the
         // atlas and the palette never gains an anti-aliased colour.
