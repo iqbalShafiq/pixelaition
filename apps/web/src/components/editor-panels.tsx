@@ -934,13 +934,29 @@ export function LayerPanel({
                         className="flex items-center gap-0.5"
                       >
                         <IconButton
-                          label={`Rename ${layer.name}`}
+                          label={
+                            layer.text
+                              ? `Edit text ${layer.name}`
+                              : `Rename ${layer.name}`
+                          }
                           disabled={locked}
-                          onClick={() => startEdit(layer.id, layer.name)}
+                          onClick={() =>
+                            layer.text
+                              ? onSelect(layer.id)
+                              : startEdit(layer.id, layer.name)
+                          }
                         >
                           <Pencil />
                         </IconButton>
                         <Menu label={`Actions for ${layer.name}`}>
+                          {layer.text ? (
+                            <MenuItem
+                              disabled={locked}
+                              onClick={() => startEdit(layer.id, layer.name)}
+                            >
+                              <Pencil /> Rename layer
+                            </MenuItem>
+                          ) : null}
                           <MenuItem
                             disabled={locked || layers.length <= 1}
                             onClick={() =>
