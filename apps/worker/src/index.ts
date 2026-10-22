@@ -655,7 +655,10 @@ const agents = completions.flatMap(({ spec, model }) => {
  * conversation, so they all live on the supervisor agent.
  */
 function drawAgentId(role: AgentRoleName, target: RunTarget): string {
-  return `${agentPrefix}:${role}:${target.modelId}:${target.effort}`;
+  // A provider slug may itself contain a colon (`minimax/...:free`), so the
+  // model segment must be encoded or parsing the agent id from the right
+  // silently records the model as "free".
+  return `${agentPrefix}:${role}:${encodeURIComponent(target.modelId)}:${target.effort}`;
 }
 
 /** The agent a child with this key runs on: workers paint, everyone else supervises. */
@@ -940,7 +943,7 @@ function modelEffortFromAgentId(agentId: string): { modelId: string; effort: str
   const parts = agentId.split(":");
   return {
     effort: parts.at(-1) ?? "medium",
-    modelId: parts.at(-2) ?? "unknown",
+    modelId: decodeURIComponent(parts.at(-2) ?? "unknown"),
   };
 }
 

@@ -204,6 +204,13 @@
       "when": 1792500300000,
       "tag": "0028_run_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792500400000,
+      "tag": "0029_retire_minimax_free",
+      "breakpoints": true
     }
   ]
 }

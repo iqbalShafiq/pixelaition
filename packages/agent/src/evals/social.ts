@@ -1,7 +1,7 @@
 /**
  * Real-model social planning check. It exercises the format registry against a
- * live provider, with a bounded retry and the documented fallback: MiniMax M3.1
- * Flash first, Muse Spark second. No stub, no deterministic substitute.
+ * live provider, with a bounded retry and the documented fallback: DeepSeek
+ * v4.1 Flash first, Muse Spark second. No stub, no deterministic substitute.
  *
  * Run from the repo root: pnpm eval:social
  */
@@ -14,7 +14,7 @@ if (!baseUrl || !apiKey) {
   process.exit(2);
 }
 
-const primary = process.env.SOCIAL_EVAL_PRIMARY ?? "minimax/minimax-m3.1-flash:free";
+const primary = process.env.SOCIAL_EVAL_PRIMARY ?? "deepseek/deepseek-v4.1-flash-1017";
 const fallback = "meta/muse-spark-1.3-contributor";
 
 const wanted = [
