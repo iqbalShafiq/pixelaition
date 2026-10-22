@@ -98,6 +98,8 @@ export type TextElement = {
   lineHeight?: number;
   maxLines?: number;
   letterSpacing?: number;
+  /** Clockwise degrees around the text box centre. */
+  rotation?: number;
   safe?: boolean;
   visible?: boolean;
 };

@@ -40,6 +40,7 @@ import {
   MenuItem,
   Panel,
   Popover,
+  SelectControl,
   TextInput,
 } from "./ui.js";
 import { hexToRgba } from "../lib/color.js";
@@ -1385,8 +1386,13 @@ export function TextPanel({
   onRemove: () => void;
 }) {
   const spec = layer.text;
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    contentRef.current?.focus();
+    contentRef.current?.select();
+  }, [layer.id]);
   if (!spec) return null;
-  const sizeOptions = [16, 24, 32, 48, 64, 96, 120];
+  const sizeOptions = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120];
   return (
     <Panel
       title="Text"
@@ -1400,6 +1406,7 @@ export function TextPanel({
       <div className="grid gap-2">
         <Field label="Content" htmlFor="text-content">
           <textarea
+            ref={contentRef}
             id="text-content"
             value={spec.text}
             disabled={locked}
@@ -1408,41 +1415,36 @@ export function TextPanel({
             className="w-full resize-y border-2 border-line bg-field px-2 py-1.5 text-pixel-body text-ink outline-none focus-visible:border-accent disabled:opacity-50"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Size" htmlFor="text-size">
-            <select
-              id="text-size"
-              value={spec.size}
-              disabled={locked}
-              onChange={(event) => onChange({ size: Number(event.target.value) })}
-              className="w-full border-2 border-line bg-field px-2 py-1.5 font-mono text-[11px] text-ink outline-none focus-visible:border-accent disabled:opacity-50"
-            >
-              {sizeOptions.map((size) => (
-                <option key={size} value={size}>
-                  {size}px
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Colour" htmlFor="text-color">
-            <div id="text-color" className="flex flex-wrap gap-1">
-              {palette.map((hex, index) => (
-                <button
-                  key={hex}
-                  type="button"
-                  aria-label={`Text colour ${hex}`}
-                  aria-pressed={spec.color === index}
-                  disabled={locked}
-                  onClick={() => onChange({ color: index })}
-                  className={`h-5 w-5 border-2 ${
-                    spec.color === index ? "border-accent" : "border-line"
-                  } disabled:opacity-50`}
-                  style={{ background: hex }}
-                />
-              ))}
-            </div>
-          </Field>
-        </div>
+        <Field label="Size" htmlFor="text-size">
+          <SelectControl
+            id="text-size"
+            label="Text size"
+            value={String(spec.size)}
+            options={sizeOptions.map((size) => ({
+              value: String(size),
+              label: `${size}px`,
+            }))}
+            onChange={(value) => onChange({ size: Number(value) })}
+          />
+        </Field>
+        <Field label="Colour" htmlFor="text-color">
+          <div id="text-color" className="flex flex-wrap gap-1">
+            {palette.map((hex, index) => (
+              <button
+                key={hex}
+                type="button"
+                aria-label={`Text colour ${hex}`}
+                aria-pressed={spec.color === index}
+                disabled={locked}
+                onClick={() => onChange({ color: index })}
+                className={`h-5 w-5 border-2 ${
+                  spec.color === index ? "border-accent" : "border-line"
+                } disabled:opacity-50`}
+                style={{ background: hex }}
+              />
+            ))}
+          </div>
+        </Field>
         <p className="text-[11px] leading-snug text-muted">
           Click the text on the canvas to select it, then drag to move it. Every edit is
           rasterized back into this pixel layer.

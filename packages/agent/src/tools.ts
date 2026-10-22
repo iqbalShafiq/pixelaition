@@ -1226,10 +1226,10 @@ export function createPixelTools(
     },
   });
 
-  const textSizes = [16, 24, 32, 48, 64, 96, 120];
+  const textSizes = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120];
   function textSizeFor(height: number, requested?: number): number {
     if (requested && textSizes.includes(requested)) return requested;
-    const preferred = height * 0.06;
+    const preferred = height <= 64 ? Math.max(4, height * 0.25) : height * 0.06;
     return textSizes.reduce((best, value) =>
       Math.abs(value - preferred) < Math.abs(best - preferred) ? value : best,
     );
@@ -1252,6 +1252,7 @@ export function createPixelTools(
       letterSpacing?: number;
       scale?: number;
       height?: number;
+      rotation?: number;
     },
   ): TextLayerSpec {
     const color = input.color ?? 1;
@@ -1284,6 +1285,7 @@ export function createPixelTools(
         : {}),
       ...(input.scale !== undefined ? { scale: input.scale } : {}),
       ...(input.height !== undefined ? { height: input.height } : {}),
+      ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
     };
   }
 
@@ -1312,6 +1314,7 @@ export function createPixelTools(
       color: z.number().int().positive().optional(),
       width: z.number().int().positive().optional(),
       align: z.enum(["left", "center", "right"]).optional(),
+      rotation: z.number().min(-360).max(360).optional(),
       layerName: z.string().min(1).max(40).optional(),
     }),
     requiresApproval: () => false,
@@ -1356,6 +1359,7 @@ export function createPixelTools(
       color: z.number().int().positive().optional(),
       width: z.number().int().positive().optional(),
       align: z.enum(["left", "center", "right"]).optional(),
+      rotation: z.number().min(-360).max(360).optional(),
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
@@ -1375,6 +1379,7 @@ export function createPixelTools(
         ...(input.color !== undefined ? { color: input.color } : {}),
         ...(input.width !== undefined ? { width: input.width } : {}),
         ...(input.align !== undefined ? { align: input.align } : {}),
+        ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
       });
       const edited = editFrame(run, frame.id, {
         type: "replaceLayer",

@@ -15,7 +15,7 @@ export const textLayerSchema = z.object({
   text: z.string().max(2000),
   face: z.enum(["silkscreen", "pixelify", "mono"]),
   weight: z.union([z.literal(400), z.literal(700)]),
-  size: z.number().int().min(8).max(120),
+  size: z.number().int().min(4).max(120),
   color: z.number().int().nonnegative(),
   x: z.number().int(),
   y: z.number().int(),
@@ -26,6 +26,7 @@ export const textLayerSchema = z.object({
   letterSpacing: z.number().int().optional(),
   scale: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
+  rotation: z.number().min(-360).max(360).optional(),
 });
 
 export const layerSchema = z.object({

@@ -700,7 +700,16 @@ export function EditorScreen() {
         ? buffer.layers.flatMap((layer) => {
             if (!layer.text || !layer.visible) return [];
             const box = textLayerBox(layer, buffer.width, buffer.height);
-            return box ? [{ id: layer.id, fontSize: layer.text.size, ...box }] : [];
+            return box
+              ? [
+                  {
+                    id: layer.id,
+                    fontSize: layer.text.size,
+                    rotation: layer.text.rotation ?? 0,
+                    ...box,
+                  },
+                ]
+              : [];
           })
         : [],
     [buffer],
@@ -1040,6 +1049,35 @@ export function EditorScreen() {
       width: Math.max(1, Math.min(Math.round(width), bufferNow.width)),
       size,
       height: Math.max(1, Math.round(size * 1.5)),
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function rotateTextLayer(layerId: string, rotation: number): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      rotation: Math.round(rotation * 10) / 10,
     };
     const pixels = renderTextSpec(
       spec,
@@ -3416,6 +3454,7 @@ export function EditorScreen() {
                     onTextDragStart={beginTextDrag}
                     onMoveText={moveTextLayer}
                     onResizeText={resizeTextLayer}
+                    onRotateText={rotateTextLayer}
                     onTextDragEnd={endTextDrag}
                     onAction={onAction}
                     onCamera={(next) => {

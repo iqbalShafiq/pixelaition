@@ -7,7 +7,7 @@ import {
 import { emptyPixels, type Layer, type TextLayerSpec } from "@pixelaition/pixel";
 
 /** Atlas sizes the Silkscreen face ships; the UI never invents a size. */
-export const TEXT_SIZES = [16, 24, 32, 48, 64, 96, 120] as const;
+export const TEXT_SIZES = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120] as const;
 
 export function textElementOf(layer: Layer): TextElement | null {
   if (!layer.text) return null;
@@ -54,7 +54,9 @@ export function defaultTextSpec(
   height: number,
   color: number,
 ): TextLayerSpec {
-  const preferred = height * 0.06;
+  // A 32px sprite cannot carry a 16px headline; small canvases get a small
+  // label-sized face, while native frames keep a readable display size.
+  const preferred = height <= 64 ? Math.max(4, height * 0.25) : height * 0.06;
   const size = TEXT_SIZES.reduce((best, value) =>
     Math.abs(value - preferred) < Math.abs(best - preferred) ? value : best,
   );

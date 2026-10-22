@@ -1059,13 +1059,19 @@ describe("layer tools", () => {
     expect(before?.pixels).toHaveLength(16);
 
     await tool("edit_text").call(
-      { layerId: added.layerId, text: "B", x: 1, y: 1, color: 2 },
+      { layerId: added.layerId, text: "B", x: 1, y: 1, color: 2, rotation: 45 },
       { operationId: "run-1" },
     );
     const after = getRun("run-1")!
       .frames.get("frame-1")!
       .buffer.layers.find((layer) => layer.id === added.layerId);
-    expect(after?.text).toMatchObject({ text: "B", color: 2, x: 1, y: 1 });
+    expect(after?.text).toMatchObject({
+      text: "B",
+      color: 2,
+      x: 1,
+      y: 1,
+      rotation: 45,
+    });
     expect(after?.pixels).toHaveLength(16);
     releaseRun("run-1");
   });

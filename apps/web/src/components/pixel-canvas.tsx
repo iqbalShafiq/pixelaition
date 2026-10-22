@@ -35,6 +35,7 @@ export type CanvasTextBox = {
   height: number;
   /** Font size, so a corner drag can scale the text and its box together. */
   fontSize: number;
+  rotation: number;
 };
 
 type Props = {
@@ -60,6 +61,7 @@ type Props = {
   onTextDragStart?: (id: string) => void;
   onMoveText?: (id: string, x: number, y: number) => void;
   onResizeText?: (id: string, width: number, fontSize: number) => void;
+  onRotateText?: (id: string, rotation: number) => void;
   onTextDragEnd?: () => void;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
@@ -312,6 +314,7 @@ export function PixelCanvas({
   onTextDragStart,
   onMoveText,
   onResizeText,
+  onRotateText,
   onTextDragEnd,
   onAction,
   onCamera,
@@ -330,6 +333,12 @@ export function PixelCanvas({
     id: string;
     start: Point;
     origin: { x: number; y: number };
+  } | null>(null);
+  const textRotate = useRef<{
+    id: string;
+    startAngle: number;
+    startRotation: number;
+    center: Point;
   } | null>(null);
   const textResize = useRef<{
     id: string;
@@ -364,6 +373,7 @@ export function PixelCanvas({
     onTextDragStart,
     onMoveText,
     onResizeText,
+    onRotateText,
     onTextDragEnd,
   });
   latest.current = {
@@ -382,6 +392,7 @@ export function PixelCanvas({
     onTextDragStart,
     onMoveText,
     onResizeText,
+    onRotateText,
     onTextDragEnd,
   };
 
@@ -569,6 +580,16 @@ export function PixelCanvas({
           context.fillStyle = "#d8a64e";
           const handle = 6;
           context.fillRect(x + width - handle / 2, y - handle / 2, handle, handle);
+          const rotateX = x + width / 2;
+          const rotateY = y - 14;
+          context.strokeStyle = "rgba(216, 166, 78, 0.8)";
+          context.beginPath();
+          context.moveTo(rotateX, y);
+          context.lineTo(rotateX, rotateY);
+          context.stroke();
+          context.beginPath();
+          context.arc(rotateX, rotateY, 4, 0, Math.PI * 2);
+          context.fill();
         }
         context.restore();
       }
@@ -642,6 +663,18 @@ export function PixelCanvas({
     );
   }
 
+  function textRotateHandle(box: CanvasTextBox): Point {
+    const zoom = latest.current.camera.zoom;
+    return { x: box.x + box.width / 2, y: box.y - 14 / zoom };
+  }
+
+  function nearTextRotateHandle(box: CanvasTextBox, point: Point): boolean {
+    const handle = textRotateHandle(box);
+    const zoom = latest.current.camera.zoom;
+    const pad = 10 / zoom;
+    return Math.abs(point.x - handle.x) <= pad && Math.abs(point.y - handle.y) <= pad;
+  }
+
   function nearTextResizeHandle(box: CanvasTextBox, point: Point): boolean {
     const zoom = latest.current.camera.zoom;
     const pad = 18 / zoom;
@@ -672,6 +705,7 @@ export function PixelCanvas({
     pan.current = null;
     textDrag.current = null;
     textResize.current = null;
+    textRotate.current = null;
     setPanning(false);
   }
 
@@ -705,9 +739,67 @@ export function PixelCanvas({
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
         if (event.button === 0 && !space.current) {
           const point = localPoint(event);
+          // The rotate handle deliberately floats outside the text box, so it
+          // must be hit-tested before the box itself.
+          const rotateBox = latest.current.textBoxes.find((box) =>
+            nearTextRotateHandle(box, point),
+          );
+          if (rotateBox && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            const center = {
+              x: rotateBox.x + rotateBox.width / 2,
+              y: rotateBox.y + rotateBox.height / 2,
+            };
+            textRotate.current = {
+              id: rotateBox.id,
+              startAngle: Math.atan2(point.y - center.y, point.x - center.x),
+              startRotation: rotateBox.rotation,
+              center,
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(rotateBox.id);
+            latest.current.onSelectText?.(rotateBox.id);
+            repaint.current();
+            return;
+          }
+          const resizeBox = latest.current.textBoxes.find((box) =>
+            nearTextResizeHandle(box, point),
+          );
+          if (resizeBox && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            textResize.current = {
+              id: resizeBox.id,
+              start: point,
+              width: resizeBox.width,
+              height: resizeBox.height,
+              fontSize: resizeBox.fontSize,
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(resizeBox.id);
+            latest.current.onSelectText?.(resizeBox.id);
+            repaint.current();
+            return;
+          }
           const text = textAt(point);
           if (text && !latest.current.locked) {
             event.currentTarget.setPointerCapture(event.pointerId);
+            if (nearTextRotateHandle(text, point)) {
+              const center = {
+                x: text.x + text.width / 2,
+                y: text.y + text.height / 2,
+              };
+              textRotate.current = {
+                id: text.id,
+                startAngle: Math.atan2(point.y - center.y, point.x - center.x),
+                startRotation: text.rotation,
+                center,
+              };
+              hover.current = null;
+              latest.current.onTextDragStart?.(text.id);
+              latest.current.onSelectText?.(text.id);
+              repaint.current();
+              return;
+            }
             if (nearTextResizeHandle(text, point)) {
               textResize.current = {
                 id: text.id,
@@ -789,6 +881,14 @@ export function PixelCanvas({
           return;
         }
         const point = localPoint(event);
+        if (textRotate.current) {
+          const rotate = textRotate.current;
+          const angle = Math.atan2(point.y - rotate.center.y, point.x - rotate.center.x);
+          const degrees =
+            rotate.startRotation + ((angle - rotate.startAngle) * 180) / Math.PI;
+          latest.current.onRotateText?.(rotate.id, degrees);
+          return;
+        }
         if (textResize.current) {
           const resize = textResize.current;
           const ratio =
@@ -814,9 +914,11 @@ export function PixelCanvas({
         const hoveredText = textAt(point);
         hoverText.current = hoveredText?.id ?? null;
         event.currentTarget.style.cursor = hoveredText
-          ? nearTextResizeHandle(hoveredText, point)
-            ? "nesw-resize"
-            : "move"
+          ? nearTextRotateHandle(hoveredText, point)
+            ? "grab"
+            : nearTextResizeHandle(hoveredText, point)
+              ? "nesw-resize"
+              : "move"
           : "";
         if (hoveredText) {
           hover.current = null;
@@ -865,6 +967,16 @@ export function PixelCanvas({
       }}
       onPointerUp={(event) => {
         const { onAction: emit } = latest.current;
+        if (textRotate.current) {
+          textRotate.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
         if (textResize.current) {
           textResize.current = null;
           latest.current.onTextDragEnd?.();

@@ -30,6 +30,8 @@ export type TextLayerSpec = {
   letterSpacing?: number;
   scale?: number;
   height?: number;
+  /** Clockwise degrees around the text box centre. */
+  rotation?: number;
 };
 
 export type Layer = {
