@@ -93,7 +93,12 @@ import {
   TextPanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
-import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
+import {
+  defaultTextSpec,
+  renderTextSpec,
+  TEXT_SIZES,
+  textLayerBox,
+} from "../lib/text-layer.js";
 import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
@@ -695,7 +700,7 @@ export function EditorScreen() {
         ? buffer.layers.flatMap((layer) => {
             if (!layer.text || !layer.visible) return [];
             const box = textLayerBox(layer, buffer.width, buffer.height);
-            return box ? [{ id: layer.id, ...box }] : [];
+            return box ? [{ id: layer.id, fontSize: layer.text.size, ...box }] : [];
           })
         : [],
     [buffer],
@@ -1015,6 +1020,40 @@ export function EditorScreen() {
     // A drag is one edit: update the present while the pointer moves, and fold
     // the whole gesture into history when the pointer is released. The ref is
     // updated immediately so a burst of pointer moves never reads a stale box.
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function resizeTextLayer(layerId: string, width: number, fontSize: number): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const size = TEXT_SIZES.reduce((best, value) =>
+      Math.abs(value - fontSize) < Math.abs(best - fontSize) ? value : best,
+    );
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      width: Math.max(1, Math.min(Math.round(width), bufferNow.width)),
+      size,
+      height: Math.max(1, Math.round(size * 1.5)),
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
     const next = { ...current, present: result.buffer };
     draftsRef.current = { ...draftsRef.current, [frameId]: next };
     update(frameId, next);
@@ -2913,6 +2952,7 @@ export function EditorScreen() {
           setActiveLayerId(layerId);
           const layer = buffer?.layers.find((item) => item.id === layerId);
           setSelectedTextId(layer?.text ? layerId : null);
+          if (layer?.text) setInspectorTab("frame");
         }}
         onToggleVisible={(layerId, visible) =>
           frameId &&
@@ -3371,9 +3411,11 @@ export function EditorScreen() {
                     onSelectText={(id) => {
                       setActiveLayerId(id);
                       setSelectedTextId(id);
+                      setInspectorTab("frame");
                     }}
                     onTextDragStart={beginTextDrag}
                     onMoveText={moveTextLayer}
+                    onResizeText={resizeTextLayer}
                     onTextDragEnd={endTextDrag}
                     onAction={onAction}
                     onCamera={(next) => {

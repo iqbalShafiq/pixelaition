@@ -33,6 +33,8 @@ export type CanvasTextBox = {
   y: number;
   width: number;
   height: number;
+  /** Font size, so a corner drag can scale the text and its box together. */
+  fontSize: number;
 };
 
 type Props = {
@@ -57,6 +59,7 @@ type Props = {
   onSelectText?: (id: string) => void;
   onTextDragStart?: (id: string) => void;
   onMoveText?: (id: string, x: number, y: number) => void;
+  onResizeText?: (id: string, width: number, fontSize: number) => void;
   onTextDragEnd?: () => void;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
@@ -308,6 +311,7 @@ export function PixelCanvas({
   onSelectText,
   onTextDragStart,
   onMoveText,
+  onResizeText,
   onTextDragEnd,
   onAction,
   onCamera,
@@ -326,6 +330,13 @@ export function PixelCanvas({
     id: string;
     start: Point;
     origin: { x: number; y: number };
+  } | null>(null);
+  const textResize = useRef<{
+    id: string;
+    start: Point;
+    width: number;
+    height: number;
+    fontSize: number;
   } | null>(null);
   // Pan is a ref because the gesture must not re-render; the cursor still has
   // to switch to grabbing, so the fact of panning is mirrored into state.
@@ -352,6 +363,7 @@ export function PixelCanvas({
     onSelectText,
     onTextDragStart,
     onMoveText,
+    onResizeText,
     onTextDragEnd,
   });
   latest.current = {
@@ -369,6 +381,7 @@ export function PixelCanvas({
     onSelectText,
     onTextDragStart,
     onMoveText,
+    onResizeText,
     onTextDragEnd,
   };
 
@@ -554,15 +567,8 @@ export function PixelCanvas({
         if (selected) {
           context.setLineDash([]);
           context.fillStyle = "#d8a64e";
-          const handle = 4;
-          for (const [hx, hy] of [
-            [x - handle / 2, y - handle / 2],
-            [x + width - handle / 2, y - handle / 2],
-            [x - handle / 2, y + height - handle / 2],
-            [x + width - handle / 2, y + height - handle / 2],
-          ] as const) {
-            context.fillRect(hx, hy, handle, handle);
-          }
+          const handle = 6;
+          context.fillRect(x + width - handle / 2, y - handle / 2, handle, handle);
         }
         context.restore();
       }
@@ -636,6 +642,14 @@ export function PixelCanvas({
     );
   }
 
+  function nearTextResizeHandle(box: CanvasTextBox, point: Point): boolean {
+    const zoom = latest.current.camera.zoom;
+    const pad = 18 / zoom;
+    return (
+      Math.abs(point.x - (box.x + box.width)) <= pad && Math.abs(point.y - box.y) <= pad
+    );
+  }
+
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -657,6 +671,7 @@ export function PixelCanvas({
     stroke.current = null;
     pan.current = null;
     textDrag.current = null;
+    textResize.current = null;
     setPanning(false);
   }
 
@@ -693,6 +708,20 @@ export function PixelCanvas({
           const text = textAt(point);
           if (text && !latest.current.locked) {
             event.currentTarget.setPointerCapture(event.pointerId);
+            if (nearTextResizeHandle(text, point)) {
+              textResize.current = {
+                id: text.id,
+                start: point,
+                width: text.width,
+                height: text.height,
+                fontSize: text.fontSize,
+              };
+              hover.current = null;
+              latest.current.onTextDragStart?.(text.id);
+              latest.current.onSelectText?.(text.id);
+              repaint.current();
+              return;
+            }
             textDrag.current = {
               id: text.id,
               start: point,
@@ -760,6 +789,19 @@ export function PixelCanvas({
           return;
         }
         const point = localPoint(event);
+        if (textResize.current) {
+          const resize = textResize.current;
+          const ratio =
+            resize.height > 0
+              ? (resize.height + point.y - resize.start.y) / resize.height
+              : 1;
+          latest.current.onResizeText?.(
+            resize.id,
+            Math.max(1, resize.width + point.x - resize.start.x),
+            Math.max(8, Math.round(resize.fontSize * ratio)),
+          );
+          return;
+        }
         if (textDrag.current) {
           const dragText = textDrag.current;
           latest.current.onMoveText?.(
@@ -771,7 +813,11 @@ export function PixelCanvas({
         }
         const hoveredText = textAt(point);
         hoverText.current = hoveredText?.id ?? null;
-        event.currentTarget.style.cursor = hoveredText ? "move" : "";
+        event.currentTarget.style.cursor = hoveredText
+          ? nearTextResizeHandle(hoveredText, point)
+            ? "nesw-resize"
+            : "move"
+          : "";
         if (hoveredText) {
           hover.current = null;
           repaint.current();
@@ -819,6 +865,16 @@ export function PixelCanvas({
       }}
       onPointerUp={(event) => {
         const { onAction: emit } = latest.current;
+        if (textResize.current) {
+          textResize.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
         if (textDrag.current) {
           textDrag.current = null;
           latest.current.onTextDragEnd?.();
