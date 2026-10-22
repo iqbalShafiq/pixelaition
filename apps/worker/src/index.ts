@@ -622,7 +622,7 @@ const agents = completions.flatMap(({ spec, model }) => {
           : role === "ask" || role === "painter"
             ? [...roleTools, ...tool(questionTool.name)]
             : roleTools;
-      const id = `${agentPrefix}:${role}:${spec.id}:${effort}`;
+      const id = `${agentPrefix}:${role}:${encodeURIComponent(spec.id)}:${effort}`;
       return {
         id,
         role,
