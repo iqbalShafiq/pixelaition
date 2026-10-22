@@ -1,12 +1,5 @@
 import { cloneBuffer, composite, layerById, replaceLayer } from "./buffer.js";
-import {
-  clonePixels,
-  inBounds,
-  indexOf,
-  isSizeAllowed,
-  normalizeHex,
-  readCell,
-} from "./pixels.js";
+import { clonePixels, inBounds, indexOf, normalizeHex, readCell } from "./pixels.js";
 import {
   MAX_COLORS,
   type Command,
@@ -393,8 +386,13 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return { ok: true, buffer: { ...buffer, palette, layers } };
     }
     case "resize": {
-      if (!isSizeAllowed(command.width) || !isSizeAllowed(command.height)) {
-        return fail("SIZE", "Canvas size must be an integer from 8 to 128.");
+      if (
+        !Number.isInteger(command.width) ||
+        !Number.isInteger(command.height) ||
+        command.width < 1 ||
+        command.height < 1
+      ) {
+        return fail("SIZE", "Canvas size must be a positive integer.");
       }
       const layers = buffer.layers.map((layer) => {
         const pixels = new Uint8Array(command.width * command.height);

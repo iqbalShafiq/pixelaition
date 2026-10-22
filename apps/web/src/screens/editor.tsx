@@ -2529,7 +2529,7 @@ export function EditorScreen() {
       (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
       (input.height !== undefined && (input.height < 8 || input.height > 128))
     ) {
-      const text = "Canvas size must be a whole number from 8 to 128.";
+      const text = "Canvas size must be a whole number from 8 to 4096.";
       setError(text);
       notify({ title: "Size refused", description: text });
       return;

@@ -1737,6 +1737,18 @@ describe("drawing approval", () => {
     releaseRun("run-1");
   });
 
+  it("resizes past the retired 128 cap without a human approval", async () => {
+    boundRun();
+    expect(await approval("resize_canvas", { width: 400, height: 400 })).toBe(false);
+    const result = await tool("resize_canvas").call(
+      { width: 400, height: 400 },
+      { operationId: "run-1" },
+    );
+    expect(result).toEqual({ width: 400, height: 400, frames: 2 });
+    expect(getRun("run-1")?.frames.get("frame-1")?.buffer.width).toBe(400);
+    releaseRun("run-1");
+  });
+
   it("reports the resize as an asset change so the canvas size is persisted", async () => {
     const changes: FrameChange[] = [];
     const strokes: string[] = [];

@@ -23,7 +23,7 @@ export function createAsset(input: {
   palette?: string[];
 }): Asset {
   if (!isSizeAllowed(input.width) || !isSizeAllowed(input.height)) {
-    throw new Error("Canvas size must be an integer from 8 to 128.");
+    throw new Error("Canvas size must be an integer from 8 to 4096.");
   }
   const buffer = createBuffer({
     width: input.width,

@@ -1322,7 +1322,7 @@ export function StylePanel({
           </span>
         </div>
       ) : (
-        <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 128">
+        <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 4096">
           <div className="flex items-center gap-1.5">
             <TextInput
               id="canvas-width"

@@ -43,7 +43,7 @@ export function createBuffer(input: {
   layerName?: string;
 }): FrameBuffer {
   if (!isSizeAllowed(input.width) || !isSizeAllowed(input.height)) {
-    throw new Error("Canvas size must be an integer from 8 to 128.");
+    throw new Error("Canvas size must be an integer from 8 to 4096.");
   }
   const palette = input.palette ?? defaultPalette;
   return {
