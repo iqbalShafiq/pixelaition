@@ -444,7 +444,12 @@ function runFrameFrom(frame: Frame, run: BoundRunBinding): RunFrame {
   return {
     name: frame.name,
     index: frame.index,
-    buffer: frameToBuffer(frame, run.width, run.height, run.palette),
+    buffer: frameToBuffer(
+      frame,
+      frame.width ?? run.width,
+      frame.height ?? run.height,
+      run.palette,
+    ),
   };
 }
 
@@ -561,6 +566,8 @@ export function createPixelTools(
           name: item.name,
           summary: item.summary ?? "",
           index: item.index,
+          width: item.buffer.width,
+          height: item.buffer.height,
         })),
         currentFrame: { id: frame.id, name: frame.name },
         width: run.width,
@@ -597,17 +604,28 @@ export function createPixelTools(
       const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
       const frame = await resolveReadFrame(run, input);
       const read = layerOf(frame, view === "composite" ? undefined : input.layerId);
-      if (!read) throw new Error(`That layer is not on ${frame.frameName}.`);
+      if (!read) {
+        throw new Error(
+          `That layer is not on ${frame.frameName}. Layers: ${frame.layers
+            .map((layer) => layer.name)
+            .join(", ")}.`,
+        );
+      }
       return {
         assetId: frame.assetId,
         assetName: frame.assetName,
         frameId: frame.frameId,
         name: frame.frameName,
         view,
-        // Composite reads have no layer; an undefined key is not strict JSON.
-        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
         width: frame.width,
         height: frame.height,
+        layers: frame.layers.map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+        })),
+        // Composite reads have no layer; an undefined key is not strict JSON.
+        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
         palette: frame.palette.map((hex, index) => ({ index, hex })),
         rows: encodeRowsRle(read.pixels, frame.width, frame.height),
         colors: colorCounts(read.pixels, frame.palette),
@@ -1165,6 +1183,39 @@ export function createPixelTools(
 
   const setPaletteDescription =
     "Replace the asset's palette; every frame uses it. Index 0 must stay #00000000. Add the colours the request needs before painting with them.";
+  const resizeFrame = createTool({
+    name: "resize_frame",
+    description:
+      "Resize one frame's pixel canvas without changing the asset's other frames. Use this for a profile or cover whose output size differs from the asset canvas; pass width and height in pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      width: z.number().int().min(1).max(4096),
+      height: z.number().int().min(1).max(4096),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const result = applyCommand(frame.buffer, {
+        type: "resize",
+        width: input.width,
+        height: input.height,
+      });
+      if (!result.ok) throw new Error(result.message);
+      replaceFrameBuffer(run, frame.id, result.buffer);
+      run.touchedFrames.add(frame.id);
+      run.onStroke?.({ label: "resize", points: [] }, result.buffer, frame.id);
+      return {
+        frameId: frame.id,
+        name: frame.name,
+        width: result.buffer.width,
+        height: result.buffer.height,
+      };
+    },
+  });
+
   const setPalette = createTool({
     name: "set_palette",
     description: `${setPaletteDescription} The pixels follow their colours: a colour that moves to another index is rewritten, and a new colour is simply appended (or given an index and used by the next stroke), so one frame changing the palette never repaints another.`,
@@ -1543,7 +1594,7 @@ export function createPixelTools(
         approved: true,
         summary: input.summary,
         scope: [...scope],
-        next: "Create the approved frames now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
+        next: "Create the approved frames now with add_frame using exactly those names and each frame's planned width and height, then add the plan's palette colours with set_palette.",
       };
     },
   });
@@ -1714,10 +1765,12 @@ export function createPixelTools(
   const addFrameTool = createTool({
     name: "add_frame",
     description:
-      "Add a frame after the last one and make it current. Blank by default; pass copyOf to copy a frame's pixels. Use it to build animation frames.",
+      "Add a frame after the last one and make it current. Blank by default; pass copyOf to copy a frame's pixels. Pass width and height to make this frame its own canvas, such as a 400×400 profile or a 1500×500 cover; without them it inherits the asset's canvas.",
     inputSchema: z.object({
       name: z.string().max(40).optional(),
       copyOf: z.string().optional(),
+      width: z.number().int().min(8).max(4096).optional(),
+      height: z.number().int().min(8).max(4096).optional(),
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
@@ -1730,7 +1783,10 @@ export function createPixelTools(
             source.id,
             input.name ?? "",
           )
-        : addFrame(assetView(run), input.name ?? "");
+        : addFrame(assetView(run), input.name ?? "", {
+            width: input.width,
+            height: input.height,
+          });
       if (!next) throw new Error(`Frame ${input.copyOf} is not part of this asset.`);
       const added = next.frames.at(-1);
       if (!added) throw new Error("The frame could not be added.");
@@ -2232,6 +2288,7 @@ export function createPixelTools(
     applyOutline,
     ditherRect,
     resizeCanvas,
+    resizeFrame,
     setPalette,
     addLayerTool,
     addTextTool,

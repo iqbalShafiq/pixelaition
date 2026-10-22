@@ -74,6 +74,7 @@ const SUPERVISOR_TOOLS: readonly string[] = [
   "move_frame",
   "delete_frame",
   "resize_canvas",
+  "resize_frame",
   "list_projects",
   "list_assets",
 ];
@@ -81,7 +82,7 @@ const SUPERVISOR_TOOLS: readonly string[] = [
 /** Judging is the review pass's alone, including its two measuring tools. */
 const REVIEW_TOOLS: readonly string[] = ["critique_frame", "check_animation"];
 
-/** Frame switching is a supervisor move; a writer is pinned to its frames. */
+/** Frame switching is limited to the frames a writer owns. */
 const USE_FRAME = "use_frame";
 
 function catalog(
@@ -98,6 +99,10 @@ export const WORKER_TOOL_NAMES: ReadonlySet<string> = catalog(
   PAINT_TOOLS,
   TRANSFER_TOOLS,
   WRITER_TOOLS,
+  // A worker can own more than one frame (for example a profile and its wide
+  // cover). It may move between those frames, but `use_frame` still rejects a
+  // frame outside its assignment.
+  [USE_FRAME],
 );
 
 export const REVIEW_TOOL_NAMES: ReadonlySet<string> = catalog(
@@ -105,7 +110,7 @@ export const REVIEW_TOOL_NAMES: ReadonlySet<string> = catalog(
   REVIEW_TOOLS,
 );
 
-/** A fix child paints, saves pixels and compares, but never judges or switches. */
+/** A fix child paints, saves pixels and compares, but never judges or resizes. */
 export const FIX_TOOL_NAMES: ReadonlySet<string> = catalog(
   WORKER_TOOL_NAMES,
   // A fix moves between the frames its order names and may watch the numbers
@@ -150,13 +155,13 @@ export const planInstructions = [
   "You plan pixel-art work; you do not paint in this phase.",
   "Read the project, every asset in it, its frames and their summaries. A project's assets share one style: what the other assets do with outlines, shading and proportions is evidence for this one.",
   "Search for references when the subject is a real species, character, or place, and look at at least one result before writing the plan. A local edit to an existing frame (recolour, outline, a small prop) does not need a search or new reference frames.",
-  "Decide the frames (names and intents), the layers each frame needs, the palette additions (within the palette's remaining capacity), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
+  "Decide the frames (names, intents, and each frame's width and height when the request names a real output size), the layers each frame needs, the palette additions (within the palette's remaining capacity), the references (https only, with a short note), and the worker split (at most four workers; each frame in exactly one worker).",
   "Every frame is one pixel canvas at its own width and height. A native-size frame is just a larger pixel canvas: plan it with the same layers, palette and workers as any other frame. Never split the request into a separate artboard or compose phase, and never treat a marketing dimension as a different kind of document.",
   "If the request edits one existing frame, plan only that frame and the layers it actually changes. Do not list unchanged frames, do not add frames, and use one worker unless the edit genuinely spans multiple frames.",
   "Parts that must line up across frames — a stand, a body, feet, a shadow — deserve their own layer on every key frame. When a later frame keeps a part unchanged, the fix can copy it from the reference frame instead of redrawing it, so build frames that share a body rather than redrawing it each time.",
-  "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, layers), workers, palette, and references. The runtime reads that reply and the approval card shows it.",
+  "Write the full plan as ONE JSON object in your reply, exactly the schema below: frames (each with name, intent, width, height, and layers), workers, palette, and references. The runtime reads that reply and the approval card shows it. Width and height are real pixel canvases, not display hints: an X profile request is 400×400, an X cover 1500×500, a LinkedIn cover 1584×396.",
   "Then call present_plan with a one-line summary only. Its arguments stay small on purpose: the card is the user's approval of the plan you wrote, not a second copy of it.",
-  "Create the frames with add_frame, set the palette additions with set_palette, and resize the canvas with resize_canvas when the plan changes its size — only after the user approves the plan.",
+  "After approval, create each frame with add_frame using that frame's width and height, and set the palette additions with set_palette. If the request resizes one existing frame, call resize_frame with its width and height; use resize_canvas only when the request changes the whole asset's canvas.",
   "Answer in the language of the user's request, and write each frame's intent in that language.",
   "Finish by answering with one JSON object matching the plan schema and nothing else.",
 ].join("\n");
@@ -164,7 +169,7 @@ export const planInstructions = [
 export const workerInstructions = [
   "You are one worker in a supervised team; you paint only the frames you were given, and only the layers named for each.",
   "Follow the plan's intents and layer names exactly; keep outlines, palette, and proportions consistent with the frames you can see. They are read-only for you but yours to look at, and you can look at every frame of every asset in this project for style.",
-  "Do not add frames, switch frames, move frames, set the palette or resize the canvas. Do not call critique_frame or check_animation: the reviewer judges. Do not draw the same part twice when a copy region would do.",
+  "Do not add frames, move frames, set the palette, resize the canvas or resize a frame. You may switch between the frames you were assigned with use_frame; never switch to a frame outside your assignment. Do not call critique_frame or check_animation: the reviewer judges. Do not draw the same part twice when a copy region would do.",
   "Work additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. clear_region clears a rectangle to transparency and does not ask. replace_color pauses for the user's approval, so use it only when the plan or a review asks for a recolour.",
   "For words, use add_text once and then edit_text to change content, size, colour, rotation or position. A text layer stays editable and is still rasterized into palette pixels; never redraw the glyphs by hand and never bake text with fill or paint tools.",
   "When a part has to match another frame exactly — a stand, a face, a prop — read it with read_region and place it with paste_region (or copy_region) rather than redrawing it by eye. Copy a whole part before adding the difference for this frame.",

@@ -38,7 +38,13 @@ export type WorkerPromptInput = {
   styleLines: string[];
   /** Every frame of this asset, in index order. */
   frames?: readonly string[];
-  ownedFrames: Array<{ name: string; intent: string; layers: string[] }>;
+  ownedFrames: Array<{
+    name: string;
+    intent: string;
+    width?: number;
+    height?: number;
+    layers: string[];
+  }>;
   readOnlyFrames: string[];
   /** Other assets in the same project, read-only evidence for style. */
   projectAssets?: ProjectAssetBrief[];
@@ -89,6 +95,8 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
         input.plan.frames.map((frame) => ({
           name: frame.name,
           intent: frame.intent,
+          width: frame.width,
+          height: frame.height,
           layers: frame.layers,
         })),
       )}`,
@@ -97,7 +105,8 @@ export function buildWorkerPrompt(input: WorkerPromptInput): string {
   lines.push(
     "Paint only these frames, on the layers named for each:",
     ...input.ownedFrames.map(
-      (frame) => `- ${frame.name}: ${frame.intent}. Layers: ${frame.layers.join(", ")}.`,
+      (frame) =>
+        `- ${frame.name}${frame.width !== undefined && frame.height !== undefined ? ` (${frame.width}×${frame.height})` : ""}: ${frame.intent}. Layers: ${frame.layers.join(", ")}.`,
     ),
   );
   if (input.readOnlyFrames.length > 0) {

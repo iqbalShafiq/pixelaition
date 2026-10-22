@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_COLORS } from "@pixelaition/pixel";
+import { MAX_COLORS, MAX_SIZE, MIN_SIZE } from "@pixelaition/pixel";
 
 /**
  * The plan a supervisor produces for one drawing request, before a single
@@ -18,6 +18,13 @@ import { MAX_COLORS } from "@pixelaition/pixel";
 export const drawPlanFrameSchema = z.object({
   name: z.string().min(1).max(40),
   intent: z.string().min(1),
+  /**
+   * A frame is its own pixel canvas. A request that names a real output size
+   * (X profile, X cover, LinkedIn cover) carries that size here so add_frame
+   * creates the right canvas instead of silently inheriting the asset's size.
+   */
+  width: z.number().int().min(MIN_SIZE).max(MAX_SIZE).optional(),
+  height: z.number().int().min(MIN_SIZE).max(MAX_SIZE).optional(),
   layers: z
     .array(z.string().min(1).max(40))
     .describe("Layers this frame paints on, by the plan's layer names."),

@@ -820,7 +820,12 @@ export function EditorScreen() {
       const item = asset.data.frames[index + offset];
       if (item && item.kind !== "social") {
         neighbors.push(
-          frameToBuffer(item, asset.data.width, asset.data.height, asset.data.palette),
+          frameToBuffer(
+            item,
+            item.width ?? asset.data.width,
+            item.height ?? asset.data.height,
+            asset.data.palette,
+          ),
         );
       }
     }

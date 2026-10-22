@@ -34,6 +34,7 @@ const tools = [
   "mirror_frame",
   "set_palette",
   "resize_canvas",
+  "resize_frame",
   "use_asset",
   "create_asset",
   "list_projects",
@@ -81,6 +82,7 @@ describe("role tool catalogs", () => {
     for (const role of ["worker", "fix"] as const) {
       expect(names(role)).toContain("set_palette");
     }
+    expect(names("worker")).toContain("use_frame");
     expect(names("worker")).not.toContain("add_frame");
   });
 
@@ -92,13 +94,13 @@ describe("role tool catalogs", () => {
       "move_frame",
       "rename_frame",
       "resize_canvas",
+      "resize_frame",
       "use_asset",
       "create_asset",
       "list_projects",
       "list_assets",
       "plan",
       "present_plan",
-      "use_frame",
       "write_frame",
       "critique_frame",
       "check_animation",
@@ -127,7 +129,7 @@ describe("role tool catalogs", () => {
     }
   });
 
-  it("lets a fix paint, transfer, compare and save, but never judge or switch", () => {
+  it("lets a fix paint, transfer, compare and save, but never judge", () => {
     const kept = names("fix");
     for (const tool of [
       "paint_stroke",
@@ -142,7 +144,7 @@ describe("role tool catalogs", () => {
     ]) {
       expect(kept).toContain(tool);
     }
-    for (const tool of ["critique_frame", "use_frame", "add_frame"]) {
+    for (const tool of ["critique_frame", "add_frame", "resize_frame"]) {
       expect(kept).not.toContain(tool);
     }
   });

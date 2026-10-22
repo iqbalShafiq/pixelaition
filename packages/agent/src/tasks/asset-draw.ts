@@ -265,12 +265,12 @@ export function userRequestFromPrompt(
 export const PLAN_SCHEMA_EXAMPLE = [
   "Answer with exactly this JSON shape (no other fields):",
   '{"assetId":"<the asset id from read_project>",',
-  '"frames":[{"name":"idle","intent":"what this frame shows","layers":["body","shadow"]}],',
+  '"frames":[{"name":"idle","intent":"what this frame shows","width":32,"height":32,"layers":["body","shadow"]}],',
   '"palette":[{"color":"#rrggbb","name":"glow"}],',
   '"references":[{"url":"https://...","note":"what to look at","appliesTo":"all"}],',
   '"workers":[{"key":"w1","frames":["idle"]}],',
   '"review":true}',
-  "Every frame appears in exactly one worker; palette holds only the colours you added; references only when you actually searched.",
+  "Every frame appears in exactly one worker; width and height are the frame's real pixel canvas (use the size the request names); palette holds only the colours you added; references only when you actually searched.",
 ].join("\n");
 
 /** A request that describes the subject acting needs key frames, not one pose. */

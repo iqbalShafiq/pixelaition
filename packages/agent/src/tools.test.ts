@@ -400,7 +400,13 @@ describe("read tools", () => {
     const result = (await tool("read_project").call({}, { operationId: "run-1" })) as {
       assetId: string;
       name: string;
-      frames: Array<{ id: string; name: string; index: number }>;
+      frames: Array<{
+        id: string;
+        name: string;
+        index: number;
+        width: number;
+        height: number;
+      }>;
       currentFrame: { id: string; name: string };
       palette: Array<{ index: number; hex: string }>;
       layers: Array<{ id: string; name: string; visible: boolean }>;
@@ -408,8 +414,8 @@ describe("read tools", () => {
     expect(result.assetId).toBe("asset-1");
     expect(result.name).toBe("slime");
     expect(result.frames).toEqual([
-      { id: "frame-1", name: "idle", summary: "", index: 0 },
-      { id: "frame-2", name: "hop", summary: "", index: 1 },
+      { id: "frame-1", name: "idle", summary: "", index: 0, width: 4, height: 4 },
+      { id: "frame-2", name: "hop", summary: "", index: 1, width: 4, height: 4 },
     ]);
     expect(result.currentFrame).toEqual({ id: "frame-1", name: "idle" });
     expect(result.palette).toHaveLength(12);
@@ -763,6 +769,32 @@ describe("frame tools", () => {
     await expect(
       tool("use_frame").call({ frameId: "frame-9" }, { operationId: "run-1" }),
     ).rejects.toThrow('No frame named or identified by "frame-9"');
+    releaseRun("run-1");
+  });
+
+  it("add_frame creates a frame at its own canvas size", async () => {
+    boundFrameRun();
+    const result = (await tool("add_frame").call(
+      { name: "cover", width: 40, height: 20 },
+      { operationId: "run-1" },
+    )) as { frameId: string };
+    const added = getRun("run-1")?.frames.get(result.frameId);
+    expect(added?.buffer.width).toBe(40);
+    expect(added?.buffer.height).toBe(20);
+    expect(added?.buffer.layers[0]?.pixels).toHaveLength(800);
+    releaseRun("run-1");
+  });
+
+  it("resize_frame changes one frame without changing the asset canvas", async () => {
+    boundFrameRun();
+    const result = await tool("resize_frame").call(
+      { frameId: "frame-1", width: 40, height: 20 },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ frameId: "frame-1", width: 40, height: 20 });
+    const run = getRun("run-1");
+    expect(run?.frames.get("frame-1")?.buffer.width).toBe(40);
+    expect(run?.frames.get("frame-2")?.buffer.width).toBe(8);
     releaseRun("run-1");
   });
 
