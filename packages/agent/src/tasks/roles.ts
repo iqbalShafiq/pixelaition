@@ -101,8 +101,9 @@ export const WORKER_TOOL_NAMES: ReadonlySet<string> = catalog(
   WRITER_TOOLS,
   // A worker can own more than one frame (for example a profile and its wide
   // cover). It may move between those frames, but `use_frame` still rejects a
-  // frame outside its assignment.
-  [USE_FRAME],
+  // frame outside its assignment. It may also correct its own frame's canvas
+  // to the planned size; the tool still checks ownership.
+  [USE_FRAME, "resize_frame"],
 );
 
 export const REVIEW_TOOL_NAMES: ReadonlySet<string> = catalog(
@@ -169,7 +170,7 @@ export const planInstructions = [
 export const workerInstructions = [
   "You are one worker in a supervised team; you paint only the frames you were given, and only the layers named for each.",
   "Follow the plan's intents and layer names exactly; keep outlines, palette, and proportions consistent with the frames you can see. They are read-only for you but yours to look at, and you can look at every frame of every asset in this project for style.",
-  "Do not add frames, move frames, set the palette, resize the canvas or resize a frame. You may switch between the frames you were assigned with use_frame; never switch to a frame outside your assignment. Do not call critique_frame or check_animation: the reviewer judges. Do not draw the same part twice when a copy region would do.",
+  "Do not add frames, move frames, set the palette or resize the whole canvas. You may switch between the frames you were assigned with use_frame, and you may call resize_frame on one of your own frames when its planned width or height differs from its current canvas; never switch to or resize a frame outside your assignment. Do not call critique_frame or check_animation: the reviewer judges. Do not draw the same part twice when a copy region would do.",
   "Work additively: paint_stroke, fill_rect, draw_line, flood_fill, apply_outline, and dither_rect. clear_region clears a rectangle to transparency and does not ask. replace_color pauses for the user's approval, so use it only when the plan or a review asks for a recolour.",
   "For words, use add_text once and then edit_text to change content, size, colour, rotation or position. A text layer stays editable and is still rasterized into palette pixels; never redraw the glyphs by hand and never bake text with fill or paint tools.",
   "When a part has to match another frame exactly — a stand, a face, a prop — read it with read_region and place it with paste_region (or copy_region) rather than redrawing it by eye. Copy a whole part before adding the difference for this frame.",
@@ -180,7 +181,7 @@ export const workerInstructions = [
 export const reviewInstructions = [
   "You are the supervisor's review pass; you never paint. You decide when the work is done.",
   "Look at the result first: preview_frame on the frames — the strip shows them together — and compare each frame with the plan and with each other: continuity, palette, outline colour, proportions, and the frames' intents.",
-  "Measure next: critique_frame on each frame, check_animation with the frame that carries the body as referenceFrame, and compare_frames between a frame and its reference when a part should match.",
+  "Read frame metadata before judging: read_project, list_project_frames and read_frame return every frame's id, name, index, width, height, summary and layers, for the current frame and for every other frame. A missing layer is a plan or painting fact, not a guess.\n  Measure next: critique_frame on each frame, check_animation with the frame that carries the body as referenceFrame, and compare_frames between a frame and its reference when a part should match.",
   "Judge what matters for this request. A finding the artist cannot fix by construction — a layer the plan does not have, a colour the palette does not hold, a part the request never asked for — is not a fix order; say so in `summary` and stop. A finding the drawing broke is a fix order. A painting role that needed a missing colour can add it itself with set_palette, so a finding about a colour is about the design, not about permission.",
   "Each review is a fresh look, and the work log tells you what earlier rounds tried. A finding that survived an attempt is not evidence for another identical attempt: order a different act (a named tool and region — copy_region, paste_region, copy_layers from the reference frame) or take the frame as it is. When the same finding has come back three times, it is yours to resolve: either the design does not allow it (say so in summary and finish) or it is small enough to accept (finish and name it). The work log is how you know it has come back — a task that keeps re-asking is stuck, and finishing is your judgement to make.",
   "Use `done` once every frame meets what the request asked for, even when small issues remain — say what remains in `summary` instead. Use `fix` only when a new attempt can plausibly land, and give each fix the frame, the layers to touch, the tool or region that fixes it, and the reference frame when one matched better.",
@@ -190,7 +191,7 @@ export const reviewInstructions = [
 export const fixInstructions = [
   "You are a fix worker; you paint only the frames named in your task, and only the layers the review named.",
   "Fix exactly what the review asked for, and only on the layers it named. When the review points at a reference frame, look at it and copy the matching region or layer instead of redrawing it by eye; when the part must stay identical, copy, paste or mirror it.",
-  "Fix additively, like a worker: paint the corrected pixels over what is there. clear_region does not ask. replace_color pauses for approval, so use it only when the review's note asks for a recolour.",
+  "Fix additively, like a worker: paint the corrected pixels over what is there. clear_region does not ask. replace_color pauses for approval, so use it only when the review's note asks for a recolour. You may switch among the frames named in your task and resize one of those frames with resize_frame when the review names a size.",
   "Compare before and after (preview_frame, compare_frames) and change nothing the review did not ask you to change.",
   "Save with save_frame, end with a one-sentence summary of what changed in the user's language, then stop.",
 ].join("\n");

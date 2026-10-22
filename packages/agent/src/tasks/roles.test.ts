@@ -83,6 +83,7 @@ describe("role tool catalogs", () => {
       expect(names(role)).toContain("set_palette");
     }
     expect(names("worker")).toContain("use_frame");
+    expect(names("worker")).toContain("resize_frame");
     expect(names("worker")).not.toContain("add_frame");
   });
 
@@ -94,7 +95,6 @@ describe("role tool catalogs", () => {
       "move_frame",
       "rename_frame",
       "resize_canvas",
-      "resize_frame",
       "use_asset",
       "create_asset",
       "list_projects",
@@ -144,9 +144,11 @@ describe("role tool catalogs", () => {
     ]) {
       expect(kept).toContain(tool);
     }
-    for (const tool of ["critique_frame", "add_frame", "resize_frame"]) {
+    for (const tool of ["critique_frame", "add_frame"]) {
       expect(kept).not.toContain(tool);
     }
+    expect(kept).toContain("resize_frame");
+    expect(kept).toContain("use_frame");
   });
 
   it("gives the plan the whole catalogue", () => {

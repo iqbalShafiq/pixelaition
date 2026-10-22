@@ -568,6 +568,12 @@ export function createPixelTools(
           index: item.index,
           width: item.buffer.width,
           height: item.buffer.height,
+          layers: item.buffer.layers.map((layer) => ({
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            ...(layer.text ? { text: layer.text } : {}),
+          })),
         })),
         currentFrame: { id: frame.id, name: frame.name },
         width: run.width,
@@ -616,6 +622,8 @@ export function createPixelTools(
         assetName: frame.assetName,
         frameId: frame.frameId,
         name: frame.frameName,
+        index: frame.index ?? null,
+        summary: frame.summary ?? "",
         view,
         width: frame.width,
         height: frame.height,
@@ -623,6 +631,7 @@ export function createPixelTools(
           id: layer.id,
           name: layer.name,
           visible: layer.visible,
+          ...(layer.text ? { text: layer.text } : {}),
         })),
         // Composite reads have no layer; an undefined key is not strict JSON.
         ...(read.layerId === "" ? {} : { layerId: read.layerId }),
@@ -2137,7 +2146,7 @@ export function createPixelTools(
   const listProjectFrames = createTool({
     name: "list_project_frames",
     description:
-      "List every asset of this project with its size, palette and frames. Each frame's names, summaries and indices — the style evidence across the whole project.",
+      "List every asset of this project with its size, palette and frames. Every frame carries its id, name, summary, index, width, height and layers — the complete metadata for the current frame and every other frame.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
       const run = requireRun(context.operationId);

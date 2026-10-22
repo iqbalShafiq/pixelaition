@@ -1671,6 +1671,7 @@ function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
     apply_outline: "idempotent" as const,
     dither_rect: "idempotent" as const,
     resize_canvas: "idempotent" as const,
+    resize_frame: "idempotent" as const,
     set_palette: "idempotent" as const,
     rename_layer: "idempotent" as const,
     set_layer_visible: "idempotent" as const,

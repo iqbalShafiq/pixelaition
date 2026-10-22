@@ -204,6 +204,34 @@ describe("worker frame ownership", () => {
     ).rejects.toThrow("The review role cannot call paint_stroke.");
     releaseRun("run-1");
   });
+  it("resizes one frame without a human approval card", async () => {
+    boundRun();
+    expect(
+      await approval("resize_frame", { frameId: "frame-1", width: 8, height: 6 }),
+    ).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("lets a worker resize its own frame but never a sibling frame", async () => {
+    boundRun(undefined, undefined, {
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+    });
+    const result = await tool("resize_frame").call(
+      { frameId: "frame-1", width: 8, height: 6 },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ width: 8, height: 6 });
+    expect(getRun("run-1")?.frames.get("frame-1")?.buffer.width).toBe(8);
+    await expect(
+      tool("resize_frame").call(
+        { frameId: "frame-2", width: 8, height: 6 },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("That frame belongs to another worker.");
+    releaseRun("run-1");
+  });
+
   it("refuses a structural tool when the operation id carries the durable run prefix", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
@@ -406,6 +434,7 @@ describe("read tools", () => {
         index: number;
         width: number;
         height: number;
+        layers: Array<{ id: string; name: string; visible: boolean }>;
       }>;
       currentFrame: { id: string; name: string };
       palette: Array<{ index: number; hex: string }>;
@@ -414,8 +443,27 @@ describe("read tools", () => {
     expect(result.assetId).toBe("asset-1");
     expect(result.name).toBe("slime");
     expect(result.frames).toEqual([
-      { id: "frame-1", name: "idle", summary: "", index: 0, width: 4, height: 4 },
-      { id: "frame-2", name: "hop", summary: "", index: 1, width: 4, height: 4 },
+      {
+        id: "frame-1",
+        name: "idle",
+        summary: "",
+        index: 0,
+        width: 4,
+        height: 4,
+        layers: [
+          { id: "layer-base", name: "base", visible: true },
+          { id: "layer-detail", name: "detail", visible: true },
+        ],
+      },
+      {
+        id: "frame-2",
+        name: "hop",
+        summary: "",
+        index: 1,
+        width: 4,
+        height: 4,
+        layers: [{ id: "layer-a", name: "a", visible: true }],
+      },
     ]);
     expect(result.currentFrame).toEqual({ id: "frame-1", name: "idle" });
     expect(result.palette).toHaveLength(12);
