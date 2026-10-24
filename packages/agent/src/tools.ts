@@ -1603,7 +1603,7 @@ export function createPixelTools(
         approved: true,
         summary: input.summary,
         scope: [...scope],
-        next: "Create the approved frames now with add_frame using exactly those names and each frame's planned width and height, then add the plan's palette colours with set_palette.",
+        next: "Create the approved frames now with add_frame using exactly those names and each frame's planned width and height, then add the plan's palette colours with set_palette and delete every frame named in removeFrames.",
       };
     },
   });

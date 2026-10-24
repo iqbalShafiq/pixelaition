@@ -40,6 +40,17 @@ describe("validatePlan", () => {
       error: 'The plan names frame "idle" twice.',
     });
   });
+  it("accepts an existing frame marked for removal", () => {
+    expect(validatePlan({ ...base, removeFrames: ["old"] }, limits)).toEqual({
+      ok: true,
+    });
+  });
+  it("refuses to create and remove the same frame", () => {
+    expect(validatePlan({ ...base, removeFrames: ["idle"] }, limits)).toEqual({
+      ok: false,
+      error: 'The plan both creates and removes frame "idle"; choose one.',
+    });
+  });
   it("names a frame missing from every worker", () => {
     const plan = { ...base, workers: [{ key: "w1", frames: ["idle"] }] };
     expect(validatePlan(plan, limits)).toEqual({

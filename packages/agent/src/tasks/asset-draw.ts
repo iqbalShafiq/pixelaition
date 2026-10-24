@@ -269,6 +269,7 @@ export const PLAN_SCHEMA_EXAMPLE = [
   '"palette":[{"color":"#rrggbb","name":"glow"}],',
   '"references":[{"url":"https://...","note":"what to look at","appliesTo":"all"}],',
   '"workers":[{"key":"w1","frames":["idle"]}],',
+  '"removeFrames":[],',
   '"review":true}',
   "Every frame appears in exactly one worker; width and height are the frame's real pixel canvas (use the size the request names); palette holds only the colours you added; references only when you actually searched.",
 ].join("\n");
