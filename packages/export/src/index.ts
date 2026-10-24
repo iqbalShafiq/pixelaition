@@ -19,7 +19,7 @@ export function parseProject(source: string): PixelProject {
   return pixelProjectSchema.parse(JSON.parse(source));
 }
 
-export function frameToPng(buffer: FrameBuffer, scale: ExportScale): Uint8Array {
+export function frameToPng(buffer: FrameBuffer, scale: number): Uint8Array {
   const image = rasterize(buffer, scale);
   const png = new PNG({ width: image.width, height: image.height });
   png.data.set(image.data);
@@ -28,7 +28,7 @@ export function frameToPng(buffer: FrameBuffer, scale: ExportScale): Uint8Array 
 
 export function frameToJpg(
   buffer: FrameBuffer,
-  scale: ExportScale,
+  scale: number,
   background = "#0a0a09",
 ): Uint8Array {
   const image = rasterize(buffer, scale, background);

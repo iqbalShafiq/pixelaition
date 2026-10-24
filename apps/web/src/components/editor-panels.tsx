@@ -195,6 +195,9 @@ function FrameRow({
   onDragFinished: () => void;
 }) {
   const controls = useDragControls();
+  const frameWidth = frame.width ?? pixelWidth;
+  const frameHeight = frame.height ?? pixelHeight;
+  const dimensions = frameWidth && frameHeight ? `${frameWidth}×${frameHeight}` : null;
   return (
     <Reorder.Item
       data-frame-row={frame.id}
@@ -293,23 +296,20 @@ function FrameRow({
         ) : (
           <span className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center leading-5">
             <span className="truncate">{frame.name}</span>
-            {taskState !== undefined ? (
-              <span className="flex min-w-0">
+            <span className="flex min-w-0 items-center gap-1">
+              {taskState !== undefined ? (
                 <FrameStatus state={taskState} />
-              </span>
-            ) : current && locked ? (
-              <span className="text-pixel-mono">drawing</span>
-            ) : (
-              <span className="truncate font-mono text-[9px] text-muted">
-                {frame.kind === "social"
-                  ? frame.presetId
-                    ? `${frame.width}×${frame.height} · ${presetAspect(getPreset(frame.presetId))}`
-                    : "frame"
-                  : (frame.width ?? pixelWidth) && (frame.height ?? pixelHeight)
-                    ? `${frame.width ?? pixelWidth}×${frame.height ?? pixelHeight}`
-                    : null}
-              </span>
-            )}
+              ) : current && locked ? (
+                <span className="text-pixel-mono">drawing</span>
+              ) : null}
+              {dimensions !== null ? (
+                <span className="ml-auto shrink-0 font-mono text-[9px] text-muted">
+                  {frame.kind === "social" && frame.presetId
+                    ? `${dimensions} · ${presetAspect(getPreset(frame.presetId))}`
+                    : dimensions}
+                </span>
+              ) : null}
+            </span>
           </span>
         )}
         <span

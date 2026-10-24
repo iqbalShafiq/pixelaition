@@ -1786,13 +1786,24 @@ export function createPixelTools(
       requireAsset(run);
       const source =
         input.copyOf === undefined ? undefined : resolveFrame(run, input.copyOf);
+      const requestedName = input.name?.trim();
+      if (requestedName && requestedName.length > 0) {
+        const duplicate = [...run.frames.values()].find(
+          (frame) => frame.name.trim().toLowerCase() === requestedName.toLowerCase(),
+        );
+        if (duplicate) {
+          throw new Error(
+            `A frame named "${requestedName}" already exists. Use that frame or choose a different name.`,
+          );
+        }
+      }
       const next = source
         ? duplicateFrame(
             assetView(run, { withPixels: [source.id] }),
             source.id,
-            input.name ?? "",
+            requestedName ?? "",
           )
-        : addFrame(assetView(run), input.name ?? "", {
+        : addFrame(assetView(run), requestedName ?? "", {
             width: input.width,
             height: input.height,
           });
@@ -1829,6 +1840,15 @@ export function createPixelTools(
       const frame = resolveFrame(run, input.frameId);
       const name = input.name.trim();
       if (!name) throw new Error("A frame name cannot be blank.");
+      const duplicate = [...run.frames.entries()].find(
+        ([id, candidate]) =>
+          id !== frame.id && candidate.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+      if (duplicate) {
+        throw new Error(
+          `A frame named "${name}" already exists. Choose a different name.`,
+        );
+      }
       // Persist first: a refused save leaves the name exactly as it was.
       await run.onFrameChange?.({ type: "rename", frameId: frame.id, name });
       frame.frame.name = name;
@@ -1939,7 +1959,7 @@ export function createPixelTools(
         .object(comparedFrameLocator)
         .optional()
         .describe("A second frame to show beside the first."),
-      scale: z.number().int().min(1).max(10).default(4),
+      scale: z.number().min(0.25).max(10).default(4),
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
@@ -2011,7 +2031,7 @@ export function createPixelTools(
             },
           ],
         },
-        input.scale as ExportScale,
+        input.scale,
       );
       if (png.length > MAX_PREVIEW_BYTES) {
         throw new Error(

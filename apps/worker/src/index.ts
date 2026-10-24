@@ -579,6 +579,12 @@ function compactionFor(model: CompletionModel, window: number | undefined) {
 // Durable submits carry no model controls, so one agent is registered per
 // model, reasoning effort, and role, and a child's spawn picks the trio. Every
 // role's tool list is fixed here, so the model only ever sees what it owns.
+// Compaction is a summarisation job, not an art call. Muse/Responses reviewers
+// can return an empty summary at the end of a long read; the catalog's
+// summary-text model writes the compact history for every agent instead.
+const summaryModel = completions.find(({ spec }) =>
+  spec.roles.includes("summary-text"),
+)?.model;
 const agents = completions.flatMap(({ spec, model }) => {
   const questionTool = createQuestionTool();
   const catalogue = createPixelTools({ vision: spec.vision, webSearch });
@@ -597,7 +603,7 @@ const agents = completions.flatMap(({ spec, model }) => {
     };
     return [{ ...entry, call }];
   };
-  const compaction = compactionFor(model, spec.contextWindow);
+  const compaction = compactionFor(summaryModel ?? model, spec.contextWindow);
   return spec.efforts.flatMap((effort) =>
     AGENT_ROLES.map((role) => {
       // Registration order matters for the ask agent only in that its tool

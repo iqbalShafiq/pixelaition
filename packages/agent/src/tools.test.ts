@@ -820,6 +820,20 @@ describe("frame tools", () => {
     releaseRun("run-1");
   });
 
+  it("refuses a second frame with the same name", async () => {
+    boundFrameRun();
+    await expect(
+      tool("add_frame").call({ name: "idle" }, { operationId: "run-1" }),
+    ).rejects.toThrow('A frame named "idle" already exists.');
+    await expect(
+      tool("rename_frame").call(
+        { frameId: "frame-1", name: "hop" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow('A frame named "hop" already exists.');
+    releaseRun("run-1");
+  });
+
   it("add_frame creates a frame at its own canvas size", async () => {
     boundFrameRun();
     const result = (await tool("add_frame").call(

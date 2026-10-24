@@ -777,25 +777,39 @@ export function EditorScreen() {
     setFrameId((current) => current ?? data.frames[0]?.id ?? null);
   }, [asset.data]);
 
+  // Hydrate the composer once, after both the catalog and the saved
+  // preference are readable. The two used to race: the catalog effect ran with
+  // an empty model id and wrote the first model over the saved Muse choice,
+  // while the effort effect wrote that model's first effort over "medium".
+  const modelInitialised = useRef(false);
   useEffect(() => {
-    if (preferences.data?.lastModelId) setModelId(preferences.data.lastModelId);
-    if (preferences.data?.lastReasoningEffort) {
-      setEffort(preferences.data.lastReasoningEffort);
-    }
-  }, [preferences.data]);
-
-  // A stored preference can name a model or effort that is no longer offered;
-  // the composer must always show a selectable pair.
-  useEffect(() => {
-    const options = catalog.data?.models ?? [];
+    if (modelInitialised.current || !catalog.data || preferences.isLoading) return;
+    const options = catalog.data.models;
     if (options.length === 0) return;
-    if (!options.some((item) => item.id === modelId)) setModelId(options[0]?.id ?? "");
-  }, [catalog.data, modelId]);
+    const chosen =
+      options.find((item) => item.id === preferences.data?.lastModelId) ?? options[0]!;
+    setModelId(chosen.id);
+    const preferred = preferences.data?.lastReasoningEffort;
+    setEffort(
+      preferred && chosen.efforts.includes(preferred)
+        ? preferred
+        : (chosen.efforts[0] ?? ""),
+    );
+    modelInitialised.current = true;
+  }, [catalog.data, preferences.data, preferences.isLoading]);
 
+  // After hydration, a model that disappears from the catalog or an effort it
+  // no longer offers must still leave a selectable pair. Never run this before
+  // hydration: modelId is still empty then and would clobber the saved choice.
   useEffect(() => {
-    const options =
-      catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
-    if (options.length > 0 && !options.includes(effort)) setEffort(options[0] ?? "");
+    if (!modelInitialised.current || !modelId) return;
+    const options = catalog.data?.models ?? [];
+    if (!options.some((item) => item.id === modelId)) {
+      setModelId(options[0]?.id ?? "");
+      return;
+    }
+    const efforts = options.find((item) => item.id === modelId)?.efforts ?? [];
+    if (efforts.length > 0 && !efforts.includes(effort)) setEffort(efforts[0] ?? "");
   }, [catalog.data, modelId, effort]);
 
   useEffect(() => {
