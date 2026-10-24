@@ -71,7 +71,12 @@ export function SpriteThumb({
       }
       return;
     }
-    const buffer = frameToBuffer(frame, data.width, data.height, data.palette);
+    const buffer = frameToBuffer(
+      frame,
+      frame.width ?? data.width,
+      frame.height ?? data.height,
+      data.palette,
+    );
     canvas.width = buffer.width;
     canvas.height = buffer.height;
     const image = context.createImageData(buffer.width, buffer.height);
