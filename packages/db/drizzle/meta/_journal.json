@@ -211,6 +211,13 @@
       "when": 1792500400000,
       "tag": "0029_retire_minimax_free",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792500500000,
+      "tag": "0030_opencode_go_agent_models",
+      "breakpoints": true
     }
   ]
 }

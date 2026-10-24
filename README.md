@@ -91,16 +91,16 @@ The web app proxies `/api` to port 3001. One `.env` at the repository root feeds
 
 Copy `.env.example` and fill the keys for the parts you want running. Manual editing works with none of them.
 
-| Variable                                                              | What it unlocks                                                                                                   |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `AGENT_BASE_URL`, `AGENT_API_KEY`                                     | The drawing models. Point the base URL at any OpenAI-compatible endpoint, such as `https://openrouter.ai/api/v1`. |
-| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | The decision layer. Required before a run will start. It is a real model call, never a local heuristic.           |
-| `DATABASE_URL`                                                        | Postgres. The Compose file already sets it.                                                                       |
-| `BETTER_AUTH_SECRET`                                                  | Signed session cookies. Generate one with `openssl rand -base64 32`.                                              |
-| `WORKER_INTERNAL_TOKEN`                                               | The API-to-worker handshake.                                                                                      |
-| `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`     | Traces for every run. Leave them empty to run without telemetry.                                                  |
-| `TAVILY_API_KEY`                                                      | Web search. Without it the agent has no search tools.                                                             |
-| `EVAL_MODEL`                                                          | The model-judged metrics behind `pnpm eval:judge`.                                                                |
+| Variable                                                              | What it unlocks                                                                                                                                                                                                    |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AGENT_BASE_URL`, `AGENT_API_KEY`                                     | The drawing models. This setup uses OpenCode Go at `https://opencode.ai/inference/go/v1`; Jev stays on OpenRouter. The worker sends `x-opencode-session`, `x-opencode-client`, and a `pixelaition/0.1` user-agent. |
+| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | The decision layer. Required before a run will start. It is a real model call, never a local heuristic.                                                                                                            |
+| `DATABASE_URL`                                                        | Postgres. The Compose file already sets it.                                                                                                                                                                        |
+| `BETTER_AUTH_SECRET`                                                  | Signed session cookies. Generate one with `openssl rand -base64 32`.                                                                                                                                               |
+| `WORKER_INTERNAL_TOKEN`                                               | The API-to-worker handshake.                                                                                                                                                                                       |
+| `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`     | Traces for every run. Leave them empty to run without telemetry.                                                                                                                                                   |
+| `TAVILY_API_KEY`                                                      | Web search. Without it the agent has no search tools.                                                                                                                                                              |
+| `EVAL_MODEL`                                                          | The model-judged metrics behind `pnpm eval:judge`.                                                                                                                                                                 |
 
 The drawing models and their reasoning efforts live in the `models` table, seeded by migrations. The composer reads them from there, so a model that leaves the seed is deleted by the next migration.
 

@@ -4,7 +4,7 @@ const { OpenAI } = await import("openai");
 const request = JSON.parse(readFileSync("/tmp/plan-request.json", "utf8"));
 console.log("request keys:", Object.keys(request).join(","), "tools:", Array.isArray(request.tools) ? request.tools.length : "none");
 const client = new OpenAIClient({ client: new OpenAI({ apiKey: process.env.AGENT_API_KEY, baseURL: process.env.AGENT_BASE_URL }) });
-const model = client.completionModel({ modelId: "deepseek/deepseek-v4.1-flash-1017", api: "chat" });
+const model = client.completionModel({ modelId: "deepseek-v4.1-flash", api: "chat" });
 try {
   const stream = model.streamCompletion(request);
   let text = 0, calls = 0, deltas = 0;

@@ -14,8 +14,8 @@ if (!baseUrl || !apiKey) {
   process.exit(2);
 }
 
-const primary = process.env.SOCIAL_EVAL_PRIMARY ?? "deepseek/deepseek-v4.1-flash-1017";
-const fallback = "meta/muse-spark-1.3-contributor";
+const primary = process.env.SOCIAL_EVAL_PRIMARY ?? "deepseek-v4.1-flash";
+const fallback = "muse-spark-1.3-contributor";
 
 const wanted = [
   "linkedin-cover",

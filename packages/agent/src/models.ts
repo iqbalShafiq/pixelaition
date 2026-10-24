@@ -147,6 +147,22 @@ export function openCodeGoHeaders(
   baseUrl: string | undefined,
   sessionId: string,
 ): Record<string, string> | undefined {
-  if (!baseUrl?.includes("opencode.ai")) return undefined;
-  return { "x-opencode-session": sessionId, "user-agent": "pixelaition/0.1" };
+  if (!baseUrl) return undefined;
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  // Only OpenCode's own hosts receive these headers. A proxy or a local
+  // OpenAI-compatible endpoint must not see the conversation identity.
+  if (host !== "opencode.ai" && !host.endsWith(".opencode.ai")) return undefined;
+  return {
+    // Required by OpenCode Go: one stable id per conversation so routing and
+    // prompt caching survive across turns.
+    "x-opencode-session": sessionId,
+    // Identify the client instead of arriving as the generic OpenAI SDK.
+    "x-opencode-client": "pixelaition",
+    "user-agent": "pixelaition/0.1",
+  };
 }
