@@ -303,7 +303,7 @@ function FrameRow({
                 <span className="text-pixel-mono">drawing</span>
               ) : null}
               {dimensions !== null ? (
-                <span className="ml-auto shrink-0 font-mono text-[9px] text-muted">
+                <span className="shrink-0 font-mono text-[9px] text-muted">
                   {frame.kind === "social" && frame.presetId
                     ? `${dimensions} · ${presetAspect(getPreset(frame.presetId))}`
                     : dimensions}
