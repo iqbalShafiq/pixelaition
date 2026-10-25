@@ -29,6 +29,7 @@ const formats = [
   "sheet",
   "png-sequence",
   "aseprite-json",
+  "tileset",
 ] as const;
 type Format = (typeof formats)[number];
 
@@ -68,6 +69,8 @@ export function ExportDialog({
   const [columns, setColumns] = useState("");
   const [atlasPreset, setAtlasPreset] = useState("native");
   const [packed, setPacked] = useState(false);
+  const [tileWidth, setTileWidth] = useState("16");
+  const [tileHeight, setTileHeight] = useState("16");
   const [state, setState] = useState<{
     kind: "idle" | "busy" | "failed";
     message?: string;
@@ -80,7 +83,8 @@ export function ExportDialog({
     format === "webp" ||
     format === "sheet" ||
     format === "png-sequence" ||
-    format === "aseprite-json";
+    format === "aseprite-json" ||
+    format === "tileset";
   const socialFormats = formats.filter((item) => item === "png" || item === "jpg");
   const available = social
     ? socialFormats
@@ -231,6 +235,26 @@ export function ExportDialog({
               />
             </Field>
             <Checkbox label="Pack frames" checked={packed} onChange={setPacked} />
+          </>
+        ) : null}
+        {format === "tileset" ? (
+          <>
+            <Field label="Tile width" htmlFor="export-tile-width">
+              <TextInput
+                id="export-tile-width"
+                inputMode="numeric"
+                value={tileWidth}
+                onChange={(event) => setTileWidth(event.currentTarget.value)}
+              />
+            </Field>
+            <Field label="Tile height" htmlFor="export-tile-height">
+              <TextInput
+                id="export-tile-height"
+                inputMode="numeric"
+                value={tileHeight}
+                onChange={(event) => setTileHeight(event.currentTarget.value)}
+              />
+            </Field>
           </>
         ) : null}
         {format === "jpg" || format === "zip" ? (

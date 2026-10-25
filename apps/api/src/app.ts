@@ -21,6 +21,7 @@ import {
   framesToGif,
   atlasForEngine,
   atlasPresets,
+  frameToTileset,
   framesToSheet,
   serializeProject,
   sheetToAsepriteJson,
@@ -3617,6 +3618,7 @@ export function createApp() {
           "sheet",
           "png-sequence",
           "aseprite-json",
+          "tileset",
         ]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
@@ -3628,13 +3630,21 @@ export function createApp() {
         margin: z.number().int().min(0).max(64).optional(),
         atlasPreset: z.enum(atlasPresets).default("native"),
         packed: z.boolean().default(false),
+        tileWidth: z.number().int().min(1).max(256).optional(),
+        tileHeight: z.number().int().min(1).max(256).optional(),
       })
       .parse(req.body);
     const userId = res.locals.userId as string;
     if (
-      ["gif", "apng", "webp", "sheet", "png-sequence", "aseprite-json"].includes(
-        body.format,
-      )
+      [
+        "gif",
+        "apng",
+        "webp",
+        "sheet",
+        "png-sequence",
+        "aseprite-json",
+        "tileset",
+      ].includes(body.format)
     ) {
       if (body.scope === "project" || body.scope === "artboard" || body.scope === "set") {
         return fail(
@@ -3712,6 +3722,27 @@ export function createApp() {
         return [{ frame, buffer, durationMs: frame.durationMs ?? 100 }];
       });
       const slugName = slug(asset.name);
+      if (body.format === "tileset") {
+        const first = entries[0];
+        if (!first)
+          return fail(res, 422, "NOTHING_TO_EXPORT", "There is no frame to tile.");
+        const tileWidth = body.tileWidth ?? 16;
+        const tileHeight = body.tileHeight ?? 16;
+        const tileset = frameToTileset(first.buffer, tileWidth, tileHeight, slugName);
+        res.setHeader("content-type", "application/zip");
+        res.setHeader(
+          "content-disposition",
+          `attachment; filename="${slugName}-tileset.zip"`,
+        );
+        return res.send(
+          Buffer.from(
+            zipFiles({
+              ...tileset.tiles,
+              [`${slugName}-tileset.json`]: `${JSON.stringify(tileset.meta, null, 2)}\n`,
+            }),
+          ),
+        );
+      }
       if (body.format === "png-sequence") {
         const files: Record<string, Uint8Array> = {};
         entries.forEach((entry, index) => {

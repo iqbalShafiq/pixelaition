@@ -19,6 +19,7 @@ import {
   type AtlasPreset,
   frameToJpg,
   frameToPng,
+  frameToTileset,
   framesToApng,
   framesToGif,
   framesToSheet,
@@ -151,6 +152,24 @@ async function exportProject(args: string[]): Promise<void> {
   }
   if (format === "apng") {
     await writeFile(out, framesToApng(frames, { scale }));
+    return;
+  }
+  if (format === "tileset") {
+    const first = frames[0];
+    if (!first) throw new Error("That asset has no frames.");
+    const tileset = frameToTileset(
+      first.buffer,
+      Number(option(args, "tile-width") ?? "16"),
+      Number(option(args, "tile-height") ?? "16"),
+      slug(asset.name),
+    );
+    await writeFile(
+      out,
+      zipFiles({
+        ...tileset.tiles,
+        [`${slug(asset.name)}-tileset.json`]: `${JSON.stringify(tileset.meta, null, 2)}\n`,
+      }),
+    );
     return;
   }
   if (format === "sheet" || format === "png-sequence" || format === "aseprite-json") {
