@@ -422,18 +422,18 @@ Implemented:
   deterministic eval suite.
 - Touch pinch zooms and two-finger drag pans the canvas; wheel zoom and the
   toolbar's zoom steps remain.
+- Export documents now carry slices, color mode and the style lock, so the
+  `.ase` and tilemap JSON exports see the same slices as the editor.
+- A 16-slice terrain mask (`up/right/down/left`) auto-picks tiles from
+  neighbours; edge matching and tile fill remain available.
+- Masked selections support flip, rotate, move and nudge as well as
+  copy/cut/paste and mask-aware drawing.
 
 Still open from the matrix above:
 
-- Tilemap authoring with persistent tile-index layers; edge-aware tile
-  stamping, tile fill, tileset packaging, tilemap JSON recovery/apply from the editor, tile preview, seam reports and
-  tile-size suggestions are in.
-- More dynamics, true RGB color mode and Lua/visual scripting; full-colour
-  selection brushes, square/round/spray brushes, pressure sizing, jitter,
+- A persistent tile-index layer in the editor; edge-aware stamping, terrain
+  masks, tile fill, tileset packaging, tilemap JSON recovery/apply from the
+  editor and CLI, tile preview, seam reports and tile-size suggestions are in.
+- True RGB color mode and Lua/visual scripting; full-colour selection
+  brushes, square/round/spray brushes, pressure sizing, jitter,
   grayscale/monochrome modes and command-script CLI/API exist.
-- A 16-slice terrain mask (`up/right/down/left`) auto-picks tiles from
-  neighbours; edge matching and tile fill remain available. Linked layers,
-  the style lock, mirrored variant frames, selection-scoped prompts, AI
-  animation and reference overlays are in place.
-- Masked selections now support flip, rotate, move and nudge as well as
-  copy/cut/paste and mask-aware drawing.
