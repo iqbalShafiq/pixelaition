@@ -179,6 +179,7 @@ function FrameRow({
   onSelect,
   onStartEdit,
   onDuplicate,
+  onVariant,
   onDelete,
   onKeyboardMove,
   onDragFinished,
@@ -204,6 +205,7 @@ function FrameRow({
   onSelect: () => void;
   onStartEdit: () => void;
   onDuplicate: () => void;
+  onVariant?: (mirror: "horizontal" | "vertical") => void;
   onDelete: () => void;
   onKeyboardMove: (toIndex: number) => void;
   onDragFinished: () => void;
@@ -365,6 +367,16 @@ function FrameRow({
                   <MenuItem disabled={locked} onClick={onDuplicate}>
                     <Copy /> Duplicate
                   </MenuItem>
+                  {onVariant ? (
+                    <>
+                      <MenuItem disabled={locked} onClick={() => onVariant("horizontal")}>
+                        <Copy /> Mirror variant H
+                      </MenuItem>
+                      <MenuItem disabled={locked} onClick={() => onVariant("vertical")}>
+                        <Copy /> Mirror variant V
+                      </MenuItem>
+                    </>
+                  ) : null}
                   <MenuItem disabled={locked} onClick={onDelete}>
                     <Trash /> Delete
                   </MenuItem>
@@ -437,6 +449,7 @@ export function FramePanel({
   onImport,
   onImportImage,
   onDuplicate,
+  onVariant,
   onRename,
   onDelete,
   onReorder,
@@ -462,6 +475,7 @@ export function FramePanel({
   onImport?: () => void;
   onImportImage?: () => void;
   onDuplicate: (frameId: string) => void;
+  onVariant?: (frameId: string, mirror: "horizontal" | "vertical") => void;
   onRename: (frameId: string, name: string) => void;
   onDelete: (frameId: string) => void;
   onReorder: (frameId: string, toIndex: number) => Promise<boolean>;
@@ -597,6 +611,9 @@ export function FramePanel({
                   onSelect={() => onSelect(frame.id)}
                   onStartEdit={() => startEdit(frame)}
                   onDuplicate={() => onDuplicate(frame.id)}
+                  {...(onVariant
+                    ? { onVariant: (mirror) => onVariant(frame.id, mirror) }
+                    : {})}
                   onDelete={() => setPendingDelete(frame)}
                   onKeyboardMove={(to) => void onReorder(frame.id, to)}
                   onDragFinished={() => persistOrder(frame.id)}

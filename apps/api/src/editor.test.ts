@@ -163,6 +163,15 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       );
       const first = frames[0];
       if (!first || !second) throw new Error("missing timing fixture frames");
+      const variant = await request(app)
+        .post(`/api/assets/${asset.id}/frames/${first.id}/variant`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ name: "mirror", mirror: "horizontal" });
+      expect(variant.status).toBe(201);
+      expect(
+        variant.body.frames.some((frame: { name: string }) => frame.name === "mirror"),
+      ).toBe(true);
+
       const timing = await request(app)
         .patch(`/api/assets/${asset.id}/frames/${first.id}`)
         .set("authorization", `Bearer ${token}`)

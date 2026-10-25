@@ -914,6 +914,33 @@ export function EditorScreen() {
     },
   });
 
+  async function createVariant(sourceFrameId: string, mirror: "horizontal" | "vertical") {
+    if (running || !buffer) return;
+    const source = frames.find((frame) => frame.id === sourceFrameId);
+    try {
+      const data = await api<AssetDto>(
+        `/api/assets/${assetId}/frames/${sourceFrameId}/variant`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: `${source?.name ?? "frame"} ${mirror === "horizontal" ? "mirror" : "flip"}`,
+            mirror,
+          }),
+        },
+      );
+      const before = new Set(frames.map((frame) => frame.id));
+      client.setQueryData(["asset", assetId], data);
+      const created = data.frames.find((frame) => !before.has(frame.id));
+      if (created) setFrameId(created.id);
+      notify({ title: "Variant created", description: `${mirror} mirror` });
+    } catch (reason) {
+      notify({
+        title: "The variant did not save",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
   function cachedAsset(): AssetDto | undefined {
     return client.getQueryData<AssetDto>(["asset", assetId]) ?? asset.data;
   }
@@ -3417,6 +3444,7 @@ export function EditorScreen() {
         onImport={() => setImportFrameOpen(true)}
         onImportImage={() => setImportImageOpen(true)}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
+        onVariant={(id, mirror) => void createVariant(id, mirror)}
         onRename={(id, name) => void frameAction("rename", name, id)}
         onDelete={(id) => void frameAction("delete", undefined, id)}
         onReorder={(id, index) => frameReorder(id, index)}

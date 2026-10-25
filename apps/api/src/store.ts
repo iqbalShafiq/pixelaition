@@ -2323,3 +2323,52 @@ export async function updateAssetColorMode(
   if (next) await recordAssetVersion(db, assetId, "color-mode", next);
   return { asset: next };
 }
+
+/** Duplicate a sprite frame and optionally mirror the copy. */
+export async function createFrameVariantRecord(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  name?: string,
+  mirror?: "horizontal" | "vertical",
+) {
+  const duplicated = await duplicateFrameRecord(db, userId, assetId, frameId, name);
+  if (!duplicated.asset) return duplicated;
+  const record = duplicated.asset;
+  const copy = record.frames.find(
+    (frame) =>
+      frame.name ===
+      (name?.trim() ||
+        `${record.frames.find((item) => item.id === frameId)?.name ?? "frame"} copy`),
+  );
+  if (!copy || copy.kind === "social") return { asset: record };
+  const buffer = frameToBuffer(
+    copy,
+    copy.width ?? record.width,
+    copy.height ?? record.height,
+    record.palette as string[],
+  );
+  if (mirror) {
+    for (const layer of buffer.layers) {
+      const next = new Uint8Array(layer.pixels.length);
+      for (let y = 0; y < buffer.height; y += 1) {
+        for (let x = 0; x < buffer.width; x += 1) {
+          const sourceX = mirror === "horizontal" ? buffer.width - 1 - x : x;
+          const sourceY = mirror === "vertical" ? buffer.height - 1 - y : y;
+          next[y * buffer.width + x] =
+            layer.pixels[sourceY * buffer.width + sourceX] ?? 0;
+        }
+      }
+      layer.pixels = next;
+    }
+  }
+  const frame = bufferToFrame(buffer, {
+    id: copy.id,
+    name: copy.name,
+    index: copy.index,
+    ...(copy.durationMs !== undefined ? { durationMs: copy.durationMs } : {}),
+  });
+  await saveFrame(db, userId, assetId, copy.id, frame.layers, frame.groups);
+  return { asset: await getAssetRecord(db, userId, assetId) };
+}

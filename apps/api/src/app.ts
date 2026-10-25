@@ -108,6 +108,7 @@ import {
   copySocialBackgroundRecord,
   createApiKey,
   createAssetRecord,
+  createFrameVariantRecord,
   createProjectRecord,
   deleteFrameRecord,
   duplicateFrameRecord,
@@ -1244,6 +1245,33 @@ export function createApp() {
         "NOT_FOUND",
         result.failure?.message ?? "That frame is gone.",
       );
+    res.status(201).json(result.asset);
+  });
+
+  app.post("/api/assets/:id/frames/:frameId/variant", async (req, res) => {
+    const body = z
+      .object({
+        name: z.string().min(1).max(80).optional(),
+        mirror: z.enum(["horizontal", "vertical"]).optional(),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
+    const result = await createFrameVariantRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      req.params.frameId ?? "",
+      body.name,
+      body.mirror,
+    );
+    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
     res.status(201).json(result.asset);
   });
 
