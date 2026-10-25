@@ -310,6 +310,7 @@ export function EditorScreen() {
   const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
+  const [pixelPerfect, setPixelPerfect] = useState(false);
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
   const [selectedLayerId, setSelectedLayerId] = useState("");
@@ -3780,12 +3781,14 @@ export function EditorScreen() {
                     tool={tool}
                     brushSize={brushSize}
                     brushShape={brushShape}
+                    pixelPerfect={pixelPerfect}
                     selectionActive={selection !== null}
                     clipboardReady={clipboard !== null}
                     locked={locked || socialFrame !== null}
                     onTool={setTool}
                     onBrush={setBrushSize}
                     onBrushShape={setBrushShape}
+                    onPixelPerfect={setPixelPerfect}
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
                     onSelectionCopy={copySelection}

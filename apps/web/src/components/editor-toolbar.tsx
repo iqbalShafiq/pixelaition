@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { BrushShape, Tool } from "./pixel-canvas.js";
 import {
+  Check,
   Circle,
   Eraser,
   Eye,
@@ -86,12 +87,14 @@ export function Toolbar({
   tool,
   brushSize,
   brushShape = "square",
+  pixelPerfect = false,
   selectionActive,
   clipboardReady,
   locked,
   onTool,
   onBrush,
   onBrushShape,
+  onPixelPerfect,
   onSelectionFill,
   onSelectionClear,
   onSelectionCopy,
@@ -107,12 +110,14 @@ export function Toolbar({
   tool: Tool;
   brushSize: number;
   brushShape?: BrushShape;
+  pixelPerfect?: boolean;
   selectionActive: boolean;
   clipboardReady: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
   onBrush: (size: number) => void;
   onBrushShape?: (shape: BrushShape) => void;
+  onPixelPerfect?: (next: boolean) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onSelectionCopy?: () => void;
@@ -185,6 +190,17 @@ export function Toolbar({
             <Grid />
           </IconButton>
         </>
+      ) : null}
+      {onPixelPerfect ? (
+        <IconButton
+          label="Pixel-perfect strokes"
+          hint="Trim L-shaped corners as you draw"
+          subtle
+          active={pixelPerfect}
+          onClick={() => onPixelPerfect(!pixelPerfect)}
+        >
+          <Check />
+        </IconButton>
       ) : null}
 
       {onAddText ? (

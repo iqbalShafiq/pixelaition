@@ -282,6 +282,138 @@ describe("generation decisions and tools", () => {
     releaseRun("run-primitives");
   });
 
+  it("evaluates groups, timeline, slices, and background cleanup through the eval runner", async () => {
+    const buffer = createBuffer({ width: 8, height: 8 });
+    const layerId = activeLayerId(buffer);
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    if (!layer) throw new Error("missing layer");
+    layer.pixels.fill(1);
+    const changes: Array<{ type: string }> = [];
+    bindRun("run-workflow", {
+      assetId: "asset",
+      assetName: "asset",
+      originFrameId: "frame-a",
+      currentFrameId: "frame-a",
+      frames: new Map([
+        ["frame-a", { name: "idle", index: 0, buffer, durationMs: 100 }],
+        [
+          "frame-b",
+          {
+            name: "walk",
+            index: 1,
+            buffer: createBuffer({ width: 8, height: 8, palette: buffer.palette }),
+            durationMs: 120,
+          },
+        ],
+      ]),
+      palette: [...buffer.palette],
+      width: 8,
+      height: 8,
+      tags: [],
+      slices: [],
+      style: {
+        defaultWidth: 8,
+        defaultHeight: 8,
+        outline: "#1a1c2c",
+        shadowDirection: "down",
+        notes: "",
+      },
+      approvedScope: new Set(["frame-a", "frame-b"]),
+      touchedFrames: new Set(),
+      strokes: [],
+      issues: [],
+      onFrameChange: (change) => {
+        changes.push(change as { type: string });
+      },
+    });
+
+    const timelineMetric = defineMetric<boolean, { ok: boolean }, boolean, unknown>({
+      name: "timeline_complete",
+      dataType: "BOOLEAN",
+      evaluate: ({ output }) =>
+        output?.ok
+          ? EvalOutcome.pass(true)
+          : EvalOutcome.fail(false, { comment: "timeline/slices/groups incomplete" }),
+    });
+
+    const result = await runEvalSuite({
+      name: "pixelaition-workflow-tools",
+      cases: [{ id: "workflow", input: true, expected: true }],
+      target: async (): Promise<{ ok: boolean }> => {
+        const group = (await toolFor("add_layer_group").call(
+          { name: "lighting" },
+          { operationId: "run-workflow/tool:1" },
+        )) as { groupId: string };
+        await toolFor("move_layer_to_group").call(
+          { layerId, groupId: group.groupId },
+          { operationId: "run-workflow/tool:2" },
+        );
+        await toolFor("set_layer_group_opacity").call(
+          { groupId: group.groupId, opacity: 0.5 },
+          { operationId: "run-workflow/tool:3" },
+        );
+        await toolFor("set_frame_duration").call(
+          { frameId: "frame-b", durationMs: 180 },
+          { operationId: "run-workflow/tool:4" },
+        );
+        await toolFor("set_tags").call(
+          {
+            tags: [
+              {
+                name: "walk",
+                fromFrameId: "frame-a",
+                toFrameId: "frame-b",
+                direction: "pingpong",
+                loop: true,
+              },
+            ],
+          },
+          { operationId: "run-workflow/tool:5" },
+        );
+        await toolFor("set_slices").call(
+          {
+            slices: [
+              {
+                name: "button",
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+                pivot: { x: 2, y: 2 },
+              },
+            ],
+          },
+          { operationId: "run-workflow/tool:6" },
+        );
+        await toolFor("remove_background").call(
+          { layerId },
+          { operationId: "run-workflow/tool:7" },
+        );
+        await toolFor("check_tiling").call(
+          { frameId: "frame-a" },
+          { operationId: "run-workflow/tool:8" },
+        );
+        const live = getRun("run-workflow");
+        const alpha = live?.frames.get("frame-a")?.buffer.layers[0]?.pixels;
+        return {
+          ok:
+            live?.tags?.length === 1 &&
+            live.slices?.length === 1 &&
+            live.frames.get("frame-a")?.buffer.groups?.length === 1 &&
+            live.frames.get("frame-b")?.durationMs === 180 &&
+            alpha !== undefined &&
+            [...alpha].every((value) => value === 0) &&
+            changes.some((change) => change.type === "slices") &&
+            changes.some((change) => change.type === "tags") &&
+            changes.some((change) => change.type === "duration"),
+        };
+      },
+      metrics: [timelineMetric],
+    });
+    expect(result.results[0]?.outcome).toBe("pass");
+    releaseRun("run-workflow");
+  });
+
   it("fails a summary that invents a color", async () => {
     const result = await runEvalSuite({
       name: "pixelaition-draws",

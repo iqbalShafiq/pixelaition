@@ -65,6 +65,8 @@ type Props = {
   tool: Tool;
   brushSize: number;
   brushShape?: BrushShape;
+  pixelPerfect?: boolean;
+  activeLayerId?: string;
   grid: boolean;
   checker: boolean;
   onionSkin: FrameBuffer[];
@@ -312,6 +314,8 @@ export function PixelCanvas({
   tool,
   brushSize,
   brushShape = "square",
+  pixelPerfect = false,
+  activeLayerId,
   grid,
   checker,
   onionSkin,
@@ -339,6 +343,9 @@ export function PixelCanvas({
   const pan = useRef<{ x: number; y: number; camera: Camera } | null>(null);
   const stroke = useRef<Point | null>(null);
   const drag = useRef<{ from: Point; to: Point } | null>(null);
+  const painting = useRef(false);
+  const strokeKeys = useRef(new Set<string>());
+  const strokeBefore = useRef(new Map<string, number>());
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
@@ -382,6 +389,8 @@ export function PixelCanvas({
     tool,
     brushSize,
     brushShape,
+    pixelPerfect,
+    activeLayerId,
     onAction,
     onCamera,
     ghost,
@@ -404,6 +413,8 @@ export function PixelCanvas({
     tool,
     brushSize,
     brushShape,
+    pixelPerfect,
+    activeLayerId,
     onAction,
     onCamera,
     ghost,
@@ -792,6 +803,49 @@ export function PixelCanvas({
     };
   }
 
+  function trackCells(points: Point[]) {
+    if (!latest.current.pixelPerfect || !latest.current.activeLayerId) return;
+    const layer = latest.current.buffer.layers.find(
+      (item) => item.id === latest.current.activeLayerId,
+    );
+    if (!layer) return;
+    for (const point of points) {
+      const key = `${point.x}:${point.y}`;
+      strokeKeys.current.add(key);
+      if (!strokeBefore.current.has(key)) {
+        strokeBefore.current.set(
+          key,
+          layer.pixels[point.y * latest.current.buffer.width + point.x] ?? 0,
+        );
+      }
+    }
+  }
+
+  function pixelPerfectCleanup() {
+    if (latest.current.tool !== "pencil") return;
+    if (!latest.current.pixelPerfect || !latest.current.activeLayerId) return;
+    if (strokeBefore.current.size === 0) return;
+    const corners: Point[] = [];
+    for (const key of strokeKeys.current) {
+      if (strokeBefore.current.get(key) !== 0) continue;
+      const [xText, yText] = key.split(":");
+      const x = Number(xText);
+      const y = Number(yText);
+      const has = (dx: number, dy: number) =>
+        strokeKeys.current.has(`${x + dx}:${y + dy}`);
+      const left = has(-1, 0);
+      const right = has(1, 0);
+      const up = has(0, -1);
+      const down = has(0, 1);
+      if ((left && up) || (left && down) || (right && up) || (right && down)) {
+        corners.push({ x, y });
+      }
+    }
+    if (corners.length > 0) {
+      latest.current.onAction({ kind: "erase", points: corners });
+    }
+  }
+
   function inside(point: Point) {
     const doc = latest.current.buffer;
     return point.x >= 0 && point.y >= 0 && point.x < doc.width && point.y < doc.height;
@@ -956,6 +1010,10 @@ export function PixelCanvas({
         ).filter(inside);
         stroke.current = point;
         if (points.length === 0) return;
+        painting.current = true;
+        strokeKeys.current = new Set();
+        strokeBefore.current = new Map();
+        trackCells(points);
         emit(active === "eraser" ? { kind: "erase", points } : { kind: "paint", points });
       }}
       onPointerMove={(event) => {
@@ -1106,6 +1164,7 @@ export function PixelCanvas({
         stroke.current = point;
         const cells = strokeCells(last, point);
         if (cells.length === 0) return;
+        trackCells(cells);
         latest.current.onAction(
           latest.current.tool === "eraser"
             ? { kind: "erase", points: cells }
@@ -1166,6 +1225,12 @@ export function PixelCanvas({
             });
           }
         }
+        if (painting.current) {
+          painting.current = false;
+          pixelPerfectCleanup();
+          strokeKeys.current = new Set();
+          strokeBefore.current = new Map();
+        }
         resetGesture();
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1174,6 +1239,7 @@ export function PixelCanvas({
       }}
       onPointerCancel={() => {
         // A cancelled gesture must not leave a phantom marquee behind.
+        painting.current = false;
         resetGesture();
         repaint.current();
       }}
