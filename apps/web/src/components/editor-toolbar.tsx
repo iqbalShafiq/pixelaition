@@ -12,6 +12,7 @@ import {
   Line,
   Pencil,
   Picker,
+  Search,
   Select,
   Square,
   Text,
@@ -27,6 +28,8 @@ const tools: Array<{
   icon: ComponentType<IconProps>;
 }> = [
   { id: "select", label: "Select", key: "V", icon: Select },
+  { id: "lasso", label: "Lasso", key: "Q", icon: Select },
+  { id: "wand", label: "Magic wand", key: "W", icon: Search },
   { id: "pencil", label: "Pencil", key: "B", icon: Pencil },
   { id: "eraser", label: "Eraser", key: "E", icon: Eraser },
   { id: "fill", label: "Fill", key: "G", icon: Fill },

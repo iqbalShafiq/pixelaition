@@ -12,7 +12,13 @@ import type { PaletteImage } from "@pixelaition/artboard";
 import { useEffect, useRef, useState } from "react";
 
 export type Point = { x: number; y: number };
-export type Rect = { x: number; y: number; width: number; height: number };
+export type Rect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  mask?: Uint8Array;
+};
 
 export type BrushShape = "square" | "circle" | "spray";
 
@@ -25,6 +31,8 @@ export type Tool =
   | "line"
   | "rect"
   | "ellipse"
+  | "lasso"
+  | "wand"
   | "pan";
 
 export type CanvasAction =
@@ -149,6 +157,98 @@ function pixelCheckerPattern(
   paint.fillRect(0, 0, half, half);
   paint.fillRect(half, half, half, half);
   return context.createPattern(tile, "repeat");
+}
+
+function polygonSelection(points: Point[], width: number, height: number): Rect | null {
+  if (points.length < 3) return null;
+  const minX = Math.max(0, Math.floor(Math.min(...points.map((point) => point.x))));
+  const minY = Math.max(0, Math.floor(Math.min(...points.map((point) => point.y))));
+  const maxX = Math.min(
+    width - 1,
+    Math.ceil(Math.max(...points.map((point) => point.x))),
+  );
+  const maxY = Math.min(
+    height - 1,
+    Math.ceil(Math.max(...points.map((point) => point.y))),
+  );
+  if (maxX < minX || maxY < minY) return null;
+  const boxWidth = maxX - minX + 1;
+  const boxHeight = maxY - minY + 1;
+  const mask = new Uint8Array(boxWidth * boxHeight);
+  const insidePolygon = (x: number, y: number) => {
+    let inside = false;
+    for (
+      let index = 0, previous = points.length - 1;
+      index < points.length;
+      previous = index++
+    ) {
+      const a = points[index];
+      const b = points[previous];
+      if (!a || !b) continue;
+      if (
+        a.y > y !== b.y > y &&
+        x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y || Number.EPSILON) + a.x
+      ) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
+  for (let y = 0; y < boxHeight; y += 1) {
+    for (let x = 0; x < boxWidth; x += 1) {
+      if (insidePolygon(minX + x + 0.5, minY + y + 0.5)) {
+        mask[y * boxWidth + x] = 1;
+      }
+    }
+  }
+  return { x: minX, y: minY, width: boxWidth, height: boxHeight, mask };
+}
+
+function wandSelection(doc: FrameBuffer, point: Point): Rect | null {
+  if (point.x < 0 || point.y < 0 || point.x >= doc.width || point.y >= doc.height)
+    return null;
+  const pixels = composite(doc);
+  const target = pixels[point.y * doc.width + point.x] ?? 0;
+  const seen = new Uint8Array(doc.width * doc.height);
+  const stack: Point[] = [point];
+  const cells: Point[] = [];
+  let minX = point.x;
+  let maxX = point.x;
+  let minY = point.y;
+  let maxY = point.y;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    if (
+      current.x < 0 ||
+      current.y < 0 ||
+      current.x >= doc.width ||
+      current.y >= doc.height
+    )
+      continue;
+    const index = current.y * doc.width + current.x;
+    if (seen[index] === 1) continue;
+    if ((pixels[index] ?? 0) !== target) continue;
+    seen[index] = 1;
+    cells.push(current);
+    minX = Math.min(minX, current.x);
+    maxX = Math.max(maxX, current.x);
+    minY = Math.min(minY, current.y);
+    maxY = Math.max(maxY, current.y);
+    stack.push(
+      { x: current.x + 1, y: current.y },
+      { x: current.x - 1, y: current.y },
+      { x: current.x, y: current.y + 1 },
+      { x: current.x, y: current.y - 1 },
+    );
+  }
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  const mask = new Uint8Array(width * height);
+  for (const cell of cells) {
+    mask[(cell.y - minY) * width + (cell.x - minX)] = 1;
+  }
+  return { x: minX, y: minY, width, height, mask };
 }
 
 /**
@@ -343,6 +443,7 @@ export function PixelCanvas({
   const pan = useRef<{ x: number; y: number; camera: Camera } | null>(null);
   const stroke = useRef<Point | null>(null);
   const drag = useRef<{ from: Point; to: Point } | null>(null);
+  const lasso = useRef<Point[] | null>(null);
   const painting = useRef(false);
   const strokeKeys = useRef(new Set<string>());
   const strokeBefore = useRef(new Map<string, number>());
@@ -659,6 +760,22 @@ export function PixelCanvas({
         context.restore();
       }
 
+      const lassoPoints = lasso.current;
+      if (lassoPoints && lassoPoints.length > 1) {
+        context.strokeStyle = "#d8a64e";
+        context.lineWidth = 1;
+        context.setLineDash([4, 3]);
+        context.beginPath();
+        lassoPoints.forEach((point, index) => {
+          const x = originX + (point.x + 0.5) * cell;
+          const y = originY + (point.y + 0.5) * cell;
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.closePath();
+        context.stroke();
+        context.setLineDash([]);
+      }
       const shape = preview.current;
       if (shape) {
         const cells =
@@ -853,6 +970,7 @@ export function PixelCanvas({
 
   function resetGesture() {
     drag.current = null;
+    lasso.current = null;
     marquee.current = null;
     preview.current = null;
     stroke.current = null;
@@ -957,7 +1075,7 @@ export function PixelCanvas({
         }
         if (
           event.button === 0 &&
-          (active === "select" || active === "pan") &&
+          (active === "select" || active === "lasso" || active === "pan") &&
           !space.current
         ) {
           latest.current.onDeselect?.();
@@ -979,6 +1097,18 @@ export function PixelCanvas({
           const doc = latest.current.buffer;
           drag.current = { from: point, to: point };
           marquee.current = clampRect(normalizeRect(point, point), doc.width, doc.height);
+          repaint.current();
+          return;
+        }
+        if (active === "lasso") {
+          lasso.current = [point];
+          repaint.current();
+          return;
+        }
+        if (active === "wand") {
+          if (!inside(point)) return;
+          const selection = wandSelection(latest.current.buffer, point);
+          if (selection) emit({ kind: "select", rect: selection });
           repaint.current();
           return;
         }
@@ -1017,6 +1147,16 @@ export function PixelCanvas({
         emit(active === "eraser" ? { kind: "erase", points } : { kind: "paint", points });
       }}
       onPointerMove={(event) => {
+        if (lasso.current) {
+          const point = localPoint(event);
+          const points = lasso.current;
+          const last = points[points.length - 1];
+          if (inside(point) && (!last || last.x !== point.x || last.y !== point.y)) {
+            points.push(point);
+            repaint.current();
+          }
+          return;
+        }
         if (pan.current) {
           const start = pan.current;
           latest.current.onCamera({
@@ -1197,6 +1337,23 @@ export function PixelCanvas({
           textDrag.current = null;
           latest.current.onTextDragEnd?.();
           resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
+        if (lasso.current) {
+          const points = lasso.current;
+          lasso.current = null;
+          emit({
+            kind: "select",
+            rect: polygonSelection(
+              points,
+              latest.current.buffer.width,
+              latest.current.buffer.height,
+            ),
+          });
           if (event.currentTarget.hasPointerCapture(event.pointerId)) {
             event.currentTarget.releasePointerCapture(event.pointerId);
           }

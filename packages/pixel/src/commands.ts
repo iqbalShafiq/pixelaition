@@ -792,6 +792,69 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return mirrorRegion(buffer, command);
     case "outline":
       return outline(buffer, command.layerId, command.color);
+    case "fillMask": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (
+        !withinRegion(buffer, command.x, command.y, command.width, command.height) ||
+        command.mask.length !== command.width * command.height
+      ) {
+        return fail("SHAPE", "The masked fill has the wrong region or mask size.");
+      }
+      if (!paletteIndexOk(buffer, command.color)) {
+        return fail("PALETTE_INDEX", "The fill colour is not in the palette.");
+      }
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const inside = (x: number, y: number) => {
+        const localX = x - command.x;
+        const localY = y - command.y;
+        return (
+          localX >= 0 &&
+          localY >= 0 &&
+          localX < command.width &&
+          localY < command.height &&
+          command.mask[localY * command.width + localX] === 1
+        );
+      };
+      const startX = command.x + Math.floor(command.width / 2);
+      const startY = command.y + Math.floor(command.height / 2);
+      let seed: Point | undefined;
+      for (let y = command.y; y < command.y + command.height && !seed; y += 1) {
+        for (let x = command.x; x < command.x + command.width; x += 1) {
+          if (
+            inside(x, y) &&
+            readCell(layer.pixels, indexOf(buffer.width, x, y)) !== command.color
+          ) {
+            seed = { x, y };
+            break;
+          }
+        }
+      }
+      if (!seed) seed = { x: startX, y: startY };
+      if (!inside(seed.x, seed.y)) return { ok: true, buffer };
+      const target = readCell(layer.pixels, indexOf(buffer.width, seed.x, seed.y));
+      if (target === command.color) return { ok: true, buffer };
+      const next = clonePixels(layer.pixels);
+      const stack: Point[] = [seed];
+      const seen = new Set<number>();
+      while (stack.length > 0) {
+        const point = stack.pop();
+        if (!point || !inside(point.x, point.y)) continue;
+        const index = indexOf(buffer.width, point.x, point.y);
+        if (seen.has(index)) continue;
+        seen.add(index);
+        if (readCell(next, index) !== target) continue;
+        next[index] = command.color;
+        stack.push(
+          { x: point.x + 1, y: point.y },
+          { x: point.x - 1, y: point.y },
+          { x: point.x, y: point.y + 1 },
+          { x: point.x, y: point.y - 1 },
+        );
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
     case "ellipse": {
       const gate = requireLayer(buffer, command.layerId);
       if ("ok" in gate) return gate;

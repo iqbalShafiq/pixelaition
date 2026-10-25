@@ -196,6 +196,17 @@ export type Command =
       color: number;
       mode: "fill" | "clear" | "flood";
     }
+  | {
+      type: "fillMask";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      /** 1 inside the selection, 0 outside; row-major in the bounding box. */
+      mask: number[];
+      color: number;
+    }
   | { type: "replaceColor"; layerId?: string; from: number; to: number }
   | { type: "outline"; layerId: string; color: number }
   | {

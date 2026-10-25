@@ -14,6 +14,7 @@ import {
   centerCamera,
   createHistory,
   fitZoom,
+  ellipsePoints,
   frameToBuffer,
   linePoints,
   paletteFromImage,
@@ -2420,15 +2421,26 @@ export function EditorScreen() {
         edit(
           frameId,
           current,
-          selection
+          selection?.mask
             ? {
-                type: "region",
+                type: "fillMask",
                 layerId: activeLayerId,
-                ...selection,
+                x: selection.x,
+                y: selection.y,
+                width: selection.width,
+                height: selection.height,
+                mask: Array.from(selection.mask),
                 color,
-                mode: "flood",
               }
-            : { type: "fill", layerId: activeLayerId, ...seed, color },
+            : selection
+              ? {
+                  type: "region",
+                  layerId: activeLayerId,
+                  ...selection,
+                  color,
+                  mode: "flood",
+                }
+              : { type: "fill", layerId: activeLayerId, ...seed, color },
         );
         return;
       }
@@ -2458,6 +2470,19 @@ export function EditorScreen() {
       }
       case "rect": {
         const box = normalizeRect(action.from, action.to);
+        if (selection?.mask) {
+          const points = rectPoints(box, action.filled).filter((point) =>
+            insideSelection(selection, point),
+          );
+          if (points.length > 0) {
+            edit(frameId, current, {
+              type: "paint",
+              layerId: activeLayerId,
+              points: points.map((point) => ({ ...point, color })),
+            });
+          }
+          return;
+        }
         const shape = selection ? intersect(box, selection) : box;
         if (shape.width < 1 || shape.height < 1) return;
         edit(frameId, current, {
@@ -2471,6 +2496,23 @@ export function EditorScreen() {
       }
       case "ellipse": {
         const box = normalizeRect(action.from, action.to);
+        if (selection?.mask) {
+          const points = ellipsePoints(
+            box.x,
+            box.y,
+            box.width,
+            box.height,
+            action.filled,
+          ).filter((point) => insideSelection(selection, point));
+          if (points.length > 0) {
+            edit(frameId, current, {
+              type: "paint",
+              layerId: activeLayerId,
+              points: points.map((point) => ({ ...point, color })),
+            });
+          }
+          return;
+        }
         const shape = selection ? intersect(box, selection) : box;
         if (shape.width < 1 || shape.height < 1) return;
         edit(frameId, current, {
@@ -2490,6 +2532,31 @@ export function EditorScreen() {
   function selectionCommand(mode: "fill" | "clear") {
     if (running) return;
     if (!frameId || !selection || !activeLayerId) return;
+    if (selection.mask && mode === "clear") {
+      const points: Point[] = [];
+      for (let y = 0; y < selection.height; y += 1) {
+        for (let x = 0; x < selection.width; x += 1) {
+          if (selection.mask[y * selection.width + x] === 1) {
+            points.push({ x: selection.x + x, y: selection.y + y });
+          }
+        }
+      }
+      edit(frameId, drafts[frameId], { type: "erase", layerId: activeLayerId, points });
+      return;
+    }
+    if (selection.mask) {
+      edit(frameId, drafts[frameId], {
+        type: "fillMask",
+        layerId: activeLayerId,
+        x: selection.x,
+        y: selection.y,
+        width: selection.width,
+        height: selection.height,
+        mask: Array.from(selection.mask),
+        color,
+      });
+      return;
+    }
     edit(frameId, drafts[frameId], {
       type: "region",
       layerId: activeLayerId,
@@ -2507,8 +2574,18 @@ export function EditorScreen() {
     );
   }
 
+  function maskedSelection() {
+    if (!selection?.mask) return false;
+    notify({
+      title: "Masked selections support paint, erase, and fill",
+      description: "Clear the lasso or wand selection before copying or transforming.",
+    });
+    return true;
+  }
+
   function copySelection() {
     if (running || !selection) return;
+    if (maskedSelection()) return;
     const layer = selectionLayer();
     if (!layer || !buffer) return;
     const pixels = new Uint8Array(selection.width * selection.height);
@@ -2527,12 +2604,14 @@ export function EditorScreen() {
 
   function cutSelection() {
     if (running || !selection) return;
+    if (maskedSelection()) return;
     copySelection();
     selectionCommand("clear");
   }
 
   function pasteSelection() {
     if (running || !clipboard || !buffer || !frameId || !activeLayerId) return;
+    if (maskedSelection()) return;
     if (clipboard.width > buffer.width || clipboard.height > buffer.height) {
       notify({
         title: "The clipboard is larger than the canvas",
@@ -2562,6 +2641,7 @@ export function EditorScreen() {
 
   function flipSelection(axis: "horizontal" | "vertical") {
     if (running || !selection || !frameId || !activeLayerId) return;
+    if (maskedSelection()) return;
     edit(frameId, drafts[frameId], {
       type: "mirrorRegion",
       layerId: activeLayerId,
@@ -2572,6 +2652,7 @@ export function EditorScreen() {
 
   function rotateSelection() {
     if (running || !selection || !frameId || !activeLayerId) return;
+    if (maskedSelection()) return;
     if (selection.width !== selection.height) {
       notify({
         title: "A quarter-turn needs a square",
@@ -2589,6 +2670,7 @@ export function EditorScreen() {
 
   function nudgeSelection(dx: number, dy: number) {
     if (running || !selection || !frameId || !activeLayerId) return;
+    if (maskedSelection()) return;
     const x = selection.x + dx;
     const y = selection.y + dy;
     if (
@@ -4516,12 +4598,34 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function insideSelection(box: Rect, point: Point): boolean {
-  return (
-    point.x >= box.x &&
-    point.y >= box.y &&
-    point.x < box.x + box.width &&
-    point.y < box.y + box.height
-  );
+  if (
+    point.x < box.x ||
+    point.y < box.y ||
+    point.x >= box.x + box.width ||
+    point.y >= box.y + box.height
+  ) {
+    return false;
+  }
+  if (!box.mask) return true;
+  return box.mask[(point.y - box.y) * box.width + (point.x - box.x)] === 1;
+}
+
+function rectPoints(box: Rect, filled: boolean): Point[] {
+  const points: Point[] = [];
+  for (let y = box.y; y < box.y + box.height; y += 1) {
+    for (let x = box.x; x < box.x + box.width; x += 1) {
+      if (
+        filled ||
+        x === box.x ||
+        y === box.y ||
+        x === box.x + box.width - 1 ||
+        y === box.y + box.height - 1
+      ) {
+        points.push({ x, y });
+      }
+    }
+  }
+  return points;
 }
 
 function intersect(left: Rect, right: Rect): Rect {

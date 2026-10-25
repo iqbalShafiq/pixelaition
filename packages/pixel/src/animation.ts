@@ -1,7 +1,14 @@
 import { composite } from "./buffer.js";
 import type { FrameBuffer, Point } from "./types.js";
 
-export type Rect = { x: number; y: number; width: number; height: number };
+export type Rect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Optional 1-inside/0-outside mask, row-major inside the rectangle. */
+  mask?: Uint8Array;
+};
 
 export type PairReport = {
   from: string;
