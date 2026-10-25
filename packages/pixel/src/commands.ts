@@ -813,6 +813,46 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return mirrorRegion(buffer, command);
     case "outline":
       return outline(buffer, command.layerId, command.color);
+    case "tileFill": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (
+        command.tileWidth < 1 ||
+        command.tileHeight < 1 ||
+        !withinRegion(
+          buffer,
+          command.tileX,
+          command.tileY,
+          command.tileWidth,
+          command.tileHeight,
+        ) ||
+        !withinRegion(buffer, command.x, command.y, command.width, command.height)
+      ) {
+        return fail("SHAPE", "The tile or destination reaches outside the canvas.");
+      }
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const tile = new Uint8Array(command.tileWidth * command.tileHeight);
+      for (let row = 0; row < command.tileHeight; row += 1) {
+        for (let column = 0; column < command.tileWidth; column += 1) {
+          tile[row * command.tileWidth + column] = readCell(
+            layer.pixels,
+            indexOf(buffer.width, command.tileX + column, command.tileY + row),
+          );
+        }
+      }
+      const next = clonePixels(layer.pixels);
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          next[indexOf(buffer.width, command.x + column, command.y + row)] =
+            tile[
+              (row % command.tileHeight) * command.tileWidth +
+                (column % command.tileWidth)
+            ] ?? 0;
+        }
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
     case "moveMask": {
       const gate = requireLayer(buffer, command.layerId);
       if ("ok" in gate) return gate;

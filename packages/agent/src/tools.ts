@@ -2092,6 +2092,33 @@ export function createPixelTools(
     },
   });
 
+  const tileFillTool = createTool({
+    name: "tile_fill",
+    description:
+      "Repeat a rectangular tile across a destination region on a layer. The tile is read from the same frame before the fill, so a pixel map can be built from a tileset.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      tileX: z.number().int().nonnegative(),
+      tileY: z.number().int().nonnegative(),
+      tileWidth: z.number().int().positive(),
+      tileHeight: z.number().int().positive(),
+      x: z.number().int().nonnegative(),
+      y: z.number().int().nonnegative(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const { frameId, ...fill } = input;
+      const edited = editFrame(run, frameId, { type: "tileFill", ...fill });
+      run.onStroke?.({ label: "tile fill", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
   const removeBackground = createTool({
     name: "remove_background",
     description:
@@ -3142,6 +3169,7 @@ export function createPixelTools(
     eraseStroke,
     drawLine,
     drawEllipse,
+    tileFillTool,
     removeBackground,
     moveRegionTool,
     rotateRegionTool,

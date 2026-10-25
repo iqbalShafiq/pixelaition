@@ -31,6 +31,7 @@ test("a linked layer follows edits into the other frame", async ({ page }) => {
   await settings.click();
   await page.getByRole("button", { name: "Link across frames" }).click();
   await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
 
   await page.getByRole("button", { name: "Pencil", exact: true }).click();
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);

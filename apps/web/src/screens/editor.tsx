@@ -989,24 +989,46 @@ export function EditorScreen() {
     }
   }
 
-  function linkLayer(layerId: string) {
+  async function linkLayer(layerId: string) {
     if (!frameId || !buffer) return;
     const layer = buffer.layers.find((item) => item.id === layerId);
     if (!layer) return;
     const linkId = layer.linkId ? undefined : crypto.randomUUID();
     for (const frame of frames) {
       const draft = draftsRef.current[frame.id];
-      if (!draft) continue;
       const target =
         frame.id === frameId
-          ? draft.present.layers.find((item) => item.id === layerId)
-          : draft.present.layers.find((item) => item.name === layer.name);
-      if (!target) continue;
-      edit(frame.id, draft, {
-        type: "setLayerLink",
-        layerId: target.id,
-        ...(linkId ? { linkId } : {}),
-      });
+          ? draft?.present.layers.find((item) => item.id === layerId)
+          : draft?.present.layers.find((item) => item.name === layer.name);
+      if (target && draft) {
+        edit(frame.id, draft, {
+          type: "setLayerLink",
+          layerId: target.id,
+          ...(linkId ? { linkId } : {}),
+        });
+        continue;
+      }
+      if (frame.id === frameId) continue;
+      const layers = frame.layers.map((item) =>
+        item.name === layer.name
+          ? {
+              ...item,
+              ...(linkId ? { linkId } : { linkId: undefined }),
+            }
+          : item,
+      );
+      try {
+        const data = await api<AssetDto>(`/api/assets/${assetId}/frames/${frame.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ layers, groups: frame.groups ?? [] }),
+        });
+        client.setQueryData(["asset", assetId], data);
+      } catch (reason) {
+        notify({
+          title: "The layer link did not save",
+          description: reason instanceof Error ? reason.message : "Unknown error",
+        });
+      }
     }
     notify({
       title: linkId ? "Layer linked across frames" : "Layer unlinked",
@@ -3852,6 +3874,24 @@ export function EditorScreen() {
         height={frame?.height ?? asset.data?.height ?? 32}
         locked={locked}
         onSave={(slices) => void saveSlices(slices)}
+        onTileFill={(slice) => {
+          if (!frameId || !buffer || !activeLayerId) return;
+          const destination = selection ?? {
+            x: 0,
+            y: 0,
+            width: buffer.width,
+            height: buffer.height,
+          };
+          edit(frameId, drafts[frameId], {
+            type: "tileFill",
+            layerId: activeLayerId,
+            tileX: slice.x,
+            tileY: slice.y,
+            tileWidth: slice.width,
+            tileHeight: slice.height,
+            ...destination,
+          });
+        }}
       />
       {viewPanel}
       <StylePanel

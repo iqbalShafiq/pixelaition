@@ -201,6 +201,18 @@ export type Command =
       mode: "fill" | "clear" | "flood";
     }
   | {
+      type: "tileFill";
+      layerId: string;
+      tileX: number;
+      tileY: number;
+      tileWidth: number;
+      tileHeight: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }
+  | {
       type: "moveMask";
       layerId: string;
       x: number;

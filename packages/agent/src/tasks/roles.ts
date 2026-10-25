@@ -35,6 +35,7 @@ const PAINT_TOOLS: readonly string[] = [
   "erase_stroke",
   "draw_line",
   "draw_ellipse",
+  "tile_fill",
   "remove_background",
   "move_region",
   "rotate_region",
