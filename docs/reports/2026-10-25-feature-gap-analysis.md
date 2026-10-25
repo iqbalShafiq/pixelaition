@@ -407,7 +407,8 @@ Implemented:
 - Asset color modes: indexed, grayscale and monochrome palette conversion.
 - Indexed `.ase` import (raw and zlib cels, palette, tags, slices) through the
   shared parser, plus `.ase` export.
-- A `.pxl` CLI for import, inspect, script and export.
+- Command scripting over CLI and `POST /api/assets/:id/script`, both routed
+  through `applyCommand`; a `.pxl` CLI for import, inspect, script and export.
 - Integration tests for palette, timing, tags, slices and every export, plus
   Playwright coverage for import, drawing/selection, background removal, GIF
   download and the palette lock.
@@ -421,8 +422,8 @@ Still open from the matrix above:
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
-  scripting; grayscale/monochrome modes, pressure sizing and a command-script
-  CLI exist.
+  scripting; grayscale/monochrome modes, pressure sizing and command-script
+  CLI/API exist.
 - Linked/shared layers and auto-tiling remain design work; the style lock,
   mirrored variant frames (API, frame menu and agent tool), selection-scoped
   prompts, AI animation through frames/tags, and reference overlays are in
