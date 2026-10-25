@@ -398,8 +398,8 @@ Implemented:
 - GIF, APNG, WebP, PNG sequence, packed/grid sprite sheets, engine atlas presets
   (Unity, Godot, Phaser), Aseprite JSON export/import, slices with nine-slice
   borders and pivots.
-- Pixel-perfect pencil cleanup, round/spray brushes, a reference overlay, and
-  tile-size suggestions from the seam scan.
+- Pixel-perfect pencil cleanup, round/spray brushes, lasso and magic-wand
+  selections, a reference overlay, and tile-size suggestions from the seam scan.
 - Tileset packaging (`tileset` export), Aseprite JSON import in the CLI, a
   `.pxl` command-script runner, and `create_variant` for mirrored/remapped
   frames.
