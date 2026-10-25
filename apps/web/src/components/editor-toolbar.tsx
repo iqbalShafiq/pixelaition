@@ -103,6 +103,8 @@ export function Toolbar({
   onDynamics,
   onSelectionFill,
   onSelectionClear,
+  onSelectionBrush,
+  brushActive = false,
   onSelectionCopy,
   onSelectionCut,
   onSelectionPaste,
@@ -128,6 +130,8 @@ export function Toolbar({
   onDynamics?: (next: boolean) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
+  onSelectionBrush?: () => void;
+  brushActive?: boolean;
   onSelectionCopy?: () => void;
   onSelectionCut?: () => void;
   onSelectionPaste?: () => void;
@@ -259,6 +263,16 @@ export function Toolbar({
           >
             Clear
           </Button>
+          {onSelectionBrush ? (
+            <Button
+              tone={brushActive ? "solid" : "ghost"}
+              className="px-2 py-1.5 text-pixel-label"
+              disabled={locked}
+              onClick={onSelectionBrush}
+            >
+              {brushActive ? "Brush on" : "Brush"}
+            </Button>
+          ) : null}
           <Button
             tone="ghost"
             className="px-2 py-1.5 text-pixel-label"

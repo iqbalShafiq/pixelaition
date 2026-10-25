@@ -22,6 +22,12 @@ export type Rect = {
 
 export type BrushShape = "square" | "circle" | "spray";
 
+export type BrushPattern = {
+  width: number;
+  height: number;
+  mask: Uint8Array;
+};
+
 export type Tool =
   | "select"
   | "pencil"
@@ -75,6 +81,7 @@ type Props = {
   tool: Tool;
   brushSize: number;
   brushShape?: BrushShape;
+  customBrush?: BrushPattern | null;
   pixelPerfect?: boolean;
   dynamics?: boolean;
   activeLayerId?: string;
@@ -417,6 +424,7 @@ export function PixelCanvas({
   tool,
   brushSize,
   brushShape = "square",
+  customBrush = null,
   pixelPerfect = false,
   dynamics = false,
   activeLayerId,
@@ -494,6 +502,7 @@ export function PixelCanvas({
     tool,
     brushSize,
     brushShape,
+    customBrush,
     pixelPerfect,
     dynamics,
     activeLayerId,
@@ -519,6 +528,7 @@ export function PixelCanvas({
     tool,
     brushSize,
     brushShape,
+    customBrush,
     pixelPerfect,
     dynamics,
     activeLayerId,
@@ -998,6 +1008,26 @@ export function PixelCanvas({
         ? "cursor-default"
         : "cursor-pixel-cross";
 
+  function patternCells(point: Point, pattern: BrushPattern): Point[] {
+    const startX = -Math.floor(pattern.width / 2);
+    const startY = -Math.floor(pattern.height / 2);
+    const points: Point[] = [];
+    for (let row = 0; row < pattern.height; row += 1) {
+      for (let column = 0; column < pattern.width; column += 1) {
+        if (pattern.mask[row * pattern.width + column] !== 1) continue;
+        points.push({ x: point.x + startX + column, y: point.y + startY + row });
+      }
+    }
+    return points;
+  }
+
+  function footprint(point: Point, size: number): Point[] {
+    const pattern = latest.current.customBrush;
+    return pattern
+      ? patternCells(point, pattern)
+      : brushPoints(point, size, latest.current.brushShape);
+  }
+
   function brushSizeFor(event: { pointerType: string; pressure: number }): number {
     if (!latest.current.dynamics || event.pointerType !== "pen") {
       return latest.current.brushSize;
@@ -1009,7 +1039,7 @@ export function PixelCanvas({
   function strokeCells(from: Point, to: Point, size = latest.current.brushSize): Point[] {
     const doc = latest.current.buffer;
     return lineCells(from, to)
-      .flatMap((item) => brushPoints(item, size, latest.current.brushShape))
+      .flatMap((item) => footprint(item, size))
       .filter(inside)
       .map((item) => ({
         x: Math.min(item.x, doc.width - 1),
@@ -1149,11 +1179,7 @@ export function PixelCanvas({
           if (inside(point)) emit({ kind: "tile", point });
           return;
         }
-        const points = brushPoints(
-          point,
-          brushSizeFor(event),
-          latest.current.brushShape,
-        ).filter(inside);
+        const points = footprint(point, brushSizeFor(event)).filter(inside);
         stroke.current = point;
         if (points.length === 0) return;
         painting.current = true;

@@ -32,7 +32,7 @@ import {
   type TextLayerSpec,
 } from "@pixelaition/pixel";
 import type { PaletteImage } from "@pixelaition/artboard";
-import type { BrushShape } from "../components/pixel-canvas.js";
+import type { BrushPattern, BrushShape } from "../components/pixel-canvas.js";
 import {
   checkScene,
   getPreset,
@@ -334,6 +334,7 @@ export function EditorScreen() {
   const [tileSource, setTileSource] = useState<
     NonNullable<AssetDto["slices"]>[number] | null
   >(null);
+  const [customBrush, setCustomBrush] = useState<BrushPattern | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
   const asepriteInput = useRef<HTMLInputElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -990,6 +991,29 @@ export function EditorScreen() {
         description: reason instanceof Error ? reason.message : "Unknown error",
       });
     }
+  }
+
+  function useSelectionAsBrush() {
+    if (!selection) return;
+    if (selection.width > 64 || selection.height > 64) {
+      notify({
+        title: "That selection is too large for a brush",
+        description: "A custom brush can be at most 64×64.",
+      });
+      return;
+    }
+    const mask =
+      selection.mask ?? new Uint8Array(selection.width * selection.height).fill(1);
+    setCustomBrush({
+      width: selection.width,
+      height: selection.height,
+      mask: mask.slice(),
+    });
+    setTool("pencil");
+    notify({
+      title: "Selection is now the brush",
+      description: `${selection.width}×${selection.height} silhouette`,
+    });
   }
 
   async function linkLayer(layerId: string) {
@@ -4201,6 +4225,10 @@ export function EditorScreen() {
                     onDynamics={setDynamics}
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
+                    brushActive={customBrush !== null}
+                    onSelectionBrush={() =>
+                      customBrush ? setCustomBrush(null) : useSelectionAsBrush()
+                    }
                     onSelectionCopy={copySelection}
                     onSelectionCut={cutSelection}
                     onSelectionPaste={pasteSelection}
@@ -4307,6 +4335,11 @@ export function EditorScreen() {
                     camera={camera}
                     tool={tool}
                     brushSize={brushSize}
+                    brushShape={brushShape}
+                    customBrush={customBrush}
+                    pixelPerfect={pixelPerfect}
+                    dynamics={dynamics}
+                    activeLayerId={activeLayerId}
                     grid={grid}
                     checker={checker}
                     onionSkin={onionSkin}
