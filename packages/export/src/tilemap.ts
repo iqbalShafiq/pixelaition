@@ -94,3 +94,58 @@ export function frameToTilemapJson(buffer: FrameBuffer, slices: Slice[]): Tilema
     }),
   };
 }
+
+/**
+ * Paint a tile-index map back into a frame using the tileset rectangles that
+ * frameToTilemapJson recorded. A -1 cell clears its cell; a missing layer or
+ * out-of-range tile is an error rather than a guessed tile.
+ */
+export function applyTilemap(buffer: FrameBuffer, map: TilemapJson): FrameBuffer {
+  if (
+    map.width * map.tileWidth !== buffer.width ||
+    map.height * map.tileHeight !== buffer.height
+  ) {
+    throw new Error(
+      `The tilemap is ${map.width}×${map.height} cells of ${map.tileWidth}×${map.tileHeight}; that does not match ${buffer.width}×${buffer.height}.`,
+    );
+  }
+  const layers = new Map(buffer.layers.map((layer) => [layer.name, layer]));
+  for (const target of map.layers) {
+    const layer = layers.get(target.name);
+    if (!layer) throw new Error(`The tilemap names a missing layer: ${target.name}.`);
+    if (target.data.length !== map.width * map.height) {
+      throw new Error(`Layer ${target.name} does not have one tile per cell.`);
+    }
+    const source = layer.pixels.slice();
+    for (let cell = 0; cell < target.data.length; cell += 1) {
+      const tileIndex = target.data[cell] ?? -1;
+      const cellX = (cell % map.width) * map.tileWidth;
+      const cellY = Math.floor(cell / map.width) * map.tileHeight;
+      if (tileIndex === -1) {
+        for (let row = 0; row < map.tileHeight; row += 1) {
+          for (let column = 0; column < map.tileWidth; column += 1) {
+            layer.pixels[(cellY + row) * buffer.width + cellX + column] = 0;
+          }
+        }
+        continue;
+      }
+      const tile = map.tileset[tileIndex];
+      if (!tile) throw new Error(`Tile index ${tileIndex} is outside the tileset.`);
+      if (
+        tile.width !== map.tileWidth ||
+        tile.height !== map.tileHeight ||
+        tile.x + tile.width > buffer.width ||
+        tile.y + tile.height > buffer.height
+      ) {
+        throw new Error(`Tile ${tile.name} does not fit the map cell.`);
+      }
+      for (let row = 0; row < map.tileHeight; row += 1) {
+        for (let column = 0; column < map.tileWidth; column += 1) {
+          layer.pixels[(cellY + row) * buffer.width + cellX + column] =
+            source[(tile.y + row) * buffer.width + tile.x + column] ?? 0;
+        }
+      }
+    }
+  }
+  return { ...buffer, layers: [...buffer.layers] };
+}

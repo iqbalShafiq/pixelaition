@@ -95,4 +95,4 @@ export { frameToTileset, type TilesetResult, type TilesetTile } from "./tileset.
 export { framesToAse, type AseFrame, type AseTag } from "./ase.js";
 
 export { parseAse, type AseImport } from "./ase-import.js";
-export { frameToTilemapJson, type TilemapJson } from "./tilemap.js";
+export { applyTilemap, frameToTilemapJson, type TilemapJson } from "./tilemap.js";

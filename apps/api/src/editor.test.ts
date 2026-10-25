@@ -262,6 +262,32 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         pivot: { x: 8, y: 12 },
       });
 
+      const appliedTilemap = await request(app)
+        .post(`/api/assets/${asset.id}/tilemap`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          frameId: first.id,
+          tilemap: {
+            version: 1,
+            width: 2,
+            height: 2,
+            tileWidth: 16,
+            tileHeight: 16,
+            tileset: [
+              {
+                index: 0,
+                name: "button",
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+              },
+            ],
+            layers: [{ name: "pixels", data: [0, 0, 0, 0] }],
+          },
+        });
+      expect(appliedTilemap.status).toBe(200);
+
       const lockedStyle = await request(app)
         .patch(`/api/assets/${asset.id}`)
         .set("authorization", `Bearer ${token}`)
