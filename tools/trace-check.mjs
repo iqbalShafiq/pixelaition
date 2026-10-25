@@ -38,8 +38,13 @@ const taskId = taskArg === -1 ? (runArg === -1 ? process.argv[2] : undefined) : 
 const durableRunId = runArg === -1 ? undefined : process.argv[runArg + 1];
 const roleArg = process.argv.indexOf("--role");
 const requestedRole = roleArg === -1 ? undefined : process.argv[roleArg + 1];
-if (requestedRole && !["ask", "image-compose"].includes(requestedRole)) {
-  console.error("--role must be ask or image-compose when checking one run.");
+if (
+  requestedRole &&
+  !["ask", "image-compose", "draw-plan", "draw-worker", "draw-review", "draw-fix", "draw-task"].includes(
+    requestedRole,
+  )
+) {
+  console.error("--role must name a known run role when checking one run.");
   process.exit(2);
 }
 if (!taskId && !durableRunId) {
