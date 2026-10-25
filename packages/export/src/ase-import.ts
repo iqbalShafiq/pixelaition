@@ -17,12 +17,18 @@ export type AseImport = {
 };
 
 type LayerDef = {
+  kind: "layer" | "group";
+  id: string;
   name: string;
   visible: boolean;
   opacity: number;
   blend: string;
   width: number;
   height: number;
+  depth: number;
+  parentGroupId?: string;
+  chunkIndex: number;
+  imageIndex?: number;
 };
 
 const blendNames: Record<number, string> = {
@@ -69,6 +75,7 @@ export function parseAse(bytes: Uint8Array): AseImport {
   }
   const palette = Array.from({ length: 256 }, () => "#00000000");
   const layerDefs: LayerDef[] = [];
+  const groupStack: string[] = [];
   const frameCels: Array<
     Array<{ layer: number; x: number; y: number; pixels: Uint8Array }>
   > = [];
@@ -115,12 +122,10 @@ export function parseAse(bytes: Uint8Array): AseImport {
         throw new Error("An Aseprite chunk is malformed.");
       if (type === 0x2004) {
         const flags = view.getUint16(data, true);
-        if ((view.getUint16(data + 2, true) & 1) !== 0) {
-          throw new Error("Group layers are not supported in .ase import yet.");
-        }
-        const layerType = view.getUint16(data + 2, true) & 0xff;
-        if (layerType !== 0) {
-          throw new Error("Only image layers are supported in .ase import.");
+        const layerType = view.getUint16(data + 2, true);
+        const childLevel = view.getUint16(data + 4, true);
+        if (layerType === 2) {
+          throw new Error("Tilemap layers are not supported in .ase import yet.");
         }
         const layerWidth = view.getUint16(data + 6, true);
         const layerHeight = view.getUint16(data + 8, true);
@@ -130,14 +135,42 @@ export function parseAse(bytes: Uint8Array): AseImport {
         const name = new TextDecoder().decode(
           bytes.subarray(data + 18, data + 18 + nameLength),
         );
-        layerDefs.push({
-          name: name || `layer-${layerDefs.length + 1}`,
-          visible: (flags & 1) !== 0,
-          opacity,
-          blend: blendNames[blend] ?? "normal",
-          width: layerWidth || width,
-          height: layerHeight || height,
-        });
+        const id = `ase-layer-${layerDefs.length + 1}`;
+        const parentGroupId = childLevel > 0 ? groupStack[childLevel - 1] : undefined;
+        if (layerType === 1) {
+          groupStack[childLevel] = id;
+          groupStack.length = childLevel + 1;
+          layerDefs.push({
+            kind: "group",
+            id,
+            name: name || `group-${layerDefs.length + 1}`,
+            visible: (flags & 1) !== 0,
+            opacity,
+            blend: "normal",
+            width: layerWidth,
+            height: layerHeight,
+            depth: childLevel,
+            ...(parentGroupId ? { parentGroupId } : {}),
+            chunkIndex: layerDefs.length,
+          });
+        } else {
+          groupStack.length = childLevel;
+          const imageIndex = layerDefs.filter((def) => def.kind === "layer").length;
+          layerDefs.push({
+            kind: "layer",
+            id,
+            name: name || `layer-${layerDefs.length + 1}`,
+            visible: (flags & 1) !== 0,
+            opacity,
+            blend: blendNames[blend] ?? "normal",
+            width: layerWidth || width,
+            height: layerHeight || height,
+            depth: childLevel,
+            ...(parentGroupId ? { parentGroupId } : {}),
+            chunkIndex: layerDefs.length,
+            imageIndex,
+          });
+        }
       } else if (type === 0x2019) {
         const first = view.getUint32(data + 4, true);
         const last = view.getUint32(data + 8, true);
@@ -163,8 +196,10 @@ export function parseAse(bytes: Uint8Array): AseImport {
         if (celType === 1 || celType === 3) {
           throw new Error("Linked cels are not supported in .ase import yet.");
         }
-        const layer = layerDefs[layerIndex];
-        if (!layer) throw new Error("An Aseprite cel names a missing layer.");
+        const layer = layerDefs.find(
+          (def) => def.kind === "layer" && def.chunkIndex === layerIndex,
+        );
+        if (!layer) throw new Error("An Aseprite cel names a missing image layer.");
         const expected = layer.width * layer.height;
         let pixels = bytes.subarray(data + 16, end);
         if (celType === 2) {
@@ -263,31 +298,50 @@ export function parseAse(bytes: Uint8Array): AseImport {
     frameCels.push(cels);
     offset += frameSize;
   }
-  if (layerDefs.length === 0) {
+  if (layerDefs.every((def) => def.kind !== "layer")) {
     layerDefs.push({
+      kind: "layer",
+      id: "ase-layer-1",
       name: "pixels",
       visible: true,
       opacity: 1,
       blend: "normal",
       width,
       height,
+      depth: 0,
+      chunkIndex: layerDefs.length,
+      imageIndex: 0,
     });
   }
   const frames = frameCels.map((cels, frameIndex) => {
     const buffer = createBuffer({ width, height, palette });
-    buffer.layers = layerDefs.map((layer, index) => ({
-      id: `ase-layer-${index + 1}`,
-      name: layer.name,
-      visible: layer.visible,
-      ...(layer.opacity < 1 ? { opacity: layer.opacity } : {}),
-      ...(layer.blend !== "normal" ? { blend: layer.blend as never } : {}),
-      pixels: new Uint8Array(width * height),
-    }));
+    buffer.groups = layerDefs
+      .filter((layer) => layer.kind === "group")
+      .map((group) => ({
+        id: group.id,
+        name: group.name,
+        visible: group.visible,
+        ...(group.opacity < 1 ? { opacity: group.opacity } : {}),
+        ...(group.parentGroupId ? { parentGroupId: group.parentGroupId } : {}),
+      }));
+    buffer.layers = layerDefs
+      .filter((layer) => layer.kind === "layer")
+      .map((layer) => ({
+        id: layer.id,
+        name: layer.name,
+        visible: layer.visible,
+        ...(layer.opacity < 1 ? { opacity: layer.opacity } : {}),
+        ...(layer.blend !== "normal" ? { blend: layer.blend as never } : {}),
+        ...(layer.parentGroupId ? { parentGroupId: layer.parentGroupId } : {}),
+        pixels: new Uint8Array(width * height),
+      }));
     for (const cel of cels) {
-      const layer = buffer.layers[cel.layer];
+      const layerDef = layerDefs.find(
+        (def) => def.kind === "layer" && def.chunkIndex === cel.layer,
+      );
+      if (!layerDef || layerDef.imageIndex === undefined) continue;
+      const layer = buffer.layers[layerDef.imageIndex];
       if (!layer) continue;
-      const layerDef = layerDefs[cel.layer];
-      if (!layerDef) continue;
       for (let row = 0; row < layerDef.height; row += 1) {
         for (let column = 0; column < layerDef.width; column += 1) {
           const targetX = cel.x + column;

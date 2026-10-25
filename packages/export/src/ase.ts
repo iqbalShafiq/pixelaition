@@ -1,4 +1,4 @@
-import type { FrameBuffer, Layer } from "@pixelaition/pixel";
+import type { FrameBuffer, Layer, LayerGroup } from "@pixelaition/pixel";
 import { hexToRgba } from "@pixelaition/pixel";
 
 export type AseFrame = { buffer: FrameBuffer; durationMs: number };
@@ -81,12 +81,12 @@ function chunk(type: number, payload: Uint8Array): Uint8Array {
   return out.finish();
 }
 
-function layerChunk(buffer: FrameBuffer, layer: Layer): Uint8Array {
+function layerChunk(buffer: FrameBuffer, layer: Layer, childLevel: number): Uint8Array {
   const flags = 1 | (layer.locked ? 0 : 2);
   const body = new Writer();
   body.u16(flags);
   body.u16(0);
-  body.u16(0);
+  body.u16(childLevel);
   body.u16(buffer.width);
   body.u16(buffer.height);
   body.u16(blendCode[layer.blend ?? "normal"] ?? 0);
@@ -95,6 +95,23 @@ function layerChunk(buffer: FrameBuffer, layer: Layer): Uint8Array {
   body.u8(0);
   body.u8(0);
   body.string(layer.name);
+  return chunk(CHUNK_LAYER, body.finish());
+}
+
+function groupChunk(group: LayerGroup, childLevel: number): Uint8Array {
+  const flags = 1 | 2 | 32;
+  const body = new Writer();
+  body.u16(flags);
+  body.u16(1);
+  body.u16(childLevel);
+  body.u16(0);
+  body.u16(0);
+  body.u16(0);
+  body.u8(Math.round(Math.max(0, Math.min(1, group.opacity ?? 1)) * 255));
+  body.u8(0);
+  body.u8(0);
+  body.u8(0);
+  body.string(group.name);
   return chunk(CHUNK_LAYER, body.finish());
 }
 
@@ -152,8 +169,8 @@ function tagsChunk(tags: AseTag[]): Uint8Array | undefined {
 
 /**
  * Write an indexed .ase (Aseprite) document with one layer per frame layer,
- * raw cels, palette, frame delays and tags. Group layers and slices are not
- * representable in this first exporter; they stay in .pxl and the JSON atlas.
+ * raw cels, palette, groups, frame delays and tags. Slices stay in .pxl and
+ * the JSON atlas.
  */
 export function framesToAse(frames: AseFrame[], tags: AseTag[] = []): Uint8Array {
   if (frames.length === 0) throw new Error("An Aseprite file needs at least one frame.");
@@ -185,31 +202,74 @@ export function framesToAse(frames: AseFrame[], tags: AseTag[] = []): Uint8Array
   const output = new Writer();
   output.raw(header.finish());
 
-  // Aseprite has one layer layout for the sprite. Merge frames by layer name,
-  // keeping the first frame's order and appending layers only later frames have.
-  const layerNames: string[] = [];
-  const representatives = new Map<string, Layer>();
-  for (const frame of frames) {
-    for (const layer of frame.buffer.layers) {
-      if (!representatives.has(layer.name)) {
-        representatives.set(layer.name, layer);
-        layerNames.push(layer.name);
-      }
+  // Aseprite has one layer layout for the sprite. Groups are emitted before
+  // their first child; layers keep their paint order.
+  const firstGroups = new Map(
+    (first.buffer.groups ?? []).map((group) => [group.id, group]),
+  );
+  const entries: Array<
+    | { kind: "group"; group: LayerGroup; depth: number }
+    | { kind: "layer"; layer: Layer; depth: number }
+  > = [];
+  const emitted = new Set<string>();
+  const chain = (layer: Layer): LayerGroup[] => {
+    const groups: LayerGroup[] = [];
+    let current = layer.parentGroupId;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const group = firstGroups.get(current);
+      if (!group) break;
+      groups.unshift(group);
+      current = group.parentGroupId;
     }
+    return groups;
+  };
+  for (const layer of first.buffer.layers) {
+    const groups = chain(layer);
+    groups.forEach((group, depth) => {
+      if (emitted.has(group.id)) return;
+      emitted.add(group.id);
+      entries.push({ kind: "group", group, depth });
+    });
+    entries.push({ kind: "layer", layer, depth: groups.length });
   }
+  for (const group of first.buffer.groups ?? []) {
+    if (emitted.has(group.id)) continue;
+    emitted.add(group.id);
+    const depth = chain({
+      id: "",
+      name: group.name,
+      visible: true,
+      parentGroupId: group.parentGroupId,
+      pixels: new Uint8Array(0),
+    }).length;
+    entries.push({ kind: "group", group, depth });
+  }
+  const layerIndexFor = new Map<string, number>();
+  entries.forEach((entry, index) => {
+    if (entry.kind === "layer") layerIndexFor.set(entry.layer.name, index);
+  });
   frames.forEach((frame, frameIndex) => {
     const chunks: Uint8Array[] = [];
     if (frameIndex === 0) {
       chunks.push(paletteChunk(frame.buffer));
-      for (const name of layerNames) {
-        const representative = representatives.get(name);
-        if (representative) chunks.push(layerChunk(frame.buffer, representative));
+      for (const entry of entries) {
+        if (entry.kind === "group") {
+          chunks.push(groupChunk(entry.group, entry.depth));
+        } else if (first.buffer.layers.some((layer) => layer.name === entry.layer.name)) {
+          chunks.push(layerChunk(first.buffer, entry.layer, entry.depth));
+        }
       }
     }
-    layerNames.forEach((name, layerIndex) => {
-      const layer = frame.buffer.layers.find((item) => item.name === name);
-      if (layer) chunks.push(celChunk(frame.buffer, layer, layerIndex));
-    });
+    for (const entry of entries) {
+      if (entry.kind !== "layer") continue;
+      const layer = frame.buffer.layers.find((item) => item.name === entry.layer.name);
+      const layerIndex = layerIndexFor.get(entry.layer.name);
+      if (layer && layerIndex !== undefined) {
+        chunks.push(celChunk(frame.buffer, layer, layerIndex));
+      }
+    }
     if (frameIndex === 0) {
       const tagChunk = tagsChunk(tags);
       if (tagChunk) chunks.push(tagChunk);
