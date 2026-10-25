@@ -1,4 +1,5 @@
 import {
+  ArrowLeft as RawArrowLeft,
   ArrowRight as RawArrowRight,
   Attachment as RawAttachment,
   Check as RawCheck,
@@ -128,6 +129,8 @@ export const Check = crisp(RawCheck);
 export const Close = crisp(RawClose);
 export const Grid = crisp(RawGrid3x3);
 export const Export = crisp(RawDownload);
+export const Undo = crisp(RawArrowLeft);
+export const Redo = crisp(RawArrowRight);
 export const Menu = crisp(RawMenu);
 export const PanelLeft = crisp(RawLayout);
 export const Send = crisp(RawSend);

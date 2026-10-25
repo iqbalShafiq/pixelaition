@@ -45,7 +45,7 @@ test("magic wand selects a flat region and clears it", async ({ page }) => {
 
   await page.getByRole("button", { name: "Magic wand" }).click();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("button", { name: "Clear selection", exact: true }).click();
   await page.waitForTimeout(800);
 
   const saved = await page.request.get(`/api/assets/${assetBody.id}`);
@@ -120,7 +120,7 @@ test("lasso selects a polygon and clears only inside it", async ({ page }) => {
     await page.mouse.move(point.x, point.y, { steps: 3 });
   }
   await page.mouse.up();
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("button", { name: "Clear selection", exact: true }).click();
   await page.waitForTimeout(800);
   const saved = await page.request.get(`/api/assets/${assetBody.id}`);
   const body = (await saved.json()) as {

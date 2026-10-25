@@ -108,7 +108,7 @@ import {
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
 import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
 import type { PaletteAction } from "../lib/palette.js";
-import { Minus, Plus } from "../components/pixel-icons.js";
+import { Minus, Plus, Redo, Undo } from "../components/pixel-icons.js";
 import {
   normalizeRect,
   PixelCanvas,
@@ -887,6 +887,21 @@ export function EditorScreen() {
   const update = useCallback((frameKey: string, next: History) => {
     setDrafts((current) => ({ ...current, [frameKey]: next }));
   }, []);
+
+  const canUndo = Boolean(history && history.past.length > 0);
+  const canRedo = Boolean(history && history.future.length > 0);
+  const undo = useCallback(() => {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current || current.past.length === 0) return;
+    update(frameId, undoHistory(current));
+  }, [frameId, update]);
+  const redo = useCallback(() => {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current || current.future.length === 0) return;
+    update(frameId, redoHistory(current));
+  }, [frameId, update]);
 
   const edit = useCallback(
     (frameKey: string, current: History | undefined, command: Command) => {
@@ -4426,6 +4441,23 @@ export function EditorScreen() {
           >
             ◨
           </IconButton>
+          <IconButton
+            label="Undo"
+            hint="Ctrl+Z"
+            disabled={!canUndo || running || preview !== null}
+            onClick={undo}
+          >
+            <Undo />
+          </IconButton>
+          <IconButton
+            label="Redo"
+            hint="Ctrl+Shift+Z"
+            disabled={!canRedo || running || preview !== null}
+            onClick={redo}
+          >
+            <Redo />
+          </IconButton>
+          <span className="mx-0.5 h-6 w-0.5 bg-line" aria-hidden />
           <Button
             tone="danger"
             className="px-2.5 py-1.5 text-pixel-label"
@@ -4434,6 +4466,7 @@ export function EditorScreen() {
           >
             Delete
           </Button>
+          <span className="mx-0.5 h-6 w-0.5 bg-line" aria-hidden />
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-pixel-label"

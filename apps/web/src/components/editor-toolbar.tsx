@@ -3,6 +3,9 @@ import type { BrushShape, Tool } from "./pixel-canvas.js";
 import {
   Check,
   Circle,
+  Clipboard,
+  Close,
+  Copy,
   Eraser,
   Eye,
   Fill,
@@ -12,11 +15,13 @@ import {
   Line,
   Pencil,
   Picker,
+  Redo,
   Search,
   Select,
   Square,
   Text,
   Transparency,
+  Trash,
   type IconProps,
 } from "./pixel-icons.js";
 import { Button, IconButton, Panel, Separator } from "./ui.js";
@@ -40,52 +45,6 @@ const tools: Array<{
   { id: "ellipse", label: "Ellipse", key: "O", icon: Circle },
   { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
-
-/** A pixel-art dot: round enough to read as a circle, drawn on a square grid. */
-const dotMaps: Record<number, string[]> = {
-  1: [".XXX.", "XXXXX", "XXXXX", "XXXXX", ".XXX."],
-  2: ["..XXX..", ".XXXXX.", "XXXXXXX", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX.."],
-  3: [
-    "...XXX...",
-    ".XXXXXXX.",
-    ".XXXXXXX.",
-    "XXXXXXXXX",
-    "XXXXXXXXX",
-    "XXXXXXXXX",
-    ".XXXXXXX.",
-    ".XXXXXXX.",
-    "...XXX...",
-  ],
-};
-
-function PixelDot({ level }: { level: number }) {
-  const map = dotMaps[level] ?? dotMaps[1] ?? [];
-  const n = map.length;
-  return (
-    <svg
-      aria-hidden
-      width={n * 2}
-      height={n * 2}
-      viewBox={`0 0 ${n} ${n}`}
-      shapeRendering="crispEdges"
-    >
-      {map.flatMap((row, y) =>
-        [...row].map((cell, x) =>
-          cell === "X" ? (
-            <rect
-              key={`${x}-${y}`}
-              x={x}
-              y={y}
-              width={1}
-              height={1}
-              fill="currentColor"
-            />
-          ) : null,
-        ),
-      )}
-    </svg>
-  );
-}
 
 export function Toolbar({
   tool,
@@ -163,22 +122,40 @@ export function Toolbar({
         );
       })}
 
-      {[1, 2, 3, 4, 6, 8].map((value) => (
-        <IconButton
-          key={value}
-          label={`Brush size ${value}`}
-          hint="[ or ]"
-          subtle
-          active={brushSize === value}
-          onClick={() => onBrush(value)}
-        >
-          {value <= 3 ? (
-            <PixelDot level={value} />
-          ) : (
-            <span className="text-pixel-mono">{value}</span>
-          )}
-        </IconButton>
-      ))}
+      <div
+        className="flex h-9 items-end gap-1 border-2 border-line bg-field px-1.5 py-1"
+        role="group"
+        aria-label="Brush level"
+      >
+        <Pencil className="mb-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+        <div className="flex h-full items-end gap-0.5">
+          {[1, 2, 3, 4, 6, 8].map((value, index) => {
+            const height = 4 + index * 3;
+            const active = brushSize >= value;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-label={`Brush level ${value}`}
+                aria-pressed={brushSize === value}
+                title={`Brush level ${value} · [ or ]`}
+                onClick={() => onBrush(value)}
+                className={`w-2 border transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent ${
+                  active
+                    ? index === 5
+                      ? "border-accent bg-erase"
+                      : "border-accent bg-accent"
+                    : "border-line bg-raised hover:border-line-strong hover:bg-accent/30"
+                } ${brushSize === value ? "ring-1 ring-accent ring-offset-1 ring-offset-field" : ""}`}
+                style={{ height }}
+              />
+            );
+          })}
+        </div>
+        <span className="mb-0.5 w-4 text-right text-pixel-mono text-[9px] text-muted">
+          {brushSize}
+        </span>
+      </div>
       {onBrushShape ? (
         <>
           <IconButton
@@ -253,97 +230,73 @@ export function Toolbar({
       ) : null}
 
       <Separator vertical />
-      <Button
-        tone="ghost"
-        className="px-2 py-1.5 text-pixel-label"
+      <IconButton
+        label="Select all"
+        hint="Ctrl+A"
         disabled={locked}
         onClick={onSelectAll}
       >
-        All
-      </Button>
+        <Select />
+      </IconButton>
       {selectionActive ? (
         <>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
-            disabled={locked}
-            onClick={onSelectionFill}
-          >
-            Fill
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
+          <IconButton label="Fill selection" disabled={locked} onClick={onSelectionFill}>
+            <Fill />
+          </IconButton>
+          <IconButton
+            label="Clear selection"
             disabled={locked}
             onClick={onSelectionClear}
           >
-            Clear
-          </Button>
+            <Eraser />
+          </IconButton>
           {onSelectionBrush ? (
-            <Button
-              tone={brushActive ? "solid" : "ghost"}
-              className="px-2 py-1.5 text-pixel-label"
+            <IconButton
+              label={brushActive ? "Stop painting on selection" : "Paint on selection"}
+              active={brushActive}
               disabled={locked}
               onClick={onSelectionBrush}
             >
-              {brushActive ? "Brush on" : "Brush"}
-            </Button>
+              <Pencil />
+            </IconButton>
           ) : null}
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
-            disabled={locked}
-            onClick={onSelectionCopy}
-          >
-            Copy
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
-            disabled={locked}
-            onClick={onSelectionCut}
-          >
-            Cut
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
+          <IconButton label="Copy selection" disabled={locked} onClick={onSelectionCopy}>
+            <Copy />
+          </IconButton>
+          <IconButton label="Cut selection" disabled={locked} onClick={onSelectionCut}>
+            <Trash />
+          </IconButton>
+          <IconButton
+            label="Paste at selection"
             disabled={locked || !clipboardReady}
             onClick={onSelectionPaste}
           >
-            Paste
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
+            <Clipboard />
+          </IconButton>
+          <IconButton
+            label="Flip selection horizontally"
             disabled={locked}
             onClick={() => onSelectionFlip?.("horizontal")}
           >
-            Flip H
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
+            <Square />
+          </IconButton>
+          <IconButton
+            label="Flip selection vertically"
             disabled={locked}
             onClick={() => onSelectionFlip?.("vertical")}
           >
-            Flip V
-          </Button>
-          <Button
-            tone="ghost"
-            className="px-2 py-1.5 text-pixel-label"
+            <Square />
+          </IconButton>
+          <IconButton
+            label="Rotate selection"
             disabled={locked}
             onClick={onSelectionRotate}
           >
-            Rotate
-          </Button>
-          <Button
-            tone="quiet"
-            className="px-2 py-1.5 text-pixel-label"
-            onClick={onDeselect}
-          >
-            Deselect
-          </Button>
+            <Redo />
+          </IconButton>
+          <IconButton label="Deselect" onClick={onDeselect}>
+            <Close />
+          </IconButton>
         </>
       ) : null}
     </div>

@@ -50,8 +50,8 @@ test("draws an ellipse and copies a rectangular selection", async ({ page }) => 
     steps: 4,
   });
   await page.mouse.up();
-  await page.getByRole("button", { name: "Copy", exact: true }).click();
-  const paste = page.getByRole("button", { name: "Paste", exact: true });
+  await page.getByRole("button", { name: "Copy selection", exact: true }).click();
+  const paste = page.getByRole("button", { name: "Paste at selection", exact: true });
   await expect(paste).toBeEnabled();
   await paste.click();
   await page.waitForTimeout(700);
