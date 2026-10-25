@@ -30,7 +30,10 @@
     "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev",
     "eval:jev:decisions": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev:decisions",
     "eval:social": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:social",
-    "postinstall": "node tools/patch-anvia-openai.mjs"
+    "postinstall": "node tools/patch-anvia-openai.mjs",
+    "test:integration": "dotenv -e .env -- pnpm --filter @pixelaition/api test && dotenv -e .env -- pnpm --filter @pixelaition/worker test",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
   },
   "lint-staged": {
     "*.{ts,tsx,js,css,md,json,yml}": "prettier --write"
@@ -38,6 +41,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.3",
     "@commitlint/config-conventional": "^20.5.3",
+    "@playwright/test": "^1.64.1",
     "dotenv-cli": "^11.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
