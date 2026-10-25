@@ -16,6 +16,7 @@ export type LayerDto = {
   opacity?: number;
   blend?: BlendMode;
   locked?: boolean;
+  linkId?: string;
   parentGroupId?: string;
 };
 

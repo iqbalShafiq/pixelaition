@@ -111,6 +111,7 @@ export function frameToBuffer(
       ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
       ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
       ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+      ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
       ...(layer.parentGroupId !== undefined
         ? { parentGroupId: layer.parentGroupId }
         : {}),
@@ -143,6 +144,7 @@ export function bufferToFrame(
       ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
       ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
       ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+      ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
       ...(layer.parentGroupId !== undefined
         ? { parentGroupId: layer.parentGroupId }
         : {}),

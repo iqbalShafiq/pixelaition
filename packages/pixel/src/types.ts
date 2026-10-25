@@ -82,6 +82,8 @@ export type Layer = {
   blend?: BlendMode;
   /** A locked layer refuses human and agent writes; the pixels remain readable. */
   locked?: boolean;
+  /** Shared layers carry the same link id across frames. */
+  linkId?: string;
   parentGroupId?: string;
 };
 
@@ -307,6 +309,7 @@ export type Command =
   | { type: "setLayerOpacity"; layerId: string; opacity: number }
   | { type: "setLayerBlend"; layerId: string; blend: BlendMode }
   | { type: "setLayerLocked"; layerId: string; locked: boolean }
+  | { type: "setLayerLink"; layerId: string; linkId?: string }
   | { type: "duplicateLayer"; layerId: string; id: string; name: string }
   | {
       type: "addLayerGroup";

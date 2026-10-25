@@ -53,6 +53,7 @@ export const layerSchema = z.object({
   opacity: z.number().min(0).max(1).optional(),
   blend: z.enum(blendModes).optional(),
   locked: z.boolean().optional(),
+  linkId: z.string().min(1).optional(),
   parentGroupId: z.string().min(1).optional(),
 });
 

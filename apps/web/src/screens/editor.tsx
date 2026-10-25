@@ -887,6 +887,53 @@ export function EditorScreen() {
       }
       setError(null);
       update(frameKey, pushHistory(current, result.buffer));
+
+      // A linked layer edits every frame that carries the same link id. The
+      // layer id differs per frame, so the command is re-bound by link id.
+      const named = "layerId" in command ? command.layerId : undefined;
+      if (typeof named !== "string") return;
+      const linked = current.present.layers.find((layer) => layer.id === named);
+      if (!linked?.linkId) return;
+      const propagates = new Set<Command["type"]>([
+        "paint",
+        "erase",
+        "fill",
+        "line",
+        "rect",
+        "ellipse",
+        "region",
+        "fillMask",
+        "transformMask",
+        "moveMask",
+        "moveRegion",
+        "rotateRegion",
+        "mirrorRegion",
+        "stamp",
+        "replaceColor",
+        "outline",
+        "dither",
+        "removeBackground",
+        "setLayerOpacity",
+        "setLayerBlend",
+        "setLayerLocked",
+        "setLayerVisible",
+        "renameLayer",
+        "replaceLayer",
+      ]);
+      if (!propagates.has(command.type)) return;
+      for (const [otherId, other] of Object.entries(draftsRef.current)) {
+        if (otherId === frameKey) continue;
+        const target = other.present.layers.find(
+          (layer) => layer.linkId === linked.linkId,
+        );
+        if (!target) continue;
+        const next = applyCommand(other.present, {
+          ...command,
+          layerId: target.id,
+        } as Command);
+        if (!next.ok) continue;
+        update(otherId, pushHistory(other, next.buffer));
+      }
     },
     [notify, update],
   );
@@ -904,6 +951,7 @@ export function EditorScreen() {
             ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
             ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
             ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+            ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
             ...(layer.parentGroupId !== undefined
               ? { parentGroupId: layer.parentGroupId }
               : {}),
@@ -939,6 +987,33 @@ export function EditorScreen() {
         description: reason instanceof Error ? reason.message : "Unknown error",
       });
     }
+  }
+
+  function linkLayer(layerId: string) {
+    if (!frameId || !buffer) return;
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    if (!layer) return;
+    const linkId = layer.linkId ? undefined : crypto.randomUUID();
+    for (const frame of frames) {
+      const draft = draftsRef.current[frame.id];
+      if (!draft) continue;
+      const target =
+        frame.id === frameId
+          ? draft.present.layers.find((item) => item.id === layerId)
+          : draft.present.layers.find((item) => item.name === layer.name);
+      if (!target) continue;
+      edit(frame.id, draft, {
+        type: "setLayerLink",
+        layerId: target.id,
+        ...(linkId ? { linkId } : {}),
+      });
+    }
+    notify({
+      title: linkId ? "Layer linked across frames" : "Layer unlinked",
+      description: linkId
+        ? "Edits now follow every frame with this link."
+        : "Each frame edits independently again.",
+    });
   }
 
   async function createVariant(sourceFrameId: string, mirror: "horizontal" | "vertical") {
@@ -3511,6 +3586,7 @@ export function EditorScreen() {
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerLocked", layerId, locked })
         }
+        onLink={linkLayer}
         onRemoveBackground={(layerId) => {
           if (!frameId) return;
           edit(frameId, drafts[frameId], {

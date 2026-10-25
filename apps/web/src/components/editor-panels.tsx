@@ -752,6 +752,7 @@ export function LayerPanel({
   onLock,
   onDuplicate,
   onRemoveBackground,
+  onLink,
   onAdd,
   onAddGroup,
   onToggleGroup,
@@ -779,6 +780,7 @@ export function LayerPanel({
   onLock?: (layerId: string, locked: boolean) => void;
   onDuplicate?: (layerId: string) => void;
   onRemoveBackground?: (layerId: string) => void;
+  onLink?: (layerId: string) => void;
   onAdd?: () => void;
   onAddGroup?: () => void;
   onToggleGroup?: (groupId: string, visible: boolean) => void;
@@ -1026,6 +1028,11 @@ export function LayerPanel({
                         LOCK
                       </span>
                     ) : null}
+                    {layer.linkId ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-accent">
+                        LINK
+                      </span>
+                    ) : null}
                     {(layer.opacity ?? 1) < 1 ? (
                       <span className="ml-1 text-pixel-mono text-[8px] text-muted">
                         {Math.round((layer.opacity ?? 1) * 100)}%
@@ -1134,6 +1141,15 @@ export function LayerPanel({
                                     }
                                   />
                                 </Field>
+                              ) : null}
+                              {onLink ? (
+                                <Button
+                                  tone="ghost"
+                                  className="justify-start px-2 py-1 text-pixel-label"
+                                  onClick={() => onLink(layer.id)}
+                                >
+                                  {layer.linkId ? "Unlink layer" : "Link across frames"}
+                                </Button>
                               ) : null}
                               {onRemoveBackground ? (
                                 <Button

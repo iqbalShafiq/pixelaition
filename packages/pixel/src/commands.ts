@@ -280,6 +280,7 @@ function lockedLayerFor(buffer: FrameBuffer, command: Command): Layer | undefine
     "setLayerOpacity",
     "setLayerBlend",
     "setLayerLocked",
+    "setLayerLink",
     "duplicateLayer",
     "addLayerGroup",
     "renameLayerGroup",
@@ -596,6 +597,26 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
           ...buffer,
           layers: buffer.layers.map((layer) =>
             layer.id === command.layerId ? { ...layer, locked: command.locked } : layer,
+          ),
+        },
+      };
+    }
+    case "setLayerLink": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId
+              ? {
+                  ...layer,
+                  ...(command.linkId
+                    ? { linkId: command.linkId }
+                    : { linkId: undefined }),
+                }
+              : layer,
           ),
         },
       };
