@@ -422,9 +422,9 @@ Still open from the matrix above:
 - Tilemap authoring with persistent tile-index layers and terrain transitions;
   tile stamping from slices, tile fill, tileset packaging, tile preview, seam
   reports and tile-size suggestions are in.
-- Full-colour custom brush images, richer dynamics, true RGB color mode and
-  Lua/visual scripting; selection silhouettes, square/round/spray brushes,
-  pressure sizing, grayscale/monochrome modes and command-script CLI/API exist.
+- Richer dynamics, true RGB color mode and Lua/visual scripting; full-colour
+  selection brushes, square/round/spray brushes, pressure sizing,
+  grayscale/monochrome modes and command-script CLI/API exist.
 - Terrain-aware auto-tiling remains design work; tile fill from slices,
   linked layers, the style lock, mirrored variant frames, selection-scoped
   prompts, AI animation and reference overlays are in place.
