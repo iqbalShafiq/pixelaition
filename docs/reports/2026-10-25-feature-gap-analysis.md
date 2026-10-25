@@ -408,8 +408,8 @@ Implemented:
 - Indexed `.ase` import (raw and zlib cels, palette, tags, slices) through the
   shared parser, plus `.ase` export.
 - Command scripting from the editor, CLI and `POST /api/assets/:id/script`,
-  all routed through `applyCommand`; a `.pxl` CLI for import, inspect, script
-  and export.
+  all routed through `applyCommand`; a `.pxl` CLI for import, inspect, script,
+  tilemap apply and export.
 - Aseprite binary round-trips frames, layers, groups, linked cels, palette,
   tags and slices; the editor imports `.ase`/`.aseprite` into the current
   asset and preserves imported frame dimensions.
