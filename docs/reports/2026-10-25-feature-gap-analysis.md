@@ -398,7 +398,11 @@ Implemented:
 - GIF, APNG, WebP, PNG sequence, packed/grid sprite sheets, engine atlas presets
   (Unity, Godot, Phaser), Aseprite JSON export/import, slices with nine-slice
   borders and pivots.
-- A `.pxl` CLI for import, inspect and export.
+- Pixel-perfect pencil cleanup, round/spray brushes, a reference overlay, and
+  tile-size suggestions from the seam scan.
+- Tileset packaging (`tileset` export), Aseprite JSON import in the CLI, and a
+  `.pxl` command-script runner.
+- A `.pxl` CLI for import, inspect, script and export.
 - Integration tests for palette, timing, tags, slices and every export, plus
   Playwright coverage for import, drawing/selection, background removal, GIF
   download and the palette lock.
@@ -407,8 +411,8 @@ Still open from the matrix above:
 
 - Binary `.ase`/`.aseprite` import/export (only Aseprite's JSON spritesheet
   dialect is covered).
-- Tilemap/tileset authoring (the tile preview and seam report are in, the map
-  format and editor are not).
+- Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
+  suggestions are in; the map layer/editor is not).
 - Custom brush images, brush dynamics, RGB/grayscale color modes and scripting.
 - AI variants, linked/shared layers, a style lock and auto-tiling remain design
   work; selection-scoped prompts, AI animation through frames/tags, and
