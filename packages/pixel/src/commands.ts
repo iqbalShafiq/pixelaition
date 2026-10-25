@@ -281,6 +281,7 @@ function lockedLayerFor(buffer: FrameBuffer, command: Command): Layer | undefine
     "setLayerBlend",
     "setLayerLocked",
     "setLayerLink",
+    "setTilemap",
     "duplicateLayer",
     "addLayerGroup",
     "renameLayerGroup",
@@ -597,6 +598,26 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
           ...buffer,
           layers: buffer.layers.map((layer) =>
             layer.id === command.layerId ? { ...layer, locked: command.locked } : layer,
+          ),
+        },
+      };
+    }
+    case "setTilemap": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId
+              ? {
+                  ...layer,
+                  ...(command.tilemap
+                    ? { tilemap: { ...command.tilemap, data: [...command.tilemap.data] } }
+                    : { tilemap: undefined }),
+                }
+              : layer,
           ),
         },
       };
@@ -1261,7 +1282,22 @@ function stamp(
       next[indexOf(buffer.width, command.x + column, command.y + row)] = color;
     }
   }
-  return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+  const replaced = replaceLayer(buffer, command.layerId, next);
+  if (!command.tilemapData) return { ok: true, buffer: replaced };
+  return {
+    ok: true,
+    buffer: {
+      ...replaced,
+      layers: replaced.layers.map((item) =>
+        item.id === command.layerId && item.tilemap
+          ? {
+              ...item,
+              tilemap: { ...item.tilemap, data: [...command.tilemapData!] },
+            }
+          : item,
+      ),
+    },
+  };
 }
 
 /** Flip one rectangle inside its own bounds; pixels outside it are untouched. */

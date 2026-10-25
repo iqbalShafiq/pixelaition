@@ -963,6 +963,7 @@ export function EditorScreen() {
             ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
             ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
             ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
+            ...(layer.tilemap ? { tilemap: layer.tilemap } : {}),
             ...(layer.parentGroupId !== undefined
               ? { parentGroupId: layer.parentGroupId }
               : {}),
@@ -1068,6 +1069,47 @@ export function EditorScreen() {
     notify({
       title: "Selection is now the brush",
       description: `${selection.width}×${selection.height} silhouette`,
+    });
+  }
+
+  function addTilemapLayer() {
+    if (!frameId || !buffer) return;
+    const slice = asset.data?.slices?.[0];
+    if (!slice) {
+      notify({
+        title: "Add a slice first",
+        description: "A tilemap layer needs a slice to define its tiles.",
+      });
+      return;
+    }
+    const id = crypto.randomUUID();
+    const added = applyCommand(buffer, { type: "addLayer", id, name: "tilemap" });
+    if (!added.ok) {
+      notify({ title: "The tilemap layer was refused", description: added.message });
+      return;
+    }
+    const columns = Math.ceil(buffer.width / slice.width);
+    const rows = Math.ceil(buffer.height / slice.height);
+    const next = applyCommand(added.buffer, {
+      type: "setTilemap",
+      layerId: id,
+      tilemap: {
+        tileWidth: slice.width,
+        tileHeight: slice.height,
+        data: Array.from({ length: columns * rows }, () => -1),
+      },
+    });
+    if (!next.ok) {
+      notify({ title: "The tilemap layer was refused", description: next.message });
+      return;
+    }
+    const current = drafts[frameId];
+    if (current) update(frameId, pushHistory(current, next.buffer));
+    setActiveLayerId(id);
+    setSelectedLayerId(id);
+    notify({
+      title: "Tilemap layer added",
+      description: `${columns}×${rows} cells of ${slice.width}×${slice.height}`,
     });
   }
 
@@ -2862,6 +2904,20 @@ export function EditorScreen() {
             );
           }
         }
+        const sliceIndex = (asset.data?.slices ?? []).findIndex(
+          (slice) => slice.id === chosen.id,
+        );
+        const tilemapData = layer.tilemap
+          ? (() => {
+              const columns = Math.ceil(buffer.width / layer.tilemap!.tileWidth);
+              const data = [...layer.tilemap!.data];
+              data[
+                Math.floor(y / layer.tilemap!.tileHeight) * columns +
+                  Math.floor(x / layer.tilemap!.tileWidth)
+              ] = sliceIndex;
+              return data;
+            })()
+          : undefined;
         edit(frameId, current, {
           type: "stamp",
           layerId: activeLayerId,
@@ -2870,6 +2926,7 @@ export function EditorScreen() {
           width: chosen.width,
           height: chosen.height,
           pixels,
+          ...(tilemapData ? { tilemapData } : {}),
         });
         return;
       }
@@ -3864,6 +3921,7 @@ export function EditorScreen() {
             name: `Group ${groups.length + 1}`,
           });
         }}
+        onAddTilemap={addTilemapLayer}
         onToggleGroup={(groupId, visible) =>
           frameId &&
           edit(frameId, drafts[frameId], {

@@ -55,6 +55,7 @@ export {
   assetSchema,
   layerGroupSchema,
   layerSchema,
+  tilemapSchema,
   pixelProjectSchema,
   styleGuideSchema,
   textLayerSchema,

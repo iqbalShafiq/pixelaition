@@ -17,6 +17,7 @@ export type LayerDto = {
   blend?: BlendMode;
   locked?: boolean;
   linkId?: string;
+  tilemap?: { tileWidth: number; tileHeight: number; data: number[] };
   parentGroupId?: string;
 };
 

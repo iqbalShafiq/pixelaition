@@ -44,6 +44,12 @@ export const layerGroupSchema = z.object({
   parentGroupId: z.string().min(1).optional(),
 });
 
+export const tilemapSchema = z.object({
+  tileWidth: z.number().int().positive(),
+  tileHeight: z.number().int().positive(),
+  data: z.array(z.number().int().min(-1)),
+});
+
 export const layerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
@@ -54,6 +60,7 @@ export const layerSchema = z.object({
   blend: z.enum(blendModes).optional(),
   locked: z.boolean().optional(),
   linkId: z.string().min(1).optional(),
+  tilemap: tilemapSchema.optional(),
   parentGroupId: z.string().min(1).optional(),
 });
 

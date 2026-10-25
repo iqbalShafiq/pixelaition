@@ -28,6 +28,7 @@ import {
   Check,
   Copy,
   Folder,
+  Grid,
   Menu as MenuIcon,
   Minus,
   Pencil,
@@ -755,6 +756,7 @@ export function LayerPanel({
   onLink,
   onAdd,
   onAddGroup,
+  onAddTilemap,
   onToggleGroup,
   onRemoveGroup,
   onMoveGroup,
@@ -783,6 +785,7 @@ export function LayerPanel({
   onLink?: (layerId: string) => void;
   onAdd?: () => void;
   onAddGroup?: () => void;
+  onAddTilemap?: () => void;
   onToggleGroup?: (groupId: string, visible: boolean) => void;
   onRemoveGroup?: (groupId: string) => void;
   onMoveGroup?: (layerId: string, groupId: string | null) => void;
@@ -823,6 +826,15 @@ export function LayerPanel({
             {onAddGroup ? (
               <IconButton label="Add layer group" disabled={locked} onClick={onAddGroup}>
                 <Folder />
+              </IconButton>
+            ) : null}
+            {onAddTilemap ? (
+              <IconButton
+                label="Add tilemap layer"
+                disabled={locked}
+                onClick={onAddTilemap}
+              >
+                <Grid />
               </IconButton>
             ) : null}
             {onAdd ? (
@@ -1031,6 +1043,11 @@ export function LayerPanel({
                     {layer.linkId ? (
                       <span className="ml-1 text-pixel-mono text-[8px] text-accent">
                         LINK
+                      </span>
+                    ) : null}
+                    {layer.tilemap ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-accent">
+                        TILEMAP
                       </span>
                     ) : null}
                     {(layer.opacity ?? 1) < 1 ? (

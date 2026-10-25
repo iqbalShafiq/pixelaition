@@ -69,6 +69,13 @@ export type LayerGroup = {
   parentGroupId?: string;
 };
 
+export type TilemapMetadata = {
+  tileWidth: number;
+  tileHeight: number;
+  /** One slice index per cell; -1 means empty. */
+  data: number[];
+};
+
 export type Layer = {
   id: string;
   name: string;
@@ -84,6 +91,8 @@ export type Layer = {
   locked?: boolean;
   /** Shared layers carry the same link id across frames. */
   linkId?: string;
+  /** A tile-index layer keeps its map even though pixels are baked for render. */
+  tilemap?: TilemapMetadata;
   parentGroupId?: string;
 };
 
@@ -322,6 +331,7 @@ export type Command =
   | { type: "setLayerBlend"; layerId: string; blend: BlendMode }
   | { type: "setLayerLocked"; layerId: string; locked: boolean }
   | { type: "setLayerLink"; layerId: string; linkId?: string }
+  | { type: "setTilemap"; layerId: string; tilemap?: TilemapMetadata }
   | { type: "duplicateLayer"; layerId: string; id: string; name: string }
   | {
       type: "addLayerGroup";
@@ -351,6 +361,8 @@ export type Command =
       width: number;
       height: number;
       pixels: readonly number[];
+      /** When present, update the persisted tile-index map for this stamp. */
+      tilemapData?: readonly number[];
     }
   /** Flip a rectangle inside its own bounds, leaving the rest of the layer alone. */
   | {

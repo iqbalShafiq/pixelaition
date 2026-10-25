@@ -112,6 +112,9 @@ export function frameToBuffer(
       ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
       ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
       ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
+      ...(layer.tilemap
+        ? { tilemap: { ...layer.tilemap, data: [...layer.tilemap.data] } }
+        : {}),
       ...(layer.parentGroupId !== undefined
         ? { parentGroupId: layer.parentGroupId }
         : {}),
@@ -145,6 +148,9 @@ export function bufferToFrame(
       ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
       ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
       ...(layer.linkId !== undefined ? { linkId: layer.linkId } : {}),
+      ...(layer.tilemap
+        ? { tilemap: { ...layer.tilemap, data: [...layer.tilemap.data] } }
+        : {}),
       ...(layer.parentGroupId !== undefined
         ? { parentGroupId: layer.parentGroupId }
         : {}),
