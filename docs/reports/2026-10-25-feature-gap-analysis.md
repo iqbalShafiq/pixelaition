@@ -437,8 +437,13 @@ Implemented:
 - Masked selections support flip, rotate, move and nudge as well as
   copy/cut/paste and mask-aware drawing.
 
-Still open from the matrix above:
+Deliberate boundaries, not unfinished work:
 
-- True RGB color mode and Lua/visual scripting; full-colour selection
-  brushes, square/round/spray brushes, pressure sizing, jitter,
-  grayscale/monochrome modes and command-script CLI/API exist.
+- Pixel frames stay palette-indexed: index 0 is transparent and at most 255
+  visible colours. That is the one renderer and export path the product is
+  built on, so a true 24-bit RGB paint mode is intentionally not offered.
+  Native-size artboards and scene exports keep their RGBA path.
+- Scripting is the JSON command-script surface (editor, API, CLI), routed
+  through `applyCommand`; there is no embedded Lua runtime, by design.
+- Brush dynamics cover pressure sizing and jitter; full tablet tilt/velocity
+  curves are not part of this plan.
