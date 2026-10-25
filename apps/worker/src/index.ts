@@ -2074,7 +2074,11 @@ app.post("/internal/runs", async (req, res) => {
           agentId: drawAgentId("supervisor", target),
           maxWorkers: shape.workers,
           review: shape.review,
-          maxPalette: asset ? paletteCapacity(asset.palette.length) : MAX_COLORS,
+          maxPalette: asset?.paletteLocked
+            ? 0
+            : asset
+              ? paletteCapacity(asset.palette.length)
+              : MAX_COLORS,
           ...(asset && originFrameId
             ? (() => {
                 const selected = asset.frames.find((frame) => frame.id === originFrameId);
@@ -3142,6 +3146,7 @@ function bindAssetRun(options: {
         ]),
     ),
     palette: [...asset.palette],
+    paletteLocked: asset.paletteLocked,
     width: asset.width,
     height: asset.height,
     style: asset.style,
@@ -4024,6 +4029,7 @@ function bindWorkspaceRun(options: {
       width: asset.width,
       height: asset.height,
       palette: [...asset.palette],
+      paletteLocked: asset.paletteLocked,
       style: asset.style,
       frames: framesByIndex.map((frame) => ({
         id: frame.id,
@@ -4097,6 +4103,7 @@ function bindWorkspaceRun(options: {
         width: asset.width,
         height: asset.height,
         palette: asset.palette,
+        paletteLocked: false,
         // A fresh asset has no generated summary yet; the summarizer fills it.
         summary: "",
         summaryAt: null,

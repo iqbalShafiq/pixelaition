@@ -139,6 +139,7 @@ export type RunAsset = {
   width: number;
   height: number;
   palette: string[];
+  paletteLocked?: boolean;
   style: StyleGuide;
   frames: Array<{
     id: string;
@@ -173,6 +174,7 @@ export type RunBinding = {
   currentFrameId?: string;
   frames: Map<string, RunFrame>;
   palette: string[];
+  paletteLocked?: boolean;
   width?: number;
   height?: number;
   style: StyleGuide;

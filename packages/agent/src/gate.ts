@@ -66,6 +66,16 @@ const TOOL_GATES: Record<
       "Clear a rectangle of a layer to transparency (erase pixels). Painting new artwork often begins by clearing the area the new artwork will occupy.",
     questions: { supported: supportedQuestion, proportionate: proportionateQuestion },
   },
+  remove_palette_color: {
+    description:
+      "Remove one palette colour from the asset and rewrite every pixel and scene that used it to another index.",
+    questions: { supported: supportedQuestion, proportionate: proportionateQuestion },
+  },
+  reorder_palette: {
+    description:
+      "Reorder the asset palette; every pixel and social scene follows the colour it used.",
+    questions: { supported: supportedQuestion },
+  },
   replace_color: {
     description:
       "Replace every pixel of one palette color with another across the frame (or one layer).",

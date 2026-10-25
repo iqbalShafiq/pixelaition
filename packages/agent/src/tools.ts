@@ -579,6 +579,7 @@ export function createPixelTools(
         width: run.width,
         height: run.height,
         palette: run.palette.map((hex, index) => ({ index, hex })),
+        paletteLocked: run.paletteLocked === true,
         layers: frame.buffer.layers.map((layer) => ({
           id: layer.id,
           name: layer.name,
@@ -1225,6 +1226,45 @@ export function createPixelTools(
     },
   });
 
+  /** Apply one explicit old-index -> new-index map to every frame. */
+  function applyPaletteMapping(
+    run: BoundRunBinding,
+    nextPalette: string[],
+    mapping: number[],
+  ): {
+    palette: string[];
+    repainted: string[];
+  } {
+    const current = resolveFrame(run);
+    const adopted = [...run.frames.entries()].map(([id, frame]) => {
+      const result = applyCommand(frame.buffer, {
+        type: "reindexPalette",
+        palette: nextPalette,
+        mapping: Object.fromEntries(mapping.map((to, from) => [from, to])),
+      });
+      if (!result.ok) throw new Error(result.message);
+      return { id, buffer: result.buffer };
+    });
+    for (const item of adopted) {
+      replaceFrameBuffer(run, item.id, item.buffer);
+      run.touchedFrames.add(item.id);
+    }
+    run.palette = [...nextPalette];
+    const edited = adopted.find((item) => item.id === current.id);
+    if (edited)
+      run.onStroke?.({ label: "palette", points: [] }, edited.buffer, edited.id);
+    for (const item of adopted) {
+      if (item.id === current.id) continue;
+      void run.onFrameChange?.({
+        type: "frame-pixels",
+        frameId: item.id,
+        buffer: item.buffer,
+      });
+    }
+    void run.onFrameChange?.({ type: "palette", palette: run.palette });
+    return { palette: run.palette, repainted: adopted.map((item) => item.id) };
+  }
+
   const setPalette = createTool({
     name: "set_palette",
     description: `${setPaletteDescription} The pixels follow their colours: a colour that moves to another index is rewritten, and a new colour is simply appended (or given an index and used by the next stroke), so one frame changing the palette never repaints another.`,
@@ -1238,6 +1278,11 @@ export function createPixelTools(
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
+      if (run.paletteLocked) {
+        throw new Error(
+          "The palette is locked for this asset; ask the user to unlock it.",
+        );
+      }
       const current = resolveFrame(run, input.frameId);
       // The palette belongs to the asset, exactly like the editor's palette
       // panel: every frame must be able to adopt it before any of them
@@ -1283,6 +1328,116 @@ export function createPixelTools(
         palette: run.palette,
         repainted: adopted.map((item) => item.id),
       };
+    },
+  });
+
+  const editPaletteColor = createTool({
+    name: "edit_palette_color",
+    description:
+      "Change the hex of one visible palette index without moving any pixel. Every frame adopts the new colour; index 0 cannot be edited.",
+    inputSchema: z.object({
+      index: z.number().int().positive(),
+      color: z.string(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      if (run.paletteLocked) {
+        throw new Error(
+          "The palette is locked for this asset; ask the user to unlock it.",
+        );
+      }
+      if (input.index >= run.palette.length) {
+        throw new Error("That colour index is not in the palette.");
+      }
+      const color = normalizeHex(input.color);
+      if (!color || color === "#00000000") {
+        throw new Error("A visible palette entry needs a hex colour.");
+      }
+      const nextPalette = [...run.palette];
+      nextPalette[input.index] = color;
+      for (const [id, frame] of run.frames) {
+        replaceFrameBuffer(run, id, { ...frame.buffer, palette: nextPalette });
+      }
+      run.palette = nextPalette;
+      const current = resolveFrame(run);
+      run.onStroke?.({ label: "palette", points: [] }, current.buffer, current.id);
+      void run.onFrameChange?.({ type: "palette", palette: nextPalette });
+      return { palette: nextPalette, index: input.index, color };
+    },
+  });
+
+  const removePaletteColor = createTool({
+    name: "remove_palette_color",
+    description:
+      "Remove one visible palette colour and rewrite every pixel that used it to another index (0 = transparent). This is asset-wide and pauses for approval when Jev cannot support it.",
+    inputSchema: z.object({
+      index: z.number().int().positive(),
+      remapTo: z.number().int().nonnegative().default(0),
+    }),
+    requiresApproval: gatedApproval("remove_palette_color", frameNeedsApproval),
+    execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "remove_palette_color");
+      if (refused) return { refused: refused.reason };
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      if (run.paletteLocked) {
+        throw new Error(
+          "The palette is locked for this asset; ask the user to unlock it.",
+        );
+      }
+      if (input.index >= run.palette.length || input.remapTo >= run.palette.length) {
+        throw new Error("That palette index is not in the palette.");
+      }
+      if (input.index === input.remapTo) {
+        throw new Error("Choose a different colour to keep, or clear to transparent.");
+      }
+      const nextPalette = run.palette.filter((_, index) => index !== input.index);
+      const mapping = run.palette.map((_, source) => {
+        if (source === 0) return 0;
+        if (source === input.index) {
+          return input.remapTo > input.index ? input.remapTo - 1 : input.remapTo;
+        }
+        return source > input.index ? source - 1 : source;
+      });
+      return applyPaletteMapping(run, nextPalette, mapping);
+    },
+  });
+
+  const reorderPalette = createTool({
+    name: "reorder_palette",
+    description:
+      "Reorder palette indices with an explicit old-index order. Every pixel and social scene follows the colour it used; index 0 must stay first.",
+    inputSchema: z.object({
+      order: z.array(z.number().int().nonnegative()).min(2),
+    }),
+    requiresApproval: gatedApproval("reorder_palette", frameNeedsApproval),
+    execute: (input, context) => {
+      const refused = gateRefusal(context.operationId, "reorder_palette");
+      if (refused) return { refused: refused.reason };
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      if (run.paletteLocked) {
+        throw new Error(
+          "The palette is locked for this asset; ask the user to unlock it.",
+        );
+      }
+      const order = input.order;
+      if (
+        order.length !== run.palette.length ||
+        new Set(order).size !== order.length ||
+        order.some((value) => value < 0 || value >= run.palette.length) ||
+        order[0] !== 0
+      ) {
+        throw new Error("The order must list every palette index once, starting at 0.");
+      }
+      const nextPalette = order.map((source) => run.palette[source] ?? "#00000000");
+      const mapping = new Array<number>(run.palette.length).fill(0);
+      order.forEach((source, target) => {
+        mapping[source] = target;
+      });
+      return applyPaletteMapping(run, nextPalette, mapping);
     },
   });
 
@@ -2152,6 +2307,7 @@ export function createPixelTools(
           assetId: run.assetId,
           assetName: run.assetName,
           palette: run.palette.map((hex, index) => ({ index, hex })),
+          paletteLocked: run.paletteLocked === true,
         };
       }
       const view = await resolveReadFrame(run, { assetId: input.assetId });
@@ -2319,6 +2475,9 @@ export function createPixelTools(
     resizeCanvas,
     resizeFrame,
     setPalette,
+    editPaletteColor,
+    removePaletteColor,
+    reorderPalette,
     addLayerTool,
     addTextTool,
     editTextTool,
