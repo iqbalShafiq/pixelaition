@@ -78,7 +78,9 @@ const MARKERS = {
   // work log, and bounds the writer to the ordered layers.
   "draw-fix": ["Frame:", "The review asks:", "Paint only"],
   "image-compose": ["image asset", "list_formats", "list_project_sprites"],
-  ask: ["read_project", "read_frame"],
+  // An ask answer can be complete after read_project; read_frame is only needed
+  // when the question asks about pixels, so it is not a mandatory marker.
+  ask: ["read_project"],
 };
 /** Tool failures the model sees as `error-*`; every one is a refused call worth naming. */
 const REFUSAL = /"type":"error-(text|json)"/;
