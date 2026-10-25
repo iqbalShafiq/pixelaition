@@ -421,8 +421,8 @@ Still open from the matrix above:
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
   scripting; grayscale/monochrome modes, pressure sizing and a command-script
   CLI exist.
-- AI variant gallery, linked/shared layers, a style lock and auto-tiling remain
-  design work; selection-scoped prompts, an agent variant tool, AI animation
+- AI variant gallery, linked/shared layers and auto-tiling remain design work;
+  the style lock, selection-scoped prompts, an agent variant tool, AI animation
   through frames/tags, and reference overlays are in place.
 - Masked selections now support flip, rotate, move and nudge as well as
   copy/cut/paste and mask-aware drawing.
