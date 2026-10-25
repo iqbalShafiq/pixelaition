@@ -33,6 +33,7 @@ export type Tool =
   | "ellipse"
   | "lasso"
   | "wand"
+  | "tile"
   | "pan";
 
 export type CanvasAction =
@@ -43,7 +44,8 @@ export type CanvasAction =
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean }
   | { kind: "ellipse"; from: Point; to: Point; filled: boolean }
-  | { kind: "select"; rect: Rect | null };
+  | { kind: "select"; rect: Rect | null }
+  | { kind: "tile"; point: Point };
 
 type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
@@ -1141,6 +1143,10 @@ export function PixelCanvas({
         }
         if (active === "fill") {
           if (inside(point)) emit({ kind: "fill", point });
+          return;
+        }
+        if (active === "tile") {
+          if (inside(point)) emit({ kind: "tile", point });
           return;
         }
         const points = brushPoints(

@@ -331,6 +331,9 @@ export function EditorScreen() {
   const [symmetry, setSymmetry] = useState<"none" | "x" | "y">("none");
   const [tileOpen, setTileOpen] = useState(false);
   const [reference, setReference] = useState<PaletteImage | null>(null);
+  const [tileSource, setTileSource] = useState<
+    NonNullable<AssetDto["slices"]>[number] | null
+  >(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
   const asepriteInput = useRef<HTMLInputElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -2647,6 +2650,44 @@ export function EditorScreen() {
         });
         return;
       }
+      case "tile": {
+        if (!tileSource) return;
+        const layer = buffer?.layers.find((item) => item.id === activeLayerId);
+        if (!layer || !buffer) return;
+        if (
+          tileSource.x + tileSource.width > buffer.width ||
+          tileSource.y + tileSource.height > buffer.height
+        ) {
+          return;
+        }
+        const x = Math.floor(action.point.x / tileSource.width) * tileSource.width;
+        const y = Math.floor(action.point.y / tileSource.height) * tileSource.height;
+        if (
+          x + tileSource.width > buffer.width ||
+          y + tileSource.height > buffer.height
+        ) {
+          return;
+        }
+        const pixels: number[] = [];
+        for (let row = 0; row < tileSource.height; row += 1) {
+          for (let column = 0; column < tileSource.width; column += 1) {
+            pixels.push(
+              layer.pixels[(tileSource.y + row) * buffer.width + tileSource.x + column] ??
+                0,
+            );
+          }
+        }
+        edit(frameId, current, {
+          type: "stamp",
+          layerId: activeLayerId,
+          x,
+          y,
+          width: tileSource.width,
+          height: tileSource.height,
+          pixels,
+        });
+        return;
+      }
       case "ellipse": {
         const box = normalizeRect(action.from, action.to);
         if (selection?.mask) {
@@ -3874,6 +3915,14 @@ export function EditorScreen() {
         height={frame?.height ?? asset.data?.height ?? 32}
         locked={locked}
         onSave={(slices) => void saveSlices(slices)}
+        onUseTile={(slice) => {
+          setTileSource(slice);
+          setTool("tile");
+          notify({
+            title: "Tile selected",
+            description: `${slice.width}×${slice.height} — click the canvas to stamp it`,
+          });
+        }}
         onTileFill={(slice) => {
           if (!frameId || !buffer || !activeLayerId) return;
           const destination = selection ?? {

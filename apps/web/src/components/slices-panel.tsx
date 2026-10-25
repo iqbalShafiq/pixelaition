@@ -10,6 +10,7 @@ export function SlicesPanel({
   locked,
   onSave,
   onTileFill,
+  onUseTile,
 }: {
   slices: Slice[];
   width: number;
@@ -17,6 +18,7 @@ export function SlicesPanel({
   locked: boolean;
   onSave: (slices: Slice[]) => void;
   onTileFill?: (slice: Slice) => void;
+  onUseTile?: (slice: Slice) => void;
 }) {
   const [draft, setDraft] = useState<Slice[]>(slices);
   const [dirty, setDirty] = useState(false);
@@ -83,6 +85,16 @@ export function SlicesPanel({
                 className="min-w-0 flex-1 px-1.5 py-1 font-mono text-[11px]"
                 onChange={(event) => update(index, { name: event.currentTarget.value })}
               />
+              {onUseTile ? (
+                <Button
+                  tone="ghost"
+                  className="px-1.5 py-1 text-pixel-mono"
+                  disabled={locked}
+                  onClick={() => onUseTile(slice)}
+                >
+                  Stamp tile
+                </Button>
+              ) : null}
               {onTileFill ? (
                 <Button
                   tone="ghost"

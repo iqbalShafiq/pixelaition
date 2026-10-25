@@ -30,6 +30,7 @@ const tools: Array<{
   { id: "select", label: "Select", key: "V", icon: Select },
   { id: "lasso", label: "Lasso", key: "Q", icon: Select },
   { id: "wand", label: "Magic wand", key: "W", icon: Search },
+  { id: "tile", label: "Tile stamp", key: "T", icon: Grid },
   { id: "pencil", label: "Pencil", key: "B", icon: Pencil },
   { id: "eraser", label: "Eraser", key: "E", icon: Eraser },
   { id: "fill", label: "Fill", key: "G", icon: Fill },
