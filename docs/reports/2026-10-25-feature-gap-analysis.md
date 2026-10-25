@@ -403,6 +403,9 @@ Implemented:
 - Tileset packaging (`tileset` export), Aseprite JSON import in the CLI, a
   `.pxl` command-script runner, and `create_variant` for mirrored/remapped
   frames.
+- Asset color modes: indexed, grayscale and monochrome palette conversion.
+- Indexed `.ase` import (raw and zlib cels, palette, tags, slices) through the
+  shared parser, plus `.ase` export.
 - A `.pxl` CLI for import, inspect, script and export.
 - Integration tests for palette, timing, tags, slices and every export, plus
   Playwright coverage for import, drawing/selection, background removal, GIF
