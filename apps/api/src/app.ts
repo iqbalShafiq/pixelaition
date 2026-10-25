@@ -25,6 +25,7 @@ import {
   frameToTileset,
   framesToAse,
   framesToSheet,
+  parseAse,
   serializeProject,
   sheetToAsepriteJson,
   zipFiles,
@@ -1190,6 +1191,58 @@ export function createApp() {
         result.failure?.message ?? "That palette could not be imported.",
       );
     res.json(result.asset);
+  });
+
+  app.post("/api/assets/:id/import/ase", async (req, res) => {
+    const body = z.object({ data: z.string().min(16).max(16_000_000) }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
+    let imported;
+    try {
+      imported = parseAse(Buffer.from(body.data, "base64"));
+    } catch (reason) {
+      return fail(
+        res,
+        422,
+        "INVALID_ASEPRITE",
+        reason instanceof Error
+          ? reason.message
+          : "That Aseprite file could not be read.",
+      );
+    }
+    const result = await importFrames(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      {
+        palette: imported.palette,
+        mode: "frames",
+        frames: imported.frames.map((frame) => ({
+          name: frame.name,
+          width: frame.width ?? imported.width,
+          height: frame.height ?? imported.height,
+          layers: frame.layers.map((layer) => ({
+            name: layer.name,
+            pixels: layer.pixels,
+          })),
+          groups: frame.groups,
+        })),
+      },
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        422,
+        result.failure?.code ?? "IMPORT_FAILED",
+        result.failure?.message ?? "Those frames could not be imported.",
+      );
+    res.status(201).json(result.asset);
   });
 
   app.post("/api/assets/:id/frames/import", async (req, res) => {

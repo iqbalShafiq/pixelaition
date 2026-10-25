@@ -332,6 +332,7 @@ export function EditorScreen() {
   const [tileOpen, setTileOpen] = useState(false);
   const [reference, setReference] = useState<PaletteImage | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
+  const asepriteInput = useRef<HTMLInputElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
@@ -913,6 +914,32 @@ export function EditorScreen() {
       });
     },
   });
+
+  async function importAseprite(file: File | undefined) {
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (const value of bytes) binary += String.fromCharCode(value);
+      const data = await api<AssetDto>(`/api/assets/${assetId}/import/ase`, {
+        method: "POST",
+        body: JSON.stringify({ data: btoa(binary) }),
+      });
+      const before = new Set(frames.map((frame) => frame.id));
+      client.setQueryData(["asset", assetId], data);
+      const added = data.frames.filter((frame) => !before.has(frame.id));
+      if (added.length > 0) setFrameId(added[added.length - 1]?.id ?? null);
+      notify({
+        title: "Aseprite imported",
+        description: `${added.length} frame${added.length === 1 ? "" : "s"} added`,
+      });
+    } catch (reason) {
+      notify({
+        title: "The Aseprite file did not import",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
 
   async function createVariant(sourceFrameId: string, mirror: "horizontal" | "vertical") {
     if (running || !buffer) return;
@@ -3443,6 +3470,7 @@ export function EditorScreen() {
         onAdd={() => setSocialPickerOpen(true)}
         onImport={() => setImportFrameOpen(true)}
         onImportImage={() => setImportImageOpen(true)}
+        onImportAseprite={() => asepriteInput.current?.click()}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
         onVariant={(id, mirror) => void createVariant(id, mirror)}
         onRename={(id, name) => void frameAction("rename", name, id)}
@@ -4662,6 +4690,16 @@ export function EditorScreen() {
         onPick={(presetId) => addSocialFrame.mutate(presetId)}
         onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
         busy={addSocialFrame.isPending || addCustomFrame.isPending}
+      />
+      <input
+        ref={asepriteInput}
+        type="file"
+        accept=".ase,.aseprite"
+        className="hidden"
+        onChange={(event) => {
+          void importAseprite(event.currentTarget.files?.[0]);
+          event.currentTarget.value = "";
+        }}
       />
       <input
         ref={referenceInput}

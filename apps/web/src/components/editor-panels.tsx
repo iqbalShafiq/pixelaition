@@ -448,6 +448,7 @@ export function FramePanel({
   onAdd,
   onImport,
   onImportImage,
+  onImportAseprite,
   onDuplicate,
   onVariant,
   onRename,
@@ -474,6 +475,7 @@ export function FramePanel({
   onAdd: () => void;
   onImport?: () => void;
   onImportImage?: () => void;
+  onImportAseprite?: () => void;
   onDuplicate: (frameId: string) => void;
   onVariant?: (frameId: string, mirror: "horizontal" | "vertical") => void;
   onRename: (frameId: string, name: string) => void;
@@ -642,6 +644,16 @@ export function FramePanel({
           disabled={locked}
         >
           Import image
+        </Button>
+      ) : null}
+      {onImportAseprite ? (
+        <Button
+          tone="ghost"
+          className="mt-1 justify-start px-2 py-1 text-pixel-label"
+          onClick={onImportAseprite}
+          disabled={locked}
+        >
+          Import Aseprite
         </Button>
       ) : null}
 

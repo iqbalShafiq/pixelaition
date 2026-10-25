@@ -4,6 +4,8 @@ import { eq, sql } from "drizzle-orm";
 import type { Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createBuffer } from "@pixelaition/pixel";
+import { framesToAse } from "@pixelaition/export";
 import { createApiKey } from "./store.js";
 
 async function probe(url: string | undefined): Promise<Database | undefined> {
@@ -172,6 +174,19 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         variant.body.frames.some((frame: { name: string }) => frame.name === "mirror"),
       ).toBe(true);
 
+      const source = createBuffer({ width: 8, height: 8 });
+      source.layers[0]?.pixels.fill(1);
+      const aseImport = await request(app)
+        .post(`/api/assets/${asset.id}/import/ase`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          data: Buffer.from(framesToAse([{ buffer: source, durationMs: 100 }])).toString(
+            "base64",
+          ),
+        });
+      expect(aseImport.status).toBe(201);
+      expect(aseImport.body.frames.length).toBeGreaterThan(asset.frames.length);
+
       const timing = await request(app)
         .patch(`/api/assets/${asset.id}/frames/${first.id}`)
         .set("authorization", `Bearer ${token}`)
@@ -226,7 +241,7 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         .patch(`/api/assets/${asset.id}`)
         .set("authorization", `Bearer ${token}`)
         .send({ styleLocked: true });
-      expect(lockedStyle.status).toBe(200);
+      expect(lockedStyle.status, JSON.stringify(lockedStyle.body)).toBe(200);
       expect(lockedStyle.body.styleLocked).toBe(true);
 
       const grayscale = await request(app)

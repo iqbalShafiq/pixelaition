@@ -342,6 +342,8 @@ function asPixelAsset(record: AssetRecord): Asset {
         id: frame.id,
         name: frame.name,
         index: frame.index,
+        ...(frame.width !== null ? { width: frame.width } : {}),
+        ...(frame.height !== null ? { height: frame.height } : {}),
         layers: frame.layers,
         groups: (frame.groups ?? []) as Frame["groups"],
         durationMs: frame.durationMs,
