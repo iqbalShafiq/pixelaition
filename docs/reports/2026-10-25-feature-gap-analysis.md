@@ -423,7 +423,9 @@ Implemented:
 - Touch pinch zooms and two-finger drag pans the canvas; wheel zoom and the
   toolbar's zoom steps remain.
 - Export documents now carry slices, color mode and the style lock, so the
-  `.ase` and tilemap JSON exports see the same slices as the editor.
+  `.ase` and tilemap JSON exports see the same slices as the editor; an e2e
+  imports a two-frame binary `.ase` through the frame panel and checks the
+  imported dimensions.
 - A 16-slice terrain mask (`up/right/down/left`) auto-picks tiles from
   neighbours; edge matching and tile fill remain available.
 - Masked selections support flip, rotate, move and nudge as well as
