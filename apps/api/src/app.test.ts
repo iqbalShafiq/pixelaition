@@ -193,6 +193,7 @@ describe.skipIf(!db)("API routes", () => {
       expect(created.body.artboards).toHaveLength(2);
       const board = created.body.artboards[0];
       expect(board.width).toBe(400);
+      expect(board.scene.version).toBe(2);
       expect(board.scene.elements.length).toBeGreaterThan(0);
 
       const preview = await request(app)
