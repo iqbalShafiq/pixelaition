@@ -14,6 +14,8 @@ import { useEffect, useRef, useState } from "react";
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
 
+export type BrushShape = "square" | "circle" | "spray";
+
 export type Tool =
   | "select"
   | "pencil"
@@ -62,6 +64,7 @@ type Props = {
   camera: Camera;
   tool: Tool;
   brushSize: number;
+  brushShape?: BrushShape;
   grid: boolean;
   checker: boolean;
   onionSkin: FrameBuffer[];
@@ -197,14 +200,26 @@ function overlayBitmapFor(
   return canvas;
 }
 
-function brushPoints(point: Point, size: number): Point[] {
+function brushPoints(point: Point, size: number, shape: BrushShape = "square"): Point[] {
   const side = Math.max(1, Math.min(32, Math.round(size)));
   if (side === 1) return [point];
   const start = -Math.floor((side - 1) / 2);
+  const radius = (side - 1) / 2;
   const points: Point[] = [];
   for (let dy = 0; dy < side; dy += 1) {
     for (let dx = 0; dx < side; dx += 1) {
-      points.push({ x: point.x + start + dx, y: point.y + start + dy });
+      const localX = start + dx;
+      const localY = start + dy;
+      if (
+        shape === "circle" &&
+        localX * localX + localY * localY > radius * radius + 0.1
+      ) {
+        continue;
+      }
+      if (shape === "spray" && (Math.abs(localX) + Math.abs(localY)) % 2 === 1) {
+        continue;
+      }
+      points.push({ x: point.x + localX, y: point.y + localY });
     }
   }
   return points;
@@ -296,6 +311,7 @@ export function PixelCanvas({
   camera,
   tool,
   brushSize,
+  brushShape = "square",
   grid,
   checker,
   onionSkin,
@@ -365,6 +381,7 @@ export function PixelCanvas({
     buffer,
     tool,
     brushSize,
+    brushShape,
     onAction,
     onCamera,
     ghost,
@@ -386,6 +403,7 @@ export function PixelCanvas({
     buffer,
     tool,
     brushSize,
+    brushShape,
     onAction,
     onCamera,
     ghost,
@@ -805,7 +823,9 @@ export function PixelCanvas({
   function strokeCells(from: Point, to: Point): Point[] {
     const doc = latest.current.buffer;
     return lineCells(from, to)
-      .flatMap((item) => brushPoints(item, latest.current.brushSize))
+      .flatMap((item) =>
+        brushPoints(item, latest.current.brushSize, latest.current.brushShape),
+      )
       .filter(inside)
       .map((item) => ({
         x: Math.min(item.x, doc.width - 1),
@@ -929,7 +949,11 @@ export function PixelCanvas({
           if (inside(point)) emit({ kind: "fill", point });
           return;
         }
-        const points = brushPoints(point, latest.current.brushSize).filter(inside);
+        const points = brushPoints(
+          point,
+          latest.current.brushSize,
+          latest.current.brushShape,
+        ).filter(inside);
         stroke.current = point;
         if (points.length === 0) return;
         emit(active === "eraser" ? { kind: "erase", points } : { kind: "paint", points });

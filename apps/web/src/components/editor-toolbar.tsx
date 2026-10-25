@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { Tool } from "./pixel-canvas.js";
+import type { BrushShape, Tool } from "./pixel-canvas.js";
 import {
   Circle,
   Eraser,
@@ -85,11 +85,13 @@ function PixelDot({ level }: { level: number }) {
 export function Toolbar({
   tool,
   brushSize,
+  brushShape = "square",
   selectionActive,
   clipboardReady,
   locked,
   onTool,
   onBrush,
+  onBrushShape,
   onSelectionFill,
   onSelectionClear,
   onSelectionCopy,
@@ -104,11 +106,13 @@ export function Toolbar({
 }: {
   tool: Tool;
   brushSize: number;
+  brushShape?: BrushShape;
   selectionActive: boolean;
   clipboardReady: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
   onBrush: (size: number) => void;
+  onBrushShape?: (shape: BrushShape) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onSelectionCopy?: () => void;
@@ -154,6 +158,34 @@ export function Toolbar({
           )}
         </IconButton>
       ))}
+      {onBrushShape ? (
+        <>
+          <IconButton
+            label="Square brush"
+            subtle
+            active={brushShape === "square"}
+            onClick={() => onBrushShape("square")}
+          >
+            <Square />
+          </IconButton>
+          <IconButton
+            label="Round brush"
+            subtle
+            active={brushShape === "circle"}
+            onClick={() => onBrushShape("circle")}
+          >
+            <Circle />
+          </IconButton>
+          <IconButton
+            label="Spray brush"
+            subtle
+            active={brushShape === "spray"}
+            onClick={() => onBrushShape("spray")}
+          >
+            <Grid />
+          </IconButton>
+        </>
+      ) : null}
 
       {onAddText ? (
         <>

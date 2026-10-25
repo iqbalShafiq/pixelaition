@@ -31,6 +31,7 @@ import {
   type TextLayerSpec,
 } from "@pixelaition/pixel";
 import type { PaletteImage } from "@pixelaition/artboard";
+import type { BrushShape } from "../components/pixel-canvas.js";
 import {
   checkScene,
   getPreset,
@@ -308,6 +309,7 @@ export function EditorScreen() {
   } = useAgentPaint(draftsRef, setDrafts);
   const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(1);
+  const [brushShape, setBrushShape] = useState<BrushShape>("square");
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
   const [selectedLayerId, setSelectedLayerId] = useState("");
@@ -3777,11 +3779,13 @@ export function EditorScreen() {
                   <Toolbar
                     tool={tool}
                     brushSize={brushSize}
+                    brushShape={brushShape}
                     selectionActive={selection !== null}
                     clipboardReady={clipboard !== null}
                     locked={locked || socialFrame !== null}
                     onTool={setTool}
                     onBrush={setBrushSize}
+                    onBrushShape={setBrushShape}
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
                     onSelectionCopy={copySelection}
