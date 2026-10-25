@@ -813,6 +813,40 @@ export function EditorScreen() {
     setFrameId((current) => current ?? data.frames[0]?.id ?? null);
   }, [asset.data]);
 
+  // The undo stack is not part of the asset payload: it is fetched for the
+  // frame in view, so opening the editor never waits on megabytes of history.
+  const loadedHistory = useRef(new Set<string>());
+  useEffect(() => {
+    if (!asset.data || !frameId) return;
+    const frame = asset.data.frames.find((item) => item.id === frameId);
+    if (!frame || frame.kind === "social") return;
+    const key = `${assetId}:${frameId}`;
+    if (loadedHistory.current.has(key)) return;
+    loadedHistory.current.add(key);
+    let active = true;
+    void api<{ history: unknown }>(`/api/assets/${assetId}/frames/${frameId}/history`)
+      .then(({ history }) => {
+        if (!active || !history) return;
+        const width = frame.width ?? asset.data!.width;
+        const height = frame.height ?? asset.data!.height;
+        const restored = decodeHistory(history, width, height, asset.data!.palette);
+        if (!restored) return;
+        setDrafts((current) => {
+          const existing = current[frameId];
+          if (!existing || existing.past.length > 0 || existing.future.length > 0) {
+            return current;
+          }
+          return { ...current, [frameId]: restored };
+        });
+      })
+      .catch(() => {
+        // A missing history is an empty undo stack, not an editor failure.
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset.data, assetId, frameId]);
+
   // Hydrate the composer once, after both the catalog and the saved
   // preference are readable. The two used to race: the catalog effect ran with
   // an empty model id and wrote the first model over the saved Muse choice,

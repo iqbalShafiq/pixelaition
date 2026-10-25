@@ -766,6 +766,15 @@ export function createApp() {
     res.status(201).json(asset);
   });
 
+  /** Frame rows without the undo stack: the editor asks for that separately. */
+  function withoutUndoHistory(asset: Awaited<ReturnType<typeof getAssetRecord>>) {
+    if (!asset) return asset;
+    return {
+      ...asset,
+      frames: asset.frames.map(({ undoHistory: _undoHistory, ...frame }) => frame),
+    };
+  }
+
   app.get("/api/assets/:id", async (req, res) => {
     const asset = await getAssetRecord(
       db,
@@ -773,7 +782,19 @@ export function createApp() {
       req.params.id ?? "",
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
-    res.json(asset);
+    res.json(withoutUndoHistory(asset));
+  });
+
+  app.get("/api/assets/:id/frames/:frameId/history", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const frame = asset.frames.find((item) => item.id === req.params.frameId);
+    if (!frame) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
+    res.json({ history: frame.undoHistory ?? null });
   });
 
   app.put("/api/assets/:id/frames/:frameId", async (req, res) => {
@@ -824,7 +845,7 @@ export function createApp() {
         saved.failure?.code ?? "NOT_FOUND",
         saved.failure?.message ?? "That frame is not available.",
       );
-    res.json(saved.asset);
+    res.json(withoutUndoHistory(saved.asset));
   });
 
   app.post("/api/assets/:id/import", async (req, res) => {

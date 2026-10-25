@@ -27,6 +27,15 @@ test("keeps undo and redo across a reload", async ({ page }) => {
   const assetBody = (await asset.json()) as { id: string };
   const readAsset = async () =>
     (await (await page.request.get(`/api/assets/${assetBody.id}`)).json()) as AssetBody;
+  const readHistory = async () => {
+    const asset = await readAsset();
+    const frameId = asset.frames[0]?.id;
+    return (
+      (await (
+        await page.request.get(`/api/assets/${assetBody.id}/frames/${frameId}/history`)
+      ).json()) as { history: { past: unknown[]; future: unknown[] } | null }
+    ).history;
+  };
 
   await page.goto(`/projects/${projectBody.id}/assets/${assetBody.id}`);
   const canvas = page.getByRole("img", { name: /Pixel canvas/ });
@@ -36,7 +45,7 @@ test("keeps undo and redo across a reload", async ({ page }) => {
   if (!box) throw new Error("canvas has no box");
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
 
-  const history = async () => (await readAsset()).frames[0]?.undoHistory;
+  const history = readHistory;
   await expect
     .poll(async () => (await history())?.past.length ?? 0, { timeout: 15_000 })
     .toBeGreaterThan(0);
