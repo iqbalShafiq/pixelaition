@@ -1307,6 +1307,7 @@ export function createApp() {
     const body = z
       .object({
         frameId: z.string().min(1),
+        layerId: z.string().optional(),
         commands: z.array(z.record(z.string(), z.unknown())).min(1).max(1000),
       })
       .parse(req.body);
@@ -1333,7 +1334,11 @@ export function createApp() {
       record.palette as string[],
     );
     for (const [index, raw] of body.commands.entries()) {
-      const result = applyCommand(buffer, raw as never);
+      const command =
+        body.layerId && raw.layerId === undefined
+          ? { ...raw, layerId: body.layerId }
+          : raw;
+      const result = applyCommand(buffer, command as never);
       if (!result.ok) {
         return fail(
           res,

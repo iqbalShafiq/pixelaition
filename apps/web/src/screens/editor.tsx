@@ -56,6 +56,7 @@ import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { ImportImageDialog } from "../components/import-image-dialog.js";
 import { decodeImageFile } from "../lib/image-import.js";
 import { TimelinePanel } from "../components/timeline-panel.js";
+import { ScriptDialog } from "../components/script-dialog.js";
 import { SlicesPanel } from "../components/slices-panel.js";
 import { TilePreviewDialog } from "../components/tile-preview-dialog.js";
 import { Composer } from "../components/composer.js";
@@ -330,6 +331,7 @@ export function EditorScreen() {
   const [onion, setOnion] = useState(false);
   const [symmetry, setSymmetry] = useState<"none" | "x" | "y">("none");
   const [tileOpen, setTileOpen] = useState(false);
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [reference, setReference] = useState<PaletteImage | null>(null);
   const [tileSource, setTileSource] = useState<
     NonNullable<AssetDto["slices"]>[number] | null
@@ -937,6 +939,7 @@ export function EditorScreen() {
         } as Command);
         if (!next.ok) continue;
         update(otherId, pushHistory(other, next.buffer));
+        save.mutate({ frameId: otherId, buffer: next.buffer });
       }
     },
     [notify, update],
@@ -1041,11 +1044,15 @@ export function EditorScreen() {
           ? draft?.present.layers.find((item) => item.id === layerId)
           : draft?.present.layers.find((item) => item.name === layer.name);
       if (target && draft) {
-        edit(frame.id, draft, {
+        const result = applyCommand(draft.present, {
           type: "setLayerLink",
           layerId: target.id,
           ...(linkId ? { linkId } : {}),
         });
+        if (result.ok) {
+          update(frame.id, pushHistory(draft, result.buffer));
+          await save.mutateAsync({ frameId: frame.id, buffer: result.buffer });
+        }
         continue;
       }
       if (frame.id === frameId) continue;
@@ -4204,6 +4211,14 @@ export function EditorScreen() {
           <Button
             tone="ghost"
             className="px-2.5 py-1.5 text-pixel-label"
+            disabled={!asset.data || running}
+            onClick={() => setScriptOpen(true)}
+          >
+            Script
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2.5 py-1.5 text-pixel-label"
             disabled={!asset.data}
             onClick={() => {
               flush();
@@ -4923,6 +4938,21 @@ export function EditorScreen() {
         onChange={(event) => {
           void loadReferenceFile(event.currentTarget.files?.[0]);
           event.currentTarget.value = "";
+        }}
+      />
+      <ScriptDialog
+        open={scriptOpen}
+        onOpenChange={setScriptOpen}
+        assetId={assetId}
+        frameId={frameId ?? ""}
+        layers={(buffer?.layers ?? []).map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+        }))}
+        activeLayerId={activeLayerId}
+        onSaved={(data) => {
+          client.setQueryData(["asset", assetId], data);
+          notify({ title: "Script committed" });
         }}
       />
       <TilePreviewDialog

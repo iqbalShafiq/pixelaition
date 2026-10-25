@@ -20,18 +20,29 @@ test("a linked layer follows edits into the other frame", async ({ page }) => {
   await page.request.post(`/api/assets/${assetBody.id}/frames`, {
     data: { name: "second" },
   });
+  const linked = await page.request.get(`/api/assets/${assetBody.id}`);
+  const linkedBody = (await linked.json()) as {
+    frames: Array<{
+      id: string;
+      name: string;
+      groups: unknown[];
+      layers: Array<{ id: string; name: string; visible: boolean; pixels: string }>;
+    }>;
+  };
+  for (const frame of linkedBody.frames) {
+    await page.request.put(`/api/assets/${assetBody.id}/frames/${frame.id}`, {
+      data: {
+        groups: frame.groups ?? [],
+        layers: frame.layers.map((layer) => ({ ...layer, linkId: "link-e2e" })),
+      },
+    });
+  }
 
   await page.goto(`/projects/${projectBody.id}/assets/${assetBody.id}`);
   const canvas = page.getByRole("img", { name: /Pixel canvas/ });
   await expect(canvas).toBeVisible();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("canvas has no box");
-
-  const settings = page.getByRole("button", { name: "Settings for pixels" }).first();
-  await settings.click();
-  await page.getByRole("button", { name: "Link across frames" }).click();
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(500);
 
   await page.getByRole("button", { name: "Pencil", exact: true }).click();
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
