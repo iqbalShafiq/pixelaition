@@ -5,7 +5,7 @@ import type { Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBuffer } from "@pixelaition/pixel";
-import { framesToAse } from "@pixelaition/export";
+import { framesToAse, parseAse } from "@pixelaition/export";
 import { createApiKey } from "./store.js";
 
 async function probe(url: string | undefined): Promise<Database | undefined> {
@@ -341,11 +341,20 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       const ase = await request(app)
         .post("/api/export")
         .set("authorization", `Bearer ${token}`)
-        .send({ scope: "asset", projectId, assetId: asset.id, format: "ase" });
+        .send({
+          scope: "asset",
+          projectId,
+          assetId: asset.id,
+          format: "ase",
+          frameIds: [first.id],
+        });
       expect(ase.status).toBe(200);
       expect(ase.headers["content-type"]).toBe("image/x-aseprite");
       if (Buffer.isBuffer(ase.body)) {
         expect(ase.body.readUInt16LE(4)).toBe(0xa5e0);
+        const parsed = parseAse(ase.body);
+        expect(parsed.slices).toHaveLength(1);
+        expect(parsed.slices[0]?.name).toBe("button");
       }
 
       const webp = await request(app)

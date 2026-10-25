@@ -228,6 +228,16 @@ export function framesToAse(
   if (frames.length === 0) throw new Error("An Aseprite file needs at least one frame.");
   const first = frames[0];
   if (!first) throw new Error("An Aseprite file needs at least one frame.");
+  for (const frame of frames) {
+    if (
+      frame.buffer.width !== first.buffer.width ||
+      frame.buffer.height !== first.buffer.height
+    ) {
+      throw new Error(
+        `An Aseprite sprite needs one canvas size; got ${first.buffer.width}×${first.buffer.height} and ${frame.buffer.width}×${frame.buffer.height}.`,
+      );
+    }
+  }
   const header = new Writer();
   header.u32(0);
   header.u16(MAGIC);

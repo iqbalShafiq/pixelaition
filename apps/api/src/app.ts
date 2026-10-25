@@ -4012,17 +4012,28 @@ export function createApp() {
             },
           ];
         });
-        const bytes = framesToAse(
-          entries.map((entry) => ({
-            buffer: entry.buffer,
-            durationMs: entry.durationMs,
-          })),
-          aseTags,
-          (asset.slices ?? []) as never,
-        );
-        res.setHeader("content-type", "image/x-aseprite");
-        res.setHeader("content-disposition", `attachment; filename="${slugName}.ase"`);
-        return res.send(Buffer.from(bytes));
+        try {
+          const bytes = framesToAse(
+            entries.map((entry) => ({
+              buffer: entry.buffer,
+              durationMs: entry.durationMs,
+            })),
+            aseTags,
+            (asset.slices ?? []) as never,
+          );
+          res.setHeader("content-type", "image/x-aseprite");
+          res.setHeader("content-disposition", `attachment; filename="${slugName}.ase"`);
+          return res.send(Buffer.from(bytes));
+        } catch (reason) {
+          return fail(
+            res,
+            422,
+            "ASEPRITE_FAILED",
+            reason instanceof Error
+              ? reason.message
+              : "The Aseprite file could not be built.",
+          );
+        }
       }
       if (body.format === "tilemap-json") {
         const first = entries[0];
