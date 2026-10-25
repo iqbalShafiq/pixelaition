@@ -91,6 +91,7 @@ export function Toolbar({
   brushSize,
   brushShape = "square",
   pixelPerfect = false,
+  dynamics = false,
   selectionActive,
   clipboardReady,
   locked,
@@ -98,6 +99,7 @@ export function Toolbar({
   onBrush,
   onBrushShape,
   onPixelPerfect,
+  onDynamics,
   onSelectionFill,
   onSelectionClear,
   onSelectionCopy,
@@ -114,6 +116,7 @@ export function Toolbar({
   brushSize: number;
   brushShape?: BrushShape;
   pixelPerfect?: boolean;
+  dynamics?: boolean;
   selectionActive: boolean;
   clipboardReady: boolean;
   locked: boolean;
@@ -121,6 +124,7 @@ export function Toolbar({
   onBrush: (size: number) => void;
   onBrushShape?: (shape: BrushShape) => void;
   onPixelPerfect?: (next: boolean) => void;
+  onDynamics?: (next: boolean) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onSelectionCopy?: () => void;
@@ -203,6 +207,18 @@ export function Toolbar({
           onClick={() => onPixelPerfect(!pixelPerfect)}
         >
           <Check />
+        </IconButton>
+      ) : null}
+
+      {onDynamics ? (
+        <IconButton
+          label="Pen pressure"
+          hint="Vary the brush size with a pen's pressure"
+          subtle
+          active={dynamics}
+          onClick={() => onDynamics(!dynamics)}
+        >
+          <Pencil />
         </IconButton>
       ) : null}
 

@@ -74,6 +74,7 @@ type Props = {
   brushSize: number;
   brushShape?: BrushShape;
   pixelPerfect?: boolean;
+  dynamics?: boolean;
   activeLayerId?: string;
   grid: boolean;
   checker: boolean;
@@ -415,6 +416,7 @@ export function PixelCanvas({
   brushSize,
   brushShape = "square",
   pixelPerfect = false,
+  dynamics = false,
   activeLayerId,
   grid,
   checker,
@@ -491,6 +493,7 @@ export function PixelCanvas({
     brushSize,
     brushShape,
     pixelPerfect,
+    dynamics,
     activeLayerId,
     onAction,
     onCamera,
@@ -515,6 +518,7 @@ export function PixelCanvas({
     brushSize,
     brushShape,
     pixelPerfect,
+    dynamics,
     activeLayerId,
     onAction,
     onCamera,
@@ -992,12 +996,18 @@ export function PixelCanvas({
         ? "cursor-default"
         : "cursor-pixel-cross";
 
-  function strokeCells(from: Point, to: Point): Point[] {
+  function brushSizeFor(event: { pointerType: string; pressure: number }): number {
+    if (!latest.current.dynamics || event.pointerType !== "pen") {
+      return latest.current.brushSize;
+    }
+    const factor = 0.25 + Math.max(0, Math.min(1, event.pressure)) * 0.75;
+    return Math.max(1, Math.round(latest.current.brushSize * factor));
+  }
+
+  function strokeCells(from: Point, to: Point, size = latest.current.brushSize): Point[] {
     const doc = latest.current.buffer;
     return lineCells(from, to)
-      .flatMap((item) =>
-        brushPoints(item, latest.current.brushSize, latest.current.brushShape),
-      )
+      .flatMap((item) => brushPoints(item, size, latest.current.brushShape))
       .filter(inside)
       .map((item) => ({
         x: Math.min(item.x, doc.width - 1),
@@ -1135,7 +1145,7 @@ export function PixelCanvas({
         }
         const points = brushPoints(
           point,
-          latest.current.brushSize,
+          brushSizeFor(event),
           latest.current.brushShape,
         ).filter(inside);
         stroke.current = point;
@@ -1302,7 +1312,7 @@ export function PixelCanvas({
         }
         if (last.x === point.x && last.y === point.y) return;
         stroke.current = point;
-        const cells = strokeCells(last, point);
+        const cells = strokeCells(last, point, brushSizeFor(event));
         if (cells.length === 0) return;
         trackCells(cells);
         latest.current.onAction(

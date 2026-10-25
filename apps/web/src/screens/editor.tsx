@@ -312,6 +312,7 @@ export function EditorScreen() {
   const [brushSize, setBrushSize] = useState(1);
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
   const [pixelPerfect, setPixelPerfect] = useState(false);
+  const [dynamics, setDynamics] = useState(false);
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
   const [selectedLayerId, setSelectedLayerId] = useState("");
@@ -322,6 +323,7 @@ export function EditorScreen() {
     width: number;
     height: number;
     pixels: Uint8Array;
+    mask?: Uint8Array;
   } | null>(null);
   const [grid, setGrid] = useState(true);
   const [checker, setChecker] = useState(true);
@@ -2585,17 +2587,25 @@ export function EditorScreen() {
 
   function copySelection() {
     if (running || !selection) return;
-    if (maskedSelection()) return;
     const layer = selectionLayer();
     if (!layer || !buffer) return;
     const pixels = new Uint8Array(selection.width * selection.height);
     for (let row = 0; row < selection.height; row += 1) {
       for (let column = 0; column < selection.width; column += 1) {
+        const inside = selection.mask
+          ? selection.mask[row * selection.width + column] === 1
+          : true;
+        if (!inside) continue;
         pixels[row * selection.width + column] =
           layer.pixels[(selection.y + row) * buffer.width + selection.x + column] ?? 0;
       }
     }
-    setClipboard({ width: selection.width, height: selection.height, pixels });
+    setClipboard({
+      width: selection.width,
+      height: selection.height,
+      pixels,
+      ...(selection.mask ? { mask: selection.mask.slice() } : {}),
+    });
     notify({
       title: "Selection copied",
       description: `${selection.width}×${selection.height} pixels`,
@@ -2604,14 +2614,12 @@ export function EditorScreen() {
 
   function cutSelection() {
     if (running || !selection) return;
-    if (maskedSelection()) return;
     copySelection();
     selectionCommand("clear");
   }
 
   function pasteSelection() {
     if (running || !clipboard || !buffer || !frameId || !activeLayerId) return;
-    if (maskedSelection()) return;
     if (clipboard.width > buffer.width || clipboard.height > buffer.height) {
       notify({
         title: "The clipboard is larger than the canvas",
@@ -2627,6 +2635,31 @@ export function EditorScreen() {
     };
     const x = Math.min(Math.max(0, target.x), buffer.width - clipboard.width);
     const y = Math.min(Math.max(0, target.y), buffer.height - clipboard.height);
+    if (clipboard.mask) {
+      const points: Array<{ x: number; y: number; color: number }> = [];
+      for (let row = 0; row < clipboard.height; row += 1) {
+        for (let column = 0; column < clipboard.width; column += 1) {
+          if (clipboard.mask[row * clipboard.width + column] !== 1) continue;
+          const color = clipboard.pixels[row * clipboard.width + column] ?? 0;
+          if (color > 0) points.push({ x: x + column, y: y + row, color });
+        }
+      }
+      if (points.length > 0) {
+        edit(frameId, drafts[frameId], {
+          type: "paint",
+          layerId: activeLayerId,
+          points,
+        });
+      }
+      setSelection({
+        x,
+        y,
+        width: clipboard.width,
+        height: clipboard.height,
+        mask: clipboard.mask.slice(),
+      });
+      return;
+    }
     edit(frameId, drafts[frameId], {
       type: "stamp",
       layerId: activeLayerId,
@@ -3883,6 +3916,7 @@ export function EditorScreen() {
                     brushSize={brushSize}
                     brushShape={brushShape}
                     pixelPerfect={pixelPerfect}
+                    dynamics={dynamics}
                     selectionActive={selection !== null}
                     clipboardReady={clipboard !== null}
                     locked={locked || socialFrame !== null}
@@ -3890,6 +3924,7 @@ export function EditorScreen() {
                     onBrush={setBrushSize}
                     onBrushShape={setBrushShape}
                     onPixelPerfect={setPixelPerfect}
+                    onDynamics={setDynamics}
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
                     onSelectionCopy={copySelection}
