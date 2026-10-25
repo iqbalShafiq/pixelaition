@@ -3,6 +3,16 @@ import { hexToRgba } from "@pixelaition/pixel";
 
 export type AseFrame = { buffer: FrameBuffer; durationMs: number };
 
+export type AseSlice = {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  nineSlice?: { left: number; right: number; top: number; bottom: number };
+  pivot?: { x: number; y: number };
+};
+
 export type AseTag = {
   name: string;
   from: number;
@@ -17,6 +27,7 @@ const CHUNK_LAYER = 0x2004;
 const CHUNK_CEL = 0x2005;
 const CHUNK_TAGS = 0x2018;
 const CHUNK_PALETTE = 0x2019;
+const CHUNK_SLICE = 0x2022;
 
 const blendCode: Record<string, number> = {
   normal: 0,
@@ -53,6 +64,9 @@ class Writer {
       (value >>> 16) & 0xff,
       (value >>> 24) & 0xff,
     );
+  }
+  i32(value: number): void {
+    this.u32(value < 0 ? value + 0x100000000 : value);
   }
   raw(values: Iterable<number>): void {
     for (const value of values) this.bytes.push(value & 0xff);
@@ -176,12 +190,41 @@ function tagsChunk(tags: AseTag[]): Uint8Array | undefined {
   return chunk(CHUNK_TAGS, body.finish());
 }
 
+function sliceChunk(slice: AseSlice): Uint8Array {
+  const flags = (slice.nineSlice ? 1 : 0) | (slice.pivot ? 2 : 0);
+  const body = new Writer();
+  body.u32(1);
+  body.u32(flags);
+  body.u32(0);
+  body.string(slice.name);
+  body.u32(0);
+  body.i32(slice.x);
+  body.i32(slice.y);
+  body.u32(slice.width);
+  body.u32(slice.height);
+  if (slice.nineSlice) {
+    body.i32(slice.x + slice.nineSlice.left);
+    body.i32(slice.y + slice.nineSlice.top);
+    body.u32(Math.max(0, slice.width - slice.nineSlice.left - slice.nineSlice.right));
+    body.u32(Math.max(0, slice.height - slice.nineSlice.top - slice.nineSlice.bottom));
+  }
+  if (slice.pivot) {
+    body.i32(slice.pivot.x);
+    body.i32(slice.pivot.y);
+  }
+  return chunk(CHUNK_SLICE, body.finish());
+}
+
 /**
  * Write an indexed .ase (Aseprite) document with one layer per frame layer,
  * raw cels, palette, groups, frame delays and tags. Slices stay in .pxl and
  * the JSON atlas.
  */
-export function framesToAse(frames: AseFrame[], tags: AseTag[] = []): Uint8Array {
+export function framesToAse(
+  frames: AseFrame[],
+  tags: AseTag[] = [],
+  slices: AseSlice[] = [],
+): Uint8Array {
   if (frames.length === 0) throw new Error("An Aseprite file needs at least one frame.");
   const first = frames[0];
   if (!first) throw new Error("An Aseprite file needs at least one frame.");
@@ -295,6 +338,7 @@ export function framesToAse(frames: AseFrame[], tags: AseTag[] = []): Uint8Array
     if (frameIndex === 0) {
       const tagChunk = tagsChunk(tags);
       if (tagChunk) chunks.push(tagChunk);
+      for (const slice of slices) chunks.push(sliceChunk(slice));
     }
     const frameBody = new Writer();
     frameBody.u32(0);

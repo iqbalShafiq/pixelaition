@@ -3797,6 +3797,7 @@ export function createApp() {
             durationMs: entry.durationMs,
           })),
           aseTags,
+          (asset.slices ?? []) as never,
         );
         res.setHeader("content-type", "image/x-aseprite");
         res.setHeader("content-disposition", `attachment; filename="${slugName}.ase"`);

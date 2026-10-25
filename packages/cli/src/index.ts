@@ -184,6 +184,7 @@ async function exportProject(args: string[]): Promise<void> {
           durationMs: entry.durationMs,
         })),
         tags,
+        (asset.slices ?? []) as never,
       ),
     );
     return;
