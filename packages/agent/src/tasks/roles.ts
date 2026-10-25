@@ -80,6 +80,7 @@ const SUPERVISOR_TOOLS: readonly string[] = [
   "use_asset",
   "create_asset",
   "add_frame",
+  "create_variant",
   "rename_frame",
   "move_frame",
   "delete_frame",

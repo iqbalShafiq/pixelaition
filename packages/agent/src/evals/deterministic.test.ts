@@ -389,6 +389,15 @@ describe("generation decisions and tools", () => {
           { layerId },
           { operationId: "run-workflow/tool:7" },
         );
+        await toolFor("create_variant").call(
+          {
+            frameId: "frame-b",
+            name: "walk-mirror",
+            mirror: "horizontal",
+            remap: buffer.palette.map((_, index) => index),
+          },
+          { operationId: "run-workflow/tool:9" },
+        );
         await toolFor("check_tiling").call(
           { frameId: "frame-a" },
           { operationId: "run-workflow/tool:8" },
@@ -401,6 +410,7 @@ describe("generation decisions and tools", () => {
             live.slices?.length === 1 &&
             live.frames.get("frame-a")?.buffer.groups?.length === 1 &&
             live.frames.get("frame-b")?.durationMs === 180 &&
+            live.frames.size === 3 &&
             alpha !== undefined &&
             [...alpha].every((value) => value === 0) &&
             changes.some((change) => change.type === "slices") &&

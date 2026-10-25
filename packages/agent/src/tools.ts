@@ -2583,6 +2583,76 @@ export function createPixelTools(
     },
   });
 
+  const createVariant = createTool({
+    name: "create_variant",
+    description:
+      "Create a new frame as a variant of an existing frame. Optionally mirror it and remap palette indices; the asset palette itself does not change. Use it for alternate poses, recolours, or mirrored sprites.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      name: z.string().min(1).max(40),
+      mirror: z.enum(["horizontal", "vertical"]).optional(),
+      /** One target index per palette index; index 0 stays transparent. */
+      remap: z.array(z.number().int().min(0).max(255)).optional(),
+    }),
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const source = resolveFrame(run, input.frameId);
+      const name = input.name.trim();
+      if (!name) throw new Error("A variant needs a name.");
+      if (
+        [...run.frames.values()].some(
+          (frame) => frame.name.trim().toLowerCase() === name.toLowerCase(),
+        )
+      ) {
+        throw new Error(`A frame named "${name}" already exists.`);
+      }
+      const next = duplicateFrame(
+        assetView(run, { withPixels: [source.id] }),
+        source.id,
+        name,
+      );
+      if (!next) throw new Error("The variant frame could not be created.");
+      const added = next.frames.at(-1);
+      if (!added) throw new Error("The variant frame could not be created.");
+      const frame = runFrameFrom(added, run);
+      if (input.remap) {
+        if (input.remap.length !== frame.buffer.palette.length || input.remap[0] !== 0) {
+          throw new Error(
+            "A remap must list every palette index exactly once, starting at 0.",
+          );
+        }
+        for (const layer of frame.buffer.layers) {
+          for (let index = 0; index < layer.pixels.length; index += 1) {
+            layer.pixels[index] = input.remap[layer.pixels[index] ?? 0] ?? 0;
+          }
+        }
+      }
+      if (input.mirror) {
+        for (const layer of frame.buffer.layers) {
+          const flipped = new Uint8Array(layer.pixels.length);
+          for (let y = 0; y < frame.buffer.height; y += 1) {
+            for (let x = 0; x < frame.buffer.width; x += 1) {
+              const fromX =
+                input.mirror === "horizontal" ? frame.buffer.width - 1 - x : x;
+              const fromY = input.mirror === "vertical" ? frame.buffer.height - 1 - y : y;
+              flipped[y * frame.buffer.width + x] =
+                layer.pixels[fromY * frame.buffer.width + fromX] ?? 0;
+            }
+          }
+          layer.pixels = flipped;
+        }
+      }
+      await run.onFrameChange?.({ type: "add", frame: changeFrame(added.id, frame) });
+      run.frames.set(added.id, frame);
+      run.currentFrameId = added.id;
+      run.approvedScope.add(added.id);
+      run.onScopeChange?.([...run.approvedScope]);
+      run.touchedFrames.add(added.id);
+      return { frameId: added.id, name: frame.name, mirror: input.mirror ?? null };
+    },
+  });
+
   const renameFrameTool = createTool({
     name: "rename_frame",
     description: "Rename a frame. The name is trimmed and must not be blank.",
@@ -3129,6 +3199,7 @@ export function createPixelTools(
     mirror,
     useFrame,
     addFrameTool,
+    createVariant,
     renameFrameTool,
     moveFrameTool,
     deleteFrameTool,
