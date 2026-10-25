@@ -418,6 +418,8 @@ Implemented:
   download, scripts, linked layers, tilemaps and the palette lock.
 - A fresh Langfuse ask trace (`aa992884…`) reads back with five observations
   and passes `tools/trace-check.mjs --run … --role ask`.
+- The agent can apply a tilemap through `apply_tilemap`, covered by the
+  deterministic eval suite.
 
 Still open from the matrix above:
 
