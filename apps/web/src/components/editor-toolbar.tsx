@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { Tool } from "./pixel-canvas.js";
 import {
+  Circle,
   Eraser,
   Fill,
   Grid,
@@ -30,6 +31,7 @@ const tools: Array<{
   { id: "picker", label: "Eyedropper", key: "I", icon: Picker },
   { id: "line", label: "Line", key: "L", icon: Line },
   { id: "rect", label: "Rectangle", key: "R", icon: Square },
+  { id: "ellipse", label: "Ellipse", key: "O", icon: Circle },
   { id: "pan", label: "Pan", key: "H", icon: Hand },
 ];
 
@@ -83,11 +85,18 @@ export function Toolbar({
   tool,
   brushSize,
   selectionActive,
+  clipboardReady,
   locked,
   onTool,
   onBrush,
   onSelectionFill,
   onSelectionClear,
+  onSelectionCopy,
+  onSelectionCut,
+  onSelectionPaste,
+  onSelectionFlip,
+  onSelectionRotate,
+  onSelectAll,
   onDeselect,
   onAddText,
   addTextDisabled,
@@ -95,11 +104,18 @@ export function Toolbar({
   tool: Tool;
   brushSize: number;
   selectionActive: boolean;
+  clipboardReady: boolean;
   locked: boolean;
   onTool: (tool: Tool) => void;
   onBrush: (size: number) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
+  onSelectionCopy?: () => void;
+  onSelectionCut?: () => void;
+  onSelectionPaste?: () => void;
+  onSelectionFlip?: (axis: "horizontal" | "vertical") => void;
+  onSelectionRotate?: () => void;
+  onSelectAll?: () => void;
   onDeselect: () => void;
   onAddText?: () => void;
   addTextDisabled?: boolean;
@@ -121,7 +137,7 @@ export function Toolbar({
         );
       })}
 
-      {[1, 2, 3].map((value) => (
+      {[1, 2, 3, 4, 6, 8].map((value) => (
         <IconButton
           key={value}
           label={`Brush size ${value}`}
@@ -130,7 +146,11 @@ export function Toolbar({
           active={brushSize === value}
           onClick={() => onBrush(value)}
         >
-          <PixelDot level={value} />
+          {value <= 3 ? (
+            <PixelDot level={value} />
+          ) : (
+            <span className="text-pixel-mono">{value}</span>
+          )}
         </IconButton>
       ))}
 
@@ -143,9 +163,17 @@ export function Toolbar({
         </>
       ) : null}
 
+      <Separator vertical />
+      <Button
+        tone="ghost"
+        className="px-2 py-1.5 text-pixel-label"
+        disabled={locked}
+        onClick={onSelectAll}
+      >
+        All
+      </Button>
       {selectionActive ? (
         <>
-          <Separator vertical />
           <Button
             tone="ghost"
             className="px-2 py-1.5 text-pixel-label"
@@ -161,6 +189,54 @@ export function Toolbar({
             onClick={onSelectionClear}
           >
             Clear
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked}
+            onClick={onSelectionCopy}
+          >
+            Copy
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked}
+            onClick={onSelectionCut}
+          >
+            Cut
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked || !clipboardReady}
+            onClick={onSelectionPaste}
+          >
+            Paste
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked}
+            onClick={() => onSelectionFlip?.("horizontal")}
+          >
+            Flip H
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked}
+            onClick={() => onSelectionFlip?.("vertical")}
+          >
+            Flip V
+          </Button>
+          <Button
+            tone="ghost"
+            className="px-2 py-1.5 text-pixel-label"
+            disabled={locked}
+            onClick={onSelectionRotate}
+          >
+            Rotate
           </Button>
           <Button
             tone="quiet"
@@ -179,18 +255,22 @@ export function ViewPanel({
   grid,
   checker,
   onion,
+  symmetry = "none",
   onGrid,
   onChecker,
   onOnion,
+  onSymmetry,
   zones,
   onZones,
 }: {
   grid: boolean;
   checker: boolean;
   onion: boolean;
+  symmetry?: "none" | "x" | "y";
   onGrid: (next: boolean) => void;
   onChecker: (next: boolean) => void;
   onOnion: (next: boolean) => void;
+  onSymmetry?: (next: "none" | "x" | "y") => void;
   /** Scene-backed frames show safe-zone visibility instead of pixel layers. */
   zones?: boolean;
   onZones?: (next: boolean) => void;
@@ -228,6 +308,21 @@ export function ViewPanel({
           <Layers />
         </IconButton>
       </div>
+      {onSymmetry ? (
+        <div className="mt-1 flex items-center gap-1">
+          <span className="text-pixel-mono text-muted">Mirror</span>
+          {(["none", "x", "y"] as const).map((axis) => (
+            <Button
+              key={axis}
+              tone={symmetry === axis ? "solid" : "ghost"}
+              className="px-2 py-1 text-pixel-mono"
+              onClick={() => onSymmetry(axis)}
+            >
+              {axis === "none" ? "Off" : axis.toUpperCase()}
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </Panel>
   );
 }

@@ -989,6 +989,89 @@ export function createPixelTools(
     },
   });
 
+  const drawEllipse = createTool({
+    name: "draw_ellipse",
+    description:
+      "Draw an ellipse inside a bounding box on a layer of the current frame. Set filled for a solid ellipse, omit it for an outline.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      color: z.number().int().nonnegative(),
+      filled: z.boolean().optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const { frameId, ...ellipse } = input;
+      const edited = editFrame(run, frameId, {
+        type: "ellipse",
+        ...ellipse,
+        filled: input.filled ?? false,
+      });
+      run.onStroke?.({ label: "ellipse", points: [] }, edited.buffer, edited.id);
+      return { committed: true, filled: input.filled ?? false };
+    },
+  });
+
+  const moveRegionTool = createTool({
+    name: "move_region",
+    description:
+      "Move a rectangle of pixels on a layer. By default the source is cleared, so this is a real move rather than a copy; pass eraseSource false to leave the source.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      dx: z.number().int(),
+      dy: z.number().int(),
+      eraseSource: z.boolean().optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const { frameId, ...move } = input;
+      const edited = editFrame(run, frameId, {
+        type: "moveRegion",
+        ...move,
+        eraseSource: input.eraseSource ?? true,
+      });
+      run.onStroke?.({ label: "move", points: [] }, edited.buffer, edited.id);
+      return { committed: true, dx: input.dx, dy: input.dy };
+    },
+  });
+
+  const rotateRegionTool = createTool({
+    name: "rotate_region",
+    description:
+      "Rotate a square selection by one quarter turn clockwise or anticlockwise. A non-square region is refused rather than resampled.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      x: z.number().int(),
+      y: z.number().int(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+      turns: z.union([z.literal(1), z.literal(-1)]),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const { frameId, ...rotate } = input;
+      const edited = editFrame(run, frameId, { type: "rotateRegion", ...rotate });
+      run.onStroke?.({ label: "rotate", points: [] }, edited.buffer, edited.id);
+      return { committed: true, turns: input.turns };
+    },
+  });
+
   const floodFill = createTool({
     name: "flood_fill",
     description:
@@ -2466,6 +2549,9 @@ export function createPixelTools(
     fillRect,
     eraseStroke,
     drawLine,
+    drawEllipse,
+    moveRegionTool,
+    rotateRegionTool,
     floodFill,
     fillRegion,
     clearRegion,

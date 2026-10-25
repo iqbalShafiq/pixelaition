@@ -307,9 +307,15 @@ export function EditorScreen() {
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
   const [viewMode, setViewMode] = useState<"fit" | "actual" | "free">("fit");
   const [selection, setSelection] = useState<Rect | null>(null);
+  const [clipboard, setClipboard] = useState<{
+    width: number;
+    height: number;
+    pixels: Uint8Array;
+  } | null>(null);
   const [grid, setGrid] = useState(true);
   const [checker, setChecker] = useState(true);
   const [onion, setOnion] = useState(false);
+  const [symmetry, setSymmetry] = useState<"none" | "x" | "y">("none");
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
@@ -1389,7 +1395,52 @@ export function EditorScreen() {
         setViewMode("actual");
         return;
       }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey) {
+        const key = event.key.toLowerCase();
+        if (key === "c") {
+          event.preventDefault();
+          copySelection();
+          return;
+        }
+        if (key === "x") {
+          event.preventDefault();
+          cutSelection();
+          return;
+        }
+        if (key === "v") {
+          event.preventDefault();
+          pasteSelection();
+          return;
+        }
+        if (key === "a") {
+          event.preventDefault();
+          const doc = bufferRef.current;
+          if (doc) setSelection({ x: 0, y: 0, width: doc.width, height: doc.height });
+          return;
+        }
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (
+        selection &&
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      ) {
+        event.preventDefault();
+        const delta =
+          event.key === "ArrowLeft"
+            ? [-1, 0]
+            : event.key === "ArrowRight"
+              ? [1, 0]
+              : event.key === "ArrowUp"
+                ? [0, -1]
+                : [0, 1];
+        nudgeSelection(delta[0] ?? 0, delta[1] ?? 0);
+        return;
+      }
+      if (selection && (event.key === "Delete" || event.key === "Backspace")) {
+        event.preventDefault();
+        selectionCommand("clear");
+        return;
+      }
       const next = toolByKey.get(event.key.toLowerCase());
       if (next) {
         setTool(next);
@@ -1398,13 +1449,13 @@ export function EditorScreen() {
       if (event.key === "Escape") setSelection(null);
       if (event.key === "[" || event.key === "]") {
         setBrushSize((size) =>
-          event.key === "]" ? Math.min(3, size + 1) : Math.max(1, size - 1),
+          event.key === "]" ? Math.min(8, size + 1) : Math.max(1, size - 1),
         );
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fit, frameId, running]);
+  }, [fit, frameId, running, selection, clipboard, buffer]);
 
   useEffect(() => {
     if (!playing || frames.length < 2) return;
@@ -2287,9 +2338,20 @@ export function EditorScreen() {
     if (running) return;
     const current = drafts[frameId];
     if (!current || !activeLayerId) return;
+    const mirrored = <T extends Point>(points: T[]): T[] => {
+      if (symmetry === "none" || !buffer) return points;
+      const extra = points.map((point) =>
+        symmetry === "x"
+          ? { ...point, x: buffer.width - 1 - point.x }
+          : ({ ...point, y: buffer.height - 1 - point.y } as T),
+      );
+      return [...points, ...extra];
+    };
 
     if (selection && "points" in action) {
-      const kept = action.points.filter((point) => insideSelection(selection, point));
+      const kept = mirrored(action.points).filter((point) =>
+        insideSelection(selection, point),
+      );
       if (kept.length === 0) return;
       edit(
         frameId,
@@ -2310,14 +2372,14 @@ export function EditorScreen() {
         edit(frameId, current, {
           type: "paint",
           layerId: activeLayerId,
-          points: action.points.map((point) => ({ ...point, color })),
+          points: mirrored(action.points).map((point) => ({ ...point, color })),
         });
         return;
       case "erase":
         edit(frameId, current, {
           type: "erase",
           layerId: activeLayerId,
-          points: action.points,
+          points: mirrored(action.points),
         });
         return;
       case "fill": {
@@ -2385,6 +2447,19 @@ export function EditorScreen() {
         });
         return;
       }
+      case "ellipse": {
+        const box = normalizeRect(action.from, action.to);
+        const shape = selection ? intersect(box, selection) : box;
+        if (shape.width < 1 || shape.height < 1) return;
+        edit(frameId, current, {
+          type: "ellipse",
+          layerId: activeLayerId,
+          ...shape,
+          color,
+          filled: action.filled,
+        });
+        return;
+      }
       default:
         return;
     }
@@ -2400,6 +2475,117 @@ export function EditorScreen() {
       color,
       mode,
     });
+  }
+
+  function selectionLayer() {
+    return (
+      buffer?.layers.find((layer) => layer.id === activeLayerId) ??
+      buffer?.layers.find((layer) => layer.visible) ??
+      buffer?.layers[0]
+    );
+  }
+
+  function copySelection() {
+    if (running || !selection) return;
+    const layer = selectionLayer();
+    if (!layer || !buffer) return;
+    const pixels = new Uint8Array(selection.width * selection.height);
+    for (let row = 0; row < selection.height; row += 1) {
+      for (let column = 0; column < selection.width; column += 1) {
+        pixels[row * selection.width + column] =
+          layer.pixels[(selection.y + row) * buffer.width + selection.x + column] ?? 0;
+      }
+    }
+    setClipboard({ width: selection.width, height: selection.height, pixels });
+    notify({
+      title: "Selection copied",
+      description: `${selection.width}×${selection.height} pixels`,
+    });
+  }
+
+  function cutSelection() {
+    if (running || !selection) return;
+    copySelection();
+    selectionCommand("clear");
+  }
+
+  function pasteSelection() {
+    if (running || !clipboard || !buffer || !frameId || !activeLayerId) return;
+    if (clipboard.width > buffer.width || clipboard.height > buffer.height) {
+      notify({
+        title: "The clipboard is larger than the canvas",
+        description: "Resize the canvas or copy a smaller region.",
+      });
+      return;
+    }
+    const target = selection ?? {
+      x: 0,
+      y: 0,
+      width: clipboard.width,
+      height: clipboard.height,
+    };
+    const x = Math.min(Math.max(0, target.x), buffer.width - clipboard.width);
+    const y = Math.min(Math.max(0, target.y), buffer.height - clipboard.height);
+    edit(frameId, drafts[frameId], {
+      type: "stamp",
+      layerId: activeLayerId,
+      x,
+      y,
+      width: clipboard.width,
+      height: clipboard.height,
+      pixels: Array.from(clipboard.pixels),
+    });
+    setSelection({ x, y, width: clipboard.width, height: clipboard.height });
+  }
+
+  function flipSelection(axis: "horizontal" | "vertical") {
+    if (running || !selection || !frameId || !activeLayerId) return;
+    edit(frameId, drafts[frameId], {
+      type: "mirrorRegion",
+      layerId: activeLayerId,
+      ...selection,
+      axis,
+    });
+  }
+
+  function rotateSelection() {
+    if (running || !selection || !frameId || !activeLayerId) return;
+    if (selection.width !== selection.height) {
+      notify({
+        title: "A quarter-turn needs a square",
+        description: "Select a square region, or use the flip buttons.",
+      });
+      return;
+    }
+    edit(frameId, drafts[frameId], {
+      type: "rotateRegion",
+      layerId: activeLayerId,
+      ...selection,
+      turns: 1,
+    });
+  }
+
+  function nudgeSelection(dx: number, dy: number) {
+    if (running || !selection || !frameId || !activeLayerId) return;
+    const x = selection.x + dx;
+    const y = selection.y + dy;
+    if (
+      x < 0 ||
+      y < 0 ||
+      x + selection.width > (buffer?.width ?? 0) ||
+      y + selection.height > (buffer?.height ?? 0)
+    ) {
+      return;
+    }
+    edit(frameId, drafts[frameId], {
+      type: "moveRegion",
+      layerId: activeLayerId,
+      ...selection,
+      dx,
+      dy,
+      eraseSource: true,
+    });
+    setSelection({ ...selection, x, y });
   }
 
   // The run console is the supervisor's stage: open it while a task is live,
@@ -3151,9 +3337,11 @@ export function EditorScreen() {
       grid={grid}
       checker={checker}
       onion={onion}
+      symmetry={symmetry}
       onGrid={setGrid}
       onChecker={setChecker}
       onOnion={setOnion}
+      onSymmetry={setSymmetry}
     />
   );
 
@@ -3420,11 +3608,26 @@ export function EditorScreen() {
                     tool={tool}
                     brushSize={brushSize}
                     selectionActive={selection !== null}
+                    clipboardReady={clipboard !== null}
                     locked={locked || socialFrame !== null}
                     onTool={setTool}
                     onBrush={setBrushSize}
                     onSelectionFill={() => selectionCommand("fill")}
                     onSelectionClear={() => selectionCommand("clear")}
+                    onSelectionCopy={copySelection}
+                    onSelectionCut={cutSelection}
+                    onSelectionPaste={pasteSelection}
+                    onSelectionFlip={flipSelection}
+                    onSelectionRotate={rotateSelection}
+                    onSelectAll={() => {
+                      if (!buffer) return;
+                      setSelection({
+                        x: 0,
+                        y: 0,
+                        width: buffer.width,
+                        height: buffer.height,
+                      });
+                    }}
                     onDeselect={() => setSelection(null)}
                     onAddText={addTextLayer}
                     addTextDisabled={running || !buffer}

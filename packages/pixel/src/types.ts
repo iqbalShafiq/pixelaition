@@ -166,6 +166,38 @@ export type Command =
   | { type: "replaceColor"; layerId?: string; from: number; to: number }
   | { type: "outline"; layerId: string; color: number }
   | {
+      type: "ellipse";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      color: number;
+      filled: boolean;
+    }
+  | {
+      type: "rotateRegion";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      /** Clockwise quarter turns: 1 = 90° clockwise, -1 = 90° anticlockwise. */
+      turns: 1 | -1;
+    }
+  | {
+      type: "moveRegion";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      dx: number;
+      dy: number;
+      /** Clear the source rectangle before stamping the destination. */
+      eraseSource: boolean;
+    }
+  | {
       type: "dither";
       layerId: string;
       x: number;

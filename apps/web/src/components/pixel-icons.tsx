@@ -4,6 +4,7 @@ import {
   Check as RawCheck,
   CheckboxOn as RawCheckboxOn,
   ChevronDown as RawChevronDown,
+  Circle as RawCircle,
   CircleInfo as RawCircleInfo,
   Clipboard as RawClipboard,
   Close as RawClose,
@@ -108,6 +109,7 @@ export const Pencil = crisp(RawPencil);
 export const Eraser = crisp(RawEraser);
 export const Picker = crisp(RawPipette);
 export const Square = crisp(RawSquare);
+export const Circle = crisp(RawCircle);
 export const Hand = crisp(RawHand);
 export const Plus = crisp(RawPlus);
 export const Trash = crisp(RawTrash);

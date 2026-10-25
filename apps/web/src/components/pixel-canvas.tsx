@@ -1,5 +1,6 @@
 import {
   composite,
+  ellipsePoints,
   hexToRgba,
   stepZoom,
   zoomAt,
@@ -13,7 +14,15 @@ export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };
 
 export type Tool =
-  "select" | "pencil" | "eraser" | "fill" | "picker" | "line" | "rect" | "pan";
+  | "select"
+  | "pencil"
+  | "eraser"
+  | "fill"
+  | "picker"
+  | "line"
+  | "rect"
+  | "ellipse"
+  | "pan";
 
 export type CanvasAction =
   | { kind: "paint"; points: Point[] }
@@ -22,11 +31,13 @@ export type CanvasAction =
   | { kind: "pick"; index: number }
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean }
+  | { kind: "ellipse"; from: Point; to: Point; filled: boolean }
   | { kind: "select"; rect: Rect | null };
 
 type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
-  | { kind: "rect"; from: Point; to: Point; filled: boolean };
+  | { kind: "rect"; from: Point; to: Point; filled: boolean }
+  | { kind: "ellipse"; from: Point; to: Point; filled: boolean };
 
 export type TextResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
 
@@ -195,11 +206,14 @@ function overlayBitmapFor(
 }
 
 function brushPoints(point: Point, size: number): Point[] {
-  if (size <= 1) return [point];
-  const offsets = size === 2 ? [0, 1] : [-1, 0, 1];
+  const side = Math.max(1, Math.min(32, Math.round(size)));
+  if (side === 1) return [point];
+  const start = -Math.floor((side - 1) / 2);
   const points: Point[] = [];
-  for (const dy of offsets) {
-    for (const dx of offsets) points.push({ x: point.x + dx, y: point.y + dy });
+  for (let dy = 0; dy < side; dy += 1) {
+    for (let dx = 0; dx < side; dx += 1) {
+      points.push({ x: point.x + start + dx, y: point.y + start + dy });
+    }
   }
   return points;
 }
@@ -613,7 +627,12 @@ export function PixelCanvas({
         const cells =
           shape.kind === "line"
             ? lineCells(shape.from, shape.to)
-            : rectCells(normalizeRect(shape.from, shape.to), shape.filled);
+            : shape.kind === "ellipse"
+              ? (() => {
+                  const box = normalizeRect(shape.from, shape.to);
+                  return ellipsePoints(box.x, box.y, box.width, box.height, shape.filled);
+                })()
+              : rectCells(normalizeRect(shape.from, shape.to), shape.filled);
         context.fillStyle = "rgba(216, 166, 78, 0.55)";
         for (const item of cells) {
           context.fillRect(originX + item.x * cell, originY + item.y * cell, cell, cell);
@@ -880,12 +899,14 @@ export function PixelCanvas({
           repaint.current();
           return;
         }
-        if (active === "line" || active === "rect") {
+        if (active === "line" || active === "rect" || active === "ellipse") {
           drag.current = { from: point, to: point };
           preview.current =
             active === "line"
               ? { kind: "line", from: point, to: point }
-              : { kind: "rect", from: point, to: point, filled: false };
+              : active === "ellipse"
+                ? { kind: "ellipse", from: point, to: point, filled: false }
+                : { kind: "rect", from: point, to: point, filled: false };
           repaint.current();
           return;
         }
@@ -1031,6 +1052,13 @@ export function PixelCanvas({
               to: point,
               filled: preview.current.filled,
             };
+          } else if (preview.current?.kind === "ellipse") {
+            preview.current = {
+              kind: "ellipse",
+              from: preview.current.from,
+              to: point,
+              filled: preview.current.filled,
+            };
           }
           repaint.current();
           return;
@@ -1092,6 +1120,13 @@ export function PixelCanvas({
           } else if (preview.current?.kind === "rect") {
             emit({
               kind: "rect",
+              from: preview.current.from,
+              to: preview.current.to,
+              filled: preview.current.filled,
+            });
+          } else if (preview.current?.kind === "ellipse") {
+            emit({
+              kind: "ellipse",
               from: preview.current.from,
               to: preview.current.to,
               filled: preview.current.filled,

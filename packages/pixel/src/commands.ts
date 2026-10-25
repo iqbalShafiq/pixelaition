@@ -70,6 +70,42 @@ export function linePoints(x0: number, y0: number, x1: number, y1: number): Poin
   return points;
 }
 
+/**
+ * A grid ellipse inside a bounding box. Rows are symmetric and every point is
+ * inside the box; an outline records the extreme cell of each row, a filled
+ * ellipse records the whole run.
+ */
+export function ellipsePoints(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  filled = false,
+): Point[] {
+  if (width < 1 || height < 1) return [];
+  const rx = (width - 1) / 2;
+  const ry = (height - 1) / 2;
+  const cx = x + rx;
+  const points = new Map<string, Point>();
+  const add = (px: number, py: number) => {
+    const point = { x: Math.round(px), y: Math.round(py) };
+    points.set(`${point.x}:${point.y}`, point);
+  };
+  for (let row = 0; row < height; row += 1) {
+    const normalized = ry === 0 ? 0 : (row - ry) / ry;
+    const extent = rx * Math.sqrt(Math.max(0, 1 - normalized * normalized));
+    const left = Math.ceil(cx - extent);
+    const right = Math.floor(cx + extent);
+    if (filled) {
+      for (let column = left; column <= right; column += 1) add(column, y + row);
+    } else {
+      add(left, y + row);
+      add(right, y + row);
+    }
+  }
+  return [...points.values()];
+}
+
 function withinRegion(
   buffer: FrameBuffer,
   x: number,
@@ -517,6 +553,105 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return mirrorRegion(buffer, command);
     case "outline":
       return outline(buffer, command.layerId, command.color);
+    case "ellipse": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (command.width < 1 || command.height < 1) {
+        return fail("SIZE", "An ellipse needs a positive width and height.");
+      }
+      if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+        return fail("OUT_OF_BOUNDS", "The ellipse reaches outside the canvas.");
+      }
+      if (!paletteIndexOk(buffer, command.color)) {
+        return fail("PALETTE_INDEX", "The ellipse colour is not in the palette.");
+      }
+      return paintPoints(
+        buffer,
+        command.layerId,
+        ellipsePoints(
+          command.x,
+          command.y,
+          command.width,
+          command.height,
+          command.filled,
+        ).map((point) => ({ ...point, color: command.color })),
+        (point) => point.color ?? 0,
+      );
+    }
+    case "rotateRegion": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (command.width !== command.height) {
+        return fail("SQUARE_REQUIRED", "A quarter-turn needs a square selection.");
+      }
+      if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+        return fail("OUT_OF_BOUNDS", "The selected region reaches outside the canvas.");
+      }
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const next = clonePixels(layer.pixels);
+      const size = command.width;
+      for (let row = 0; row < size; row += 1) {
+        for (let column = 0; column < size; column += 1) {
+          const sourceX = command.turns === 1 ? size - 1 - row : column;
+          const sourceY = command.turns === 1 ? column : size - 1 - column;
+          next[indexOf(buffer.width, command.x + column, command.y + row)] = readCell(
+            layer.pixels,
+            indexOf(buffer.width, command.x + sourceX, command.y + sourceY),
+          );
+        }
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
+    case "moveRegion": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
+        return fail("OUT_OF_BOUNDS", "The selected region reaches outside the canvas.");
+      }
+      if (
+        !withinRegion(
+          buffer,
+          command.x + command.dx,
+          command.y + command.dy,
+          command.width,
+          command.height,
+        )
+      ) {
+        return fail("OUT_OF_BOUNDS", "The moved region would leave the canvas.");
+      }
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const source = new Uint8Array(command.width * command.height);
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          source[row * command.width + column] = readCell(
+            layer.pixels,
+            indexOf(buffer.width, command.x + column, command.y + row),
+          );
+        }
+      }
+      const next = clonePixels(layer.pixels);
+      if (command.eraseSource) {
+        for (let row = 0; row < command.height; row += 1) {
+          for (let column = 0; column < command.width; column += 1) {
+            next[indexOf(buffer.width, command.x + column, command.y + row)] = 0;
+          }
+        }
+      }
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          next[
+            indexOf(
+              buffer.width,
+              command.x + command.dx + column,
+              command.y + command.dy + row,
+            )
+          ] = source[row * command.width + column] ?? 0;
+        }
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
     case "dither":
       return dither(
         buffer,
