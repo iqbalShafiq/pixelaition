@@ -407,8 +407,9 @@ Implemented:
 - Asset color modes: indexed, grayscale and monochrome palette conversion.
 - Indexed `.ase` import (raw and zlib cels, palette, tags, slices) through the
   shared parser, plus `.ase` export.
-- Command scripting over CLI and `POST /api/assets/:id/script`, both routed
-  through `applyCommand`; a `.pxl` CLI for import, inspect, script and export.
+- Command scripting from the editor, CLI and `POST /api/assets/:id/script`,
+  all routed through `applyCommand`; a `.pxl` CLI for import, inspect, script
+  and export.
 - Integration tests for palette, timing, tags, slices and every export, plus
   Playwright coverage for import, drawing/selection, background removal, GIF
   download and the palette lock.
