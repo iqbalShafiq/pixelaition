@@ -13,6 +13,7 @@ import type {
   TextFace,
   TextWeight,
 } from "./types.js";
+import { hexToColor } from "@pixelaition/pixel";
 import { hexToRgba } from "./render.js";
 
 export type TemplateInput = {
@@ -46,7 +47,7 @@ function buildTemplateSceneRaw(input: TemplateInput): ArtboardScene {
     height: Math.round(preset.height * 0.9),
   };
   const background = { kind: "solid" as const, color: colors.background };
-  if (template === "blank") return { version: 1, background, elements: [] };
+  if (template === "blank") return { version: 2, background, elements: [] };
   if (template === "profile-mark") {
     return profileTemplate(input, safe, colors);
   }
@@ -92,7 +93,7 @@ function profileTemplate(
     : undefined;
   if (sprite) elements.push(sprite);
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -137,7 +138,7 @@ function centeredMarkTemplate(
     );
   }
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -181,7 +182,7 @@ function centeredCopyTemplate(
   );
   elements.push(...stack);
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -232,7 +233,7 @@ function splitTemplate(
     });
   }
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -299,7 +300,7 @@ function stackTemplate(
     );
   }
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -348,7 +349,7 @@ function thumbnailTemplate(
     safe: false,
   });
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -387,7 +388,7 @@ function bannerTemplate(
     ),
   );
   return {
-    version: 1,
+    version: 2,
     background: { kind: "solid", color: colors.background },
     elements,
   };
@@ -687,11 +688,12 @@ export function paletteRoles(palette: string[]): PaletteRoles {
         (a, b) =>
           Math.abs((a.luminance ?? 0) - 0.35) - Math.abs((b.luminance ?? 0) - 0.35),
       )[0]?.index ?? accent;
+  const packed = (index: number) => hexToColor(palette[index] ?? "#00000000") ?? 0;
   return {
-    background,
-    ink: ink === background ? (accent === background ? 1 : accent) : ink,
-    muted: muted === background ? accent : muted,
-    accent: accent === background ? ink : accent,
+    background: packed(background),
+    ink: packed(ink === background ? (accent === background ? 1 : accent) : ink),
+    muted: packed(muted === background ? accent : muted),
+    accent: packed(accent === background ? ink : accent),
   };
 }
 

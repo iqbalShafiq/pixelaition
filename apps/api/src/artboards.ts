@@ -3,6 +3,7 @@ import {
   artboardSets,
   artboardVersions,
   artboards,
+  assets,
   projects,
   type Database,
 } from "@pixelaition/db";
@@ -13,6 +14,7 @@ import {
   renderScene,
   sceneSchema,
   syncCopyScene,
+  upgradeScene,
   type Artboard,
   type ArtboardCheck,
   type ArtboardScene,
@@ -321,10 +323,11 @@ export async function updateArtboard(
   | { failure: { code: string; message: string } }
 > {
   const [row] = await db
-    .select({ artboard: artboards, set: artboardSets })
+    .select({ artboard: artboards, set: artboardSets, palette: assets.palette })
     .from(artboards)
     .innerJoin(artboardSets, eq(artboardSets.id, artboards.setId))
     .innerJoin(projects, eq(projects.id, artboardSets.projectId))
+    .innerJoin(assets, eq(assets.id, artboardSets.assetId))
     .where(and(eq(artboards.id, artboardId), eq(projects.userId, userId)));
   if (!row)
     return { failure: { code: "NOT_FOUND", message: "That artboard is not available." } };
@@ -337,7 +340,7 @@ export async function updateArtboard(
     };
   }
   const nextScene = input.scene ?? (row.artboard.scene as ArtboardScene);
-  const scene = sceneSchema.parse(nextScene);
+  const scene = upgradeScene(sceneSchema.parse(nextScene), row.palette as string[]);
   const [written] = await db
     .update(artboards)
     .set({

@@ -1,5 +1,5 @@
 import { assets, frames, type Database } from "@pixelaition/db";
-import { mapSceneIndices, sceneSchema } from "@pixelaition/artboard";
+import { mapSceneColors, sceneSchema } from "@pixelaition/artboard";
 import { normalizeHex, paletteIndexMap } from "@pixelaition/pixel";
 import { and, eq } from "drizzle-orm";
 import { getAssetRecord, recordAssetVersion, type StoreFailure } from "./store.js";
@@ -173,13 +173,15 @@ export async function mutatePalette(
     await db.transaction(async (tx) => {
       if (prepared.mapping) {
         // Pixel layers hold full RGBA and are never rewritten by a swatch
-        // reorder. Social scenes still store palette indices, so they travel
-        // through the explicit map.
-        const mapping = prepared.mapping;
+        // reorder. Scenes map by colour so exact RGBA survives a reorder.
         for (const frame of record.frames) {
           if (!frame.scene) continue;
           const updates = {
-            scene: mapSceneIndices(sceneSchema.parse(frame.scene), mapping),
+            scene: mapSceneColors(
+              sceneSchema.parse(frame.scene),
+              record.palette as string[],
+              prepared.nextPalette,
+            ),
             version: frame.version + 1,
             updatedAt: new Date(),
           };

@@ -1,10 +1,14 @@
 import {
+  colorToHex,
   composite,
   hexToRgba as pixelHexToRgba,
   normalizeHex,
+  readCell,
+  writeCell,
   type FrameBuffer,
 } from "@pixelaition/pixel";
-import { drawText, textBounds } from "./text.js";
+import { drawTextRgba, textBounds } from "./text.js";
+import { upgradeScene } from "./scene.js";
 import type {
   Element,
   PaletteImage,
@@ -17,10 +21,11 @@ import type {
 import { frameKey } from "./types.js";
 
 export function renderScene(input: RenderInput): RenderResult {
-  const { scene, preset, palette } = input;
+  const { scene: rawScene, preset, palette } = input;
+  const scene = upgradeScene(rawScene, palette);
   const { width, height } = preset;
-  const target = new Uint8Array(width * height);
-  paintBackground(target, width, height, scene.background, palette.length);
+  const target = new Uint8Array(width * height * 4);
+  paintBackground(target, width, height, scene.background);
   const used = new Set<number>();
   if (scene.background.kind !== "transparent") {
     if (scene.background.kind === "solid") used.add(scene.background.color);
@@ -31,21 +36,22 @@ export function renderScene(input: RenderInput): RenderResult {
   }
   for (const element of scene.elements) {
     if (element.visible === false) continue;
-    paintElement(target, width, height, element, palette, input.sprites);
+    paintElement(target, width, height, element, input.sprites);
     if ("color" in element) used.add(element.color);
     if (element.kind === "pattern") {
       used.add(element.colorA);
       used.add(element.colorB);
     }
   }
-  const usedColors = [...used].filter((color) => color > 0 && color < palette.length);
+  const usedColors = [...used].filter((color) => (color & 0xff) !== 0);
+  const indices = indicesFor(target, width, height, palette);
   return {
     image: {
       width,
       height,
       palette: [...palette],
-      indices: target,
-      rgba: indicesToRgba(target, width, height, palette),
+      indices,
+      rgba: target,
     },
     usedColors,
   };
@@ -56,25 +62,25 @@ export function paintBackground(
   width: number,
   height: number,
   background: RenderInput["scene"]["background"],
-  paletteSize: number,
 ): void {
   if (background.kind === "transparent") return;
   if (background.kind === "solid") {
-    assertColor(background.color, paletteSize, "background");
-    target.fill(background.color);
+    fillAll(target, background.color);
     return;
   }
-  assertColor(background.colorA, paletteSize, "background color A");
-  assertColor(background.colorB, paletteSize, "background color B");
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      target[y * width + x] = patternAt(
-        x,
-        y,
-        background.unit,
-        background.mode,
-        background.colorA,
-        background.colorB,
+      writeCell(
+        target,
+        y * width + x,
+        patternAt(
+          x,
+          y,
+          background.unit,
+          background.mode,
+          background.colorA,
+          background.colorB,
+        ),
       );
     }
   }
@@ -85,17 +91,13 @@ function paintElement(
   width: number,
   height: number,
   element: Element,
-  palette: string[],
   sprites: Map<string, SpriteSource> | undefined,
 ): void {
   switch (element.kind) {
     case "rect":
-      assertColor(element.color, palette.length, "rect");
       fillRect(target, width, height, element, element.color);
       return;
     case "pattern":
-      assertColor(element.colorA, palette.length, "pattern color A");
-      assertColor(element.colorB, palette.length, "pattern color B");
       for (
         let y = Math.max(0, element.y);
         y < Math.min(height, element.y + element.height);
@@ -106,28 +108,36 @@ function paintElement(
           x < Math.min(width, element.x + element.width);
           x += 1
         ) {
-          target[y * width + x] = patternAt(
-            x - element.x,
-            y - element.y,
-            element.unit,
-            element.mode,
-            element.colorA,
-            element.colorB,
+          writeCell(
+            target,
+            y * width + x,
+            patternAt(
+              x - element.x,
+              y - element.y,
+              element.unit,
+              element.mode,
+              element.colorA,
+              element.colorB,
+            ),
           );
         }
       }
       return;
     case "frame":
-      assertColor(element.color, palette.length, "frame");
       paintFrame(target, width, height, element);
       return;
     case "text":
-      assertColor(element.color, palette.length, "text");
-      drawText(target, width, height, element, palette.length);
+      drawTextRgba(target, width, height, element);
       return;
     case "sprite":
-      paintSprite(target, width, height, element, palette, sprites);
+      paintSprite(target, width, height, element, sprites);
       return;
+  }
+}
+
+function fillAll(target: Uint8Array, color: number): void {
+  for (let cell = 0; cell < target.length / 4; cell += 1) {
+    writeCell(target, cell, color);
   }
 }
 
@@ -143,7 +153,9 @@ function fillRect(
   const right = Math.min(width, rect.x + rect.width);
   const bottom = Math.min(height, rect.y + rect.height);
   for (let y = top; y < bottom; y += 1) {
-    target.fill(color, y * width + left, y * width + Math.max(left, right));
+    for (let x = left; x < right; x += 1) {
+      writeCell(target, y * width + x, color);
+    }
   }
 }
 
@@ -197,7 +209,6 @@ function patternAt(
   if (mode === "checker") {
     return (cellX + cellY) % 2 === 0 ? colorA : colorB;
   }
-  // A 50% ordered dither: the pattern is stable and reads as texture, not noise.
   const bayer = BAYER4[(y % 4) * 4 + (x % 4)] ?? 0;
   return bayer < 8 ? colorA : colorB;
 }
@@ -209,7 +220,6 @@ function paintSprite(
   width: number,
   height: number,
   element: SpriteElement,
-  palette: string[],
   sprites: Map<string, SpriteSource> | undefined,
 ): void {
   const source =
@@ -221,29 +231,78 @@ function paintSprite(
     );
   }
   const compositePixels = composite(source.buffer);
-  const mapping = spriteMapping(source.buffer.palette, palette);
   const box = spriteBox(element, source.buffer);
   const scale = element.scale;
   for (let y = 0; y < source.buffer.height; y += 1) {
     for (let x = 0; x < source.buffer.width; x += 1) {
-      const color = compositePixels[y * source.buffer.width + x] ?? 0;
-      if (color === 0) continue;
-      const mapped = mapping[color];
-      if (mapped === undefined) {
-        throw new Error(
-          `Sprite colour ${source.buffer.palette[color] ?? color} is not in the artboard palette.`,
-        );
-      }
+      const color = readCell(compositePixels, y * source.buffer.width + x);
+      if ((color & 0xff) === 0) continue;
       for (let dy = 0; dy < scale; dy += 1) {
         for (let dx = 0; dx < scale; dx += 1) {
           const px = box.x + x * scale + dx;
           const py = box.y + y * scale + dy;
           if (px < 0 || py < 0 || px >= width || py >= height) continue;
-          target[py * width + px] = mapped;
+          const cell = py * width + px;
+          writeCell(target, cell, over(readCell(target, cell), color));
         }
       }
     }
   }
+}
+
+/** Source-over for straight RGBA packed colours. */
+function over(dst: number, src: number): number {
+  const sa = src & 0xff;
+  if (sa === 255) return src;
+  if (sa === 0) return dst;
+  const da = dst & 0xff;
+  const outA = sa + (da * (255 - sa)) / 255;
+  if (outA === 0) return 0;
+  const mix = (shift: number) => {
+    const d = (dst >>> shift) & 0xff;
+    const s = (src >>> shift) & 0xff;
+    return Math.round((s * sa + d * da * (1 - sa / 255)) / outA);
+  };
+  return ((mix(24) << 24) | (mix(16) << 16) | (mix(8) << 8) | Math.round(outA)) >>> 0;
+}
+
+function indicesFor(
+  target: Uint8Array,
+  width: number,
+  height: number,
+  palette: string[],
+): Uint8Array {
+  const indices = new Uint8Array(width * height);
+  const exact = new Map<string, number>();
+  palette.forEach((hex, index) => exact.set(normalizeHex(hex) ?? "", index));
+  const colors = palette.map((hex) => hexToRgba(hex));
+  for (let cell = 0; cell < indices.length; cell += 1) {
+    const color = readCell(target, cell);
+    if ((color & 0xff) === 0) continue;
+    const found = exact.get(colorToHex(color));
+    if (found !== undefined) {
+      indices[cell] = found;
+      continue;
+    }
+    let best = 1;
+    let distance = Number.POSITIVE_INFINITY;
+    const [r, g, b] = colorToRgba(color);
+    for (let index = 1; index < colors.length; index += 1) {
+      const candidate = colors[index]!;
+      const next =
+        (candidate[0] - r) ** 2 + (candidate[1] - g) ** 2 + (candidate[2] - b) ** 2;
+      if (next < distance) {
+        distance = next;
+        best = index;
+      }
+    }
+    indices[cell] = best;
+  }
+  return indices;
+}
+
+function colorToRgba(color: number): [number, number, number] {
+  return [(color >>> 24) & 0xff, (color >>> 16) & 0xff, (color >>> 8) & 0xff];
 }
 
 function findSprite(
@@ -257,21 +316,6 @@ function findSprite(
     if (frameId === undefined || source.frameId === frameId) return source;
   }
   return undefined;
-}
-
-function spriteMapping(source: string[], target: string[]): number[] {
-  const targetIndex = new Map<string, number>();
-  for (let index = 1; index < target.length; index += 1) {
-    const hex = normalizeHex(target[index] ?? "");
-    if (hex) targetIndex.set(hex, index);
-  }
-  const mapping = new Array<number>(source.length).fill(0);
-  for (let index = 1; index < source.length; index += 1) {
-    const hex = normalizeHex(source[index] ?? "");
-    const found = hex ? targetIndex.get(hex) : undefined;
-    if (found !== undefined) mapping[index] = found;
-  }
-  return mapping;
 }
 
 export function spriteBox(element: SpriteElement, source: FrameBuffer): Rect {
@@ -336,13 +380,9 @@ export function elementLabel(element: Element): string {
 }
 
 export function toRgba(image: PaletteImage): Uint8Array {
-  if (image.rgba.length === image.width * image.height * 4) {
-    return new Uint8Array(image.rgba);
-  }
-  return indicesToRgba(image.indices, image.width, image.height, image.palette);
+  return new Uint8Array(image.rgba);
 }
 
-/** Resolve one indexed image into straight RGBA bytes. */
 export function indicesToRgba(
   indices: Uint8Array,
   width: number,
@@ -367,12 +407,4 @@ export function hexToRgba(hex: string): [number, number, number, number] {
   const normalized = normalizeHex(hex);
   if (!normalized) throw new Error(`Invalid palette colour "${hex}".`);
   return pixelHexToRgba(normalized);
-}
-
-function assertColor(color: number, paletteSize: number, label: string): void {
-  if (!Number.isInteger(color) || color < 0 || color >= paletteSize) {
-    throw new Error(
-      `The ${label} uses palette index ${color}, outside the ${paletteSize}-colour palette.`,
-    );
-  }
 }

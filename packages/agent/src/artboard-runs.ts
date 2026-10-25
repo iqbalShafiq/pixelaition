@@ -1,3 +1,4 @@
+import { upgradeScene } from "@pixelaition/artboard";
 import type {
   Artboard,
   ArtboardSet,
@@ -119,7 +120,10 @@ export function assertPlanApproved(run: ArtboardRunBinding): void {
 
 export function writeArtboard(run: ArtboardRunBinding, artboard: Artboard): void {
   assertPlanApproved(run);
-  run.artboards.set(artboard.id, artboard);
+  run.artboards.set(artboard.id, {
+    ...artboard,
+    scene: upgradeScene(artboard.scene, run.palette),
+  });
   run.currentArtboardId = artboard.id;
   run.onChange?.(artboard);
 }

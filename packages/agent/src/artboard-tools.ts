@@ -9,7 +9,6 @@ import {
   formatBytes,
   formatPresets,
   getPreset,
-  indicesToRgba,
   layoutText,
   missingGlyphs,
   resolveFont,
@@ -24,6 +23,7 @@ import {
   renderScene,
 } from "@pixelaition/artboard";
 import { artboardToJpg, artboardToPng } from "@pixelaition/export";
+import { hexToColor } from "@pixelaition/pixel";
 import { z } from "zod";
 import {
   assertOwnedArtboard,
@@ -36,6 +36,11 @@ import {
 } from "./artboard-runs.js";
 
 const MAX_PREVIEW_BYTES = 1024 * 1024;
+
+const colorSchema = z.union([
+  z.string().describe("A hex RGBA colour such as #d8a64eff."),
+  z.number().int().nonnegative().describe("Packed RGBA, or a legacy palette index."),
+]);
 
 const anchor = z.enum([
   "top-left",
@@ -107,36 +112,18 @@ function downsample(image: PaletteImage, factor: number): PaletteImage {
   const width = Math.max(1, Math.floor(image.width / factor));
   const height = Math.max(1, Math.floor(image.height / factor));
   const indices = new Uint8Array(width * height);
+  const rgba = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const counts = new Map<number, number>();
-      for (let dy = 0; dy < factor; dy += 1) {
-        for (let dx = 0; dx < factor; dx += 1) {
-          const sx = x * factor + dx;
-          const sy = y * factor + dy;
-          if (sx >= image.width || sy >= image.height) continue;
-          const color = image.indices[sy * image.width + sx] ?? 0;
-          counts.set(color, (counts.get(color) ?? 0) + 1);
-        }
-      }
-      let best = 0;
-      let bestCount = -1;
-      for (const [color, count] of counts) {
-        if (count > bestCount) {
-          best = color;
-          bestCount = count;
-        }
-      }
-      indices[y * width + x] = best;
+      const sx = Math.min(image.width - 1, x * factor + Math.floor(factor / 2));
+      const sy = Math.min(image.height - 1, y * factor + Math.floor(factor / 2));
+      const source = sy * image.width + sx;
+      const target = y * width + x;
+      indices[target] = image.indices[source] ?? 0;
+      rgba.set(image.rgba.subarray(source * 4, source * 4 + 4), target * 4);
     }
   }
-  return {
-    ...image,
-    width,
-    height,
-    indices,
-    rgba: indicesToRgba(indices, width, height, image.palette),
-  };
+  return { ...image, width, height, indices, rgba };
 }
 
 function checksJson(checks: ArtboardCheck[]): {
@@ -382,13 +369,13 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
   const setBackground = createTool({
     name: "set_background",
     description:
-      "Set the artboard background: transparent, a solid palette index, or a two-colour checker/dither pattern. Colours are palette indices, never hex.",
+      "Set the artboard background: transparent, a solid RGBA colour, or a two-colour checker/dither pattern. Colours are hex RGBA strings or packed RGBA; a small number may also be a legacy palette index.",
     inputSchema: z.object({
       artboardId,
       kind: z.enum(["transparent", "solid", "pattern"]),
-      color: z.number().int().nonnegative().optional(),
-      colorA: z.number().int().nonnegative().optional(),
-      colorB: z.number().int().nonnegative().optional(),
+      color: colorSchema.optional(),
+      colorA: colorSchema.optional(),
+      colorB: colorSchema.optional(),
       unit: z.number().int().min(1).max(64).optional(),
       mode: z.enum(["checker", "50"]).optional(),
     }),
@@ -478,7 +465,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       weight: weight.optional(),
       size: z.number().int().min(8).max(192),
       scale: z.number().int().min(1).max(8).default(1),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
       x: z.number().int().min(0),
       y: z.number().int().min(0),
       width: z.number().int().min(1),
@@ -523,7 +510,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         weight: resolvedWeight,
         size: snapped.size,
         ...(scale > 1 ? { scale } : {}),
-        color: input.color,
+        color: requireColor(input.color, run, "text"),
         x: input.x,
         y: input.y,
         width: input.width,
@@ -570,7 +557,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       y: z.number().int().min(0),
       width: z.number().int().min(1),
       height: z.number().int().min(1),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     execute: (input, context) => {
       const run = requireArtboardRun(context.operationId);
@@ -584,7 +571,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         y: input.y,
         width: input.width,
         height: input.height,
-        color: input.color,
+        color: requireColor(input.color, run, "rect"),
       };
       const next = addElement(artboard, element);
       writeArtboard(run, next);
@@ -594,7 +581,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
 
   const addPattern = createTool({
     name: "add_pattern",
-    description: "Add a checker or dither texture block in two palette colours.",
+    description:
+      "Add a checker or dither texture block in two RGBA colours (hex or packed).",
     inputSchema: z.object({
       artboardId,
       elementId: z.string().min(1).max(80).optional(),
@@ -602,8 +590,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       y: z.number().int().min(0),
       width: z.number().int().min(1),
       height: z.number().int().min(1),
-      colorA: z.number().int().nonnegative(),
-      colorB: z.number().int().nonnegative(),
+      colorA: colorSchema,
+      colorB: colorSchema,
       unit: z.number().int().min(1).max(64).default(4),
       mode: z.enum(["checker", "50"]).default("checker"),
     }),
@@ -611,8 +599,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       const run = requireArtboardRun(context.operationId);
       const artboard = resolveArtboard(run, input.artboardId);
       assertOwnedArtboard(run, artboard.id);
-      requireColor(input.colorA, run, "pattern colour A");
-      requireColor(input.colorB, run, "pattern colour B");
+      const colorA = requireColor(input.colorA, run, "pattern colour A");
+      const colorB = requireColor(input.colorB, run, "pattern colour B");
       const element: Element = {
         id: input.elementId ?? uniqueId("pattern"),
         kind: "pattern",
@@ -620,8 +608,8 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         y: input.y,
         width: input.width,
         height: input.height,
-        colorA: input.colorA,
-        colorB: input.colorB,
+        colorA,
+        colorB,
         unit: input.unit,
         mode: input.mode,
       };
@@ -642,13 +630,13 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
       width: z.number().int().min(1),
       height: z.number().int().min(1),
       thickness: z.number().int().min(1).max(64),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     execute: (input, context) => {
       const run = requireArtboardRun(context.operationId);
       const artboard = resolveArtboard(run, input.artboardId);
       assertOwnedArtboard(run, artboard.id);
-      requireColor(input.color, run, "frame");
+      const color = requireColor(input.color, run, "frame");
       const element: Element = {
         id: input.elementId ?? uniqueId("frame"),
         kind: "frame",
@@ -657,7 +645,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
         width: input.width,
         height: input.height,
         thickness: input.thickness,
-        color: input.color,
+        color,
         safe: false,
       };
       const next = addElement(artboard, element);
@@ -889,15 +877,22 @@ function addElement(artboard: Artboard, element: Element): Artboard {
 }
 
 function requireColor(
-  color: number | undefined,
+  color: number | string | undefined,
   run: ArtboardRunBinding,
   label: string,
 ): number {
-  if (color === undefined) throw new Error(`The ${label} needs a palette colour index.`);
-  if (!Number.isInteger(color) || color < 0 || color >= run.palette.length) {
-    throw new Error(
-      `Palette index ${color} is outside the ${run.palette.length}-colour palette.`,
-    );
+  if (color === undefined) throw new Error(`The ${label} needs a colour.`);
+  if (typeof color === "string") {
+    const packed = hexToColor(color);
+    if (packed === null) throw new Error(`The ${label} is not a valid hex RGBA colour.`);
+    return packed;
+  }
+  if (!Number.isInteger(color) || color < 0) {
+    throw new Error(`The ${label} is not a packed RGBA colour.`);
+  }
+  // Legacy scenes and tools addressed swatches by index; map that small set.
+  if (color < run.palette.length && color < 16) {
+    return hexToColor(run.palette[color] ?? "#00000000") ?? 0;
   }
   return color;
 }

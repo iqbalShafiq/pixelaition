@@ -1,7 +1,6 @@
 import {
   checkScene,
   getPreset,
-  indicesToRgba,
   renderScene,
   type Artboard,
   type ArtboardCheck,
@@ -76,36 +75,18 @@ export function downsamplePalette(image: PaletteImage, maxEdge: number): Palette
   const width = Math.max(1, Math.floor(image.width / factor));
   const height = Math.max(1, Math.floor(image.height / factor));
   const indices = new Uint8Array(width * height);
+  const rgba = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const counts = new Map<number, number>();
-      for (let dy = 0; dy < factor; dy += 1) {
-        for (let dx = 0; dx < factor; dx += 1) {
-          const sx = x * factor + dx;
-          const sy = y * factor + dy;
-          if (sx >= image.width || sy >= image.height) continue;
-          const color = image.indices[sy * image.width + sx] ?? 0;
-          counts.set(color, (counts.get(color) ?? 0) + 1);
-        }
-      }
-      let best = 0;
-      let bestCount = -1;
-      for (const [color, count] of counts) {
-        if (count > bestCount) {
-          best = color;
-          bestCount = count;
-        }
-      }
-      indices[y * width + x] = best;
+      const sx = Math.min(image.width - 1, x * factor + Math.floor(factor / 2));
+      const sy = Math.min(image.height - 1, y * factor + Math.floor(factor / 2));
+      const source = sy * image.width + sx;
+      const target = y * width + x;
+      indices[target] = image.indices[source] ?? 0;
+      rgba.set(image.rgba.subarray(source * 4, source * 4 + 4), target * 4);
     }
   }
-  return {
-    ...image,
-    width,
-    height,
-    indices,
-    rgba: indicesToRgba(indices, width, height, image.palette),
-  };
+  return { ...image, width, height, indices, rgba };
 }
 
 export function copyWith(copy: CopyDeck, key: keyof CopyDeck, value: string): CopyDeck {

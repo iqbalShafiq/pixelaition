@@ -1,5 +1,7 @@
+import { colorToHex } from "@pixelaition/pixel";
 import { availableSizes, missingGlyphs, resolveFont } from "./font.js";
 import { elementBounds, hexToRgba } from "./render.js";
+import { upgradeScene } from "./scene.js";
 import { layoutText, textBounds } from "./text.js";
 import type {
   ArtboardCheck,
@@ -26,9 +28,10 @@ export type CheckInput = {
  * here so a reviewer never has to eyeball a number.
  */
 export function checkScene(input: CheckInput): ArtboardCheck[] {
-  const { scene, preset, palette, sprites, bytes } = input;
+  const { preset, palette, sprites, bytes } = input;
+  const scene = upgradeScene(input.scene, palette);
   const checks: ArtboardCheck[] = [];
-  if (scene.version !== 1) {
+  if (scene.version !== 2) {
     checks.push({
       code: "VERSION",
       severity: "error",
@@ -50,14 +53,14 @@ export function checkScene(input: CheckInput): ArtboardCheck[] {
     });
   }
   if (scene.background.kind === "solid") {
-    assertPalette(scene.background.color, palette.length, "background", checks);
+    assertColor(scene.background.color, "background", checks);
   }
   if (scene.background.kind === "pattern") {
-    assertPalette(scene.background.colorA, palette.length, "background colour A", checks);
-    assertPalette(scene.background.colorB, palette.length, "background colour B", checks);
+    assertColor(scene.background.colorA, "background colour A", checks);
+    assertColor(scene.background.colorB, "background colour B", checks);
   }
   for (const element of scene.elements) {
-    validateElement(element, scene, preset, palette, sprites, checks);
+    validateElement(element, scene, preset, sprites, checks);
   }
   if (bytes !== undefined && preset.maxBytes !== null && bytes > preset.maxBytes) {
     checks.push({
@@ -75,19 +78,18 @@ function validateElement(
   element: Element,
   scene: ArtboardScene,
   preset: FormatPreset,
-  palette: string[],
   sprites: Map<string, SpriteSource> | undefined,
   checks: ArtboardCheck[],
 ): void {
   if (element.kind === "rect" || element.kind === "frame") {
-    assertPalette(element.color, palette.length, element.kind, checks, element.id);
+    assertColor(element.color, element.kind, checks, element.id);
   }
   if (element.kind === "pattern") {
-    assertPalette(element.colorA, palette.length, "pattern colour A", checks, element.id);
-    assertPalette(element.colorB, palette.length, "pattern colour B", checks, element.id);
+    assertColor(element.colorA, "pattern colour A", checks, element.id);
+    assertColor(element.colorB, "pattern colour B", checks, element.id);
   }
   if (element.kind === "text") {
-    validateText(element, scene, preset, palette, checks);
+    validateText(element, scene, preset, checks);
   }
   if (element.kind === "sprite") {
     const source =
@@ -165,10 +167,9 @@ function validateText(
   element: Extract<Element, { kind: "text" }>,
   scene: ArtboardScene,
   preset: FormatPreset,
-  palette: string[],
   checks: ArtboardCheck[],
 ): void {
-  assertPalette(element.color, palette.length, "text", checks, element.id);
+  assertColor(element.color, "text", checks, element.id);
   let font;
   try {
     font = resolveFont(element.face, element.weight, element.size);
@@ -235,9 +236,9 @@ function validateText(
       elementId: element.id,
     });
   }
-  if (scene.background.kind === "solid" && element.color < palette.length) {
-    const ratio = contrastRatio(palette[element.color] ?? "#000000", [
-      palette[scene.background.color] ?? "#000000",
+  if (scene.background.kind === "solid") {
+    const ratio = contrastRatio(colorToHex(element.color), [
+      colorToHex(scene.background.color),
     ]);
     if (ratio !== null && ratio < 4.5) {
       checks.push({
@@ -250,18 +251,17 @@ function validateText(
   }
 }
 
-function assertPalette(
+function assertColor(
   color: number,
-  size: number,
   label: string,
   checks: ArtboardCheck[],
   elementId?: string,
 ): void {
-  if (!Number.isInteger(color) || color < 0 || color >= size) {
+  if (!Number.isInteger(color) || color < 0 || color > 0xffffffff) {
     checks.push({
       code: "PALETTE",
       severity: "error",
-      message: `The ${label} uses palette index ${color}, outside the ${size}-colour palette.`,
+      message: `The ${label} is not a packed RGBA colour.`,
       ...(elementId ? { elementId } : {}),
     });
   }

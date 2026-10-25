@@ -42,9 +42,10 @@ import {
 import {
   buildTemplateScene,
   getPreset,
-  mapSceneIndices,
+  mapSceneColors,
   renderScene,
   sceneSchema,
+  upgradeScene,
   type ArtboardScene,
   type CopyDeck,
   type PaletteImage,
@@ -568,13 +569,13 @@ export async function addSocialFrameRecord(
       id: "background",
       name: "Background",
       visible: true,
-      pixels: encodePixels(background.indices),
+      pixels: encodePixels(background.rgba),
     },
     {
       id: "artwork",
       name: "Artwork",
       visible: true,
-      pixels: encodePixels(artwork.indices),
+      pixels: encodePixels(artwork.rgba),
     },
   ];
   await db.insert(frames).values({
@@ -610,7 +611,7 @@ export async function saveSocialFrameRecord(
   },
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const [row] = await db
-    .select({ frame: frames })
+    .select({ frame: frames, palette: assets.palette })
     .from(frames)
     .innerJoin(assets, eq(frames.assetId, assets.id))
     .innerJoin(projects, eq(assets.projectId, projects.id))
@@ -636,8 +637,10 @@ export async function saveSocialFrameRecord(
       },
     };
   }
-  const scene =
-    input.scene === undefined ? row.frame.scene : sceneSchema.parse(input.scene);
+  const scene = upgradeScene(
+    sceneSchema.parse(input.scene === undefined ? row.frame.scene : input.scene),
+    row.palette as string[],
+  );
   const [updated] = await db
     .update(frames)
     .set({
@@ -1813,7 +1816,7 @@ function mapScenePalette(
   source: string[],
   target: string[],
 ): ArtboardScene {
-  return mapSceneIndices(scene, paletteIndexMap(source, target));
+  return mapSceneColors(scene, source, target);
 }
 export async function importFrameRecord(
   db: Database,

@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./presets.js";
 export * from "./font.js";
 export { indicesToRgba } from "./render.js";
+export { sceneColor, upgradeScene } from "./scene.js";
 export {
   resolveCopy,
   hasImageCopy,
@@ -49,4 +50,4 @@ export {
   type TextLine,
 } from "./text.js";
 
-export { mapSceneIndices } from "./palette.js";
+export { mapSceneColors, mapSceneIndices } from "./palette.js";

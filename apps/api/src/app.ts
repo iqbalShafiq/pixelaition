@@ -4507,7 +4507,7 @@ function withSceneOverlay(frame: { scene?: unknown }, buffer: FrameBuffer): Fram
           id: "scene-overlay",
           name: "Scene",
           visible: true,
-          pixels: rendered.indices,
+          pixels: rendered.rgba,
         },
       ],
     };

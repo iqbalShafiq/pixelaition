@@ -2,10 +2,9 @@ import { z } from "zod";
 import type { FrameBuffer } from "@pixelaition/pixel";
 
 /**
- * Social formats are composed at their native output size. A `color` is
- * always an index into the artboard's palette — the same palette the sprite
- * was drawn with — so a rendered artboard can never invent a hue, and pixel
- * text keeps the same binary, un-antialiased edge as the artwork.
+ * Social formats are composed at their native output size. A `color` is a
+ * packed RGBA number (`0xRRGGBBAA`), the same colour model as pixel commands;
+ * the palette is a swatch library, never an index the renderer depends on.
  */
 export type Rect = { x: number; y: number; width: number; height: number };
 
@@ -162,7 +161,8 @@ export type CopyDeck = {
 export type CopyOverride = Partial<CopyDeck>;
 
 export type ArtboardScene = {
-  version: 1;
+  /** 2 stores packed RGBA; 1 is upgraded through the palette on read. */
+  version: 1 | 2;
   background: Background;
   elements: Element[];
 };
@@ -374,7 +374,7 @@ const frameElementSchema = z.object({
 });
 
 export const sceneSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   background: backgroundSchema,
   elements: z.array(
     z.discriminatedUnion("kind", [

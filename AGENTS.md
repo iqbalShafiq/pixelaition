@@ -59,8 +59,8 @@ pnpm db:migrate
   shell, view controls, composer and export; the internal `frames.kind` values
   `sprite` and `social` are storage details, never product language. A
   pixel-backed frame holds true-RGBA layers at the asset canvas; an
-  output-size frame holds a scene graph at its size preset and shares the asset
-  swatches and copy deck. A pixel colour is never an index into that swatch
+  output-size frame holds a scene graph of packed RGBA colours at its size
+  preset and shares the asset swatches and copy deck. A pixel colour is never an index into that swatch
   list, so changing or dropping a swatch never rewrites pixels.
 - `packages/artboard` is shared by the web, API, worker and MCP; do not fork the
   renderer or the preset registry. An output-size frame's dimensions, safe

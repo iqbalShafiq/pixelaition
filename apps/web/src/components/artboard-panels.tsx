@@ -14,6 +14,7 @@ import {
   type FormatPreset,
   type TemplateId,
 } from "@pixelaition/artboard";
+import { hexToColor } from "@pixelaition/pixel";
 import {
   Button,
   Dialog,
@@ -693,18 +694,23 @@ function ColorPicker({
         {label}
       </p>
       <div className="flex flex-wrap gap-1">
-        {palette.map((hex, index) => (
-          <button
-            key={`${hex}-${index}`}
-            type="button"
-            title={`${index} ${hex}`}
-            onClick={() => onChange(index)}
-            className={`h-6 w-6 border-2 ${
-              value === index ? "border-accent" : "border-line hover:border-line-strong"
-            }`}
-            style={{ background: index === 0 ? "transparent" : hex }}
-          />
-        ))}
+        {palette.map((hex, index) => {
+          const packed = hexToColor(hex) ?? 0;
+          return (
+            <button
+              key={`${hex}-${index}`}
+              type="button"
+              title={`${index} ${hex}`}
+              onClick={() => onChange(packed)}
+              className={`h-6 w-6 border-2 ${
+                value === packed
+                  ? "border-accent"
+                  : "border-line hover:border-line-strong"
+              }`}
+              style={{ background: index === 0 ? "transparent" : hex }}
+            />
+          );
+        })}
       </div>
     </div>
   );
