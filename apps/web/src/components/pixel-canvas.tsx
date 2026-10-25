@@ -498,6 +498,12 @@ export function PixelCanvas({
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
   const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
   const overlayBitmaps = useRef(new WeakMap<PaletteImage, HTMLCanvasElement>());
+  const touchPointers = useRef(new Map<number, Point>());
+  const pinch = useRef<{
+    distance: number;
+    midpoint: Point;
+    camera: Camera;
+  } | null>(null);
 
   // Handlers read the latest props without re-binding listeners on every render.
   const latest = useRef({
@@ -1073,6 +1079,26 @@ export function PixelCanvas({
       aria-label={`Pixel canvas ${buffer.width} by ${buffer.height}`}
       className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
+        if (event.pointerType === "touch") {
+          touchPointers.current.set(event.pointerId, localPoint(event));
+          if (touchPointers.current.size === 2) {
+            const [first, second] = [...touchPointers.current.values()];
+            if (first && second) {
+              painting.current = false;
+              resetGesture();
+              pinch.current = {
+                distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+                midpoint: {
+                  x: (first.x + second.x) / 2,
+                  y: (first.y + second.y) / 2,
+                },
+                camera: latest.current.camera,
+              };
+              event.currentTarget.setPointerCapture(event.pointerId);
+              return;
+            }
+          }
+        }
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
         if (event.button === 0 && !space.current) {
           const point = localPoint(event);
@@ -1208,6 +1234,34 @@ export function PixelCanvas({
         emit(active === "eraser" ? { kind: "erase", points } : { kind: "paint", points });
       }}
       onPointerMove={(event) => {
+        if (event.pointerType === "touch" && touchPointers.current.has(event.pointerId)) {
+          touchPointers.current.set(event.pointerId, localPoint(event));
+          if (pinch.current && touchPointers.current.size >= 2) {
+            const [first, second] = [...touchPointers.current.values()];
+            if (first && second) {
+              const start = pinch.current;
+              const distance = Math.max(
+                1,
+                Math.hypot(second.x - first.x, second.y - first.y),
+              );
+              const midpoint = {
+                x: (first.x + second.x) / 2,
+                y: (first.y + second.y) / 2,
+              };
+              const zoom = Math.max(
+                0.05,
+                Math.min(64, start.camera.zoom * (distance / start.distance)),
+              );
+              const next = zoomAt(start.camera, start.midpoint.x, start.midpoint.y, zoom);
+              latest.current.onCamera({
+                ...next,
+                x: next.x + midpoint.x - start.midpoint.x,
+                y: next.y + midpoint.y - start.midpoint.y,
+              });
+              return;
+            }
+          }
+        }
         if (lasso.current) {
           const point = localPoint(event);
           const points = lasso.current;
@@ -1373,6 +1427,10 @@ export function PixelCanvas({
         );
       }}
       onPointerUp={(event) => {
+        if (event.pointerType === "touch") {
+          touchPointers.current.delete(event.pointerId);
+          if (touchPointers.current.size < 2) pinch.current = null;
+        }
         const { onAction: emit } = latest.current;
         if (textRotate.current) {
           textRotate.current = null;
@@ -1457,6 +1515,8 @@ export function PixelCanvas({
       }}
       onPointerCancel={() => {
         // A cancelled gesture must not leave a phantom marquee behind.
+        touchPointers.current.clear();
+        pinch.current = null;
         painting.current = false;
         resetGesture();
         repaint.current();
