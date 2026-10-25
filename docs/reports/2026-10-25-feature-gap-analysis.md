@@ -419,13 +419,13 @@ Still open from the matrix above:
   linked cels, palette, tags and slices all cross `.pxl` and `.ase`. The
   editor can import an `.ase`/`.aseprite` file into the current asset, and
   imported frame dimensions survive the asset read path.
-- Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
-  suggestions are in; the map layer/editor is not).
+- Tilemap authoring (tileset packaging, tile fill from slices, tile preview,
+  seam reports and tile-size suggestions are in; the map layer/editor is not).
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
   scripting; grayscale/monochrome modes, pressure sizing and command-script
   CLI/API exist.
-- Auto-tiling remains design work; linked layers, the style lock, mirrored
-  variant frames (API, frame menu and agent tool), selection-scoped prompts,
-  AI animation through frames/tags, and reference overlays are in place.
+- Terrain-aware auto-tiling remains design work; tile fill from slices,
+  linked layers, the style lock, mirrored variant frames, selection-scoped
+  prompts, AI animation and reference overlays are in place.
 - Masked selections now support flip, rotate, move and nudge as well as
   copy/cut/paste and mask-aware drawing.
