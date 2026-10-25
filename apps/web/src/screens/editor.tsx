@@ -2576,15 +2576,6 @@ export function EditorScreen() {
     );
   }
 
-  function maskedSelection() {
-    if (!selection?.mask) return false;
-    notify({
-      title: "Masked selections support paint, erase, and fill",
-      description: "Clear the lasso or wand selection before copying or transforming.",
-    });
-    return true;
-  }
-
   function copySelection() {
     if (running || !selection) return;
     const layer = selectionLayer();
@@ -2748,7 +2739,6 @@ export function EditorScreen() {
 
   function nudgeSelection(dx: number, dy: number) {
     if (running || !selection || !frameId || !activeLayerId) return;
-    if (maskedSelection()) return;
     const x = selection.x + dx;
     const y = selection.y + dy;
     if (
@@ -2757,6 +2747,21 @@ export function EditorScreen() {
       x + selection.width > (buffer?.width ?? 0) ||
       y + selection.height > (buffer?.height ?? 0)
     ) {
+      return;
+    }
+    if (selection.mask) {
+      edit(frameId, drafts[frameId], {
+        type: "moveMask",
+        layerId: activeLayerId,
+        x: selection.x,
+        y: selection.y,
+        width: selection.width,
+        height: selection.height,
+        mask: Array.from(selection.mask),
+        dx,
+        dy,
+      });
+      setSelection({ ...selection, x, y });
       return;
     }
     edit(frameId, drafts[frameId], {

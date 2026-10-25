@@ -197,6 +197,17 @@ export type Command =
       mode: "fill" | "clear" | "flood";
     }
   | {
+      type: "moveMask";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      mask: number[];
+      dx: number;
+      dy: number;
+    }
+  | {
       type: "transformMask";
       layerId: string;
       x: number;
