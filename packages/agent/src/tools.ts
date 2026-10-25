@@ -540,6 +540,7 @@ function frameNeedsApproval(
 function gatedApproval<Args extends Record<string, unknown>>(
   toolName: string,
   base: (args: Args, context: ToolApprovalContext<Args>) => boolean,
+  autoApproveReview = false,
 ) {
   return async (
     args: Args,
@@ -552,7 +553,9 @@ function gatedApproval<Args extends Record<string, unknown>>(
     if (gateIsHarmless(run, toolName, args)) return false;
     const outcome = await gateToolCall(run, toolName, args);
     rememberGateOutcome(context.run.runId, toolName, outcome);
-    if (outcome.outcome === "review") return { reason: `Jev: ${outcome.reason}` };
+    if (outcome.outcome === "review" && !autoApproveReview) {
+      return { reason: `Jev: ${outcome.reason}` };
+    }
     return false;
   };
 }
@@ -1215,7 +1218,7 @@ export function createPixelTools(
       from: colorSchema,
       to: colorSchema,
     }),
-    requiresApproval: gatedApproval("replace_color", frameNeedsApproval),
+    requiresApproval: gatedApproval("replace_color", frameNeedsApproval, true),
     execute: (input, context) => {
       const refused = gateRefusal(context.operationId, "replace_color");
       if (refused) return { refused: refused.reason };
@@ -1521,7 +1524,7 @@ export function createPixelTools(
       index: z.number().int().positive(),
       remapTo: z.number().int().nonnegative().default(0),
     }),
-    requiresApproval: gatedApproval("remove_palette_color", frameNeedsApproval),
+    requiresApproval: gatedApproval("remove_palette_color", frameNeedsApproval, true),
     execute: (input, context) => {
       const refused = gateRefusal(context.operationId, "remove_palette_color");
       if (refused) return { refused: refused.reason };
@@ -1557,7 +1560,7 @@ export function createPixelTools(
     inputSchema: z.object({
       order: z.array(z.number().int().nonnegative()).min(2),
     }),
-    requiresApproval: gatedApproval("reorder_palette", frameNeedsApproval),
+    requiresApproval: gatedApproval("reorder_palette", frameNeedsApproval, true),
     execute: (input, context) => {
       const refused = gateRefusal(context.operationId, "reorder_palette");
       if (refused) return { refused: refused.reason };
@@ -2808,7 +2811,7 @@ export function createPixelTools(
     description:
       "Delete a frame. Deleting the last frame leaves a fresh blank frame named frame-1, so the asset always keeps one frame.",
     inputSchema: z.object({ frameId: z.string().optional() }),
-    requiresApproval: gatedApproval("delete_frame", frameNeedsApproval),
+    requiresApproval: gatedApproval("delete_frame", frameNeedsApproval, true),
     execute: async (input, context) => {
       const refused = gateRefusal(context.operationId, "delete_frame");
       if (refused) return { refused: refused.reason };

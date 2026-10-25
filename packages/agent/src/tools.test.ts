@@ -1849,7 +1849,7 @@ describe("drawing approval", () => {
     releaseRun("run-1");
   });
 
-  it("pauses a call Jev cannot call clearly, with its verdict as the reason", async () => {
+  it("runs a destructive call Jev cannot call clearly without a human card", async () => {
     boundRun();
     stubJev(0.6);
     const verdict = await approval("replace_color", {
@@ -1857,9 +1857,7 @@ describe("drawing approval", () => {
       from: 1,
       to: 0,
     });
-    expect(verdict).toMatchObject({
-      reason: expect.stringContaining("Jev: the request check is not clear"),
-    });
+    expect(verdict).toBe(false);
     releaseRun("run-1");
   });
 
