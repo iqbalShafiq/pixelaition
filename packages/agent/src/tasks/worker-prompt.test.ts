@@ -54,7 +54,9 @@ describe("buildWorkerPrompt", () => {
     expect(prompt).toContain("ksatria, pedang, cahaya");
     expect(prompt).toContain("one outline color");
     expect(prompt).toContain("This asset's frames: idle, jalan-a, jalan-b");
-    expect(prompt).toContain("Outline colour #0b0906 is palette index 1");
+    expect(prompt).toContain(
+      "Outline colour #0b0906 is in this palette; pass it as hex.",
+    );
     expect(prompt).toContain("asset-2");
     expect(prompt).toContain("ksatria-besar");
   });

@@ -24,7 +24,7 @@ pnpm db:migrate
 - Every drawing run is one durable `asset-draw` task: Jev sets the shape (workers 1-4, whether a review round is worth it), a supervisor child plans and the plan card is approved, up to four worker children paint their own frames in parallel behind an `allSettled` join, and a review child (continuing the plan's conversation) reads every frame, answers with a typed verdict — `{ done, summary, fixes[] }` — and decides when the work is finished: there is no round cap in code, and a review's fixes may name the layers to touch (a fix writes only those) and a reference frame to copy from. Ask runs stay single read-only runs.
 - One agent per model, effort and role (supervisor: plan/review/fix, whose children continue each other's conversation; painter: workers; ask) — `continueFrom` never crosses agents, so roles that continue each other share one. The role gate in the tool layer stays as a second wall and names its cause. Workers and fix children paint, then stop; they do not move or redraw finished pixels to chase a critique, and a fix writes only on the layers its review order named.
 - Workers write only their owned frames; the plan's palette additions happen before the parallel phase, and the supervisor's search references ride into each worker's `view_image` allow-list.
-- Every role carries its own tool catalog (painter, supervisor, ask) instead of being offered tools it may not call. Frames of every asset in the same project are readable through `list_project_frames` / `read_frame(assetId)` / `read_palette`; pixels move with `copy_region`, `paste_region`, `mirror_region`, `repeat_region` and `copy_layers`, which map palettes explicitly and never guess a colour. `check_animation` measures the unchanged body against a reference frame, not just consecutive frames, so a frame that redrew a shared part is flagged and a turning flame is not.
+- Every role carries its own tool catalog (painter, supervisor, ask) instead of being offered tools it may not call. Frames of every asset in the same project are readable through `list_project_frames` / `read_frame(assetId)` / `read_palette`; pixels move with `copy_region`, `paste_region`, `mirror_region`, `repeat_region` and `copy_layers`, which carry RGBA colours unchanged and never guess a colour. `check_animation` measures the unchanged body against a reference frame, not just consecutive frames, so a frame that redrew a shared part is flagged and a turning flame is not.
 - Long sessions (many review rounds) are bounded by Anvia's durable compaction against the model's declared window, not by cutting prompts or fields: no prose field carries a length cap.
 - One task per asset thread: a second drawing request answers `RUN_IN_PROGRESS` (guarded in the API and again in the worker before submission).
 - The editor shows per-frame task state (colour, shape, and label; whole-pixel `steps()` animation that `prefers-reduced-motion` turns off), streams the task tree into the console, feeds each frame's canvas from its own worker's stream, and anchors a message to the frame in view through the composer's frame-context toggle.
@@ -58,9 +58,10 @@ pnpm db:migrate
 - One asset is one image document. Every frame shares the editor's rail, canvas
   shell, view controls, composer and export; the internal `frames.kind` values
   `sprite` and `social` are storage details, never product language. A
-  pixel-backed frame holds palette-indexed layers at the asset canvas; an
-  output-size frame holds a palette-indexed scene graph at its size preset and
-  shares the asset palette and copy deck. There is no separate Studio surface.
+  pixel-backed frame holds true-RGBA layers at the asset canvas; an
+  output-size frame holds a scene graph at its size preset and shares the asset
+  swatches and copy deck. A pixel colour is never an index into that swatch
+  list, so changing or dropping a swatch never rewrites pixels.
 - `packages/artboard` is shared by the web, API, worker and MCP; do not fork the
   renderer or the preset registry. An output-size frame's dimensions, safe
   zones, crops, exclusions, minimum text size and byte budget come from
@@ -79,9 +80,9 @@ pnpm db:migrate
   (`kind: social` internally), edited through its scene route, and exported at
   native size. `GET /api/projects/:id/resources` is the project-wide read:
   assets, pixel frames, output-size frames, palettes and dimensions. Cross-asset
-  reuse is explicit: image elements name `assetId/frameId`; frame import maps the
-  palette; palette import remaps every pixel layer and scene; background import
-  copies one frame's backdrop.
+  reuse is explicit: image elements name `assetId/frameId`; frame import carries
+  RGBA colours unchanged; palette import updates swatches and remaps artboard
+  scenes only; background import copies one frame's backdrop.
 - Output-size frames are not extra pixel canvases: their `layers` are `[]`, and
   every pixel-only helper (`frameToBuffer`, version preview, pixel PUT) must
   filter `kind !== "social"` or refuse it with a named cause.

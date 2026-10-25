@@ -70,13 +70,9 @@ const DEFAULT_STYLE = {
 export function buildWorkerPrompt(input: WorkerPromptInput): string {
   const outline = input.style?.outline ?? DEFAULT_STYLE.outline;
   const palette = input.palette ?? [];
-  const paletteIndex = palette.findIndex(
-    (hex) => hex.toLowerCase() === outline.toLowerCase(),
-  );
-  const outlineNote =
-    paletteIndex > 0
-      ? `Outline colour ${outline} is palette index ${paletteIndex}.`
-      : `The style guide's outline colour ${outline} is not in this palette; pick a dark palette colour for outlines.`;
+  const outlineNote = palette.some((hex) => hex.toLowerCase() === outline.toLowerCase())
+    ? `Outline colour ${outline} is in this palette; pass it as hex.`
+    : `The style guide's outline colour ${outline} is not a swatch; pass it as hex anyway, or pick a dark swatch.`;
   const lines = [
     `Request: ${input.request}`,
     `Project: ${input.projectName}${input.projectSummary ? ` — ${input.projectSummary}` : ""}`,

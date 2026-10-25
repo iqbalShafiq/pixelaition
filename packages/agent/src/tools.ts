@@ -747,7 +747,7 @@ export function createPixelTools(
   const copyRegion = createTool({
     name: "copy_region",
     description:
-      "Copy a rectangle of any frame in this project (this asset or a sibling asset) and get its palette indices back as RLE rows, ready to pass to paste_region. Use it when a part must match another frame exactly, instead of reading pixels and retyping them.",
+      "Copy a rectangle of any frame in this project (this asset or a sibling asset) and get its RGBA colours back as RLE rows (#rrggbbaa x count), ready to pass to paste_region. Use it when a part must match another frame exactly, instead of reading pixels and retyping them.",
     inputSchema: z.object({
       ...frameLocator,
       ...regionShape,
@@ -1208,7 +1208,7 @@ export function createPixelTools(
   const replaceColorTool = createTool({
     name: "replace_color",
     description:
-      "Replace every pixel of one palette index with another on the current frame: one layer when layerId is given (id or name), every layer otherwise.",
+      "Replace every pixel of one RGBA colour with another on the current frame: one layer when layerId is given (id or name), every layer otherwise. Both colours are hex or packed RGBA.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
@@ -1479,7 +1479,7 @@ export function createPixelTools(
   const editPaletteColor = createTool({
     name: "edit_palette_color",
     description:
-      "Change the hex of one visible palette index without moving any pixel. Every frame adopts the new colour; index 0 cannot be edited.",
+      "Change one palette swatch without moving any pixel. Every frame adopts the swatch; index 0 cannot be edited.",
     inputSchema: z.object({
       index: z.number().int().positive(),
       color: z.string(),
@@ -1553,7 +1553,7 @@ export function createPixelTools(
   const reorderPalette = createTool({
     name: "reorder_palette",
     description:
-      "Reorder palette indices with an explicit old-index order. Every pixel and social scene follows the colour it used; index 0 must stay first.",
+      "Reorder the palette swatches with an explicit old-index order. Pixel colours do not move; social scenes follow the swatch colour. Index 0 must stay first.",
     inputSchema: z.object({
       order: z.array(z.number().int().nonnegative()).min(2),
     }),
@@ -2669,7 +2669,7 @@ export function createPixelTools(
   const createVariant = createTool({
     name: "create_variant",
     description:
-      "Create a new frame as a variant of an existing frame. Optionally mirror it and remap palette indices; the asset palette itself does not change. Use it for alternate poses, recolours, or mirrored sprites.",
+      "Create a new frame as a variant of an existing frame. Optionally mirror it and map swatch indexes for artboard scenes; pixel colours are copied unchanged. Use it for alternate poses, recolours, or mirrored sprites.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       name: z.string().min(1).max(40),
@@ -3046,7 +3046,7 @@ export function createPixelTools(
   const readPalette = createTool({
     name: "read_palette",
     description:
-      "Read the palette of this asset or of any sibling asset in the project, as index:hex pairs. Use it before copying a region across assets, where indices mean different colours.",
+      "Read the palette of this asset or of any sibling asset in the project, as index:hex swatches. Pixel colours copy across assets unchanged; the swatches are style guidance.",
     inputSchema: z.object({
       assetId: z
         .string()
