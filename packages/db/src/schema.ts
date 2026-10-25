@@ -128,6 +128,8 @@ export const frames = pgTable(
     summaryAt: timestamp("summary_at", { withTimezone: true }),
     index: integer("index").notNull(),
     layers: jsonb("layers").notNull(),
+    /** Layer groups are frame-local; empty keeps the old flat-layer shape. */
+    groups: jsonb("groups").notNull().default([]),
     /** `sprite` frames paint layers; `social` frames own a scene at native size. */
     kind: text("kind").$type<"sprite" | "social">().notNull().default("sprite"),
     width: integer("width"),

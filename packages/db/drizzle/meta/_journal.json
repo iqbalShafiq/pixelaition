@@ -218,6 +218,13 @@
       "when": 1792500500000,
       "tag": "0030_opencode_go_agent_models",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792916449440,
+      "tag": "0031_frame_groups",
+      "breakpoints": true
     }
   ]
 }
