@@ -262,6 +262,20 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         pivot: { x: 8, y: 12 },
       });
 
+      const tilemapExport = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          scope: "asset",
+          projectId,
+          assetId: asset.id,
+          format: "tilemap-json",
+          frameIds: [first.id],
+        });
+      expect(tilemapExport.status, JSON.stringify(tilemapExport.body)).toBe(200);
+      expect(tilemapExport.body.tileWidth).toBe(16);
+      expect(tilemapExport.body.layers[0].data).toHaveLength(4);
+
       const appliedTilemap = await request(app)
         .post(`/api/assets/${asset.id}/tilemap`)
         .set("authorization", `Bearer ${token}`)

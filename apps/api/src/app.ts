@@ -9,6 +9,7 @@ import {
   layerGroupSchema,
   sliceSchema,
   textLayerSchema,
+  type Asset,
   type FrameBuffer,
   type FrameTag,
   type PixelProject,
@@ -3916,6 +3917,7 @@ export function createApp() {
         "png-sequence",
         "aseprite-json",
         "tileset",
+        "tilemap-json",
         "ase",
       ].includes(body.format)
     ) {
@@ -4456,6 +4458,9 @@ async function documentForScope(
       height: full.height,
       palette: full.palette as string[],
       tags: full.tags as FrameTag[],
+      slices: (full.slices ?? []) as Asset["slices"],
+      colorMode: full.colorMode as Asset["colorMode"],
+      styleLocked: full.styleLocked,
       frames: frames.map((frame) => {
         const width = frame.width ?? full.width;
         const height = frame.height ?? full.height;
