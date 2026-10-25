@@ -420,6 +420,8 @@ Implemented:
   and passes `tools/trace-check.mjs --run … --role ask`.
 - The agent can apply a tilemap through `apply_tilemap`, covered by the
   deterministic eval suite.
+- Aseprite export rejects mixed frame sizes with a named 422 instead of
+  writing a malformed sprite, and API export documents now carry slices.
 - Touch pinch zooms and two-finger drag pans the canvas; wheel zoom and the
   toolbar's zoom steps remain.
 - Export documents now carry slices, color mode and the style lock, so the
