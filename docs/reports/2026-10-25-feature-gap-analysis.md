@@ -424,4 +424,5 @@ Still open from the matrix above:
 - AI variant gallery, linked/shared layers, a style lock and auto-tiling remain
   design work; selection-scoped prompts, an agent variant tool, AI animation
   through frames/tags, and reference overlays are in place.
-- Flip/rotate/move on masked selections remain rectangular.
+- Moving a masked selection remains rectangular; masked flip and rotate are
+  mask-aware.
