@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ADD COLUMN "color_mode" text DEFAULT 'indexed' NOT NULL;

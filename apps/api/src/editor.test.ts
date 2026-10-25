@@ -213,6 +213,20 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         pivot: { x: 8, y: 12 },
       });
 
+      const grayscale = await request(app)
+        .put(`/api/assets/${asset.id}/color-mode`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ mode: "grayscale" });
+      expect(grayscale.status).toBe(200);
+      expect(grayscale.body.colorMode).toBe("grayscale");
+      for (const color of grayscale.body.palette.slice(1)) {
+        const [r, g, b] = [1, 3, 5].map((offset) =>
+          Number.parseInt(String(color).slice(offset, offset + 2), 16),
+        );
+        expect(r).toBe(g);
+        expect(g).toBe(b);
+      }
+
       const gif = await request(app)
         .post("/api/export")
         .set("authorization", `Bearer ${token}`)

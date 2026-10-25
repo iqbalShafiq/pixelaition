@@ -1,5 +1,6 @@
 import type {
   BlendMode,
+  ColorMode,
   FrameTag,
   LayerGroup,
   Slice,
@@ -45,6 +46,7 @@ export type AssetDto = {
   height: number;
   palette: string[];
   paletteLocked: boolean;
+  colorMode?: ColorMode;
   tags?: FrameTag[];
   slices?: Slice[];
   copy: CopyDeck;

@@ -113,6 +113,8 @@ export const assets = pgTable("assets", {
   paletteLocked: boolean("palette_locked").notNull().default(false),
   /** Named export slices with optional nine-slice borders and pivot. */
   slices: jsonb("slices").notNull().default([]),
+  /** indexed | grayscale | monochrome; pixels stay indexed either way. */
+  colorMode: text("color_mode").notNull().default("indexed"),
   /** Shared social copy deck; sprite frames ignore it. */
   copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -28,9 +28,12 @@ import {
   emptyPixels,
   encodePixels,
   frameToBuffer,
+  hexToRgba,
   paletteIndexMap,
+  rgbaToHex,
   writeFrame,
   type Asset,
+  type ColorMode,
   type Frame,
   type StyleGuide,
 } from "@pixelaition/pixel";
@@ -345,6 +348,7 @@ function asPixelAsset(record: AssetRecord): Asset {
       })),
     tags: record.tags as never,
     slices: (record.slices ?? []) as never,
+    colorMode: record.colorMode as ColorMode,
   };
 }
 
@@ -2262,5 +2266,41 @@ export async function updateAssetSlices(
     .where(eq(assets.id, assetId));
   const next = await getAssetRecord(db, userId, assetId);
   if (next) await recordAssetVersion(db, assetId, "slices", next);
+  return { asset: next };
+}
+
+/** Convert the palette for grayscale/monochrome; pixel indices never move. */
+export async function updateAssetColorMode(
+  db: Database,
+  userId: string,
+  assetId: string,
+  mode: ColorMode,
+) {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  const palette = (record.palette as string[]).map((hex) => {
+    const [r, g, b, a] = hexToRgba(hex);
+    if (a === 0) return hex;
+    if (mode === "grayscale") {
+      const luma = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+      return rgbaToHex(luma, luma, luma, a);
+    }
+    if (mode === "monochrome") {
+      const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      const value = luma >= 128 ? 255 : 0;
+      return rgbaToHex(value, value, value, a);
+    }
+    return hex;
+  });
+  await db
+    .update(assets)
+    .set({ palette, colorMode: mode, updatedAt: new Date() })
+    .where(eq(assets.id, assetId));
+  const next = await getAssetRecord(db, userId, assetId);
+  if (next) await recordAssetVersion(db, assetId, "color-mode", next);
   return { asset: next };
 }

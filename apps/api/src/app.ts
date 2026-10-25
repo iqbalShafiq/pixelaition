@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   assetFrameBuffer,
   blendModes,
+  colorModes,
   bufferToFrame,
   frameToBuffer,
   layerGroupSchema,
@@ -114,6 +115,7 @@ import {
   importFrameRecord,
   importPaletteRecord,
   replaceFrameTags,
+  updateAssetColorMode,
   updateAssetSlices,
   updateFrameDuration,
   renderSocialFrameRecord,
@@ -951,6 +953,26 @@ export function createApp() {
         result.failure?.code ?? "INVALID",
         result.failure?.message ?? "That asset is not available.",
       );
+    res.json(result.asset);
+  });
+
+  app.put("/api/assets/:id/color-mode", async (req, res) => {
+    const body = z.object({ mode: z.enum(colorModes) }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await updateAssetColorMode(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.mode,
+    );
+    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     res.json(result.asset);
   });
 

@@ -3444,6 +3444,23 @@ export function EditorScreen() {
     }
   }
 
+  async function saveColorMode(mode: NonNullable<AssetDto["colorMode"]>) {
+    if (running) return;
+    try {
+      const data = await api<AssetDto>(`/api/assets/${assetId}/color-mode`, {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      });
+      client.setQueryData(["asset", assetId], data);
+      notify({ title: `Color mode: ${mode}` });
+    } catch (reason) {
+      notify({
+        title: "The color mode did not save",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
   async function saveSlices(slices: NonNullable<AssetDto["slices"]>) {
     if (running) return;
     try {
@@ -3543,8 +3560,10 @@ export function EditorScreen() {
         style={style}
         width={frame?.width ?? asset.data?.width ?? 32}
         height={frame?.height ?? asset.data?.height ?? 32}
+        colorMode={asset.data?.colorMode ?? "indexed"}
         readOnly={frame !== null && frame.width !== asset.data?.width}
         onResize={(width, height) => void updateAsset({ width, height })}
+        onColorMode={(mode) => void saveColorMode(mode)}
       />
     </div>
   );

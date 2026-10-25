@@ -93,6 +93,9 @@ export type FrameBuffer = {
   groups?: LayerGroup[];
 };
 
+export const colorModes = ["indexed", "grayscale", "monochrome"] as const;
+export type ColorMode = (typeof colorModes)[number];
+
 export const tagDirections = ["forward", "reverse", "pingpong"] as const;
 export type TagDirection = (typeof tagDirections)[number];
 
@@ -138,6 +141,7 @@ export type Asset = {
   height: number;
   palette: string[];
   frames: Frame[];
+  colorMode?: ColorMode;
   tags?: FrameTag[];
   slices?: Slice[];
 };

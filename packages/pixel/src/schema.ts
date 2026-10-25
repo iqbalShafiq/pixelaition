@@ -3,6 +3,7 @@ import {
   MAX_SIZE,
   MIN_SIZE,
   blendModes,
+  colorModes,
   shadowDirections,
   tagDirections,
 } from "./types.js";
@@ -89,6 +90,7 @@ export const assetSchema = z.object({
   height: z.number().int().min(MIN_SIZE).max(MAX_SIZE),
   palette: z.array(hex).min(2).max(256),
   frames: z.array(frameSchema).min(1),
+  colorMode: z.enum(colorModes).optional(),
   slices: z.array(sliceSchema).optional(),
   tags: z
     .array(

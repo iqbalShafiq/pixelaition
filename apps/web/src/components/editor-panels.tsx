@@ -1,5 +1,6 @@
 import {
   blendModes,
+  colorModes,
   composite,
   frameToBuffer,
   type FrameBuffer,
@@ -1718,13 +1719,17 @@ export function StylePanel({
   style,
   width,
   height,
+  colorMode = "indexed",
   onResize,
+  onColorMode,
   readOnly = false,
 }: {
   style: StyleGuide;
   width: number;
   height: number;
+  colorMode?: (typeof colorModes)[number];
   onResize?: (width: number, height: number) => void;
+  onColorMode?: (mode: (typeof colorModes)[number]) => void;
   /** Native-size frames show their real output size and cannot be resized. */
   readOnly?: boolean;
 }) {
@@ -1752,6 +1757,17 @@ export function StylePanel({
         </div>
       </dl>
       {style.notes ? <p className="text-[12px] text-muted">{style.notes}</p> : null}
+      {onColorMode ? (
+        <Field label="Color mode" htmlFor="asset-color-mode">
+          <SelectControl
+            id="asset-color-mode"
+            label="Color mode"
+            value={colorMode}
+            options={[...colorModes]}
+            onChange={(next) => onColorMode(next as (typeof colorModes)[number])}
+          />
+        </Field>
+      ) : null}
 
       {readOnly ? (
         <div className="flex items-baseline justify-between gap-2 border-t-2 border-line pt-1.5 text-pixel-mono">
