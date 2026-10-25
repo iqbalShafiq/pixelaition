@@ -410,16 +410,17 @@ Implemented:
 - Command scripting from the editor, CLI and `POST /api/assets/:id/script`,
   all routed through `applyCommand`; a `.pxl` CLI for import, inspect, script
   and export.
+- Aseprite binary round-trips frames, layers, groups, linked cels, palette,
+  tags and slices; the editor imports `.ase`/`.aseprite` into the current
+  asset and preserves imported frame dimensions.
 - Integration tests for palette, timing, tags, slices and every export, plus
   Playwright coverage for import, drawing/selection, background removal, GIF
-  download and the palette lock.
+  download, scripts, linked layers, tilemaps and the palette lock.
+- A fresh Langfuse ask trace (`aa992884…`) reads back with five observations
+  and passes `tools/trace-check.mjs --run … --role ask`.
 
 Still open from the matrix above:
 
-- Named slices in binary `.ase` now round-trip too; frames, layers, groups,
-  linked cels, palette, tags and slices all cross `.pxl` and `.ase`. The
-  editor can import an `.ase`/`.aseprite` file into the current asset, and
-  imported frame dimensions survive the asset read path.
 - Tilemap authoring with persistent tile-index layers; edge-aware tile
   stamping, tile fill, tileset packaging, tilemap JSON recovery/apply from the editor, tile preview, seam reports and
   tile-size suggestions are in.
