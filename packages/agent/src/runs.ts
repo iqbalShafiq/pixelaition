@@ -6,6 +6,7 @@ import {
   type CritiqueIssue,
   type FrameBuffer,
   type FrameTag,
+  type Slice,
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { toolNamesForRole } from "./tasks/roles.js";
@@ -68,6 +69,7 @@ export type FrameChange =
   | { type: "palette"; palette: string[] }
   | { type: "duration"; frameId: string; durationMs: number }
   | { type: "tags"; tags: FrameTag[] }
+  | { type: "slices"; slices: Slice[] }
   | { type: "resize"; width: number; height: number }
   | {
       type: "delete";
@@ -158,6 +160,7 @@ export type RunAsset = {
     durationMs?: number;
   }>;
   tags?: FrameTag[];
+  slices?: Slice[];
 };
 
 /** One Jev gate call, for the run's trace. */
@@ -185,6 +188,7 @@ export type RunBinding = {
   palette: string[];
   paletteLocked?: boolean;
   tags?: FrameTag[];
+  slices?: Slice[];
   width?: number;
   height?: number;
   style: StyleGuide;
@@ -346,6 +350,7 @@ export function bindRun(runId: string, binding: RunBinding): void {
     ),
     palette: [...binding.palette],
     ...(binding.tags ? { tags: binding.tags.map((tag) => ({ ...tag })) } : {}),
+    ...(binding.slices ? { slices: binding.slices.map((slice) => ({ ...slice })) } : {}),
     approvedScope: new Set(binding.approvedScope),
     touchedFrames: new Set(binding.touchedFrames),
     strokes: [...binding.strokes],

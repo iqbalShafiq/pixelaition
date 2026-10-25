@@ -64,6 +64,24 @@ export const frameSchema = z.object({
   durationMs: z.number().int().min(10).max(60_000).optional(),
 });
 
+export const sliceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(40),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  nineSlice: z
+    .object({
+      left: z.number().int().min(0),
+      right: z.number().int().min(0),
+      top: z.number().int().min(0),
+      bottom: z.number().int().min(0),
+    })
+    .optional(),
+  pivot: z.object({ x: z.number().int(), y: z.number().int() }).optional(),
+});
+
 export const assetSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
@@ -71,6 +89,7 @@ export const assetSchema = z.object({
   height: z.number().int().min(MIN_SIZE).max(MAX_SIZE),
   palette: z.array(hex).min(2).max(256),
   frames: z.array(frameSchema).min(1),
+  slices: z.array(sliceSchema).optional(),
   tags: z
     .array(
       z.object({

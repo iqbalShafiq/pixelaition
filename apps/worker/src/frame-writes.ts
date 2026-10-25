@@ -258,6 +258,19 @@ export function frameWrites(
           runId: publicRunId,
           snapshot: { durationMs: change.durationMs },
         });
+      } else if (change.type === "slices") {
+        await db
+          .update(assets)
+          .set({ slices: change.slices, updatedAt: new Date() })
+          .where(eq(assets.id, assetId));
+        await createVersion(db, {
+          assetId,
+          scope: "asset",
+          kind: "slices",
+          author: "agent",
+          runId: publicRunId,
+          snapshot: { slices: change.slices },
+        });
       } else if (change.type === "tags") {
         await db.transaction(async (tx) => {
           await tx.delete(frameTags).where(eq(frameTags.assetId, assetId));

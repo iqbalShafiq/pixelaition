@@ -23,7 +23,7 @@ const encoderFactory = (() => {
   return (module.GIFEncoder ??
     fallback?.GIFEncoder ??
     fallback?.default ??
-    module.default) as () => ReturnType<typeof import("gifenc").GIFEncoder>;
+    module.default) as () => ReturnType<typeof gifencNs.GIFEncoder>;
 })();
 const GIFEncoder = encoderFactory;
 

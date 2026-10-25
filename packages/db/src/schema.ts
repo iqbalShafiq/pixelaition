@@ -111,6 +111,8 @@ export const assets = pgTable("assets", {
   palette: jsonb("palette").notNull(),
   /** When true, neither the editor nor an agent may add, remove or reorder. */
   paletteLocked: boolean("palette_locked").notNull().default(false),
+  /** Named export slices with optional nine-slice borders and pivot. */
+  slices: jsonb("slices").notNull().default([]),
   /** Shared social copy deck; sprite frames ignore it. */
   copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

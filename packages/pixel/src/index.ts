@@ -58,6 +58,7 @@ export {
   pixelProjectSchema,
   styleGuideSchema,
   textLayerSchema,
+  sliceSchema,
 } from "./schema.js";
 export {
   MAX_COLORS,
@@ -77,6 +78,7 @@ export type {
   BlendMode,
   Camera,
   FrameTag,
+  Slice,
   Command,
   CommandResult,
   CritiqueIssue,
@@ -90,3 +92,5 @@ export type {
   TagDirection,
   TextLayerSpec,
 } from "./types.js";
+
+export { seamReport, type SeamReport } from "./tiling.js";

@@ -3,6 +3,7 @@ import {
   renderFrame,
   type FrameBuffer,
   type FrameTag,
+  type Slice,
 } from "@pixelaition/pixel";
 import { PNG } from "pngjs";
 
@@ -19,6 +20,7 @@ export type SheetOptions = {
   scale?: number;
   background?: string;
   imageName?: string;
+  slices?: Slice[];
 };
 
 export type AtlasFrame = {
@@ -41,6 +43,7 @@ export type SheetAtlas = {
   scale: number;
   frames: AtlasFrame[];
   tags: FrameTag[];
+  slices: Slice[];
 };
 
 export type SheetResult = {
@@ -118,7 +121,7 @@ export function framesToSheet(
     });
   });
   return {
-    png: PNG.sync.write(image),
+    png: PNG.sync.write(image) as unknown as Uint8Array,
     atlas: {
       format: "pixelaition-atlas",
       version: 1,
@@ -128,6 +131,7 @@ export function framesToSheet(
       scale,
       frames: atlasFrames,
       tags,
+      slices: options.slices ?? [],
     },
     columns,
     rows,

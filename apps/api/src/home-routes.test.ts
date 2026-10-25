@@ -220,7 +220,10 @@ describe.skipIf(!db)("home runs route", () => {
       intent: "draw",
       project: { id: projectId, confidence: 0.8 },
       guardrail: { action: "pass" },
-      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      decision: {
+        usage: { input: 100, output: 10, total: 110, cost: 0.00001 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     stubProviders();
@@ -244,7 +247,10 @@ describe.skipIf(!db)("home runs route", () => {
       intent: "draw",
       project: { id: projectId, confidence: 0.8 },
       guardrail: { action: "pass" },
-      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      decision: {
+        usage: { input: 100, output: 10, total: 110, cost: 0.00001 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     stubProviders();
@@ -323,7 +329,10 @@ describe.skipIf(!db)("home runs route", () => {
       intent: "draw",
       project: { id: projectId, confidence: 0.8 },
       guardrail: { action: "pass" },
-      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      decision: {
+        usage: { input: 100, output: 10, total: 110, cost: 0.00001 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     await live
@@ -350,7 +359,10 @@ describe.skipIf(!db)("home runs route", () => {
       intent: "draw",
       project: { id: "new", confidence: 0.6 },
       guardrail: { action: "pass" },
-      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      decision: {
+        usage: { input: 100, output: 10, total: 110, cost: 0.00001 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     stubProviders();
@@ -378,7 +390,10 @@ describe.skipIf(!db)("home runs route", () => {
         severity: 0.1,
         usage: { input: 400, output: 40, total: 440, cost: 0.00002 },
       },
-      decision: { usage: { input: 500, output: 60, total: 560, cost: 0.00003 } },
+      decision: {
+        usage: { input: 500, output: 60, total: 560, cost: 0.00003 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     stubProviders();
@@ -409,7 +424,10 @@ describe.skipIf(!db)("home runs route", () => {
       intent: "draw",
       project: { id: projectId, confidence: 0.8 },
       guardrail: { action: "pass" },
-      decision: { usage: { input: 100, output: 10, total: 110, cost: 0.00001 } },
+      decision: {
+        usage: { input: 100, output: 10, total: 110, cost: 0.00001 },
+        shape: { workers: 1, review: false },
+      },
       expiresAt: new Date(Date.now() + 60_000),
     });
     stubProviders();

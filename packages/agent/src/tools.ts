@@ -15,11 +15,13 @@ import {
   moveFrame,
   emptyPixels,
   normalizeHex,
+  seamReport,
   type Asset,
   type Command,
   type Frame,
   type FrameBuffer,
   type FrameTag,
+  type Slice,
   type TextLayerSpec,
 } from "@pixelaition/pixel";
 import { drawText } from "@pixelaition/artboard";
@@ -1838,6 +1840,89 @@ export function createPixelTools(
     },
   });
 
+  const checkTiling = createTool({
+    name: "check_tiling",
+    description:
+      "Measure whether the frame's composited pixels meet when tiled. Returns mismatch counts for the left/right and top/bottom seams.",
+    inputSchema: z.object({ frameId: z.string().optional() }),
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      return { frameId: frame.id, name: frame.name, ...seamReport(frame.buffer) };
+    },
+  });
+
+  const readSlices = createTool({
+    name: "read_slices",
+    description:
+      "Read the asset's export slices, including nine-slice borders and pivots.",
+    inputSchema: z.object({}),
+    execute: (_input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      return { slices: run.slices ?? [] };
+    },
+  });
+
+  const setSlices = createTool({
+    name: "set_slices",
+    description:
+      "Replace the asset's export slices. Each slice is a named rectangle inside the asset canvas; optional nine-slice borders and a pivot ride the sheet atlas.",
+    inputSchema: z.object({
+      slices: z
+        .array(
+          z.object({
+            id: z.string().optional(),
+            name: z.string().min(1).max(40),
+            x: z.number().int().nonnegative(),
+            y: z.number().int().nonnegative(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+            nineSlice: z
+              .object({
+                left: z.number().int().nonnegative(),
+                right: z.number().int().nonnegative(),
+                top: z.number().int().nonnegative(),
+                bottom: z.number().int().nonnegative(),
+              })
+              .optional(),
+            pivot: z.object({ x: z.number().int(), y: z.number().int() }).optional(),
+          }),
+        )
+        .max(256),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      if (!run.onFrameChange) throw new Error("This run cannot save slices.");
+      const width = run.width ?? 0;
+      const height = run.height ?? 0;
+      const names = new Set<string>();
+      const slices: Slice[] = input.slices.map((slice) => {
+        const name = slice.name.trim();
+        if (!name) throw new Error("A slice needs a name.");
+        if (names.has(name.toLowerCase()))
+          throw new Error(`Two slices are named ${name}.`);
+        names.add(name.toLowerCase());
+        if (slice.x + slice.width > width || slice.y + slice.height > height) {
+          throw new Error(`Slice ${name} reaches outside the ${width}×${height} canvas.`);
+        }
+        if (
+          slice.nineSlice &&
+          slice.nineSlice.left + slice.nineSlice.right > slice.width
+        ) {
+          throw new Error(`Slice ${name} has nine-slice borders wider than the slice.`);
+        }
+        return { ...slice, id: slice.id ?? crypto.randomUUID() } as Slice;
+      });
+      await run.onFrameChange({ type: "slices", slices });
+      run.slices = slices;
+      return { slices };
+    },
+  });
+
   const readTimeline = createTool({
     name: "read_timeline",
     description:
@@ -1996,6 +2081,128 @@ export function createPixelTools(
         }
       }
       return { ok: issues.length === 0, issues, frames, tags: run.tags ?? [] };
+    },
+  });
+
+  const removeBackground = createTool({
+    name: "remove_background",
+    description:
+      "Erase a flat background from a layer. By default it samples the top-left pixel and removes the connected border region; tolerance widens the match and edgesOnly false removes every matching pixel.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      color: z.number().int().nonnegative().optional(),
+      tolerance: z.number().min(0).max(255).optional(),
+      edgesOnly: z.boolean().optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const { frameId, ...background } = input;
+      const edited = editFrame(run, frameId, {
+        type: "removeBackground",
+        ...background,
+      });
+      run.onStroke?.({ label: "background", points: [] }, edited.buffer, edited.id);
+      return { committed: true };
+    },
+  });
+
+  const addLayerGroup = createTool({
+    name: "add_layer_group",
+    description:
+      "Create a layer group on the current frame. Layers move into it with move_layer_to_group; groups use the same opacity and visibility model as layers.",
+    inputSchema: z.object({ name: z.string().min(1).max(40) }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const id = crypto.randomUUID();
+      const edited = editFrame(run, undefined, {
+        type: "addLayerGroup",
+        id,
+        name: input.name,
+      });
+      run.onStroke?.({ label: "groups", points: [] }, edited.buffer, edited.id);
+      return { groupId: id, name: input.name };
+    },
+  });
+
+  const setLayerGroupVisible = createTool({
+    name: "set_layer_group_visible",
+    description:
+      "Show or hide a layer group, which hides every layer and group inside it.",
+    inputSchema: z.object({ groupId: z.string(), visible: z.boolean() }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerGroupVisible",
+        groupId: input.groupId,
+        visible: input.visible,
+      });
+      run.onStroke?.({ label: "groups", points: [] }, edited.buffer, edited.id);
+      return input;
+    },
+  });
+
+  const setLayerGroupOpacity = createTool({
+    name: "set_layer_group_opacity",
+    description: "Set a layer group's opacity from 0 to 1; nested groups multiply it.",
+    inputSchema: z.object({ groupId: z.string(), opacity: z.number().min(0).max(1) }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerGroupOpacity",
+        groupId: input.groupId,
+        opacity: input.opacity,
+      });
+      run.onStroke?.({ label: "groups", points: [] }, edited.buffer, edited.id);
+      return input;
+    },
+  });
+
+  const removeLayerGroup = createTool({
+    name: "remove_layer_group",
+    description:
+      "Delete a layer group; its layers and child groups move up to the deleted group's parent rather than being deleted.",
+    inputSchema: z.object({ groupId: z.string() }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "removeLayerGroup",
+        groupId: input.groupId,
+      });
+      run.onStroke?.({ label: "groups", points: [] }, edited.buffer, edited.id);
+      return input;
+    },
+  });
+
+  const moveLayerToGroup = createTool({
+    name: "move_layer_to_group",
+    description:
+      "Put a layer into a group, or pass null to take it out. A layer keeps its pixel data and stack position.",
+    inputSchema: z.object({
+      layerId: z.string(),
+      groupId: z.string().nullable(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "moveLayerToGroup",
+        layerId: input.layerId,
+        groupId: input.groupId,
+      });
+      run.onStroke?.({ label: "groups", points: [] }, edited.buffer, edited.id);
+      return input;
     },
   });
 
@@ -2855,6 +3062,7 @@ export function createPixelTools(
     eraseStroke,
     drawLine,
     drawEllipse,
+    removeBackground,
     moveRegionTool,
     rotateRegionTool,
     floodFill,
@@ -2874,12 +3082,20 @@ export function createPixelTools(
     editTextTool,
     renameLayerTool,
     setLayerVisibleTool,
+    checkTiling,
+    readSlices,
+    setSlices,
     readTimeline,
     setFrameDuration,
     setTags,
     addTag,
     deleteTag,
     checkTimeline,
+    addLayerGroup,
+    setLayerGroupVisible,
+    setLayerGroupOpacity,
+    removeLayerGroup,
+    moveLayerToGroup,
     setLayerOpacity,
     setLayerBlend,
     setLayerLocked,

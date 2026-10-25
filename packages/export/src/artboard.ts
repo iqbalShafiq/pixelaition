@@ -27,12 +27,13 @@ export function artboardToPng(image: PaletteImage): Uint8Array {
   const rgba = flatten(image);
   const png = new PNG({ width: image.width, height: image.height });
   png.data.set(rgba);
-  return PNG.sync.write(png);
+  return PNG.sync.write(png) as unknown as Uint8Array;
 }
 
 export function artboardToJpg(image: PaletteImage, background = "#0a0a09"): Uint8Array {
   const rgba = flatten(image, background);
-  return encodeJpeg({ data: rgba, width: image.width, height: image.height }, 92).data;
+  return encodeJpeg({ data: rgba, width: image.width, height: image.height }, 92)
+    .data as unknown as Uint8Array;
 }
 
 export function encodeArtboard(

@@ -16,6 +16,7 @@ const READ_TOOLS: readonly string[] = [
   "list_project_frames",
   "read_frame",
   "read_timeline",
+  "read_slices",
   "read_region",
   "read_palette",
   "preview_frame",
@@ -34,6 +35,7 @@ const PAINT_TOOLS: readonly string[] = [
   "erase_stroke",
   "draw_line",
   "draw_ellipse",
+  "remove_background",
   "move_region",
   "rotate_region",
   "flood_fill",
@@ -86,7 +88,13 @@ const SUPERVISOR_TOOLS: readonly string[] = [
   "reorder_palette",
   "resize_canvas",
   "resize_frame",
+  "add_layer_group",
+  "set_layer_group_visible",
+  "set_layer_group_opacity",
+  "remove_layer_group",
+  "move_layer_to_group",
   "set_frame_duration",
+  "set_slices",
   "set_tags",
   "add_tag",
   "delete_tag",
@@ -99,6 +107,7 @@ const REVIEW_TOOLS: readonly string[] = [
   "critique_frame",
   "check_animation",
   "check_timeline",
+  "check_tiling",
 ];
 
 /** Frame switching is limited to the frames a writer owns. */

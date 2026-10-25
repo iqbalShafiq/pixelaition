@@ -1,4 +1,10 @@
-import type { BlendMode, FrameTag, LayerGroup, TextLayerSpec } from "@pixelaition/pixel";
+import type {
+  BlendMode,
+  FrameTag,
+  LayerGroup,
+  Slice,
+  TextLayerSpec,
+} from "@pixelaition/pixel";
 
 export type LayerDto = {
   id: string;
@@ -40,6 +46,7 @@ export type AssetDto = {
   palette: string[];
   paletteLocked: boolean;
   tags?: FrameTag[];
+  slices?: Slice[];
   copy: CopyDeck;
   frames: FrameDto[];
   projectId: string;

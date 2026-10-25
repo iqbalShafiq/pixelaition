@@ -2,6 +2,7 @@ import {
   composite,
   ellipsePoints,
   hexToRgba,
+  renderFrameDocument,
   stepZoom,
   zoomAt,
   type Camera,
@@ -158,19 +159,9 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
   const context = canvas.getContext("2d");
   if (context) {
     const image = context.createImageData(doc.width, doc.height);
-    const indexes = composite(doc);
-    for (let index = 0; index < indexes.length; index += 1) {
-      const value = indexes[index] ?? 0;
-      const offset = index * 4;
-      // Transparent pixels stay transparent: the field pattern drawn behind the
-      // bitmap is what shows through as the checker.
-      if (value === 0) continue;
-      const [r, g, b, a] = hexToRgba(doc.palette[value] ?? "#000000");
-      image.data[offset] = r;
-      image.data[offset + 1] = g;
-      image.data[offset + 2] = b;
-      image.data[offset + 3] = a;
-    }
+    // One compositor for the canvas and every export: opacity, blend modes and
+    // groups must look the same here as they do in a PNG.
+    image.data.set(renderFrameDocument(doc).data);
     context.putImageData(image, 0, 0);
   }
   cache.set(doc, canvas);

@@ -26,6 +26,7 @@ import { paletteFromImage } from "@pixelaition/pixel";
 import {
   Check,
   Copy,
+  Folder,
   Menu as MenuIcon,
   Minus,
   Pencil,
@@ -720,7 +721,12 @@ export function LayerPanel({
   onBlend,
   onLock,
   onDuplicate,
+  onRemoveBackground,
   onAdd,
+  onAddGroup,
+  onToggleGroup,
+  onRemoveGroup,
+  onMoveGroup,
   onRename,
   onDelete,
   onSelectElement,
@@ -742,7 +748,12 @@ export function LayerPanel({
   onBlend?: (layerId: string, blend: (typeof blendModes)[number]) => void;
   onLock?: (layerId: string, locked: boolean) => void;
   onDuplicate?: (layerId: string) => void;
+  onRemoveBackground?: (layerId: string) => void;
   onAdd?: () => void;
+  onAddGroup?: () => void;
+  onToggleGroup?: (groupId: string, visible: boolean) => void;
+  onRemoveGroup?: (groupId: string) => void;
+  onMoveGroup?: (layerId: string, groupId: string | null) => void;
   onRename: (layerId: string, name: string) => void;
   onDelete: (layerId: string) => void;
   onSelectElement?: (id: string) => void;
@@ -775,10 +786,19 @@ export function LayerPanel({
       className="min-h-0 flex-1"
       title="Layers"
       action={
-        buffer && onAdd ? (
-          <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
-            <Plus />
-          </IconButton>
+        buffer && (onAdd || onAddGroup) ? (
+          <span className="flex items-center gap-1">
+            {onAddGroup ? (
+              <IconButton label="Add layer group" disabled={locked} onClick={onAddGroup}>
+                <Folder />
+              </IconButton>
+            ) : null}
+            {onAdd ? (
+              <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
+                <Plus />
+              </IconButton>
+            ) : null}
+          </span>
         ) : undefined
       }
     >
@@ -819,6 +839,33 @@ export function LayerPanel({
               </IconButton>
             </li>
           ) : null}
+          {(buffer?.groups ?? []).map((group) => (
+            <li
+              key={group.id}
+              className="flex min-w-0 items-center gap-2 border-2 border-line/60 bg-raised/40 px-2 py-1.5"
+            >
+              <Checkbox
+                label={`Show ${group.name}`}
+                hideLabel
+                checked={group.visible}
+                disabled={locked}
+                onChange={() => onToggleGroup?.(group.id, !group.visible)}
+              />
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-accent">
+                {group.name}
+              </span>
+              <span className="shrink-0 font-mono text-[9px] text-muted">group</span>
+              {onRemoveGroup ? (
+                <IconButton
+                  label={`Remove ${group.name}`}
+                  disabled={locked}
+                  onClick={() => onRemoveGroup(group.id)}
+                >
+                  <Trash />
+                </IconButton>
+              ) : null}
+            </li>
+          ))}
           {elements.map((element) => {
             const visible = element.visible !== false;
             const current = selectedElementId === element.id;
@@ -1039,6 +1086,35 @@ export function LayerPanel({
                                   }
                                 />
                               </Field>
+                              {onMoveGroup ? (
+                                <Field label="Group" htmlFor={`group-${layer.id}`}>
+                                  <SelectControl
+                                    id={`group-${layer.id}`}
+                                    label="Group"
+                                    value={layer.parentGroupId ?? ""}
+                                    options={[
+                                      { value: "", label: "No group" },
+                                      ...(buffer?.groups ?? []).map((group) => ({
+                                        value: group.id,
+                                        label: group.name,
+                                      })),
+                                    ]}
+                                    onChange={(next) =>
+                                      onMoveGroup(layer.id, next || null)
+                                    }
+                                  />
+                                </Field>
+                              ) : null}
+                              {onRemoveBackground ? (
+                                <Button
+                                  tone="ghost"
+                                  className="justify-start px-2 py-1 text-pixel-label"
+                                  disabled={locked || layer.locked}
+                                  onClick={() => onRemoveBackground(layer.id)}
+                                >
+                                  Remove background
+                                </Button>
+                              ) : null}
                             </div>
                           </Popover>
                         ) : null}

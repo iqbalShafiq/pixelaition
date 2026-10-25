@@ -106,6 +106,18 @@ export type FrameTag = {
   color?: string;
 };
 
+/** A named rectangle used for export metadata; the nine-slice borders and pivot are optional. */
+export type Slice = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  nineSlice?: { left: number; right: number; top: number; bottom: number };
+  pivot?: { x: number; y: number };
+};
+
 export type Frame = {
   id: string;
   name: string;
@@ -127,6 +139,7 @@ export type Asset = {
   palette: string[];
   frames: Frame[];
   tags?: FrameTag[];
+  slices?: Slice[];
 };
 
 export type PixelProject = {
@@ -214,6 +227,16 @@ export type Command =
       eraseSource: boolean;
     }
   | {
+      type: "removeBackground";
+      layerId: string;
+      /** Palette index to remove; omitted samples the top-left border pixel. */
+      color?: number;
+      /** 0 keeps only exact matches; higher values remove near colours. */
+      tolerance?: number;
+      /** When true only the connected border region is removed. */
+      edgesOnly?: boolean;
+    }
+  | {
       type: "dither";
       layerId: string;
       x: number;
@@ -246,6 +269,17 @@ export type Command =
   | { type: "setLayerBlend"; layerId: string; blend: BlendMode }
   | { type: "setLayerLocked"; layerId: string; locked: boolean }
   | { type: "duplicateLayer"; layerId: string; id: string; name: string }
+  | {
+      type: "addLayerGroup";
+      id: string;
+      name: string;
+      parentGroupId?: string;
+    }
+  | { type: "renameLayerGroup"; groupId: string; name: string }
+  | { type: "setLayerGroupVisible"; groupId: string; visible: boolean }
+  | { type: "setLayerGroupOpacity"; groupId: string; opacity: number }
+  | { type: "removeLayerGroup"; groupId: string }
+  | { type: "moveLayerToGroup"; layerId: string; groupId: string | null }
   | { type: "removeLayer"; layerId: string }
   | { type: "mirror" }
   /**

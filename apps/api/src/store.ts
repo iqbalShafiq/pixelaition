@@ -344,6 +344,7 @@ function asPixelAsset(record: AssetRecord): Asset {
         durationMs: frame.durationMs,
       })),
     tags: record.tags as never,
+    slices: (record.slices ?? []) as never,
   };
 }
 
@@ -2239,5 +2240,27 @@ export async function replaceFrameTags(
   });
   const next = await getAssetRecord(db, userId, assetId);
   if (next) await recordAssetVersion(db, assetId, "tags", next);
+  return { asset: next };
+}
+
+/** Replace the asset-level slice list used by atlas export and pivots. */
+export async function updateAssetSlices(
+  db: Database,
+  userId: string,
+  assetId: string,
+  slices: unknown[],
+) {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  await db
+    .update(assets)
+    .set({ slices, updatedAt: new Date() })
+    .where(eq(assets.id, assetId));
+  const next = await getAssetRecord(db, userId, assetId);
+  if (next) await recordAssetVersion(db, assetId, "slices", next);
   return { asset: next };
 }

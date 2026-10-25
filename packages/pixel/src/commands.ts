@@ -1,4 +1,5 @@
 import { cloneBuffer, composite, layerById, replaceLayer } from "./buffer.js";
+import { colorDistance, hexToRgba } from "./color.js";
 import { clonePixels, inBounds, indexOf, normalizeHex, readCell } from "./pixels.js";
 import {
   MAX_COLORS,
@@ -280,6 +281,12 @@ function lockedLayerFor(buffer: FrameBuffer, command: Command): Layer | undefine
     "setLayerBlend",
     "setLayerLocked",
     "duplicateLayer",
+    "addLayerGroup",
+    "renameLayerGroup",
+    "setLayerGroupVisible",
+    "setLayerGroupOpacity",
+    "removeLayerGroup",
+    "moveLayerToGroup",
     "removeLayer",
   ]);
   if (readOnly.has(command.type)) return undefined;
@@ -615,6 +622,142 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       layers.splice(index + 1, 0, copy);
       return { ok: true, buffer: { ...buffer, layers } };
     }
+    case "addLayerGroup": {
+      const groups = buffer.groups ?? [];
+      if (groups.some((group) => group.id === command.id)) {
+        return fail("GROUP_EXISTS", "That layer group id is already on this frame.");
+      }
+      if (
+        command.parentGroupId &&
+        !groups.some((group) => group.id === command.parentGroupId)
+      ) {
+        return fail("GROUP_NOT_FOUND", "That parent layer group is not on this frame.");
+      }
+      const name = command.name.trim();
+      if (!name) return fail("GROUP_NAME", "A layer group needs a name.");
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          groups: [
+            ...groups,
+            {
+              id: command.id,
+              name,
+              visible: true,
+              ...(command.parentGroupId ? { parentGroupId: command.parentGroupId } : {}),
+            },
+          ],
+        },
+      };
+    }
+    case "renameLayerGroup": {
+      const groups = buffer.groups ?? [];
+      if (!groups.some((group) => group.id === command.groupId)) {
+        return fail("GROUP_NOT_FOUND", "That layer group is not on this frame.");
+      }
+      const name = command.name.trim();
+      if (!name) return fail("GROUP_NAME", "A layer group needs a name.");
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          groups: groups.map((group) =>
+            group.id === command.groupId ? { ...group, name } : group,
+          ),
+        },
+      };
+    }
+    case "setLayerGroupVisible": {
+      const groups = buffer.groups ?? [];
+      if (!groups.some((group) => group.id === command.groupId)) {
+        return fail("GROUP_NOT_FOUND", "That layer group is not on this frame.");
+      }
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          groups: groups.map((group) =>
+            group.id === command.groupId ? { ...group, visible: command.visible } : group,
+          ),
+        },
+      };
+    }
+    case "setLayerGroupOpacity": {
+      const groups = buffer.groups ?? [];
+      if (!groups.some((group) => group.id === command.groupId)) {
+        return fail("GROUP_NOT_FOUND", "That layer group is not on this frame.");
+      }
+      const opacity = Math.max(0, Math.min(1, command.opacity));
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          groups: groups.map((group) =>
+            group.id === command.groupId ? { ...group, opacity } : group,
+          ),
+        },
+      };
+    }
+    case "removeLayerGroup": {
+      const groups = buffer.groups ?? [];
+      const removed = groups.find((group) => group.id === command.groupId);
+      if (!removed)
+        return fail("GROUP_NOT_FOUND", "That layer group is not on this frame.");
+      const parent = removed.parentGroupId;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          groups: groups
+            .filter((group) => group.id !== command.groupId)
+            .map((group) =>
+              group.parentGroupId === command.groupId
+                ? {
+                    ...group,
+                    ...(parent
+                      ? { parentGroupId: parent }
+                      : { parentGroupId: undefined }),
+                  }
+                : group,
+            ),
+          layers: buffer.layers.map((layer) =>
+            layer.parentGroupId === command.groupId
+              ? {
+                  ...layer,
+                  ...(parent ? { parentGroupId: parent } : { parentGroupId: undefined }),
+                }
+              : layer,
+          ),
+        },
+      };
+    }
+    case "moveLayerToGroup": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (
+        command.groupId &&
+        !(buffer.groups ?? []).some((group) => group.id === command.groupId)
+      ) {
+        return fail("GROUP_NOT_FOUND", "That layer group is not on this frame.");
+      }
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId
+              ? {
+                  ...layer,
+                  ...(command.groupId
+                    ? { parentGroupId: command.groupId }
+                    : { parentGroupId: undefined }),
+                }
+              : layer,
+          ),
+        },
+      };
+    }
     case "removeLayer": {
       const gate = requireLayer(buffer, command.layerId);
       if ("ok" in gate) return gate;
@@ -745,6 +888,61 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
             )
           ] = source[row * command.width + column] ?? 0;
         }
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
+    case "removeBackground": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const sample = command.color ?? readCell(layer.pixels, indexOf(buffer.width, 0, 0));
+      if (!paletteIndexOk(buffer, sample)) {
+        return fail("PALETTE_INDEX", "The background colour is not in the palette.");
+      }
+      const tolerance = Math.max(0, Math.min(255, command.tolerance ?? 0));
+      const sampleRgba = hexToRgba(buffer.palette[sample] ?? "#000000");
+      const sampleRgb = [sampleRgba[0], sampleRgba[1], sampleRgba[2]] as const;
+      const matches = (index: number) => {
+        if (index === 0) return false;
+        const hex = buffer.palette[index];
+        if (hex === undefined) return false;
+        const [r, g, b] = hexToRgba(hex);
+        return colorDistance([r, g, b], sampleRgb) <= tolerance;
+      };
+      const edgesOnly = command.edgesOnly ?? true;
+      if (!edgesOnly) {
+        const next = clonePixels(layer.pixels);
+        for (let index = 0; index < next.length; index += 1) {
+          const color = readCell(next, index);
+          if (matches(color)) next[index] = 0;
+        }
+        return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+      }
+      const next = clonePixels(layer.pixels);
+      const queue: Point[] = [];
+      for (let x = 0; x < buffer.width; x += 1) {
+        queue.push({ x, y: 0 }, { x, y: buffer.height - 1 });
+      }
+      for (let y = 0; y < buffer.height; y += 1) {
+        queue.push({ x: 0, y }, { x: buffer.width - 1, y });
+      }
+      const seen = new Set<number>();
+      while (queue.length > 0) {
+        const point = queue.pop();
+        if (!point) continue;
+        if (!inBounds(buffer.width, buffer.height, point.x, point.y)) continue;
+        const index = indexOf(buffer.width, point.x, point.y);
+        if (seen.has(index)) continue;
+        seen.add(index);
+        if (!matches(readCell(next, index))) continue;
+        next[index] = 0;
+        queue.push(
+          { x: point.x + 1, y: point.y },
+          { x: point.x - 1, y: point.y },
+          { x: point.x, y: point.y + 1 },
+          { x: point.x, y: point.y - 1 },
+        );
       }
       return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
     }

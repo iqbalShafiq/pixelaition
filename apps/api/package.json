@@ -14,14 +14,15 @@
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.7",
     "@pixelaition/agent": "workspace:*",
+    "@pixelaition/artboard": "workspace:*",
     "@pixelaition/db": "workspace:*",
     "@pixelaition/export": "workspace:*",
     "@pixelaition/pixel": "workspace:*",
     "better-auth": "^1.7.7",
     "drizzle-orm": "^0.45.4",
     "express": "^5.2.1",
-    "zod": "^4.6.5",
-    "@pixelaition/artboard": "workspace:*"
+    "sharp": "^0.35.5",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@pixelaition/config": "workspace:*",

@@ -262,6 +262,7 @@ export function ViewPanel({
   onSymmetry,
   zones,
   onZones,
+  onTile,
 }: {
   grid: boolean;
   checker: boolean;
@@ -274,6 +275,7 @@ export function ViewPanel({
   /** Scene-backed frames show safe-zone visibility instead of pixel layers. */
   zones?: boolean;
   onZones?: (next: boolean) => void;
+  onTile?: () => void;
 }) {
   if (onZones) {
     return (
@@ -307,6 +309,11 @@ export function ViewPanel({
         <IconButton label="Onion skin" active={onion} onClick={() => onOnion(!onion)}>
           <Layers />
         </IconButton>
+        {onTile ? (
+          <IconButton label="Tile preview" subtle onClick={onTile}>
+            <Grid />
+          </IconButton>
+        ) : null}
       </div>
       {onSymmetry ? (
         <div className="mt-1 flex items-center gap-1">

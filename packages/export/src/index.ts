@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/triple-slash-reference -- ambient declarations for untyped encoders */
 /// <reference path="./gifenc.d.ts" />
 /// <reference path="./upng-js.d.ts" />
+/* eslint-enable @typescript-eslint/triple-slash-reference */
 import {
   pixelProjectSchema,
   type FrameBuffer,
@@ -25,7 +27,7 @@ export function frameToPng(buffer: FrameBuffer, scale: number): Uint8Array {
   const image = rasterize(buffer, scale);
   const png = new PNG({ width: image.width, height: image.height });
   png.data.set(image.data);
-  return PNG.sync.write(png);
+  return PNG.sync.write(png) as unknown as Uint8Array;
 }
 
 export function frameToJpg(
@@ -35,7 +37,7 @@ export function frameToJpg(
 ): Uint8Array {
   const image = rasterize(buffer, scale, background);
   return encodeJpeg({ data: image.data, width: image.width, height: image.height }, 90)
-    .data;
+    .data as unknown as Uint8Array;
 }
 
 export function frameToSvg(buffer: FrameBuffer, scale: ExportScale): string {
@@ -83,3 +85,7 @@ export {
   type SheetOptions,
   type SheetResult,
 } from "./sheet.js";
+
+export { sheetToAsepriteJson, type AsepriteJson, type AsepriteTag } from "./aseprite.js";
+
+export { atlasForEngine, atlasPresets, type AtlasPreset } from "./atlas-presets.js";

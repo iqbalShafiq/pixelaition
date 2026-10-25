@@ -16,7 +16,19 @@ const scopes = [
 ] as const;
 type Scope = (typeof scopes)[number]["id"];
 
-const formats = ["png", "jpg", "svg", "zip", "pxl", "gif", "apng", "sheet"] as const;
+const formats = [
+  "png",
+  "jpg",
+  "svg",
+  "zip",
+  "pxl",
+  "gif",
+  "apng",
+  "webp",
+  "sheet",
+  "png-sequence",
+  "aseprite-json",
+] as const;
 type Format = (typeof formats)[number];
 
 const scales = ["1", "2", "4", "8", "10"] as const;
@@ -53,13 +65,20 @@ export function ExportDialog({
   const [tagId, setTagId] = useState("");
   const [loop, setLoop] = useState("0");
   const [columns, setColumns] = useState("");
+  const [atlasPreset, setAtlasPreset] = useState("native");
   const [state, setState] = useState<{
     kind: "idle" | "busy" | "failed";
     message?: string;
   }>({ kind: "idle" });
 
   const pxlNeedsProject = format === "pxl" && scope !== "project";
-  const animated = format === "gif" || format === "apng" || format === "sheet";
+  const animated =
+    format === "gif" ||
+    format === "apng" ||
+    format === "webp" ||
+    format === "sheet" ||
+    format === "png-sequence" ||
+    format === "aseprite-json";
   const socialFormats = formats.filter((item) => item === "png" || item === "jpg");
   const available = social
     ? socialFormats
@@ -190,15 +209,26 @@ export function ExportDialog({
           </Field>
         ) : null}
         {format === "sheet" ? (
-          <Field label="Columns" htmlFor="export-columns">
-            <TextInput
-              id="export-columns"
-              inputMode="numeric"
-              value={columns}
-              placeholder="auto"
-              onChange={(event) => setColumns(event.currentTarget.value)}
-            />
-          </Field>
+          <>
+            <Field label="Columns" htmlFor="export-columns">
+              <TextInput
+                id="export-columns"
+                inputMode="numeric"
+                value={columns}
+                placeholder="auto"
+                onChange={(event) => setColumns(event.currentTarget.value)}
+              />
+            </Field>
+            <Field label="Atlas" htmlFor="export-atlas">
+              <SelectControl
+                id="export-atlas"
+                label="Atlas"
+                value={atlasPreset}
+                options={["native", "unity", "godot", "phaser"]}
+                onChange={setAtlasPreset}
+              />
+            </Field>
+          </>
         ) : null}
         {format === "jpg" || format === "zip" ? (
           <Field label="Background" htmlFor="export-background">

@@ -101,6 +101,7 @@ import {
   defaultStyle,
   frameToBuffer,
   type Frame,
+  type Slice,
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { ne, asc, and, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
@@ -1766,6 +1767,15 @@ app.post("/internal/runs", async (req, res) => {
       mode: z.enum(["draw", "ask", "compose"]).default("draw"),
       /** The social set a compose run lays out. */
       setId: z.string().optional(),
+      /** The editor selection the API passed through. */
+      selection: z
+        .object({
+          x: z.number().int().nonnegative(),
+          y: z.number().int().nonnegative(),
+          width: z.number().int().positive(),
+          height: z.number().int().positive(),
+        })
+        .optional(),
       // Jev's shape for the task: how many workers, whether a review round is
       // worth it. The API always sends it; a missing one fails loud below.
       shape: z
@@ -2010,8 +2020,12 @@ app.post("/internal/runs", async (req, res) => {
           modelVision: seesUserImages(targetSpec),
         })
       : { text: "", attachments: [] };
+  const selectionText = body.selection
+    ? `\n\nThe user selected the region x=${body.selection.x}, y=${body.selection.y}, ${body.selection.width}×${body.selection.height}. Treat that region as the edit boundary: do not change pixels outside it.`
+    : "";
   const promptWithPrior =
-    prior.text.length > 0 ? `${prior.text}\n\n${promptText}` : promptText;
+    (prior.text.length > 0 ? `${prior.text}\n\n${promptText}` : promptText) +
+    selectionText;
   // Attachments become media parts the model sees directly; a message without
   // them stays a plain string, which keeps old journals and replay simple.
   // Earlier reference images come first, in the order the prior text names.
@@ -2034,7 +2048,12 @@ app.post("/internal/runs", async (req, res) => {
   // Every drawing request runs one durable asset-draw task; only ask mode
   // stays a single read-only run.
   if (body.mode === "draw") {
-    const shape = body.shape ?? { workers: 2, review: true };
+    if (!body.shape) {
+      return res.status(400).json({
+        message: "Jev did not return a task shape; no run was started.",
+      });
+    }
+    const shape = body.shape;
     // One task per thread, checked at the last moment: the API guard runs
     // before the child rows exist, so the worker enforces it too.
     const [activeTask] = await db
@@ -3166,6 +3185,7 @@ function bindAssetRun(options: {
     palette: [...asset.palette],
     paletteLocked: asset.paletteLocked,
     tags: asset.tags,
+    slices: (asset.slices ?? []) as Slice[],
     width: asset.width,
     height: asset.height,
     style: asset.style,
@@ -4064,6 +4084,7 @@ function bindWorkspaceRun(options: {
         ),
       })),
       tags: asset.tags,
+      slices: (asset.slices ?? []) as Slice[],
     };
   };
 
@@ -4133,6 +4154,7 @@ function bindWorkspaceRun(options: {
         style: project.style as StyleGuide,
         copy: {},
         tags: [],
+        slices: [],
         createdAt: new Date(),
         updatedAt: new Date(),
         frames: asset.frames.map((frame) => ({

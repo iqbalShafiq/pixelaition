@@ -50,6 +50,8 @@ import { FormatPicker } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { ImportImageDialog } from "../components/import-image-dialog.js";
 import { TimelinePanel } from "../components/timeline-panel.js";
+import { SlicesPanel } from "../components/slices-panel.js";
+import { TilePreviewDialog } from "../components/tile-preview-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
@@ -317,6 +319,7 @@ export function EditorScreen() {
   const [checker, setChecker] = useState(true);
   const [onion, setOnion] = useState(false);
   const [symmetry, setSymmetry] = useState<"none" | "x" | "y">("none");
+  const [tileOpen, setTileOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
@@ -2892,6 +2895,7 @@ export function EditorScreen() {
             modelId,
             reasoningEffort: effort,
             ...(social ? { social: true } : {}),
+            ...(selection ? { selection } : {}),
             ...(staged.length > 0
               ? {
                   attachments: staged.map(({ mediaType, data }) => ({
@@ -3276,6 +3280,14 @@ export function EditorScreen() {
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerLocked", layerId, locked })
         }
+        onRemoveBackground={(layerId) => {
+          if (!frameId) return;
+          edit(frameId, drafts[frameId], {
+            type: "removeBackground",
+            layerId,
+            edgesOnly: true,
+          });
+        }}
         onDuplicate={(layerId) => {
           if (!frameId || !buffer) return;
           const source = buffer.layers.find((layer) => layer.id === layerId);
@@ -3288,6 +3300,34 @@ export function EditorScreen() {
             name,
           });
         }}
+        onAddGroup={() => {
+          if (!frameId || !buffer) return;
+          const groups = buffer.groups ?? [];
+          edit(frameId, drafts[frameId], {
+            type: "addLayerGroup",
+            id: crypto.randomUUID(),
+            name: `Group ${groups.length + 1}`,
+          });
+        }}
+        onToggleGroup={(groupId, visible) =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "setLayerGroupVisible",
+            groupId,
+            visible,
+          })
+        }
+        onRemoveGroup={(groupId) =>
+          frameId && edit(frameId, drafts[frameId], { type: "removeLayerGroup", groupId })
+        }
+        onMoveGroup={(layerId, groupId) =>
+          frameId &&
+          edit(frameId, drafts[frameId], {
+            type: "moveLayerToGroup",
+            layerId,
+            groupId,
+          })
+        }
         onAdd={() =>
           frameId &&
           edit(frameId, drafts[frameId], {
@@ -3373,6 +3413,23 @@ export function EditorScreen() {
     }
   }
 
+  async function saveSlices(slices: NonNullable<AssetDto["slices"]>) {
+    if (running) return;
+    try {
+      const data = await api<AssetDto>(`/api/assets/${assetId}/slices`, {
+        method: "PUT",
+        body: JSON.stringify({ slices }),
+      });
+      client.setQueryData(["asset", assetId], data);
+      notify({ title: "Slices saved" });
+    } catch (reason) {
+      notify({
+        title: "The slices did not save",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
   async function saveTags(tags: NonNullable<AssetDto["tags"]>) {
     if (running) return;
     try {
@@ -3409,6 +3466,7 @@ export function EditorScreen() {
       onChecker={setChecker}
       onOnion={setOnion}
       onSymmetry={setSymmetry}
+      onTile={() => setTileOpen(true)}
     />
   );
 
@@ -3439,6 +3497,13 @@ export function EditorScreen() {
         />
       ) : null}
       {palettePanel}
+      <SlicesPanel
+        slices={asset.data?.slices ?? []}
+        width={frame?.width ?? asset.data?.width ?? 32}
+        height={frame?.height ?? asset.data?.height ?? 32}
+        locked={locked}
+        onSave={(slices) => void saveSlices(slices)}
+      />
       {viewPanel}
       <StylePanel
         style={style}
@@ -4193,6 +4258,8 @@ export function EditorScreen() {
                   className="w-full shrink-0 [view-transition-name:composer-flight]"
                 >
                   <Composer
+                    selection={selection}
+                    onClearSelection={() => setSelection(null)}
                     frameContext={
                       frameId !== null
                         ? {
@@ -4339,6 +4406,12 @@ export function EditorScreen() {
         onPick={(presetId) => addSocialFrame.mutate(presetId)}
         onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
         busy={addSocialFrame.isPending || addCustomFrame.isPending}
+      />
+      <TilePreviewDialog
+        open={tileOpen}
+        onOpenChange={setTileOpen}
+        buffer={buffer ?? null}
+        name={frame?.name ?? asset.data?.name ?? "Frame"}
       />
       <ExportDialog
         open={exportOpen}

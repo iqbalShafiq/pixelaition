@@ -33,7 +33,8 @@
     "postinstall": "node tools/patch-anvia-openai.mjs",
     "test:integration": "dotenv -e .env -- pnpm --filter @pixelaition/api test && dotenv -e .env -- pnpm --filter @pixelaition/worker test",
     "test:e2e": "playwright test",
-    "test:e2e:install": "playwright install chromium"
+    "test:e2e:install": "playwright install chromium",
+    "cli": "pnpm --filter @pixelaition/cli start"
   },
   "lint-staged": {
     "*.{ts,tsx,js,css,md,json,yml}": "prettier --write"

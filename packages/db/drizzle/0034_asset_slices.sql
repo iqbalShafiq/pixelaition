@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ADD COLUMN "slices" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -190,6 +190,29 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(tagged.status).toBe(200);
       expect(tagged.body.tags).toHaveLength(1);
 
+      const sliced = await request(app)
+        .put(`/api/assets/${asset.id}/slices`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          slices: [
+            {
+              id: "slice-1",
+              name: "button",
+              x: 0,
+              y: 0,
+              width: 16,
+              height: 16,
+              nineSlice: { left: 4, right: 4, top: 4, bottom: 6 },
+              pivot: { x: 8, y: 12 },
+            },
+          ],
+        });
+      expect(sliced.status).toBe(200);
+      expect(sliced.body.slices[0]).toMatchObject({
+        name: "button",
+        pivot: { x: 8, y: 12 },
+      });
+
       const gif = await request(app)
         .post("/api/export")
         .set("authorization", `Bearer ${token}`)
@@ -204,6 +227,21 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         .send({ scope: "asset", projectId, assetId: asset.id, format: "apng" });
       expect(apng.status).toBe(200);
       expect(apng.headers["content-type"]).toBe("image/apng");
+
+      const webp = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "webp" });
+      expect(webp.status).toBe(200);
+      expect(webp.headers["content-type"]).toBe("image/webp");
+      expect((webp.body as Buffer).subarray(0, 4).toString("ascii")).toBe("RIFF");
+
+      const sequence = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "png-sequence" });
+      expect(sequence.status).toBe(200);
+      expect(sequence.headers["content-type"]).toBe("application/zip");
 
       const sheet = await request(app)
         .post("/api/export")

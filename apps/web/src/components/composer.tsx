@@ -33,6 +33,8 @@ export function Composer({
   onAttach,
   onRemoveAttachment,
   frameContext,
+  selection,
+  onClearSelection,
 }: {
   prompt: string;
   onPrompt: (value: string) => void;
@@ -68,6 +70,9 @@ export function Composer({
   onRemoveAttachment?: ((id: string) => void) | undefined;
   /** When present, the composer can anchor a message to the frame in view. */
   frameContext?: { name: string; enabled: boolean; onToggle: () => void } | undefined;
+  /** The editor selection this message is scoped to. */
+  selection?: { x: number; y: number; width: number; height: number } | null;
+  onClearSelection?: () => void;
 }) {
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -211,6 +216,17 @@ export function Composer({
           <span className="pixel-corners-sm flex min-h-10 items-center border-2 border-accent bg-accent/15 px-2 text-pixel-mono text-accent">
             {frameContext.name}
           </span>
+        ) : null}
+        {selection ? (
+          <button
+            type="button"
+            onClick={onClearSelection}
+            className="pixel-corners-sm flex min-h-10 items-center gap-1 border-2 border-accent/60 bg-accent/10 px-2 font-mono text-[10px] text-accent"
+            title="The agent will edit only this region"
+          >
+            {selection.width}×{selection.height} @ {selection.x},{selection.y}
+            <span aria-hidden>×</span>
+          </button>
         ) : null}
         {frameContext !== undefined ? (
           <IconButton

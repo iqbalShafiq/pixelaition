@@ -165,15 +165,24 @@ Three columns on a wide screen. Frames and layers on the left, the canvas in the
 | `V` | Select    | `G` | Fill       |
 | `B` | Pencil    | `I` | Eyedropper |
 | `E` | Eraser    | `L` | Line       |
-| `R` | Rectangle | `H` | Pan        |
+| `R` | Rectangle | `O` | Ellipse    |
+| `H` | Pan       |     |            |
 
-Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the image at one to one. The wheel zooms toward the cursor.
+Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size from 1 to 8. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the image at one to one. The wheel zooms toward the cursor.
 
-A frame keeps up to four layers. Frames are added, duplicated, renamed and deleted from the left column, and the play button steps through them. Onion skin draws the neighbouring frames underneath the one you are editing, at display opacity only. Drawing is saved 500ms after you stop.
+A selection can be copied, cut, pasted, flipped, rotated a quarter turn when square, or nudged with the arrow keys; Ctrl/Cmd+C, X, V and A do the expected thing. `All` selects the whole canvas. Mirror X/Y reflects pencil and eraser strokes. Layers carry opacity, blend mode, a lock and an optional group; the same renderer draws the canvas, PNG/JPG, GIF/APNG/WebP, SVG and sprite sheets, so a layer cannot look different per format. `Remove background` floods the connected border colour on the active layer.
+
+Frames are added, duplicated, renamed, timed and deleted from the left column. The play button uses each frame's delay instead of a fixed tick. Tags name a frame range with `forward`, `reverse` or `pingpong` direction and a loop flag. Onion skin draws the neighbouring frames underneath the one you are editing, at display opacity only. Drawing is saved 500ms after you stop.
+
+**Import.** A PNG can become one frame, one layer per horizontal strip, or a sprite sheet split by rows/columns, with optional dithering and palette mapping. Palette import maps every pixel and social scene explicitly. A palette can be locked so neither the editor nor an agent adds, removes or reorders colours.
+
+**Slices.** Named rectangles live on the asset; each can carry nine-slice borders and a pivot. Slices and tags ride the JSON atlas next to the packed frame rectangles.
+
+**Tile preview.** The view menu repeats the frame 3×3 and reports how many left/right and top/bottom edge pixels differ, so a tiling seam is measured rather than guessed.
 
 ## Export
 
-`POST /api/export` takes a scope of `frame`, `asset` or `project`, then `png`, `jpg`, `svg`, `zip` or `pxl`, at a scale of 1, 2, 4, 8 or 10.
+`POST /api/export` takes a scope of `frame`, `asset` or `project`, then `png`, `jpg`, `svg`, `zip`, `pxl`, `gif`, `apng`, `webp`, `sheet`, `png-sequence` or `aseprite-json`, at a scale of 1, 2, 4, 8 or 10. Animation formats read sprite frames only, honour each frame's delay, and accept `loop` (`0` forever, `-1` once), `tagId`, `frameIds`, `columns`, `padding` and `margin`. `sheet` returns a ZIP with the PNG and a JSON atlas; `png-sequence` returns a ZIP of numbered PNGs. Animated WebP is transcoded from the same indexed GIF on the server, so it cannot invent a second palette.
 
 ```json
 {
@@ -191,7 +200,16 @@ A frame keeps up to four layers. Frames are added, duplicated, renamed and delet
 { "format": "pixelaition", "version": 1 }
 ```
 
-Canvases run from 8 to 128 pixels. Index 0 in the palette is transparent `#00000000`.
+Canvases run from 8 to 4096 pixels. Index 0 in the palette is transparent `#00000000`.
+
+The CLI reads and writes the same `.pxl` document:
+
+```bash
+pnpm cli import hero.png --out hero.pxl --name hero --colors 32
+pnpm cli inspect hero.pxl
+pnpm cli export hero.pxl --format gif --out hero.gif
+pnpm cli export hero.pxl --format sheet --out hero-sheet.zip
+```
 
 ## MCP
 
@@ -228,6 +246,7 @@ pnpm test
 pnpm eval               # the agent evals
 pnpm eval:jev:decisions # the decision layer, 30 fixtures by 3 runs
 pnpm db:migrate
+pnpm cli --help
 ```
 
 `pnpm eval:judge` calls the model-judged metrics (`faithfulness`, `answerRelevancy`, `promptAlignment`, `abstention`, `llmScore`) and needs `AGENT_API_KEY`, because the judge runs on the agent provider.
@@ -240,9 +259,10 @@ apps/
   api/            Express API, auth, export, run proxy
   worker/         the durable runtime
   mcp/            stdio MCP server
+  cli/            .pxl import, inspect and export
 packages/
   pixel/          document, commands, camera, critique
-  export/         .pxl, PNG, JPG, SVG, ZIP
+  export/         .pxl, PNG, JPG, SVG, ZIP, GIF, APNG, sheet
   agent/          tools, decisions, instructions, evals
   db/             Drizzle schema
 docs/images/      the stills in this README

@@ -5,6 +5,7 @@ import {
   bufferToFrame,
   frameToBuffer,
   layerGroupSchema,
+  sliceSchema,
   textLayerSchema,
   type FrameBuffer,
   type FrameTag,
@@ -18,8 +19,11 @@ import {
   frameToSvg,
   framesToApng,
   framesToGif,
+  atlasForEngine,
+  atlasPresets,
   framesToSheet,
   serializeProject,
+  sheetToAsepriteJson,
   zipFiles,
 } from "@pixelaition/export";
 import {
@@ -53,6 +57,7 @@ import { artboards } from "@pixelaition/db";
 import { and, asc, count, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import express, { type NextFunction, type Request, type Response } from "express";
+import sharp from "sharp";
 import { z } from "zod";
 import { auth, db } from "./auth.js";
 import {
@@ -107,6 +112,7 @@ import {
   importFrameRecord,
   importPaletteRecord,
   replaceFrameTags,
+  updateAssetSlices,
   updateFrameDuration,
   renderSocialFrameRecord,
   updateAssetCopyRecord,
@@ -433,6 +439,8 @@ async function startRunViaWorker(
     mode: "draw" | "ask" | "compose";
     /** The social set a compose run lays out. */
     setId?: string;
+    /** The editor selection, passed through to the worker's prompt. */
+    selection?: { x: number; y: number; width: number; height: number };
     /** Jev's task shape; present for draw runs. */
     shape?: DrawTaskShape | undefined;
     usage: {
@@ -446,11 +454,6 @@ async function startRunViaWorker(
     };
   },
 ): Promise<void> {
-  if (input.mode === "draw" && input.shape?.source === "default") {
-    // Jev did not answer the shape questions; the conservative default is used
-    // and the fact is named instead of hidden.
-    console.warn("[shape] Jev did not answer; using workers=2, review=true");
-  }
   // One task per asset: the guard runs here as well as in the worker, because
   // a task's child rows may not exist yet when the second request arrives.
   if (
@@ -467,17 +470,22 @@ async function startRunViaWorker(
   }
   // A drawing request is one durable task; the API owns its public id and the
   // worker records the durable task id on the row. An ask stays a single run.
-  const taskShape: DrawTaskShape | undefined =
-    input.mode === "draw"
-      ? (input.shape ?? { workers: 2, review: true, source: "default" })
-      : undefined;
+  if (input.mode === "draw" && input.shape === undefined) {
+    return fail(
+      res,
+      502,
+      "SHAPE_UNAVAILABLE",
+      "Jev did not return a task shape; no run was started.",
+    );
+  }
+  const taskShape: DrawTaskShape | undefined = input.shape;
   const runId =
     input.mode === "draw"
       ? await insertTaskRecord(db, {
           id: randomUUID(),
           threadId: input.threadId,
           ...(input.target.scope === "asset" ? { assetId: input.target.assetId } : {}),
-          shape: taskShape ?? { workers: 2, review: true, source: "default" },
+          shape: taskShape as DrawTaskShape,
         })
       : await insertRun(db, {
           threadId: input.threadId,
@@ -514,6 +522,7 @@ async function startRunViaWorker(
           threadId: input.threadId,
           mode: input.mode,
           ...(input.setId !== undefined ? { setId: input.setId } : {}),
+          ...(input.selection !== undefined ? { selection: input.selection } : {}),
           ...(input.shape !== undefined ? { shape: input.shape } : {}),
           ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
           usage: input.usage,
@@ -940,6 +949,26 @@ export function createApp() {
         result.failure?.code ?? "INVALID",
         result.failure?.message ?? "That asset is not available.",
       );
+    res.json(result.asset);
+  });
+
+  app.put("/api/assets/:id/slices", async (req, res) => {
+    const body = z.object({ slices: z.array(sliceSchema).max(256) }).parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await updateAssetSlices(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.slices,
+    );
+    if (!result.asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     res.json(result.asset);
   });
 
@@ -1462,6 +1491,15 @@ export function createApp() {
         reasoningEffort: z.string().min(1),
         /** The frame is social: a draw request becomes a compose run. */
         social: z.boolean().optional(),
+        /** The region the user selected in the editor, in document pixels. */
+        selection: z
+          .object({
+            x: z.number().int().nonnegative(),
+            y: z.number().int().nonnegative(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          })
+          .optional(),
         // Reference images: the web app downscales each one well under these
         // caps, so a body over them is a bug or an abuse, not a big picture.
         attachments: z
@@ -1703,6 +1741,14 @@ export function createApp() {
     // answers with the same context but no painting tools, never an error.
     const mode =
       decided.intent === "ask" ? "ask" : body.social === true ? "compose" : "draw";
+    if (mode === "draw" && decided.shape === undefined) {
+      return fail(
+        res,
+        502,
+        "SHAPE_UNAVAILABLE",
+        "Jev did not return a task shape; no run was started.",
+      );
+    }
     return startRunViaWorker(res, {
       userId,
       prompt: body.prompt,
@@ -1714,6 +1760,7 @@ export function createApp() {
       requestId,
       mode,
       ...(decided.shape !== undefined ? { shape: decided.shape } : {}),
+      ...(body.selection !== undefined ? { selection: body.selection } : {}),
       usage: usageSeedFromSpend({
         guardrailUsage: guardrail.usage,
         decisionUsage,
@@ -3558,7 +3605,19 @@ export function createApp() {
         frameId: z.string().optional(),
         artboardId: z.string().optional(),
         setId: z.string().optional(),
-        format: z.enum(["pxl", "png", "jpg", "svg", "zip", "gif", "apng", "sheet"]),
+        format: z.enum([
+          "pxl",
+          "png",
+          "jpg",
+          "svg",
+          "zip",
+          "gif",
+          "apng",
+          "webp",
+          "sheet",
+          "png-sequence",
+          "aseprite-json",
+        ]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
         tagId: z.string().optional(),
@@ -3567,10 +3626,15 @@ export function createApp() {
         columns: z.number().int().min(1).max(64).optional(),
         padding: z.number().int().min(0).max(64).optional(),
         margin: z.number().int().min(0).max(64).optional(),
+        atlasPreset: z.enum(atlasPresets).default("native"),
       })
       .parse(req.body);
     const userId = res.locals.userId as string;
-    if (["gif", "apng", "sheet"].includes(body.format)) {
+    if (
+      ["gif", "apng", "webp", "sheet", "png-sequence", "aseprite-json"].includes(
+        body.format,
+      )
+    ) {
       if (body.scope === "project" || body.scope === "artboard" || body.scope === "set") {
         return fail(
           res,
@@ -3647,6 +3711,33 @@ export function createApp() {
         return [{ frame, buffer, durationMs: frame.durationMs ?? 100 }];
       });
       const slugName = slug(asset.name);
+      if (body.format === "png-sequence") {
+        const files: Record<string, Uint8Array> = {};
+        entries.forEach((entry, index) => {
+          files[`${slugName}-${String(index + 1).padStart(3, "0")}.png`] = frameToPng(
+            entry.buffer,
+            body.scale,
+          );
+        });
+        res.setHeader("content-type", "application/zip");
+        res.setHeader(
+          "content-disposition",
+          `attachment; filename="${slugName}-png-sequence.zip"`,
+        );
+        return res.send(Buffer.from(zipFiles(files)));
+      }
+      if (body.format === "webp") {
+        const gif = framesToGif(entries, asset.palette, {
+          loop: body.loop,
+          scale: body.scale,
+        });
+        const webp = await sharp(Buffer.from(gif), { animated: true })
+          .webp({ lossless: true })
+          .toBuffer();
+        res.setHeader("content-type", "image/webp");
+        res.setHeader("content-disposition", `attachment; filename="${slugName}.webp"`);
+        return res.send(webp);
+      }
       if (body.format === "gif") {
         const bytes = framesToGif(entries, asset.palette, {
           loop: body.loop,
@@ -3676,8 +3767,38 @@ export function createApp() {
           ...(body.margin !== undefined ? { margin: body.margin } : {}),
           ...(body.background !== undefined ? { background: body.background } : {}),
           imageName: `${slugName}.png`,
+          slices: (asset.slices ?? []) as never,
         },
       );
+      if (body.format === "aseprite-json") {
+        const asepriteTags = tags.flatMap((item) => {
+          const from = selected.findIndex((frame) => frame.id === item.fromFrameId);
+          const to = selected.findIndex((frame) => frame.id === item.toFrameId);
+          if (from < 0 || to < 0) return [];
+          return [
+            {
+              name: item.name,
+              from: Math.min(from, to),
+              to: Math.max(from, to),
+              direction: item.direction,
+            },
+          ];
+        });
+        const json = sheetToAsepriteJson(sheet, asepriteTags, `${slugName}.png`);
+        res.setHeader("content-type", "application/zip");
+        res.setHeader(
+          "content-disposition",
+          `attachment; filename="${slugName}-aseprite.zip"`,
+        );
+        return res.send(
+          Buffer.from(
+            zipFiles({
+              [`${slugName}.png`]: sheet.png,
+              [`${slugName}.json`]: `${JSON.stringify(json, null, 2)}\n`,
+            }),
+          ),
+        );
+      }
       res.setHeader("content-type", "application/zip");
       res.setHeader(
         "content-disposition",
@@ -3687,7 +3808,11 @@ export function createApp() {
         Buffer.from(
           zipFiles({
             [`${slugName}.png`]: sheet.png,
-            [`${slugName}-atlas.json`]: `${JSON.stringify(sheet.atlas, null, 2)}\n`,
+            [`${slugName}-atlas.json`]: `${JSON.stringify(
+              atlasForEngine(sheet, body.atlasPreset),
+              null,
+              2,
+            )}\n`,
           }),
         ),
       );

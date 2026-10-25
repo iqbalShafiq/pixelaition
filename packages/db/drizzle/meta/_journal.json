@@ -239,6 +239,13 @@
       "when": 1792918058111,
       "tag": "0033_frame_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792919718323,
+      "tag": "0034_asset_slices",
+      "breakpoints": true
     }
   ]
 }
