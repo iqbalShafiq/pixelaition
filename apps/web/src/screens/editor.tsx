@@ -1004,10 +1004,23 @@ export function EditorScreen() {
     }
     const mask =
       selection.mask ?? new Uint8Array(selection.width * selection.height).fill(1);
+    const layer = selectionLayer();
+    const pixels = new Uint8Array(selection.width * selection.height);
+    if (layer && buffer) {
+      for (let row = 0; row < selection.height; row += 1) {
+        for (let column = 0; column < selection.width; column += 1) {
+          const local = row * selection.width + column;
+          if (mask[local] !== 1) continue;
+          pixels[local] =
+            layer.pixels[(selection.y + row) * buffer.width + selection.x + column] ?? 0;
+        }
+      }
+    }
     setCustomBrush({
       width: selection.width,
       height: selection.height,
       mask: mask.slice(),
+      pixels,
     });
     setTool("pencil");
     notify({
@@ -2575,7 +2588,10 @@ export function EditorScreen() {
         edit(frameId, current, {
           type: "paint",
           layerId: activeLayerId,
-          points: mirrored(action.points).map((point) => ({ ...point, color })),
+          points: mirrored(action.points).map((point) => ({
+            ...point,
+            color: point.color ?? color,
+          })),
         });
         return;
       case "erase":

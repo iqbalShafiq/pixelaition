@@ -26,6 +26,8 @@ export type BrushPattern = {
   width: number;
   height: number;
   mask: Uint8Array;
+  /** Palette indices captured from the selection; custom brushes keep colour. */
+  pixels: Uint8Array;
 };
 
 export type Tool =
@@ -43,7 +45,7 @@ export type Tool =
   | "pan";
 
 export type CanvasAction =
-  | { kind: "paint"; points: Point[] }
+  | { kind: "paint"; points: Array<Point & { color?: number }> }
   | { kind: "erase"; points: Point[] }
   | { kind: "fill"; point: Point }
   | { kind: "pick"; index: number }
@@ -1036,7 +1038,11 @@ export function PixelCanvas({
     return Math.max(1, Math.round(latest.current.brushSize * factor));
   }
 
-  function strokeCells(from: Point, to: Point, size = latest.current.brushSize): Point[] {
+  function strokeCells(
+    from: Point,
+    to: Point,
+    size = latest.current.brushSize,
+  ): Array<Point & { color?: number }> {
     const doc = latest.current.buffer;
     return lineCells(from, to)
       .flatMap((item) => footprint(item, size))
