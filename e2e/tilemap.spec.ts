@@ -56,8 +56,12 @@ test("applies a tilemap JSON onto the open frame", async ({ page }) => {
     frames: Array<{ layers: Array<{ pixels: string }> }>;
   };
   const savedPixels = Buffer.from(body.frames[0]?.layers[0]?.pixels ?? "", "base64");
-  expect(savedPixels[0]).toBe(1);
-  expect(savedPixels[16 * 32 + 16]).toBe(1);
-  expect(savedPixels[31 * 32 + 31]).toBe(1);
+  expect([...savedPixels.subarray(0, 4)]).toEqual([11, 9, 6, 255]);
+  expect([...savedPixels.subarray((16 * 32 + 16) * 4, (16 * 32 + 16) * 4 + 4)]).toEqual([
+    11, 9, 6, 255,
+  ]);
+  expect([...savedPixels.subarray((31 * 32 + 31) * 4, (31 * 32 + 31) * 4 + 4)]).toEqual([
+    11, 9, 6, 255,
+  ]);
   await page.request.delete(`/api/projects/${projectBody.id}`).catch(() => undefined);
 });

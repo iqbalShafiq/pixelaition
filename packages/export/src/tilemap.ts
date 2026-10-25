@@ -1,4 +1,4 @@
-import type { FrameBuffer, Slice } from "@pixelaition/pixel";
+import { readCell, writeCell, type FrameBuffer, type Slice } from "@pixelaition/pixel";
 
 export type TilemapJson = {
   version: 1;
@@ -49,7 +49,7 @@ export function frameToTilemapJson(buffer: FrameBuffer, slices: Slice[]): Tilema
     const pixels: number[] = [];
     for (let row = 0; row < tileHeight; row += 1) {
       for (let column = 0; column < tileWidth; column += 1) {
-        pixels.push(layer.pixels[(y + row) * buffer.width + x + column] ?? 0);
+        pixels.push(readCell(layer.pixels, (y + row) * buffer.width + x + column));
       }
     }
     for (const [index, slice] of candidates.entries()) {
@@ -57,7 +57,7 @@ export function frameToTilemapJson(buffer: FrameBuffer, slices: Slice[]): Tilema
       for (let row = 0; row < tileHeight && matches; row += 1) {
         for (let column = 0; column < tileWidth; column += 1) {
           if (
-            (layer.pixels[(slice.y + row) * buffer.width + slice.x + column] ?? 0) !==
+            readCell(layer.pixels, (slice.y + row) * buffer.width + slice.x + column) !==
             pixels[row * tileWidth + column]
           ) {
             matches = false;
@@ -132,7 +132,7 @@ export function applyTilemap(buffer: FrameBuffer, map: TilemapJson): FrameBuffer
       if (tileIndex === -1) {
         for (let row = 0; row < map.tileHeight; row += 1) {
           for (let column = 0; column < map.tileWidth; column += 1) {
-            layer.pixels[(cellY + row) * buffer.width + cellX + column] = 0;
+            writeCell(layer.pixels, (cellY + row) * buffer.width + cellX + column, 0);
           }
         }
         continue;
@@ -149,8 +149,11 @@ export function applyTilemap(buffer: FrameBuffer, map: TilemapJson): FrameBuffer
       }
       for (let row = 0; row < map.tileHeight; row += 1) {
         for (let column = 0; column < map.tileWidth; column += 1) {
-          layer.pixels[(cellY + row) * buffer.width + cellX + column] =
-            source[(tile.y + row) * buffer.width + tile.x + column] ?? 0;
+          writeCell(
+            layer.pixels,
+            (cellY + row) * buffer.width + cellX + column,
+            readCell(source, (tile.y + row) * buffer.width + tile.x + column),
+          );
         }
       }
     }

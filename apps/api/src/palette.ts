@@ -1,13 +1,6 @@
 import { assets, frames, type Database } from "@pixelaition/db";
 import { mapSceneIndices, sceneSchema } from "@pixelaition/artboard";
-import {
-  applyCommand,
-  bufferToFrame,
-  frameToBuffer,
-  normalizeHex,
-  paletteIndexMap,
-  type Frame,
-} from "@pixelaition/pixel";
+import { normalizeHex, paletteIndexMap } from "@pixelaition/pixel";
 import { and, eq } from "drizzle-orm";
 import { getAssetRecord, recordAssetVersion, type StoreFailure } from "./store.js";
 
@@ -179,36 +172,17 @@ export async function mutatePalette(
   try {
     await db.transaction(async (tx) => {
       if (prepared.mapping) {
+        // Pixel layers hold full RGBA and are never rewritten by a swatch
+        // reorder. Social scenes still store palette indices, so they travel
+        // through the explicit map.
         const mapping = prepared.mapping;
         for (const frame of record.frames) {
-          const updates: Record<string, unknown> = { updatedAt: new Date() };
-          if (frame.scene) {
-            updates.scene = mapSceneIndices(sceneSchema.parse(frame.scene), mapping);
-            updates.version = frame.version + 1;
-          }
-          if (frame.layers.length > 0 || frame.kind !== "social") {
-            const width = frame.width ?? record.width;
-            const height = frame.height ?? record.height;
-            const buffer = frameToBuffer(
-              frame as unknown as Frame,
-              width,
-              height,
-              palette,
-            );
-            const result = applyCommand(buffer, {
-              type: "reindexPalette",
-              palette: prepared.nextPalette,
-              mapping: Object.fromEntries(mapping.map((to, from) => [from, to])),
-            });
-            if (!result.ok) throw new Error(result.message);
-            const next = bufferToFrame(result.buffer, {
-              id: frame.id,
-              name: frame.name,
-              index: frame.index,
-            });
-            updates.layers = next.layers;
-            updates.groups = next.groups ?? [];
-          }
+          if (!frame.scene) continue;
+          const updates = {
+            scene: mapSceneIndices(sceneSchema.parse(frame.scene), mapping),
+            version: frame.version + 1,
+            updatedAt: new Date(),
+          };
           await tx
             .update(frames)
             .set(updates)

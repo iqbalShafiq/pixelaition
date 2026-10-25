@@ -1,4 +1,5 @@
 import { composite } from "./buffer.js";
+import { readCell } from "./pixels.js";
 import type { FrameBuffer, Point } from "./types.js";
 
 export type Rect = {
@@ -67,7 +68,7 @@ function opaqueOf(pixels: Uint8Array, width: number, height: number): Opaque | n
   let maxY = -1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      if (pixels[y * width + x] === 0) continue;
+      if ((readCell(pixels, y * width + x) & 0xff) === 0) continue;
       count += 1;
       sumX += x;
       sumY += y;
@@ -121,7 +122,9 @@ function sharedMass(
     for (let x = 0; x < width; x += 1) {
       const index = y * width + x;
       // A pixel transparent in either frame is not shared mass.
-      if ((left[index] ?? 0) === 0 || (right[index] ?? 0) === 0) continue;
+      if ((readCell(left, index) & 0xff) === 0 || (readCell(right, index) & 0xff) === 0) {
+        continue;
+      }
       grow(leftMass, x, y);
       grow(rightMass, x, y);
     }
@@ -167,7 +170,7 @@ function compareFrames(
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = y * width + x;
-      if (left[index] === right[index]) continue;
+      if (readCell(left, index) === readCell(right, index)) continue;
       changedPixels += 1;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;

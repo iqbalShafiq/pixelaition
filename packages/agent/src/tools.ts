@@ -10,6 +10,9 @@ import {
   addFrame,
   applyCommand,
   blendModes,
+  colorToHex,
+  hexToColor,
+  readCell,
   bufferToFrame,
   checkAnimation,
   composite,
@@ -32,7 +35,7 @@ import {
 } from "@pixelaition/pixel";
 import { drawText } from "@pixelaition/artboard";
 import { z } from "zod";
-import { encodeRowsRle } from "./format.js";
+import { decodeRowsRle, encodeRowsRle } from "./format.js";
 import {
   gateIsHarmless,
   gateToolCall,
@@ -64,11 +67,9 @@ import {
   type RunFrame,
   type Stroke,
 } from "./runs.js";
-import { paletteLegend } from "./tasks/worker-prompt.js";
 import {
   copyLayers,
   layerOf,
-  paletteMapping,
   projectListing,
   readRegion as readFrameRegion,
   resolveReadFrame,
@@ -81,10 +82,15 @@ import {
   tavilyApiKey,
 } from "./search.js";
 
+const colorSchema = z.union([
+  z.string().describe("A hex RGBA colour such as #d8a64eff."),
+  z.number().int().nonnegative().describe("Legacy palette index or packed RGBA."),
+]);
+
 const point = z.object({
   x: z.number().int(),
   y: z.number().int(),
-  color: z.number().int().nonnegative(),
+  color: colorSchema,
 });
 
 const strokePoint = z.object({
@@ -155,11 +161,36 @@ async function saveTimelineTags(
 }
 
 /** Apply a command to one frame's buffer and write the result back to the run. */
+/** Accept hex colours at the tool boundary and hand packed RGBA to commands. */
+function normalizeCommandColors(command: Command): Command {
+  const next = { ...command } as Record<string, unknown>;
+  const convert = (value: unknown) =>
+    typeof value === "string" ? (hexToColor(value) ?? 0) : value;
+  if ("color" in next) next.color = convert(next.color);
+  if ("from" in next) next.from = convert(next.from);
+  if ("to" in next) next.to = convert(next.to);
+  if (Array.isArray(next.points)) {
+    next.points = next.points.map((item) => {
+      if (typeof item !== "object" || item === null) return item;
+      const pixel = { ...(item as Record<string, unknown>) };
+      if ("color" in pixel) pixel.color = convert(pixel.color);
+      return pixel;
+    });
+  }
+  if (typeof next.text === "object" && next.text !== null) {
+    const text = { ...(next.text as Record<string, unknown>) };
+    if ("color" in text) text.color = convert(text.color);
+    next.text = text;
+  }
+  return next as Command;
+}
+
 function editFrame(
   run: BoundRunBinding,
   frameId: string | undefined,
-  command: Command,
+  input: Command | Record<string, unknown>,
 ): { id: string; buffer: FrameBuffer } {
+  const command = input as Command;
   const frame = resolveFrame(run, frameId);
   // A worker may write only its own frames; reads stay open so it can look at
   // the neighbours for reference.
@@ -173,7 +204,7 @@ function editFrame(
     typeof ref === "string"
       ? ({ ...command, layerId: resolveLayerRef(frame.buffer, ref) } as Command)
       : command;
-  const result = applyCommand(frame.buffer, normalized);
+  const result = applyCommand(frame.buffer, normalizeCommandColors(normalized));
   if (!result.ok) throw new Error(result.message);
   replaceFrameBuffer(run, frame.id, result.buffer);
   run.touchedFrames.add(frame.id);
@@ -191,25 +222,31 @@ function recordStroke(
 }
 
 function colorCounts(
-  pixels: Uint8Array,
+  pixels: Uint8Array | Uint32Array | number[],
   palette: string[],
 ): Array<{ index: number; hex: string; count: number }> {
   const counts = new Map<number, number>();
-  for (const value of pixels) {
-    if (value === 0) continue;
-    counts.set(value, (counts.get(value) ?? 0) + 1);
+  const raw = pixels instanceof Uint8Array;
+  const bytesPerCell = raw && pixels.length % 4 === 0;
+  const count = bytesPerCell
+    ? pixels.length / 4
+    : (pixels as Uint32Array | number[]).length;
+  for (let cell = 0; cell < count; cell += 1) {
+    const color = bytesPerCell
+      ? readCell(pixels as Uint8Array, cell)
+      : ((pixels as Uint32Array | number[])[cell] ?? 0);
+    if ((color & 0xff) === 0) continue;
+    counts.set(color, (counts.get(color) ?? 0) + 1);
   }
   return [...counts.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([index, count]) => {
-      const hex = palette[index];
-      if (hex === undefined) {
-        throw new Error(
-          `The frame uses palette index ${index}, which the palette does not define.`,
-        );
-      }
-      return { index, hex, count };
-    });
+    .map(([color, amount]) => {
+      const hex = colorToHex(color);
+      const index = palette.findIndex(
+        (swatch) => swatch.toLowerCase() === hex.toLowerCase(),
+      );
+      return { index, hex, count: amount };
+    })
+    .sort((left, right) => right.count - left.count);
 }
 
 /**
@@ -307,54 +344,12 @@ function regionOf(input: { x: number; y: number; width: number; height: number }
   return { x: input.x, y: input.y, width: input.width, height: input.height };
 }
 
-/** The RLE rows a copy hands back, decoded into palette indices. */
-function decodeRowsRle(rows: string[], width: number, height: number): Uint8Array {
-  if (rows.length !== height) {
-    throw new Error(
-      `The rows hold ${rows.length} lines but the region is ${height} tall.`,
-    );
-  }
-  const pixels = new Uint8Array(width * height);
-  rows.forEach((row, y) => {
-    let x = 0;
-    for (const run of row
-      .trim()
-      .split(/\s+/)
-      .filter((part) => part.length > 0)) {
-      const [colorText, countText] = run.split("x");
-      const color = Number(colorText);
-      const count = Number(countText);
-      if (!Number.isInteger(color) || !Number.isInteger(count) || count < 1) {
-        throw new Error(`Row ${y} has a run "${run}" that is not <color>x<count>.`);
-      }
-      if (x + count > width) {
-        throw new Error(`Row ${y} is longer than the region's width ${width}.`);
-      }
-      pixels.fill(color, y * width + x, y * width + x + count);
-      x += count;
-    }
-    if (x !== width) {
-      throw new Error(`Row ${y} covers ${x} pixels but the region is ${width} wide.`);
-    }
-  });
-  return pixels;
-}
-
-/** The stamp command for a paste: source indices resolved through the mapping. */
+/** The stamp command for a paste: packed RGBA colours travel unchanged. */
 function stampCommand(
   input: { layerId: string; x: number; y: number; width: number; height: number },
-  targetPalette: readonly string[],
-  pixels: Uint8Array,
-  mapping: ReturnType<typeof paletteMapping>,
+  _targetPalette: readonly string[],
+  pixels: Uint32Array | number[],
 ): Command {
-  if (!mapping.ok) {
-    throw new Error(
-      `These source colours are not in this asset's palette: ${mapping.unmapped.join(", ")}. ` +
-        `Target palette: ${paletteLegend(targetPalette)}. Call again with a map for each source colour, for example ${JSON.stringify(
-          mapping.suggestion,
-        )}.`,
-    );
-  }
   return {
     type: "stamp",
     layerId: input.layerId,
@@ -362,7 +357,7 @@ function stampCommand(
     y: input.y,
     width: input.width,
     height: input.height,
-    pixels: Array.from(pixels, (value) => mapping.indexOf(value)),
+    pixels: Array.from(pixels),
   };
 }
 
@@ -808,17 +803,10 @@ export function createPixelTools(
       requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
       const pixels = decodeRowsRle(input.rows, input.width, input.height);
-      // The command maps source indices through the resolved palette and
-      // refuses a colour the target palette cannot hold, naming the legend.
-      const mapping = paletteMapping(
-        input.sourcePalette ?? frame.buffer.palette,
-        frame.buffer.palette,
-        input.map,
-      );
       const edited = editFrame(
         run,
         frame.id,
-        stampCommand(input, frame.buffer.palette, pixels, mapping),
+        stampCommand(input, frame.buffer.palette, pixels),
       );
       recordStroke(run, { label: "paste_region", points: [] }, edited);
       return {
@@ -938,7 +926,7 @@ export function createPixelTools(
   const paint = createTool({
     name: "paint_stroke",
     description:
-      "Paint up to 48 pixels on a layer of the current frame. layerId takes the layer id or its name. Colors are palette indexes. The server stores only the pixels it accepts.",
+      "Paint up to 48 pixels on a layer of the current frame. layerId takes the layer id or its name. Colours are hex RGBA strings (or legacy palette indexes). The server stores only the pixels it accepts.",
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
@@ -954,7 +942,13 @@ export function createPixelTools(
         input.frameId,
         input.layerId,
         input.label,
-        input.points,
+        input.points.map((pixel) => ({
+          ...pixel,
+          color:
+            typeof pixel.color === "string"
+              ? (hexToColor(pixel.color) ?? 0)
+              : pixel.color,
+        })),
       );
       return { committed: stroke.points.length, label: stroke.label };
     },
@@ -971,7 +965,7 @@ export function createPixelTools(
       y: z.number().int(),
       width: z.number().int().positive(),
       height: z.number().int().positive(),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
@@ -1022,13 +1016,15 @@ export function createPixelTools(
       label: z.string().min(1).max(40),
       from: strokePoint,
       to: strokePoint,
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
       const { frameId, from, to, label } = input;
+      const color =
+        typeof input.color === "string" ? (hexToColor(input.color) ?? 0) : input.color;
       const edited = editFrame(run, frameId, {
         type: "line",
         layerId: input.layerId,
@@ -1036,13 +1032,13 @@ export function createPixelTools(
         y0: from.y,
         x1: to.x,
         y1: to.y,
-        color: input.color,
+        color,
       });
       const stroke = {
         label,
         points: linePoints(from.x, from.y, to.x, to.y).map((pixel) => ({
           ...pixel,
-          color: input.color,
+          color,
         })),
       };
       recordStroke(run, stroke, edited);
@@ -1061,7 +1057,7 @@ export function createPixelTools(
       y: z.number().int(),
       width: z.number().int().positive(),
       height: z.number().int().positive(),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
       filled: z.boolean().optional(),
     }),
     requiresApproval: () => false,
@@ -1142,7 +1138,7 @@ export function createPixelTools(
       layerId: z.string(),
       x: z.number().int(),
       y: z.number().int(),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
@@ -1166,7 +1162,7 @@ export function createPixelTools(
       y: z.number().int(),
       width: z.number().int().positive(),
       height: z.number().int().positive(),
-      color: z.number().int().nonnegative(),
+      color: colorSchema,
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
@@ -1216,8 +1212,8 @@ export function createPixelTools(
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
-      from: z.number().int().nonnegative(),
-      to: z.number().int().nonnegative(),
+      from: colorSchema,
+      to: colorSchema,
     }),
     requiresApproval: gatedApproval("replace_color", frameNeedsApproval),
     execute: (input, context) => {
@@ -1239,7 +1235,7 @@ export function createPixelTools(
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string().optional(),
-      color: z.number().int().nonnegative().optional(),
+      color: colorSchema.optional(),
     }),
     requiresApproval: () => false,
     execute: (input, context) => {
@@ -1248,12 +1244,17 @@ export function createPixelTools(
       const buffer = frameBuffer(run, input.frameId);
       const layerId = input.layerId ?? activeLayerId(buffer);
       if (!layerId) throw new Error("This frame has no layer to outline.");
-      let color = input.color;
+      let color =
+        input.color === undefined
+          ? undefined
+          : typeof input.color === "string"
+            ? (hexToColor(input.color) ?? -1)
+            : input.color;
       if (color === undefined) {
         const outline = normalizeHex(run.style.outline);
-        color = outline ? buffer.palette.indexOf(outline) : -1;
+        color = outline ? (hexToColor(outline) ?? -1) : -1;
         if (color <= 0) {
-          throw new Error("The style guide outline color is not in the palette.");
+          throw new Error("The style guide outline color is invalid.");
         }
       }
       const edited = editFrame(run, input.frameId, { type: "outline", layerId, color });
@@ -2179,7 +2180,7 @@ export function createPixelTools(
     inputSchema: z.object({
       frameId: z.string().optional(),
       layerId: z.string(),
-      color: z.number().int().nonnegative().optional(),
+      color: colorSchema.optional(),
       tolerance: z.number().min(0).max(255).optional(),
       edgesOnly: z.boolean().optional(),
     }),

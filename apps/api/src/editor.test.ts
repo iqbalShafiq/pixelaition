@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createBuffer } from "@pixelaition/pixel";
+import { createBuffer, writeCell } from "@pixelaition/pixel";
 import { framesToAse, parseAse } from "@pixelaition/export";
 import { createApiKey } from "./store.js";
 
@@ -107,7 +107,7 @@ describe.skipIf(!db)("editor import and palette routes", () => {
     }
   });
 
-  it("remaps pixels and social scenes when a colour is removed", async () => {
+  it("keeps RGBA pixels and remaps social scenes when a colour is removed", async () => {
     const { projectId, asset } = await createAsset("remap");
     try {
       const replaced = await request(app)
@@ -120,8 +120,15 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(replaced.status).toBe(200);
 
       const frame = replaced.body.frames[0];
-      const pixels = new Array(asset.width * asset.height).fill(1);
-      pixels[0] = 2;
+      const pixels = new Array(asset.width * asset.height * 4).fill(0);
+      for (let cell = 0; cell < asset.width * asset.height; cell += 1) {
+        const offset = cell * 4;
+        pixels[offset] = 255;
+        pixels[offset + 3] = 255;
+      }
+      pixels[0] = 0;
+      pixels[1] = 0;
+      pixels[2] = 255;
       const painted = await request(app)
         .put(`/api/assets/${asset.id}/frames/${frame.id}`)
         .set("authorization", `Bearer ${token}`)
@@ -145,7 +152,7 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(removed.status).toBe(200);
       expect(removed.body.palette).toEqual(["#00000000", "#0000ff"]);
       const stored = removed.body.frames[0].layers[0].pixels as string;
-      expect(stored).toBe(base64(new Array(asset.width * asset.height).fill(1)));
+      expect(stored).toBe(base64(pixels));
     } finally {
       await live.delete(projects).where(eq(projects.id, projectId));
     }
@@ -175,7 +182,9 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       ).toBe(true);
 
       const source = createBuffer({ width: 8, height: 8 });
-      source.layers[0]?.pixels.fill(1);
+      for (let cell = 0; cell < 64; cell += 1) {
+        writeCell(source.layers[0]!.pixels, cell, 0x0b0906ff);
+      }
       const aseImport = await request(app)
         .post(`/api/assets/${asset.id}/import/ase`)
         .set("authorization", `Bearer ${token}`)
@@ -210,7 +219,7 @@ describe.skipIf(!db)("editor import and palette routes", () => {
           .layers[0].pixels,
         "base64",
       );
-      expect(scriptedPixels[0]).toBe(1);
+      expect([...scriptedPixels.subarray(0, 4)]).toEqual([11, 9, 6, 255]);
 
       const timing = await request(app)
         .patch(`/api/assets/${asset.id}/frames/${first.id}`)
@@ -384,7 +393,7 @@ describe.skipIf(!db)("editor import and palette routes", () => {
     }
   });
 
-  it("imports two indexed frames into the asset palette", async () => {
+  it("imports two RGBA frames into the asset palette", async () => {
     const { projectId, asset } = await createAsset("import");
     try {
       const sourcePalette = ["#00000000", "#ff0000", "#0000ff"];
@@ -394,8 +403,14 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         .send({ action: "replace", palette: sourcePalette });
       expect(replaced.status).toBe(200);
 
-      const framePixels = new Array(64).fill(1);
-      framePixels[0] = 2;
+      const framePixels = new Array(64 * 4).fill(0);
+      for (let cell = 0; cell < 64; cell += 1) {
+        const offset = cell * 4;
+        framePixels[offset] = 255;
+        framePixels[offset + 3] = 255;
+      }
+      framePixels[0] = 0;
+      framePixels[2] = 255;
       const imported = await request(app)
         .post(`/api/assets/${asset.id}/import`)
         .set("authorization", `Bearer ${token}`)

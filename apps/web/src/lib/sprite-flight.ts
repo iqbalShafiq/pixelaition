@@ -1,5 +1,4 @@
-import { composite, type FrameBuffer } from "@pixelaition/pixel";
-import { hexToRgba } from "./color.js";
+import { renderFrameDocument, type FrameBuffer } from "@pixelaition/pixel";
 
 /** A rectangle in document pixels. */
 export type Bounds = { x: number; y: number; width: number; height: number };
@@ -10,14 +9,14 @@ export type Bounds = { x: number; y: number; width: number; height: number };
  * page transition instead.
  */
 export function paintedBounds(buffer: FrameBuffer): Bounds | null {
-  const indexes = composite(buffer);
+  const rendered = renderFrameDocument(buffer);
   let minX = buffer.width;
   let minY = buffer.height;
   let maxX = -1;
   let maxY = -1;
   for (let y = 0; y < buffer.height; y += 1) {
     for (let x = 0; x < buffer.width; x += 1) {
-      if ((indexes[y * buffer.width + x] ?? 0) === 0) continue;
+      if ((rendered.data[(y * buffer.width + x) * 4 + 3] ?? 0) === 0) continue;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
@@ -43,19 +42,14 @@ export function spriteCanvas(
   canvas.height = bounds.height;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  const indexes = composite(buffer);
+  const rendered = renderFrameDocument(buffer);
   const image = context.createImageData(bounds.width, bounds.height);
   for (let y = 0; y < bounds.height; y += 1) {
-    for (let x = 0; x < bounds.width; x += 1) {
-      const value = indexes[(bounds.y + y) * buffer.width + (bounds.x + x)] ?? 0;
-      if (value === 0) continue;
-      const [r, g, b, a] = hexToRgba(buffer.palette[value] ?? "#000000");
-      const offset = (y * bounds.width + x) * 4;
-      image.data[offset] = r;
-      image.data[offset + 1] = g;
-      image.data[offset + 2] = b;
-      image.data[offset + 3] = a;
-    }
+    const sourceOffset = ((bounds.y + y) * buffer.width + bounds.x) * 4;
+    image.data.set(
+      rendered.data.subarray(sourceOffset, sourceOffset + bounds.width * 4),
+      y * bounds.width * 4,
+    );
   }
   context.putImageData(image, 0, 0);
   return canvas;

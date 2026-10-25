@@ -152,6 +152,7 @@ export function snapshotToBuffer(
       width,
       height,
       palette,
+      false,
     );
   } catch {
     return null;

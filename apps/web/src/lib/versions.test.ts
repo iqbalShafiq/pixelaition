@@ -96,7 +96,9 @@ describe("history rows", () => {
 
   it("builds a canvas buffer from a snapshot, or nothing when it cannot", () => {
     // 2x2 frame, one opaque pixel: base64 of [1,0,0,0].
-    const pixels = Buffer.from([1, 0, 0, 0]).toString("base64");
+    const pixels = Buffer.from([
+      255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]).toString("base64");
     const buffer = snapshotToBuffer(
       { name: "idle", layers: [{ id: "l1", name: "pixels", visible: true, pixels }] },
       2,
@@ -104,7 +106,7 @@ describe("history rows", () => {
       ["#00000000", "#ff0000"],
     );
     expect(buffer?.width).toBe(2);
-    expect(buffer?.layers[0]?.pixels[0]).toBe(1);
+    expect([...buffer!.layers[0]!.pixels.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
     expect(snapshotToBuffer({ name: "asset" }, 2, 2, ["#00000000"])).toBeNull();
     // A frame whose pixels do not fill this canvas must not preview.
     expect(

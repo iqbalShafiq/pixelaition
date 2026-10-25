@@ -28,8 +28,10 @@ test("runs a command script from the editor", async ({ page }) => {
   const body = (await saved.json()) as {
     frames: Array<{ layers: Array<{ pixels: string }> }>;
   };
-  const pixels = [...Buffer.from(body.frames[0]?.layers[0]?.pixels ?? "", "base64")];
+  const pixels = Buffer.from(body.frames[0]?.layers[0]?.pixels ?? "", "base64");
   expect(pixels.length).toBeGreaterThan(0);
-  expect(pixels.every((value) => value === 1)).toBe(true);
+  for (let cell = 0; cell < pixels.length; cell += 4) {
+    expect([...pixels.subarray(cell, cell + 4)]).toEqual([11, 9, 6, 255]);
+  }
   await page.request.delete(`/api/projects/${projectBody.id}`).catch(() => undefined);
 });

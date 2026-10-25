@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { colorToHex, hexToColor, readCell, writeCell } from "@pixelaition/pixel";
 import { bytesToBase64 } from "./types.js";
 import {
   AgentPaintSession,
@@ -13,7 +14,13 @@ import {
 } from "./agent-paint.js";
 
 function layer(pixels: number[], id = "base"): DecodedLayer {
-  return { id, name: "pixels", visible: true, pixels: Uint8Array.from(pixels) };
+  const data = new Uint8Array(pixels.length * 4);
+  pixels.forEach((value, cell) => {
+    const color =
+      value === 0 ? 0 : (hexToColor(`#${value.toString(16).padStart(6, "0")}ff`) ?? 0);
+    writeCell(data, cell, color);
+  });
+  return { id, name: "pixels", visible: true, pixels: data };
 }
 
 function frame(pixels: number[], width = 4): FrameView {
@@ -30,7 +37,12 @@ function stroke(
 }
 
 function painted(update: { layers?: DecodedLayer[] } | undefined): number[] {
-  return [...(update?.layers?.[0]?.pixels ?? [])];
+  const pixels = update?.layers?.[0]?.pixels;
+  if (!pixels) return [];
+  return Array.from({ length: pixels.length / 4 }, (_, cell) => {
+    const hex = colorToHex(readCell(pixels, cell));
+    return hex === "#00000000" ? 0 : Number.parseInt(hex.slice(1, 7), 16);
+  });
 }
 
 describe("orderChangedCells", () => {

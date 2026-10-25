@@ -1,5 +1,12 @@
 import { normalizeToolResultOutput } from "@anvia/core/tool";
-import { createBuffer, type FrameBuffer } from "@pixelaition/pixel";
+import {
+  colorToHex,
+  createBuffer,
+  hexToColor,
+  readCell,
+  writeCell,
+  type FrameBuffer,
+} from "@pixelaition/pixel";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bindRun,
@@ -15,6 +22,25 @@ import {
   type Stroke,
 } from "./runs.js";
 import { createPixelTools } from "./tools.js";
+
+function cellIndex(
+  layer: { pixels: Uint8Array } | undefined,
+  palette: string[],
+  cell: number,
+): number {
+  if (!layer) return -1;
+  const hex = colorToHex(readCell(layer.pixels, cell));
+  return palette.findIndex((swatch) => swatch === hex);
+}
+
+function bufferIndex(
+  buffer: FrameBuffer | undefined,
+  layerIndex: number,
+  cell: number,
+): number {
+  if (!buffer) return -1;
+  return cellIndex(buffer.layers[layerIndex], buffer.palette, cell);
+}
 
 const palette = [
   "#00000000",
@@ -36,10 +62,18 @@ const palette = [
 // 1 1 0 0          0 3 0 0            1 3 0 0
 // 0 0 2 2          0 0 3 0            0 0 3 2
 // 0 0 2 2          0 0 0 0            0 0 2 2
-const basePixels = new Uint8Array([1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 2, 2, 0, 0, 2, 2]);
-const detailPixels = new Uint8Array([0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0]);
+function rgbaPixels(indices: number[]): Uint8Array {
+  const pixels = new Uint8Array(indices.length * 4);
+  indices.forEach((index, cell) => {
+    writeCell(pixels, cell, hexToColor(palette[index] ?? "#00000000") ?? 0);
+  });
+  return pixels;
+}
+
+const basePixels = rgbaPixels([1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 2, 2, 0, 0, 2, 2]);
+const detailPixels = rgbaPixels([0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0]);
 // frame-2 "hop" — a single pixel at (0, 3) so (1, 1) is free for the paint tests.
-const hopPixels = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0]);
+const hopPixels = rgbaPixels([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0]);
 
 function idleBuffer(): FrameBuffer {
   return {
@@ -349,7 +383,13 @@ function boundFrameRun(
 ): void {
   const blank = (color: number): FrameBuffer => {
     const buffer = createBuffer({ width: 8, height: 8, palette, layerName: "pixels" });
-    if (color !== 0) buffer.layers[0]!.pixels[0] = color;
+    if (color !== 0) {
+      writeCell(
+        buffer.layers[0]!.pixels,
+        0,
+        hexToColor(palette[color] ?? "#00000000") ?? 0,
+      );
+    }
     return buffer;
   };
   bindRun("run-1", {
@@ -483,7 +523,12 @@ describe("read tools", () => {
       view: "composite",
       width: 4,
       height: 4,
-      rows: ["1x2 0x2", "1x1 3x1 0x2", "0x2 3x1 2x1", "0x2 2x2"],
+      rows: [
+        "#f4f4f4x2 #00000000x2",
+        "#f4f4f4x1 #a7f070x1 #00000000x2",
+        "#00000000x2 #a7f070x1 #ef7d57x1",
+        "#00000000x2 #ef7d57x2",
+      ],
       colors: [
         { index: 1, hex: "#f4f4f4", count: 3 },
         { index: 2, hex: "#ef7d57", count: 3 },
@@ -502,7 +547,7 @@ describe("read tools", () => {
     expect(result).toMatchObject({
       frameId: "frame-2",
       view: "composite",
-      rows: ["0x4", "0x4", "0x4", "4x1 0x3"],
+      rows: ["#00000000x4", "#00000000x4", "#00000000x4", "#38b764x1 #00000000x3"],
       colors: [{ index: 4, hex: "#38b764", count: 1 }],
     });
     releaseRun("run-1");
@@ -517,7 +562,12 @@ describe("read tools", () => {
     expect(result).toMatchObject({
       view: "layer",
       layerId: "layer-detail",
-      rows: ["0x4", "0x1 3x1 0x2", "0x2 3x1 0x1", "0x4"],
+      rows: [
+        "#00000000x4",
+        "#00000000x1 #a7f070x1 #00000000x2",
+        "#00000000x2 #a7f070x1 #00000000x1",
+        "#00000000x4",
+      ],
       colors: [{ index: 3, hex: "#a7f070", count: 2 }],
     });
     releaseRun("run-1");
@@ -552,7 +602,7 @@ describe("read tools", () => {
       y: 1,
       width: 2,
       height: 2,
-      rows: ["3x1 0x1", "0x1 3x1"],
+      rows: ["#a7f070x1 #00000000x1", "#00000000x1 #a7f070x1"],
       colors: [{ index: 3, hex: "#a7f070", count: 2 }],
     });
     releaseRun("run-1");
@@ -566,7 +616,7 @@ describe("read tools", () => {
     );
     expect(result).toMatchObject({
       frameId: "frame-2",
-      rows: ["4x1 0x1"],
+      rows: ["#38b764x1 #00000000x1"],
       colors: [{ index: 4, hex: "#38b764", count: 1 }],
     });
     releaseRun("run-1");
@@ -632,9 +682,9 @@ describe("drawing tools", () => {
       { operationId: "run-1" },
     );
     const run = getRun("run-1");
-    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[1 * 4 + 1]).toBe(2);
+    expect(bufferIndex(run?.frames.get("frame-2")?.buffer, 0, 1 * 4 + 1)).toBe(2);
     // The frame the run was bound to is untouched.
-    expect(run?.frames.get("frame-1")?.buffer.layers[0]?.pixels[1 * 4 + 1]).toBe(1);
+    expect(bufferIndex(run?.frames.get("frame-1")?.buffer, 0, 1 * 4 + 1)).toBe(1);
     releaseRun("run-1");
   });
 
@@ -648,15 +698,18 @@ describe("drawing tools", () => {
     const base = run?.frames
       .get("frame-1")
       ?.buffer.layers.find((layer) => layer.id === "layer-base");
-    expect(base?.pixels[2 * 4 + 2]).toBe(5);
-    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[2 * 4 + 2]).toBe(0);
+    expect(cellIndex(base, palette, 2 * 4 + 2)).toBe(5);
+    expect(bufferIndex(run?.frames.get("frame-2")?.buffer, 0, 2 * 4 + 2)).toBe(0);
     releaseRun("run-1");
   });
 
   it("hands the edited frame and its buffer to onStroke", async () => {
     const seen: Array<{ frameId: string; painted: number | undefined }> = [];
     boundRun((_stroke, buffer, frameId) => {
-      seen.push({ frameId, painted: buffer.layers[0]?.pixels[1 * 4 + 1] });
+      seen.push({
+        frameId,
+        painted: cellIndex(buffer.layers[0], buffer.palette, 1 * 4 + 1),
+      });
     });
     await tool("paint_stroke").call(
       {
@@ -673,19 +726,16 @@ describe("drawing tools", () => {
 
   it("hands the mirrored frame to onStroke so the worker persists it", async () => {
     const seen: Array<{ frameId: string; row0: number[] }> = [];
+    const row = (buffer: FrameBuffer) =>
+      [0, 1, 2, 3].map((cell) => cellIndex(buffer.layers[0], buffer.palette, cell));
     boundRun((_stroke, buffer, frameId) => {
-      seen.push({
-        frameId,
-        row0: [...(buffer.layers[0]?.pixels.slice(0, 4) ?? [])],
-      });
+      seen.push({ frameId, row0: row(buffer) });
     });
     await tool("mirror_frame").call({ frameId: "frame-1" }, { operationId: "run-1" });
     // frame-1's base row [1,1,0,0] flips to [0,0,1,1].
     expect(seen).toEqual([{ frameId: "frame-1", row0: [0, 0, 1, 1] }]);
-    expect([
-      ...(getRun("run-1")?.frames.get("frame-1")?.buffer.layers[0]?.pixels.slice(0, 4) ??
-        []),
-    ]).toEqual([0, 0, 1, 1]);
+    const mirrored = getRun("run-1")?.frames.get("frame-1")?.buffer;
+    expect(mirrored ? row(mirrored) : []).toEqual([0, 0, 1, 1]);
     releaseRun("run-1");
   });
 
@@ -705,9 +755,9 @@ describe("drawing tools", () => {
       { operationId: "run-1" },
     );
     const run = getRun("run-1");
-    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[0]).toBe(3);
-    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[5]).toBe(3);
-    expect(run?.frames.get("frame-1")?.buffer.layers[0]?.pixels[0]).toBe(1);
+    expect(bufferIndex(run?.frames.get("frame-2")?.buffer, 0, 0)).toBe(3);
+    expect(bufferIndex(run?.frames.get("frame-2")?.buffer, 0, 5)).toBe(3);
+    expect(bufferIndex(run?.frames.get("frame-1")?.buffer, 0, 0)).toBe(1);
     expect(seen).toEqual(["frame-2"]);
     releaseRun("run-1");
   });
@@ -758,17 +808,18 @@ describe("drawing tools", () => {
     boundRun();
     // The palette belongs to the asset: every frame adopts it (frame-2 uses
     // index 4, so the new palette must keep it).
-    const next = ["#00000000", "#111111", "#222222", "#333333", "#444444"];
+    const next = ["#00000000", "#f4f4f4", "#ef7d57", "#a7f070", "#38b764", "#111111"];
     await tool("set_palette").call({ palette: next }, { operationId: "run-1" });
     const project = (await tool("read_project").call({}, { operationId: "run-1" })) as {
       palette: Array<{ index: number; hex: string }>;
     };
     expect(project.palette).toEqual([
       { index: 0, hex: "#00000000" },
-      { index: 1, hex: "#111111" },
-      { index: 2, hex: "#222222" },
-      { index: 3, hex: "#333333" },
-      { index: 4, hex: "#444444" },
+      { index: 1, hex: "#f4f4f4" },
+      { index: 2, hex: "#ef7d57" },
+      { index: 3, hex: "#a7f070" },
+      { index: 4, hex: "#38b764" },
+      { index: 5, hex: "#111111" },
     ]);
     // Both frames carry the new palette, not just the current one.
     expect(getRun("run-1")!.frames.get("frame-2")!.buffer.palette).toEqual(next);
@@ -776,22 +827,25 @@ describe("drawing tools", () => {
     const frame = await tool("read_frame").call({}, { operationId: "run-1" });
     expect(frame).toMatchObject({
       colors: [
-        { index: 1, hex: "#111111", count: 3 },
-        { index: 2, hex: "#222222", count: 3 },
-        { index: 3, hex: "#333333", count: 2 },
+        { index: 1, hex: "#f4f4f4", count: 3 },
+        { index: 2, hex: "#ef7d57", count: 3 },
+        { index: 3, hex: "#a7f070", count: 2 },
       ],
     });
     releaseRun("run-1");
   });
 
-  it("refuses a palette that drops a color another frame still uses", async () => {
+  it("keeps RGBA pixels when the swatch library drops a colour", async () => {
     boundRun();
-    await expect(
-      tool("set_palette").call(
-        { palette: ["#00000000", "#111111"] },
-        { operationId: "run-1" },
-      ),
-    ).rejects.toThrow();
+    await tool("set_palette").call(
+      { palette: ["#00000000", "#111111"] },
+      { operationId: "run-1" },
+    );
+    const run = getRun("run-1");
+    expect(bufferIndex(run?.frames.get("frame-1")?.buffer, 0, 0)).toBe(-1);
+    expect(
+      colorToHex(readCell(run!.frames.get("frame-1")!.buffer.layers[0]!.pixels, 0)),
+    ).toBe("#f4f4f4");
     releaseRun("run-1");
   });
 });
@@ -807,8 +861,8 @@ describe("frame tools", () => {
       { operationId: "run-1" },
     );
     const run = getRun("run-1");
-    expect(run?.frames.get("frame-2")?.buffer.layers[0]?.pixels[2 * 8 + 2]).toBe(2);
-    expect(run?.frames.get("frame-1")?.buffer.layers[0]?.pixels[2 * 8 + 2]).toBe(0);
+    expect(bufferIndex(run?.frames.get("frame-2")?.buffer, 0, 2 * 8 + 2)).toBe(2);
+    expect(bufferIndex(run?.frames.get("frame-1")?.buffer, 0, 2 * 8 + 2)).toBe(0);
     releaseRun("run-1");
   });
 
@@ -843,7 +897,7 @@ describe("frame tools", () => {
     const added = getRun("run-1")?.frames.get(result.frameId);
     expect(added?.buffer.width).toBe(40);
     expect(added?.buffer.height).toBe(20);
-    expect(added?.buffer.layers[0]?.pixels).toHaveLength(800);
+    expect(added?.buffer.layers[0]?.pixels).toHaveLength(800 * 4);
     releaseRun("run-1");
   });
 
@@ -881,7 +935,7 @@ describe("frame tools", () => {
     const added = run!.frames.get(result.frameId);
     expect(added?.index).toBe(2);
     expect(added?.buffer.width).toBe(8);
-    expect([...added!.buffer.layers[0]!.pixels]).toEqual(new Array(64).fill(0));
+    expect([...added!.buffer.layers[0]!.pixels]).toEqual(new Array(64 * 4).fill(0));
     expect(changes).toEqual([
       {
         type: "add",
@@ -916,7 +970,7 @@ describe("frame tools", () => {
     const added = run!.frames.get(result.frameId);
     expect(added?.name).toBe("hop copy");
     expect(added?.buffer.layers[0]?.pixels).toEqual(source?.buffer.layers[0]?.pixels);
-    expect(added?.buffer.layers[0]?.pixels[0]).toBe(4);
+    expect(bufferIndex(added?.buffer, 0, 0)).toBe(4);
     expect(added?.buffer.layers[0]?.id).not.toBe(source?.buffer.layers[0]?.id);
     releaseRun("run-1");
   });
@@ -1150,7 +1204,7 @@ describe("layer tools", () => {
       .get("frame-1")!
       .buffer.layers.find((layer) => layer.id === added.layerId);
     expect(before?.text).toMatchObject({ text: "A", color: 1, size: 16 });
-    expect(before?.pixels).toHaveLength(16);
+    expect(before?.pixels).toHaveLength(64);
 
     await tool("edit_text").call(
       { layerId: added.layerId, text: "B", x: 1, y: 1, color: 2, rotation: 45 },
@@ -1166,7 +1220,7 @@ describe("layer tools", () => {
       y: 1,
       rotation: 45,
     });
-    expect(after?.pixels).toHaveLength(16);
+    expect(after?.pixels).toHaveLength(64);
     releaseRun("run-1");
   });
 
@@ -1500,7 +1554,7 @@ describe("workspace tools", () => {
       { layerId: "layer-base", label: "dot", points: [{ x: 2, y: 2, color: 5 }] },
       { operationId: "run-1" },
     );
-    expect(run.frames.get("frame-a")!.buffer.layers[0]!.pixels[2 * 4 + 2]).toBe(5);
+    expect(bufferIndex(run.frames.get("frame-a")!.buffer, 0, 2 * 4 + 2)).toBe(5);
     releaseRun("run-1");
   });
 
@@ -1954,7 +2008,7 @@ describe("3-shade rock", () => {
     );
     expect(await tool("apply_outline").call({}, { operationId: "run-1" })).toMatchObject({
       committed: true,
-      color: 1,
+      color: hexToColor(palette[1] ?? "#00000000"),
     });
     const result = (await tool("critique_frame").call({}, { operationId: "run-1" })) as {
       issues: Array<{ code: string }>;
@@ -2033,7 +2087,7 @@ describe("layer references by name", () => {
       { operationId: "run-1" },
     )) as { layerId?: string; rows: string[] };
     expect(frame.layerId).toBe(added.layerId);
-    expect(frame.rows.join(" ")).toContain("1x1");
+    expect(frame.rows.join(" ")).toContain("#f4f4f4x1");
     await tool("rename_layer").call(
       { layerId: "shade", name: "shadow" },
       { operationId: "run-1" },

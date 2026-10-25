@@ -5,6 +5,7 @@ import {
   resolveFont,
   type ResolvedFont,
 } from "./font.js";
+import { readCell, writeCell } from "@pixelaition/pixel";
 import type { Rect, TextElement } from "./types.js";
 
 export type TextLine = {
@@ -214,8 +215,10 @@ function drawTextUpright(
   canvasHeight: number,
   element: TextElement,
   paletteSize: number,
+  rgba = false,
 ): void {
-  if (element.color <= 0 || element.color >= paletteSize) return;
+  if (!rgba && (element.color <= 0 || element.color >= paletteSize)) return;
+  if (rgba && element.color <= 0) return;
   const layout = layoutText(element);
   const scale = layout.font.scale * textScale(element);
   const spacing = element.letterSpacing ?? 0;
@@ -253,7 +256,8 @@ function drawTextUpright(
             const px = glyphX + x;
             const py = glyphY + y;
             if (px < 0 || py < 0 || px >= canvasWidth || py >= canvasHeight) continue;
-            target[py * canvasWidth + px] = element.color;
+            if (rgba) writeCell(target, py * canvasWidth + px, element.color);
+            else target[py * canvasWidth + px] = element.color;
           }
         }
       } else {
@@ -267,7 +271,8 @@ function drawTextUpright(
                 const px = glyphX + x * scale + dx;
                 const py = glyphY + y * scale + dy;
                 if (px < 0 || py < 0 || px >= canvasWidth || py >= canvasHeight) continue;
-                target[py * canvasWidth + px] = element.color;
+                if (rgba) writeCell(target, py * canvasWidth + px, element.color);
+                else target[py * canvasWidth + px] = element.color;
               }
             }
           }
@@ -324,6 +329,57 @@ export function drawText(
         continue;
       const value = upright[sourceY * canvasWidth + sourceX] ?? 0;
       if (value !== 0) target[y * canvasWidth + x] = value;
+    }
+  }
+}
+
+/** Paint text into a straight-RGBA layer without quantising its colour. */
+export function drawTextRgba(
+  target: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  element: TextElement,
+): void {
+  if (!element.rotation) {
+    drawTextUpright(target, canvasWidth, canvasHeight, element, 0, true);
+    return;
+  }
+  const upright = new Uint8Array(canvasWidth * canvasHeight * 4);
+  drawTextUpright(
+    upright,
+    canvasWidth,
+    canvasHeight,
+    { ...element, rotation: 0 },
+    0,
+    true,
+  );
+  const bounds = uprightTextBounds({ ...element, rotation: 0 });
+  const radians = (element.rotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const cx = bounds.x + bounds.width / 2;
+  const cy = bounds.y + bounds.height / 2;
+  const rotated = textBounds(element);
+  const left = Math.max(0, rotated.x);
+  const top = Math.max(0, rotated.y);
+  const right = Math.min(canvasWidth, rotated.x + rotated.width + 1);
+  const bottom = Math.min(canvasHeight, rotated.y + rotated.height + 1);
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const dx = x + 0.5 - cx;
+      const dy = y + 0.5 - cy;
+      const sourceX = Math.round(cx + dx * cos + dy * sin);
+      const sourceY = Math.round(cy - dx * sin + dy * cos);
+      if (
+        sourceX < 0 ||
+        sourceY < 0 ||
+        sourceX >= canvasWidth ||
+        sourceY >= canvasHeight
+      ) {
+        continue;
+      }
+      const value = readCell(upright, sourceY * canvasWidth + sourceX);
+      if (value !== 0) writeCell(target, y * canvasWidth + x, value);
     }
   }
 }

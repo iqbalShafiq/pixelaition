@@ -28,6 +28,8 @@ import {
   emptyPixels,
   encodePixels,
   frameToBuffer,
+  readCell,
+  writeCell,
   hexToRgba,
   paletteIndexMap,
   rgbaToHex,
@@ -308,7 +310,7 @@ export async function saveFrame(
   // throw, so it is refused here instead of stored.
   const frameWidth = frame.width ?? asset.width;
   const frameHeight = frame.height ?? asset.height;
-  const expected = frameWidth * frameHeight;
+  const expected = frameWidth * frameHeight * 4;
   try {
     for (const layer of layers) decodePixels(layer.pixels, expected);
   } catch {
@@ -2353,13 +2355,16 @@ export async function createFrameVariantRecord(
   );
   if (mirror) {
     for (const layer of buffer.layers) {
-      const next = new Uint8Array(layer.pixels.length);
+      const next = layer.pixels.slice();
       for (let y = 0; y < buffer.height; y += 1) {
         for (let x = 0; x < buffer.width; x += 1) {
           const sourceX = mirror === "horizontal" ? buffer.width - 1 - x : x;
           const sourceY = mirror === "vertical" ? buffer.height - 1 - y : y;
-          next[y * buffer.width + x] =
-            layer.pixels[sourceY * buffer.width + sourceX] ?? 0;
+          writeCell(
+            next,
+            y * buffer.width + x,
+            readCell(layer.pixels, sourceY * buffer.width + sourceX),
+          );
         }
       }
       layer.pixels = next;

@@ -1,5 +1,12 @@
 import { defineMetric, EvalOutcome, runEvalSuite } from "@anvia/core/evals";
-import { createBuffer, encodePixels, type FrameBuffer } from "@pixelaition/pixel";
+import {
+  createBuffer,
+  encodePixels,
+  hexToColor,
+  readCell,
+  writeCell,
+  type FrameBuffer,
+} from "@pixelaition/pixel";
 import { describe, expect, it } from "vitest";
 import { bindRun, getRun, releaseRun } from "../runs.js";
 import { activeLayerId, createPixelTools } from "../tools.js";
@@ -69,7 +76,7 @@ const committedPixels = defineMetric<string, DrawOutput, boolean, unknown>({
 });
 
 describe("generation decisions and tools", () => {
-  it("commits only in-palette strokes", async () => {
+  it("commits RGBA strokes and rejects invalid colours", async () => {
     const buffer = createBuffer({ width: 8, height: 8 });
     bindRun("run-1", {
       assetId: "asset",
@@ -119,11 +126,11 @@ describe("generation decisions and tools", () => {
         {
           layerId: activeLayerId(buffer),
           label: "bad",
-          points: [{ x: 1, y: 1, color: 9 }],
+          points: [{ x: 1, y: 1, color: -1 }],
         },
         { operationId: "run-1/tool:2" },
       ),
-    ).rejects.toThrow(/palette/i);
+    ).rejects.toThrow(/colour|color/i);
     releaseRun("run-1");
     expect(
       encodePixels(buffer.layers[0]?.pixels ?? new Uint8Array()).length,
@@ -195,8 +202,8 @@ describe("generation decisions and tools", () => {
     const firstLayer = first.layers[0];
     const secondLayer = second.layers[0];
     if (!firstLayer || !secondLayer) throw new Error("missing layer");
-    firstLayer.pixels[0] = 1; // (0, 0)
-    secondLayer.pixels[1] = 1; // (1, 0), a one-pixel walk
+    writeCell(firstLayer.pixels, 0, hexToColor(first.palette[1] ?? "#00000000") ?? 0);
+    writeCell(secondLayer.pixels, 1, hexToColor(second.palette[1] ?? "#00000000") ?? 0);
 
     bindFrames("run-anim", [
       { id: "a", name: "walk-1", buffer: first },
@@ -429,7 +436,7 @@ describe("generation decisions and tools", () => {
     const layerId = activeLayerId(buffer);
     const layer = buffer.layers.find((item) => item.id === layerId);
     if (!layer) throw new Error("missing layer");
-    layer.pixels[0] = 1;
+    writeCell(layer.pixels, 0, hexToColor(buffer.palette[1] ?? "#00000000") ?? 0);
     bindFrames("run-tilemap", [{ id: "frame", name: "idle", buffer }]);
     const applied = (await toolFor("apply_tilemap").call(
       {
@@ -448,9 +455,10 @@ describe("generation decisions and tools", () => {
     )) as { committed: boolean };
     expect(applied.committed).toBe(true);
     const live = getRun("run-tilemap")?.frames.get("frame")?.buffer.layers[0]?.pixels;
-    expect(live?.[0]).toBe(1);
-    expect(live?.[2 * 8 + 2]).toBe(1);
-    expect(live?.[6 * 8 + 6]).toBe(1);
+    const expected = hexToColor(buffer.palette[1] ?? "#00000000");
+    expect(live && readCell(live, 0)).toBe(expected);
+    expect(live && readCell(live, 2 * 8 + 2)).toBe(expected);
+    expect(live && readCell(live, 6 * 8 + 6)).toBe(expected);
     releaseRun("run-tilemap");
   });
 

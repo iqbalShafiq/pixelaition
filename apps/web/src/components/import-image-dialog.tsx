@@ -1,16 +1,10 @@
-import {
-  quantizeToPalette,
-  resizeRgbaNearest,
-  sliceSheet,
-  type RgbaImageData,
-} from "@pixelaition/pixel";
+import { resizeRgbaNearest, sliceSheet, type RgbaImageData } from "@pixelaition/pixel";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Callout, Dialog, Field, SelectControl } from "./ui.js";
 import { decodeImageFile } from "../lib/image-import.js";
 import type { AssetDto, FrameDto } from "../lib/types.js";
 
 type Mode = "frames" | "layers";
-type Dither = "none" | "bayer4";
 
 function base64(bytes: Uint8Array): string {
   let binary = "";
@@ -18,13 +12,9 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function toFrameBuffer(image: RgbaImageData, palette: string[], dither: Dither) {
-  return quantizeToPalette(image, palette, { dither, alphaThreshold: 128 });
-}
-
 /**
- * Import an existing raster into the asset. Decoding and quantization happen
- * in the browser; the API re-validates every index and every canvas size.
+ * Import an existing raster into the asset as RGBA. Decoding happens in the
+ * browser; the API re-validates every buffer and every canvas size.
  */
 export function ImportImageDialog({
   open,
@@ -43,7 +33,6 @@ export function ImportImageDialog({
   const [file, setFile] = useState<File | null>(null);
   const [image, setImage] = useState<RgbaImageData | null>(null);
   const [mode, setMode] = useState<Mode>("frames");
-  const [dither, setDither] = useState<Dither>("bayer4");
   const [columns, setColumns] = useState("1");
   const [rows, setRows] = useState("1");
   const [margin, setMargin] = useState("0");
@@ -118,7 +107,7 @@ export function ImportImageDialog({
           layers: [
             {
               name: "Imported",
-              pixels: base64(toFrameBuffer(image, asset.palette, dither)),
+              pixels: base64(image.data),
             },
           ],
         };
@@ -156,7 +145,7 @@ export function ImportImageDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Import an image"
-      description="PNG, JPEG, WebP or the first frame of a GIF. Colours map into this asset's palette; pixel art stays on its grid."
+      description="PNG, JPEG, WebP or the first frame of a GIF. Pixels import as true RGBA; the grid stays on whole pixels."
       width="46rem"
     >
       <input
@@ -195,15 +184,6 @@ export function ImportImageDialog({
             value={mode}
             options={["frames", "layers"]}
             onChange={(next) => setMode(next as Mode)}
-          />
-        </Field>
-        <Field label="Dither" htmlFor="import-dither">
-          <SelectControl
-            id="import-dither"
-            label="Dither"
-            value={dither}
-            options={["none", "bayer4"]}
-            onChange={(next) => setDither(next as Dither)}
           />
         </Field>
       </div>

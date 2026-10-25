@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { composite, frameToBuffer } from "@pixelaition/pixel";
+import { frameToBuffer, renderFrameDocument } from "@pixelaition/pixel";
 import { getPreset } from "@pixelaition/artboard";
 import { useLayoutEffect, useRef } from "react";
 import { api } from "../lib/api.js";
@@ -80,17 +80,7 @@ export function SpriteThumb({
     canvas.width = buffer.width;
     canvas.height = buffer.height;
     const image = context.createImageData(buffer.width, buffer.height);
-    const indexes = composite(buffer);
-    for (let index = 0; index < indexes.length; index += 1) {
-      const value = indexes[index] ?? 0;
-      if (value === 0) continue;
-      const [r, g, b, a] = hexToRgba(buffer.palette[value] ?? "#000000");
-      const offset = index * 4;
-      image.data[offset] = r;
-      image.data[offset + 1] = g;
-      image.data[offset + 2] = b;
-      image.data[offset + 3] = a;
-    }
+    image.data.set(renderFrameDocument(buffer).data);
     context.putImageData(image, 0, 0);
   }, [asset.data]);
 

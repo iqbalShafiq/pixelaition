@@ -3,6 +3,33 @@ import { normalizeHex } from "./pixels.js";
 /** Straight-alpha RGBA, the shape every renderer and encoder agrees on. */
 export type Rgba = [number, number, number, number];
 
+/** One full-colour pixel packed as 0xRRGGBBAA. */
+export type PackedRgba = number;
+
+export function packRgba(r: number, g: number, b: number, a = 255): PackedRgba {
+  const channel = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  return ((channel(r) << 24) | (channel(g) << 16) | (channel(b) << 8) | channel(a)) >>> 0;
+}
+
+export function unpackRgba(color: PackedRgba): Rgba {
+  return [
+    (color >>> 24) & 0xff,
+    (color >>> 16) & 0xff,
+    (color >>> 8) & 0xff,
+    color & 0xff,
+  ];
+}
+
+export function hexToColor(hex: string): PackedRgba | null {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return null;
+  return packRgba(...hexToRgba(normalized));
+}
+
+export function colorToHex(color: PackedRgba): string {
+  return rgbaToHex(...unpackRgba(color));
+}
+
 /**
  * Palette entries are normalised hex, so a fixed-width parse is enough.
  * Anything unexpected is opaque black rather than silently transparent: a bad

@@ -1,4 +1,5 @@
 import { askJev, type JevQuestion } from "./jev.js";
+import { hexToColor, readCell } from "@pixelaition/pixel";
 import type { RunBinding } from "./runs.js";
 
 /**
@@ -153,23 +154,46 @@ export function gateIsHarmless(
     const right = Math.min(buffer.width, x + width);
     for (let row = top; row < bottom; row++) {
       for (let column = left; column < right; column++) {
-        if (pixels[row * buffer.width + column] !== 0) return false;
+        if ((readCell(pixels, row * buffer.width + column) & 0xff) !== 0) {
+          return false;
+        }
       }
     }
     return true;
   }
   if (toolName === "replace_color") {
-    const { layerId, from } = args as { layerId?: string; from: number };
-    if (!Number.isInteger(from)) return false;
+    const { layerId, from } = args as { layerId?: string; from: number | string };
+    let wanted = typeof from === "string" ? hexToColor(from) : from;
+    if (
+      wanted !== null &&
+      Number.isInteger(wanted) &&
+      wanted >= 0 &&
+      wanted < buffer.palette.length &&
+      wanted < 16
+    ) {
+      wanted = hexToColor(buffer.palette[wanted] ?? "#00000000") ?? wanted;
+    }
+    if (wanted === null || !Number.isInteger(wanted)) return false;
     const layers =
       layerId !== undefined
         ? [pixelsOf(layerId)]
         : buffer.layers.map((layer) => layer.pixels);
-    return !layers.some((pixels) => pixels?.includes(from));
+    return !layers.some((pixels) => {
+      if (!pixels) return false;
+      for (let cell = 0; cell < buffer.width * buffer.height; cell += 1) {
+        if (readCell(pixels, cell) === wanted) return true;
+      }
+      return false;
+    });
   }
   if (toolName === "set_palette") {
     // No painted pixel can lose its color when no pixel is painted.
-    return !buffer.layers.some((layer) => layer.pixels.some((value) => value !== 0));
+    return !buffer.layers.some((layer) => {
+      for (let cell = 0; cell < buffer.width * buffer.height; cell += 1) {
+        if ((readCell(layer.pixels, cell) & 0xff) !== 0) return true;
+      }
+      return false;
+    });
   }
   if (toolName === "resize_canvas") {
     const { width, height } = args as { width: number; height: number };

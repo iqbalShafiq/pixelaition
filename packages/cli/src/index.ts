@@ -7,7 +7,6 @@ import {
   frameToBuffer,
   paletteFromImage,
   pixelProjectSchema,
-  quantizeToPalette,
   type Asset,
   type Command,
   type Frame,
@@ -329,9 +328,7 @@ async function importImage(args: string[]): Promise<void> {
     height: image.height,
     palette: palette.slice(0, 255),
   });
-  buffer.layers[0]?.pixels.set(
-    quantizeToPalette({ data: rgba, width: image.width, height: image.height }, palette),
-  );
+  buffer.layers[0]?.pixels.set(rgba);
   const frame = bufferToFrame(buffer, {
     id: crypto.randomUUID(),
     name: "imported",
@@ -434,9 +431,7 @@ async function importAsepriteJson(args: string[]): Promise<void> {
       }
     }
     const buffer = createBuffer({ width, height, palette: palette.slice(0, 255) });
-    buffer.layers[0]?.pixels.set(
-      quantizeToPalette({ data: slice, width, height }, palette),
-    );
+    buffer.layers[0]?.pixels.set(slice);
     return bufferToFrame(buffer, {
       id: crypto.randomUUID(),
       name: `frame-${index + 1}`,

@@ -1,6 +1,14 @@
 import { cloneBuffer, composite, layerById, replaceLayer } from "./buffer.js";
-import { colorDistance, hexToRgba } from "./color.js";
-import { clonePixels, inBounds, indexOf, normalizeHex, readCell } from "./pixels.js";
+import { colorDistance, hexToColor } from "./color.js";
+import {
+  clonePixels,
+  emptyPixels,
+  inBounds,
+  indexOf,
+  normalizeHex,
+  readCell,
+  writeCell,
+} from "./pixels.js";
 import {
   MAX_COLORS,
   type Command,
@@ -36,11 +44,11 @@ function paintPoints(
     if (!inBounds(buffer.width, buffer.height, point.x, point.y)) {
       return fail("OUT_OF_BOUNDS", "A pixel sits outside the canvas.");
     }
-    const color = colorFor(point);
-    if (!Number.isInteger(color) || color < 0 || color >= buffer.palette.length) {
-      return fail("PALETTE_INDEX", "A pixel uses a color that is not in the palette.");
+    const color = resolveColor(buffer, colorFor(point));
+    if (!colorOk(color)) {
+      return fail("COLOR", "A pixel uses an invalid RGBA colour.");
     }
-    next[indexOf(buffer.width, point.x, point.y)] = color;
+    writeCell(next, indexOf(buffer.width, point.x, point.y), color);
   }
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
@@ -131,8 +139,8 @@ function flood(
   if (!inBounds(buffer.width, buffer.height, x, y)) {
     return fail("OUT_OF_BOUNDS", "The fill starts outside the canvas.");
   }
-  if (!Number.isInteger(color) || color < 0 || color >= buffer.palette.length) {
-    return fail("PALETTE_INDEX", "The fill color is not in the palette.");
+  if (!colorOk(color)) {
+    return fail("COLOR", "The fill colour is invalid.");
   }
   const limit = region
     ? {
@@ -148,8 +156,9 @@ function flood(
       point.x <= limit.right &&
       point.y >= limit.top &&
       point.y <= limit.bottom);
+  const resolved = resolveColor(buffer, color);
   const target = readCell(layer.pixels, indexOf(buffer.width, x, y));
-  if (target === color) return { ok: true, buffer };
+  if (target === resolved) return { ok: true, buffer };
   const next = clonePixels(layer.pixels);
   const stack: Point[] = [{ x, y }];
   while (stack.length > 0) {
@@ -158,7 +167,7 @@ function flood(
     if (!inside(point)) continue;
     const index = indexOf(buffer.width, point.x, point.y);
     if (readCell(next, index) !== target) continue;
-    next[index] = color;
+    writeCell(next, index, resolved);
     stack.push(
       { x: point.x + 1, y: point.y },
       { x: point.x - 1, y: point.y },
@@ -169,8 +178,20 @@ function flood(
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
 
-function paletteIndexOk(buffer: FrameBuffer, color: number): boolean {
-  return Number.isInteger(color) && color >= 0 && color < buffer.palette.length;
+function colorOk(color: number): boolean {
+  return Number.isInteger(color) && color >= 0 && color <= 0xffffffff;
+}
+
+/**
+ * Transitional palette-index support: small values are legacy indices, while
+ * packed RGBA colours are always above the transparent-black range. New tools
+ * pass packed colours (or hex, converted at the boundary).
+ */
+function resolveColor(buffer: FrameBuffer, color: number): number {
+  if (color >= 0 && color < buffer.palette.length && color < 16) {
+    return hexToColor(buffer.palette[color] ?? "#00000000") ?? 0;
+  }
+  return color;
 }
 
 function replaceColor(
@@ -179,8 +200,10 @@ function replaceColor(
   from: number,
   to: number,
 ): CommandResult {
-  if (!paletteIndexOk(buffer, from) || !paletteIndexOk(buffer, to)) {
-    return fail("PALETTE_INDEX", "The swap uses a color that is not in the palette.");
+  const source = resolveColor(buffer, from);
+  const target = resolveColor(buffer, to);
+  if (!colorOk(source) || !colorOk(target)) {
+    return fail("COLOR", "The replacement colours are invalid.");
   }
   if (layerId !== undefined) {
     const gate = requireLayer(buffer, layerId);
@@ -188,8 +211,9 @@ function replaceColor(
   }
   const swap = (pixels: Uint8Array): Uint8Array => {
     const next = clonePixels(pixels);
-    for (let index = 0; index < next.length; index += 1) {
-      if (next[index] === from) next[index] = to;
+    const cells = buffer.width * buffer.height;
+    for (let index = 0; index < cells; index += 1) {
+      if (readCell(next, index) === source) writeCell(next, index, target);
     }
     return next;
   };
@@ -209,9 +233,10 @@ function replaceColor(
 function outline(buffer: FrameBuffer, layerId: string, color: number): CommandResult {
   const layer = layerById(buffer, layerId);
   if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-  if (!paletteIndexOk(buffer, color)) {
-    return fail("PALETTE_INDEX", "The outline color is not in the palette.");
+  if (!colorOk(color)) {
+    return fail("COLOR", "The outline colour is invalid.");
   }
+  const resolved = resolveColor(buffer, color);
   const view = composite(buffer);
   const next = clonePixels(layer.pixels);
   for (let y = 0; y < buffer.height; y += 1) {
@@ -227,7 +252,7 @@ function outline(buffer: FrameBuffer, layerId: string, color: number): CommandRe
           inBounds(buffer.width, buffer.height, point.x, point.y) &&
           readCell(view, indexOf(buffer.width, point.x, point.y)) !== 0,
       );
-      if (touchesOpaque) next[indexOf(buffer.width, x, y)] = color;
+      if (touchesOpaque) writeCell(next, indexOf(buffer.width, x, y), resolved);
     }
   }
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
@@ -252,16 +277,18 @@ function dither(
   if (!withinRegion(buffer, x, y, width, height)) {
     return fail("OUT_OF_BOUNDS", "The dither region reaches outside the canvas.");
   }
-  if (!paletteIndexOk(buffer, colorA) || !paletteIndexOk(buffer, colorB)) {
-    return fail("PALETTE_INDEX", "A dither color is not in the palette.");
+  if (!colorOk(colorA) || !colorOk(colorB)) {
+    return fail("COLOR", "A dither colour is invalid.");
   }
   const layer = layerById(buffer, layerId);
   if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+  const useColorA = resolveColor(buffer, colorA);
+  const useColorB = resolveColor(buffer, colorB);
   const next = clonePixels(layer.pixels);
   for (let cellY = y; cellY < y + height; cellY += 1) {
     for (let cellX = x; cellX < x + width; cellX += 1) {
       const useA = pattern === "checker" ? (cellX + cellY) % 2 === 0 : cellX % 2 === 0;
-      next[indexOf(buffer.width, cellX, cellY)] = useA ? colorA : colorB;
+      writeCell(next, indexOf(buffer.width, cellX, cellY), useA ? useColorA : useColorB);
     }
   }
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
@@ -369,98 +396,29 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return paintPoints(buffer, command.layerId, points, (point) => point.color ?? 0);
     }
     case "setPalette": {
-      if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
-        return fail(
-          "PALETTE_SIZE",
-          "A palette needs a transparent color and at most 255 others.",
-        );
-      }
-      const palette: string[] = [];
-      for (const color of command.palette) {
-        const hex = normalizeHex(color);
-        if (!hex)
-          return fail(
-            "PALETTE_COLOR",
-            "Index 0 must be #00000000 and every entry must be hex.",
-          );
-        palette.push(hex);
-      }
-      if (palette[0] !== "#00000000") {
-        return fail(
-          "PALETTE_COLOR",
-          "Index 0 must be #00000000 and every entry must be hex.",
-        );
-      }
-      const highest = highestIndex(buffer);
-      if (highest >= palette.length) {
-        return fail(
-          "PALETTE_IN_USE",
-          "The canvas still uses a color this palette would remove.",
-        );
-      }
-      return { ok: true, buffer: { ...buffer, palette } };
-    }
-    case "reindexPalette": {
-      if (command.palette.length < 2 || command.palette.length > MAX_COLORS + 1) {
-        return fail(
-          "PALETTE_SIZE",
-          "A palette needs a transparent color and at most 255 others.",
-        );
+      if (command.palette.length < 1 || command.palette.length > MAX_COLORS + 1) {
+        return fail("PALETTE_SIZE", "A palette holds at most 256 swatches.");
       }
       const palette: string[] = [];
       for (const color of command.palette) {
         const hex = normalizeHex(color);
         if (!hex) {
-          return fail(
-            "PALETTE_COLOR",
-            "Index 0 must be #00000000 and every entry must be hex.",
-          );
+          return fail("PALETTE_COLOR", "Every swatch must be a hex colour.");
         }
         palette.push(hex);
       }
-      if (palette[0] !== "#00000000") {
-        return fail(
-          "PALETTE_COLOR",
-          "Index 0 must be #00000000 and every entry must be hex.",
-        );
+      return { ok: true, buffer: { ...buffer, palette } };
+    }
+    case "reindexPalette": {
+      // Swatches no longer own pixel colours; reindexing only refreshes the
+      // library and leaves every RGBA pixel untouched.
+      const palette: string[] = [];
+      for (const color of command.palette) {
+        const hex = normalizeHex(color);
+        if (!hex) return fail("PALETTE_COLOR", "Every swatch must be a hex colour.");
+        palette.push(hex);
       }
-      const mapping = new Map<number, number>();
-      for (const [from, to] of Object.entries(command.mapping)) {
-        const source = Number(from);
-        if (
-          !Number.isInteger(source) ||
-          source < 0 ||
-          source >= buffer.palette.length ||
-          !Number.isInteger(to) ||
-          to < 0 ||
-          to >= palette.length
-        ) {
-          return fail(
-            "PALETTE_INDEX",
-            `The mapping from ${from} to ${to} is not an index in both palettes.`,
-          );
-        }
-        mapping.set(source, to);
-      }
-      for (const layer of buffer.layers) {
-        for (const value of layer.pixels) {
-          if (value !== 0 && !mapping.has(value)) {
-            return fail(
-              "PALETTE_IN_USE",
-              `The canvas uses colour ${value}, and this palette replaces it without saying what it becomes.`,
-            );
-          }
-        }
-      }
-      const layers = buffer.layers.map((layer) => {
-        const pixels = clonePixels(layer.pixels);
-        for (let index = 0; index < pixels.length; index += 1) {
-          const mapped = mapping.get(pixels[index] ?? 0);
-          if (mapped !== undefined) pixels[index] = mapped;
-        }
-        return { ...layer, pixels };
-      });
-      return { ok: true, buffer: { ...buffer, palette, layers } };
+      return { ok: true, buffer: { ...buffer, palette } };
     }
     case "resize": {
       if (
@@ -472,14 +430,15 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         return fail("SIZE", "Canvas size must be a positive integer.");
       }
       const layers = buffer.layers.map((layer) => {
-        const pixels = new Uint8Array(command.width * command.height);
+        const pixels = emptyPixels(command.width, command.height);
         const copyWidth = Math.min(buffer.width, command.width);
         const copyHeight = Math.min(buffer.height, command.height);
         for (let y = 0; y < copyHeight; y += 1) {
           for (let x = 0; x < copyWidth; x += 1) {
-            pixels[indexOf(command.width, x, y)] = readCell(
-              layer.pixels,
-              indexOf(buffer.width, x, y),
+            writeCell(
+              pixels,
+              indexOf(command.width, x, y),
+              readCell(layer.pixels, indexOf(buffer.width, x, y)),
             );
           }
         }
@@ -503,7 +462,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
               id: command.id,
               name,
               visible: true,
-              pixels: new Uint8Array(buffer.width * buffer.height),
+              pixels: emptyPixels(buffer.width, buffer.height),
             },
           ],
         },
@@ -512,7 +471,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
     case "replaceLayer": {
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      if (command.pixels.length !== buffer.width * buffer.height)
+      if (command.pixels.length !== buffer.width * buffer.height * 4)
         return fail("PIXEL_COUNT", "The layer pixels do not match the canvas.");
       const next: Layer = {
         ...layer,
@@ -853,23 +812,28 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       }
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      const tile = new Uint8Array(command.tileWidth * command.tileHeight);
+      const tile: number[] = [];
       for (let row = 0; row < command.tileHeight; row += 1) {
         for (let column = 0; column < command.tileWidth; column += 1) {
-          tile[row * command.tileWidth + column] = readCell(
-            layer.pixels,
-            indexOf(buffer.width, command.tileX + column, command.tileY + row),
+          tile.push(
+            readCell(
+              layer.pixels,
+              indexOf(buffer.width, command.tileX + column, command.tileY + row),
+            ),
           );
         }
       }
       const next = clonePixels(layer.pixels);
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
-          next[indexOf(buffer.width, command.x + column, command.y + row)] =
+          writeCell(
+            next,
+            indexOf(buffer.width, command.x + column, command.y + row),
             tile[
               (row % command.tileHeight) * command.tileWidth +
                 (column % command.tileWidth)
-            ] ?? 0;
+            ] ?? 0,
+          );
         }
       }
       return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
@@ -895,7 +859,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       }
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      const source = new Uint8Array(command.width * command.height);
+      const source: number[] = [];
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           const local = row * command.width + column;
@@ -910,20 +874,22 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           if (command.mask[row * command.width + column] !== 1) continue;
-          next[indexOf(buffer.width, command.x + column, command.y + row)] = 0;
+          writeCell(next, indexOf(buffer.width, command.x + column, command.y + row), 0);
         }
       }
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           const local = row * command.width + column;
           if (command.mask[local] !== 1) continue;
-          next[
+          writeCell(
+            next,
             indexOf(
               buffer.width,
               command.x + command.dx + column,
               command.y + command.dy + row,
-            )
-          ] = source[local] ?? 0;
+            ),
+            source[local] ?? 0,
+          );
         }
       }
       return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
@@ -945,7 +911,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       }
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      const source = new Uint8Array(command.width * command.height);
+      const source: number[] = [];
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           const local = row * command.width + column;
@@ -960,7 +926,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           if (command.mask[row * command.width + column] !== 1) continue;
-          next[indexOf(buffer.width, command.x + column, command.y + row)] = 0;
+          writeCell(next, indexOf(buffer.width, command.x + column, command.y + row), 0);
         }
       }
       const size = command.width;
@@ -984,8 +950,11 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
           }
           const local = sourceRow * size + sourceColumn;
           if (command.mask[local] !== 1) continue;
-          next[indexOf(buffer.width, command.x + column, command.y + row)] =
-            source[local] ?? 0;
+          writeCell(
+            next,
+            indexOf(buffer.width, command.x + column, command.y + row),
+            source[local] ?? 0,
+          );
         }
       }
       return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
@@ -999,8 +968,9 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       ) {
         return fail("SHAPE", "The masked fill has the wrong region or mask size.");
       }
-      if (!paletteIndexOk(buffer, command.color)) {
-        return fail("PALETTE_INDEX", "The fill colour is not in the palette.");
+      const fillColor = resolveColor(buffer, command.color);
+      if (!colorOk(fillColor)) {
+        return fail("COLOR", "The fill colour is invalid.");
       }
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
@@ -1043,7 +1013,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         if (seen.has(index)) continue;
         seen.add(index);
         if (readCell(next, index) !== target) continue;
-        next[index] = command.color;
+        writeCell(next, index, fillColor);
         stack.push(
           { x: point.x + 1, y: point.y },
           { x: point.x - 1, y: point.y },
@@ -1062,8 +1032,8 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       if (!withinRegion(buffer, command.x, command.y, command.width, command.height)) {
         return fail("OUT_OF_BOUNDS", "The ellipse reaches outside the canvas.");
       }
-      if (!paletteIndexOk(buffer, command.color)) {
-        return fail("PALETTE_INDEX", "The ellipse colour is not in the palette.");
+      if (!colorOk(command.color)) {
+        return fail("COLOR", "The ellipse colour is invalid.");
       }
       return paintPoints(
         buffer,
@@ -1095,9 +1065,13 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         for (let column = 0; column < size; column += 1) {
           const sourceX = command.turns === 1 ? size - 1 - row : column;
           const sourceY = command.turns === 1 ? column : size - 1 - column;
-          next[indexOf(buffer.width, command.x + column, command.y + row)] = readCell(
-            layer.pixels,
-            indexOf(buffer.width, command.x + sourceX, command.y + sourceY),
+          writeCell(
+            next,
+            indexOf(buffer.width, command.x + column, command.y + row),
+            readCell(
+              layer.pixels,
+              indexOf(buffer.width, command.x + sourceX, command.y + sourceY),
+            ),
           );
         }
       }
@@ -1122,7 +1096,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       }
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      const source = new Uint8Array(command.width * command.height);
+      const source: number[] = [];
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
           source[row * command.width + column] = readCell(
@@ -1135,19 +1109,25 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       if (command.eraseSource) {
         for (let row = 0; row < command.height; row += 1) {
           for (let column = 0; column < command.width; column += 1) {
-            next[indexOf(buffer.width, command.x + column, command.y + row)] = 0;
+            writeCell(
+              next,
+              indexOf(buffer.width, command.x + column, command.y + row),
+              0,
+            );
           }
         }
       }
       for (let row = 0; row < command.height; row += 1) {
         for (let column = 0; column < command.width; column += 1) {
-          next[
+          writeCell(
+            next,
             indexOf(
               buffer.width,
               command.x + command.dx + column,
               command.y + command.dy + row,
-            )
-          ] = source[row * command.width + column] ?? 0;
+            ),
+            source[row * command.width + column] ?? 0,
+          );
         }
       }
       return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
@@ -1157,26 +1137,35 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       if ("ok" in gate) return gate;
       const layer = layerById(buffer, command.layerId);
       if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
-      const sample = command.color ?? readCell(layer.pixels, indexOf(buffer.width, 0, 0));
-      if (!paletteIndexOk(buffer, sample)) {
-        return fail("PALETTE_INDEX", "The background colour is not in the palette.");
+      const sample = resolveColor(
+        buffer,
+        command.color ?? readCell(layer.pixels, indexOf(buffer.width, 0, 0)),
+      );
+      if (!colorOk(sample)) {
+        return fail("COLOR", "The background colour is invalid.");
       }
       const tolerance = Math.max(0, Math.min(255, command.tolerance ?? 0));
-      const sampleRgba = hexToRgba(buffer.palette[sample] ?? "#000000");
-      const sampleRgb = [sampleRgba[0], sampleRgba[1], sampleRgba[2]] as const;
-      const matches = (index: number) => {
-        if (index === 0) return false;
-        const hex = buffer.palette[index];
-        if (hex === undefined) return false;
-        const [r, g, b] = hexToRgba(hex);
-        return colorDistance([r, g, b], sampleRgb) <= tolerance;
+      const sampleRgb = [
+        (sample >>> 24) & 0xff,
+        (sample >>> 16) & 0xff,
+        (sample >>> 8) & 0xff,
+      ] as const;
+      const matches = (color: number) => {
+        if ((color & 0xff) === 0) return false;
+        return (
+          colorDistance(
+            [(color >>> 24) & 0xff, (color >>> 16) & 0xff, (color >>> 8) & 0xff],
+            sampleRgb,
+          ) <= tolerance
+        );
       };
       const edgesOnly = command.edgesOnly ?? true;
+      const cells = buffer.width * buffer.height;
       if (!edgesOnly) {
         const next = clonePixels(layer.pixels);
-        for (let index = 0; index < next.length; index += 1) {
+        for (let index = 0; index < cells; index += 1) {
           const color = readCell(next, index);
-          if (matches(color)) next[index] = 0;
+          if (matches(color)) writeCell(next, index, 0);
         }
         return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
       }
@@ -1197,7 +1186,7 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
         if (seen.has(index)) continue;
         seen.add(index);
         if (!matches(readCell(next, index))) continue;
-        next[index] = 0;
+        writeCell(next, index, 0);
         queue.push(
           { x: point.x + 1, y: point.y },
           { x: point.x - 1, y: point.y },
@@ -1226,19 +1215,15 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
   }
 }
 
-function highestIndex(buffer: FrameBuffer): number {
-  let highest = 0;
-  for (const layer of buffer.layers) {
-    for (const color of layer.pixels) highest = Math.max(highest, color);
-  }
-  return highest;
-}
-
 function mirrorPixels(pixels: Uint8Array, width: number, height: number): Uint8Array {
-  const next = new Uint8Array(pixels.length);
+  const next = clonePixels(pixels);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      next[indexOf(width, width - 1 - x, y)] = readCell(pixels, indexOf(width, x, y));
+      writeCell(
+        next,
+        indexOf(width, width - 1 - x, y),
+        readCell(pixels, indexOf(width, x, y)),
+      );
     }
   }
   return next;
@@ -1268,18 +1253,17 @@ function stamp(
   const next = clonePixels(layer.pixels);
   for (let row = 0; row < command.height; row += 1) {
     for (let column = 0; column < command.width; column += 1) {
-      const color = command.pixels[row * command.width + column];
-      if (color === undefined || !paletteIndexOk(buffer, color)) {
-        const target =
-          color === undefined
-            ? `row ${row + command.y}, column ${column + command.x}`
-            : `row ${row + command.y}, column ${column + command.x} uses index ${color}`;
+      const color =
+        command.pixels[row * command.width + column] === undefined
+          ? undefined
+          : resolveColor(buffer, command.pixels[row * command.width + column] ?? 0);
+      if (color === undefined || !colorOk(color)) {
         return fail(
-          "PALETTE_INDEX",
-          `${target} is not a colour in this asset's palette. Map the source colours to this palette first.`,
+          "COLOR",
+          `Row ${row + command.y}, column ${column + command.x} is not a valid RGBA colour.`,
         );
       }
-      next[indexOf(buffer.width, command.x + column, command.y + row)] = color;
+      writeCell(next, indexOf(buffer.width, command.x + column, command.y + row), color);
     }
   }
   const replaced = replaceLayer(buffer, command.layerId, next);
@@ -1326,9 +1310,10 @@ function mirrorRegion(
         command.axis === "vertical"
           ? command.y + command.height - 1 - row
           : command.y + row;
-      next[indexOf(buffer.width, command.x + column, command.y + row)] = readCell(
-        layer.pixels,
-        indexOf(buffer.width, fromX, fromY),
+      writeCell(
+        next,
+        indexOf(buffer.width, command.x + column, command.y + row),
+        readCell(layer.pixels, indexOf(buffer.width, fromX, fromY)),
       );
     }
   }

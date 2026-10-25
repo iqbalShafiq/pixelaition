@@ -1,5 +1,6 @@
 import { composite } from "./buffer.js";
 import { hexToRgba } from "./color.js";
+import { readCell } from "./pixels.js";
 import type { BlendMode, FrameBuffer, Layer } from "./types.js";
 
 export type RgbaImage = {
@@ -86,10 +87,13 @@ export function renderFrameDocument(buffer: FrameBuffer): RgbaImage {
       Math.max(0, Math.min(1, layer.opacity ?? 1)) * groupOpacity(buffer, layer);
     if (opacity <= 0) continue;
     const blend = blendChannel[layer.blend ?? "normal"];
-    for (let index = 0; index < layer.pixels.length; index += 1) {
-      const colorIndex = layer.pixels[index] ?? 0;
-      if (colorIndex === 0) continue;
-      const [r, g, b, a] = hexToRgba(buffer.palette[colorIndex] ?? "#000000");
+    for (let index = 0; index < width * height; index += 1) {
+      const color = readCell(layer.pixels, index);
+      const a = color & 0xff;
+      if (a === 0) continue;
+      const r = (color >>> 24) & 0xff;
+      const g = (color >>> 16) & 0xff;
+      const b = (color >>> 8) & 0xff;
       const sourceAlpha = (a / 255) * opacity;
       if (sourceAlpha <= 0) continue;
       const offset = index * 4;

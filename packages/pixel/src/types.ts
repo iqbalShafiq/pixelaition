@@ -161,7 +161,7 @@ export type Asset = {
 
 export type PixelProject = {
   format: "pixelaition";
-  version: 1;
+  version: 1 | 2;
   project: {
     name: string;
     description: string;

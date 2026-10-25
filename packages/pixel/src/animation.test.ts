@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { checkAnimation, frameStats } from "./animation.js";
 import { cloneBuffer, createBuffer } from "./buffer.js";
 import { applyCommand } from "./commands.js";
+import { colorToHex } from "./color.js";
+import { readCell } from "./pixels.js";
 import type { FrameBuffer } from "./types.js";
+
+function legacyPixels(buffer: FrameBuffer, layerIndex = 0): Uint8Array {
+  const source = buffer.layers[layerIndex]?.pixels ?? new Uint8Array();
+  const result = new Uint8Array(buffer.width * buffer.height);
+  for (let cell = 0; cell < result.length; cell += 1) {
+    const hex = colorToHex(readCell(source, cell));
+    result[cell] = buffer.palette.findIndex((swatch) => swatch === hex);
+  }
+  return result;
+}
 
 function painted(points: Array<{ x: number; y: number; color?: number }>): FrameBuffer {
   const buffer = createBuffer({ width: 8, height: 8 });
@@ -212,7 +224,7 @@ describe("checkAnimation", () => {
     });
     expect(stamped.ok).toBe(true);
     const index = (x: number, y: number) => y * 8 + x;
-    const pixels = stamped.ok ? stamped.buffer.layers[0]!.pixels : new Uint8Array();
+    const pixels = legacyPixels(stamped.ok ? stamped.buffer : buffer);
     expect([
       pixels[index(1, 1)],
       pixels[index(2, 1)],
@@ -228,7 +240,7 @@ describe("checkAnimation", () => {
       height: 2,
       axis: "horizontal",
     });
-    const flipped = mirrored.ok ? mirrored.buffer.layers[0]!.pixels : new Uint8Array();
+    const flipped = legacyPixels(mirrored.ok ? mirrored.buffer : buffer);
     expect([flipped[index(1, 1)], flipped[index(2, 1)]]).toEqual([2, 1]);
   });
 
@@ -252,9 +264,9 @@ describe("checkAnimation", () => {
       y: 0,
       width: 1,
       height: 1,
-      pixels: [999],
+      pixels: [-1],
     });
-    expect(outside.ok ? "ok" : outside.code).toBe("PALETTE_INDEX");
+    expect(outside.ok ? "ok" : outside.code).toBe("COLOR");
     const offCanvas = applyCommand(created, {
       type: "stamp",
       layerId,

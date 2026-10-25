@@ -19,8 +19,26 @@ export function indexOf(width: number, x: number, y: number): number {
   return y * width + x;
 }
 
+/**
+ * Pixel bytes are straight RGBA, four bytes per cell; the editing commands
+ * still speak one packed 0xRRGGBBAA number per cell.
+ */
 export function readCell(pixels: Uint8Array, index: number): number {
-  return pixels[index] ?? TRANSPARENT;
+  const offset = index * 4;
+  const r = pixels[offset] ?? 0;
+  const g = pixels[offset + 1] ?? 0;
+  const b = pixels[offset + 2] ?? 0;
+  const a = pixels[offset + 3] ?? 0;
+  if (r === 0 && g === 0 && b === 0 && a === 0) return TRANSPARENT;
+  return ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
+}
+
+export function writeCell(pixels: Uint8Array, index: number, color: number): void {
+  const offset = index * 4;
+  pixels[offset] = (color >>> 24) & 0xff;
+  pixels[offset + 1] = (color >>> 16) & 0xff;
+  pixels[offset + 2] = (color >>> 8) & 0xff;
+  pixels[offset + 3] = color & 0xff;
 }
 
 export function encodePixels(pixels: Uint8Array): string {
@@ -44,7 +62,12 @@ export function decodePixels(encoded: string, expectedLength: number): Uint8Arra
 }
 
 export function emptyPixels(width: number, height: number): Uint8Array {
-  return new Uint8Array(cellCount(width, height));
+  return new Uint8Array(cellCount(width, height) * 4);
+}
+
+/** Bytes a frame of this size needs in the RGBA document format. */
+export function pixelBytes(width: number, height: number): number {
+  return cellCount(width, height) * 4;
 }
 
 export function clonePixels(pixels: Uint8Array): Uint8Array {

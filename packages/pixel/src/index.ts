@@ -1,6 +1,8 @@
 export { checkAnimation, frameStats } from "./animation.js";
 export {
   colorDistance,
+  colorToHex,
+  hexToColor,
   hexToRgba,
   nearestPaletteIndex,
   paletteIndexMap,
@@ -18,6 +20,7 @@ export {
   duplicateFrame,
   mirrorFrame,
   moveFrame,
+  upgradeProject,
   writeFrame,
 } from "./document.js";
 export {
@@ -49,7 +52,14 @@ export {
   layerById,
   usedColorCount,
 } from "./buffer.js";
-export { decodePixels, emptyPixels, encodePixels, normalizeHex } from "./pixels.js";
+export {
+  decodePixels,
+  emptyPixels,
+  encodePixels,
+  normalizeHex,
+  readCell,
+  writeCell,
+} from "./pixels.js";
 export { createId } from "./ids.js";
 export {
   assetSchema,

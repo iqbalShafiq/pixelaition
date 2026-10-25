@@ -1,4 +1,4 @@
-import { drawText, textBounds, type TextElement } from "@pixelaition/artboard";
+import { drawTextRgba, textBounds, type TextElement } from "@pixelaition/artboard";
 import { emptyPixels, type Layer, type TextLayerSpec } from "@pixelaition/pixel";
 
 /** Atlas sizes the Silkscreen face ships; the UI never invents a size. */
@@ -17,10 +17,10 @@ export function renderTextSpec(
   spec: TextLayerSpec,
   width: number,
   height: number,
-  paletteSize: number,
+  _paletteSize: number,
 ): Uint8Array {
   const pixels = emptyPixels(width, height);
-  drawText(pixels, width, height, { ...spec, id: "text", kind: "text" }, paletteSize);
+  drawTextRgba(pixels, width, height, { ...spec, id: "text", kind: "text" });
   return pixels;
 }
 

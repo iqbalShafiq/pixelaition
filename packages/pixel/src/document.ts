@@ -1,7 +1,8 @@
 import { bufferToFrame, createBuffer, defaultStyle, frameToBuffer } from "./buffer.js";
 import { createId } from "./ids.js";
 import { applyCommand } from "./commands.js";
-import { isSizeAllowed } from "./pixels.js";
+import { isSizeAllowed, writeCell } from "./pixels.js";
+import { hexToColor } from "./color.js";
 import type { Asset, FrameBuffer, PixelProject, StyleGuide } from "./types.js";
 
 export function createProject(
@@ -10,7 +11,7 @@ export function createProject(
 ): PixelProject {
   return {
     format: "pixelaition",
-    version: 1,
+    version: 2,
     project: { name, description: "", style },
     assets: [],
   };
@@ -159,4 +160,39 @@ export function moveFrame(
   const to = Math.max(0, Math.min(toIndex, frames.length));
   frames.splice(to, 0, moved);
   return { ...asset, frames: frames.map((frame, index) => ({ ...frame, index })) };
+}
+
+/**
+ * Read a version-1 indexed project into the RGBA document format. Already-RGBA
+ * layers pass through untouched, so running this twice is safe.
+ */
+export function upgradeProject(project: PixelProject): PixelProject {
+  const assets = project.assets.map((asset) => ({
+    ...asset,
+    frames: asset.frames.map((frame) => {
+      const cells = (frame.width ?? asset.width) * (frame.height ?? asset.height);
+      return {
+        ...frame,
+        layers: frame.layers.map((layer) => {
+          const binary = atob(layer.pixels);
+          if (binary.length === cells * 4) return layer;
+          if (binary.length !== cells) {
+            throw new Error(
+              `Frame ${frame.name} layer ${layer.name} holds ${binary.length} bytes; expected ${cells} indexed cells or ${cells * 4} RGBA bytes.`,
+            );
+          }
+          const rgba = new Uint8Array(cells * 4);
+          for (let cell = 0; cell < cells; cell += 1) {
+            const color =
+              hexToColor(asset.palette[binary.charCodeAt(cell)] ?? "#00000000") ?? 0;
+            writeCell(rgba, cell, color);
+          }
+          let encoded = "";
+          for (const byte of rgba) encoded += String.fromCharCode(byte);
+          return { ...layer, pixels: btoa(encoded) };
+        }),
+      };
+    }),
+  }));
+  return { ...project, version: 2, assets };
 }

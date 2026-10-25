@@ -1,5 +1,4 @@
 import type { FrameBuffer, Layer, LayerGroup } from "@pixelaition/pixel";
-import { hexToRgba } from "@pixelaition/pixel";
 
 export type AseFrame = { buffer: FrameBuffer; durationMs: number };
 
@@ -26,7 +25,6 @@ const FRAME_MAGIC = 0xf1fa;
 const CHUNK_LAYER = 0x2004;
 const CHUNK_CEL = 0x2005;
 const CHUNK_TAGS = 0x2018;
-const CHUNK_PALETTE = 0x2019;
 const CHUNK_SLICE = 0x2022;
 
 const blendCode: Record<string, number> = {
@@ -129,29 +127,7 @@ function groupChunk(group: LayerGroup, childLevel: number): Uint8Array {
   return chunk(CHUNK_LAYER, body.finish());
 }
 
-function paletteChunk(buffer: FrameBuffer): Uint8Array {
-  const body = new Writer();
-  body.u32(256);
-  body.u32(0);
-  body.u32(255);
-  for (let index = 0; index < 8; index += 1) body.u8(0);
-  for (let index = 0; index < 256; index += 1) {
-    const [r, g, b, a] = hexToRgba(buffer.palette[index] ?? "#00000000");
-    body.u16(0);
-    body.u8(r);
-    body.u8(g);
-    body.u8(b);
-    body.u8(a);
-  }
-  return chunk(CHUNK_PALETTE, body.finish());
-}
-
-function celChunk(
-  buffer: FrameBuffer,
-  layer: Layer,
-  layerIndex: number,
-  linkTo?: number,
-): Uint8Array {
+function celChunk(layer: Layer, layerIndex: number, linkTo?: number): Uint8Array {
   const body = new Writer();
   body.u16(layerIndex);
   body.i16(0);
@@ -163,9 +139,7 @@ function celChunk(
   if (linkTo !== undefined) {
     body.u16(linkTo);
   } else {
-    for (let index = 0; index < buffer.width * buffer.height; index += 1) {
-      body.u8(layer.pixels[index] ?? 0);
-    }
+    for (const byte of layer.pixels) body.u8(byte);
   }
   return chunk(CHUNK_CEL, body.finish());
 }
@@ -244,7 +218,7 @@ export function framesToAse(
   header.u16(frames.length);
   header.u16(first.buffer.width);
   header.u16(first.buffer.height);
-  header.u16(8);
+  header.u16(32);
   header.u32(3);
   header.u16(100);
   header.u32(0);
@@ -315,7 +289,6 @@ export function framesToAse(
   frames.forEach((frame, frameIndex) => {
     const chunks: Uint8Array[] = [];
     if (frameIndex === 0) {
-      chunks.push(paletteChunk(frame.buffer));
       for (const entry of entries) {
         if (entry.kind === "group") {
           chunks.push(groupChunk(entry.group, entry.depth));
@@ -343,7 +316,7 @@ export function framesToAse(
           break;
         }
       }
-      chunks.push(celChunk(frame.buffer, layer, layerIndex, linkTo));
+      chunks.push(celChunk(layer, layerIndex, linkTo));
     }
     if (frameIndex === 0) {
       const tagChunk = tagsChunk(tags);

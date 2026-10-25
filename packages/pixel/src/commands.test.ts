@@ -12,8 +12,20 @@ import {
   mirrorFrame,
   writeFrame,
 } from "./document.js";
-import { indexOf } from "./pixels.js";
+import { indexOf, readCell } from "./pixels.js";
+import { colorToHex } from "./color.js";
 import type { Asset, FrameBuffer } from "./types.js";
+
+/** Project the RGBA layer back to palette indices for legacy assertions. */
+function legacyPixels(buffer: FrameBuffer, layerIndex = 0): Uint8Array {
+  const source = buffer.layers[layerIndex]?.pixels ?? new Uint8Array();
+  const result = new Uint8Array(buffer.width * buffer.height);
+  for (let cell = 0; cell < result.length; cell += 1) {
+    const hex = colorToHex(readCell(source, cell));
+    result[cell] = buffer.palette.findIndex((swatch) => swatch === hex);
+  }
+  return result;
+}
 
 function paint(buffer = createBuffer({ width: 8, height: 8 })) {
   const layerId = buffer.layers[0]?.id ?? "";
@@ -30,7 +42,7 @@ describe("pixel commands", () => {
     });
     expect(painted.ok).toBe(true);
     if (!painted.ok) return;
-    expect(painted.buffer.layers[0]?.pixels[indexOf(8, 1, 2)]).toBe(1);
+    expect(legacyPixels(painted.buffer, 0)[indexOf(8, 1, 2)]).toBe(1);
 
     const rejected = applyCommand(buffer, {
       type: "paint",
@@ -40,9 +52,9 @@ describe("pixel commands", () => {
     expect(rejected).toMatchObject({ ok: false, code: "OUT_OF_BOUNDS" });
 
     const history = pushHistory(createHistory(buffer), painted.buffer);
-    expect(undoHistory(history).present.layers[0]?.pixels[indexOf(8, 1, 2)]).toBe(0);
+    expect(legacyPixels(undoHistory(history).present, 0)[indexOf(8, 1, 2)]).toBe(0);
     expect(
-      redoHistory(undoHistory(history)).present.layers[0]?.pixels[indexOf(8, 1, 2)],
+      legacyPixels(redoHistory(undoHistory(history)).present, 0)[indexOf(8, 1, 2)],
     ).toBe(1);
   });
 
@@ -51,7 +63,7 @@ describe("pixel commands", () => {
     const filled = applyCommand(buffer, { type: "fill", layerId, x: 0, y: 0, color: 2 });
     expect(filled.ok).toBe(true);
     if (!filled.ok) return;
-    expect(filled.buffer.layers[0]?.pixels.every((color) => color === 2)).toBe(true);
+    expect(legacyPixels(filled.buffer, 0).every((color) => color === 2)).toBe(true);
 
     const asset = createAsset({ name: "knight", width: 8, height: 8 });
     const frameId = asset.frames[0]?.id ?? "";
@@ -66,8 +78,8 @@ describe("pixel commands", () => {
     if (!painted.ok) return;
     const mirrored = mirrorFrame(writeFrame(asset, frameId, painted.buffer), frameId);
     const result = mirrored ? assetFrameBuffer(mirrored, frameId) : undefined;
-    expect(result?.layers[0]?.pixels[indexOf(8, 7, 0)]).toBe(1);
-    expect(result?.layers[0]?.pixels[indexOf(8, 0, 0)]).toBe(0);
+    expect(result && legacyPixels(result, 0)[indexOf(8, 7, 0)]).toBe(1);
+    expect(result && legacyPixels(result, 0)[indexOf(8, 0, 0)]).toBe(0);
   });
 
   it("duplicates a frame and keeps the source silhouette", () => {
@@ -150,7 +162,7 @@ describe("pixel commands", () => {
     });
     expect(flooded.ok).toBe(true);
     if (!flooded.ok) return;
-    const pixels = flooded.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const pixels = legacyPixels(flooded.buffer, 0) ?? new Uint8Array();
     // Inside the selection the flood reaches the wall but not past it.
     expect(pixels[indexOf(8, 2, 4)]).toBe(2);
     // Past the wall is untouched even though it is the same connected region.
@@ -172,7 +184,7 @@ describe("pixel commands", () => {
     });
     expect(filled.ok).toBe(true);
     if (!filled.ok) return;
-    const filledPixels = filled.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const filledPixels = legacyPixels(filled.buffer, 0) ?? new Uint8Array();
     expect(filledPixels[indexOf(8, 1, 1)]).toBe(3);
     expect(filledPixels[indexOf(8, 2, 2)]).toBe(3);
     expect(filledPixels[indexOf(8, 3, 3)]).toBe(0);
@@ -189,7 +201,7 @@ describe("pixel commands", () => {
     });
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
-    expect(cleared.buffer.layers[0]?.pixels[indexOf(8, 1, 1)]).toBe(0);
+    expect(legacyPixels(cleared.buffer, 0)[indexOf(8, 1, 1)]).toBe(0);
 
     expect(
       applyCommand(buffer, {
@@ -336,7 +348,7 @@ describe("pixel commands", () => {
     });
     expect(swapped.ok).toBe(true);
     if (!swapped.ok) return;
-    const pixels = swapped.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const pixels = legacyPixels(swapped.buffer, 0) ?? new Uint8Array();
     expect(pixels[indexOf(8, 0, 0)]).toBe(3);
     expect(pixels[indexOf(8, 1, 0)]).toBe(2);
     expect(pixels[indexOf(8, 2, 0)]).toBe(3);
@@ -349,11 +361,11 @@ describe("pixel commands", () => {
       }),
     ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
     expect(
-      applyCommand(painted.buffer, { type: "replaceColor", from: 1, to: 9 }),
-    ).toMatchObject({ ok: false, code: "PALETTE_INDEX" });
+      applyCommand(painted.buffer, { type: "replaceColor", from: 1, to: -1 }),
+    ).toMatchObject({ ok: false, code: "COLOR" });
     expect(
-      applyCommand(painted.buffer, { type: "replaceColor", from: 9, to: 1 }),
-    ).toMatchObject({ ok: false, code: "PALETTE_INDEX" });
+      applyCommand(painted.buffer, { type: "replaceColor", from: -1, to: 1 }),
+    ).toMatchObject({ ok: false, code: "COLOR" });
   });
 
   it("scopes replaceColor to one layer or the whole frame", () => {
@@ -388,14 +400,14 @@ describe("pixel commands", () => {
     });
     expect(scoped.ok).toBe(true);
     if (!scoped.ok) return;
-    expect(scoped.buffer.layers[0]?.pixels[indexOf(8, 0, 0)]).toBe(3);
-    expect(scoped.buffer.layers[1]?.pixels[indexOf(8, 0, 1)]).toBe(1);
+    expect(legacyPixels(scoped.buffer, 0)[indexOf(8, 0, 0)]).toBe(3);
+    expect(legacyPixels(scoped.buffer, 1)[indexOf(8, 0, 1)]).toBe(1);
 
     const whole = applyCommand(first.buffer, { type: "replaceColor", from: 1, to: 3 });
     expect(whole.ok).toBe(true);
     if (!whole.ok) return;
-    expect(whole.buffer.layers[0]?.pixels[indexOf(8, 0, 0)]).toBe(3);
-    expect(whole.buffer.layers[1]?.pixels[indexOf(8, 0, 1)]).toBe(3);
+    expect(legacyPixels(whole.buffer, 0)[indexOf(8, 0, 0)]).toBe(3);
+    expect(legacyPixels(whole.buffer, 1)[indexOf(8, 0, 1)]).toBe(3);
   });
 
   it("outlines a silhouette without touching its interior", () => {
@@ -410,7 +422,7 @@ describe("pixel commands", () => {
     const ringed = applyCommand(dot.buffer, { type: "outline", layerId, color: 2 });
     expect(ringed.ok).toBe(true);
     if (!ringed.ok) return;
-    const pixels = ringed.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const pixels = legacyPixels(ringed.buffer, 0) ?? new Uint8Array();
     expect(pixels[indexOf(8, 3, 3)]).toBe(1);
     expect(pixels[indexOf(8, 3, 2)]).toBe(2);
     expect(pixels[indexOf(8, 3, 4)]).toBe(2);
@@ -430,7 +442,7 @@ describe("pixel commands", () => {
     const outlined = applyCommand(block.buffer, { type: "outline", layerId, color: 2 });
     expect(outlined.ok).toBe(true);
     if (!outlined.ok) return;
-    const blockPixels = outlined.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const blockPixels = legacyPixels(outlined.buffer, 0) ?? new Uint8Array();
     expect(blockPixels[indexOf(8, 3, 3)]).toBe(1);
     expect(blockPixels[indexOf(8, 3, 2)]).toBe(1);
     expect(blockPixels[indexOf(8, 2, 1)]).toBe(2);
@@ -439,9 +451,9 @@ describe("pixel commands", () => {
     expect(
       applyCommand(buffer, { type: "outline", layerId: "ghost", color: 2 }),
     ).toMatchObject({ ok: false, code: "LAYER_NOT_FOUND" });
-    expect(applyCommand(buffer, { type: "outline", layerId, color: 9 })).toMatchObject({
+    expect(applyCommand(buffer, { type: "outline", layerId, color: -1 })).toMatchObject({
       ok: false,
-      code: "PALETTE_INDEX",
+      code: "COLOR",
     });
   });
 
@@ -464,9 +476,9 @@ describe("pixel commands", () => {
     const ringed = applyCommand(dot.buffer, { type: "outline", layerId, color: 2 });
     expect(ringed.ok).toBe(true);
     if (!ringed.ok) return;
-    expect(ringed.buffer.layers[0]?.pixels[indexOf(8, 3, 2)]).toBe(2);
-    expect(ringed.buffer.layers[1]?.pixels[indexOf(8, 3, 3)]).toBe(1);
-    expect(ringed.buffer.layers[1]?.pixels[indexOf(8, 3, 2)]).toBe(0);
+    expect(legacyPixels(ringed.buffer, 0)[indexOf(8, 3, 2)]).toBe(2);
+    expect(legacyPixels(ringed.buffer, 1)[indexOf(8, 3, 3)]).toBe(1);
+    expect(legacyPixels(ringed.buffer, 1)[indexOf(8, 3, 2)]).toBe(0);
   });
 
   it("dithers a region in checker and 50 patterns", () => {
@@ -484,7 +496,7 @@ describe("pixel commands", () => {
     });
     expect(checker.ok).toBe(true);
     if (!checker.ok) return;
-    const checkerPixels = checker.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const checkerPixels = legacyPixels(checker.buffer, 0) ?? new Uint8Array();
     expect(checkerPixels[indexOf(8, 0, 0)]).toBe(1);
     expect(checkerPixels[indexOf(8, 1, 0)]).toBe(2);
     expect(checkerPixels[indexOf(8, 0, 1)]).toBe(2);
@@ -504,7 +516,7 @@ describe("pixel commands", () => {
     });
     expect(columns.ok).toBe(true);
     if (!columns.ok) return;
-    const columnPixels = columns.buffer.layers[0]?.pixels ?? new Uint8Array();
+    const columnPixels = legacyPixels(columns.buffer, 0) ?? new Uint8Array();
     expect(columnPixels[indexOf(8, 1, 1)]).toBe(2);
     expect(columnPixels[indexOf(8, 2, 1)]).toBe(1);
     expect(columnPixels[indexOf(8, 3, 1)]).toBe(2);
@@ -545,10 +557,10 @@ describe("pixel commands", () => {
         width: 2,
         height: 2,
         colorA: 1,
-        colorB: 9,
+        colorB: -1,
         pattern: "checker",
       }),
-    ).toMatchObject({ ok: false, code: "PALETTE_INDEX" });
+    ).toMatchObject({ ok: false, code: "COLOR" });
     expect(
       applyCommand(buffer, {
         type: "dither",
@@ -589,12 +601,12 @@ describe("palette reindex", () => {
     });
     expect(reordered.ok).toBe(true);
     if (!reordered.ok) return;
-    const pixels = reordered.buffer.layers[0]!.pixels;
+    const pixels = legacyPixels(reordered.buffer, 0);
     expect([pixels[9], pixels[10]]).toEqual([2, 1]);
     expect(reordered.buffer.palette[1]).toBe(painted.buffer.palette[2]);
   });
 
-  it("refuses a palette that drops a colour without mapping it", () => {
+  it("keeps RGBA pixels untouched when a swatch is dropped", () => {
     const { buffer, layerId } = paint();
     const painted = applyCommand(buffer, {
       type: "paint",
@@ -607,7 +619,10 @@ describe("palette reindex", () => {
       palette: ["#00000000", "#1a1c2c"],
       mapping: { "1": 1 },
     });
-    expect(dropped.ok ? "ok" : dropped.code).toBe("PALETTE_IN_USE");
+    expect(dropped.ok).toBe(true);
+    if (dropped.ok) {
+      expect(dropped.buffer.layers[0]?.pixels).toEqual(painted.buffer.layers[0]?.pixels);
+    }
   });
 });
 

@@ -1,11 +1,13 @@
 import { createId } from "./ids.js";
 import {
   clonePixels,
-  decodePixels,
   emptyPixels,
   encodePixels,
   isSizeAllowed,
+  readCell,
+  writeCell,
 } from "./pixels.js";
+import { hexToColor } from "./color.js";
 import {
   MAX_COLORS,
   type Frame,
@@ -81,11 +83,12 @@ export function replaceLayer(
 
 export function composite(buffer: FrameBuffer): Uint8Array {
   const composited = emptyPixels(buffer.width, buffer.height);
+  const cells = buffer.width * buffer.height;
   for (const layer of buffer.layers) {
     if (!layer.visible) continue;
-    for (let index = 0; index < composited.length; index += 1) {
-      const color = layer.pixels[index] ?? 0;
-      if (color !== 0) composited[index] = color;
+    for (let index = 0; index < cells; index += 1) {
+      const color = readCell(layer.pixels, index);
+      if ((color & 0xff) !== 0) writeCell(composited, index, color);
     }
   }
   return composited;
@@ -96,8 +99,10 @@ export function frameToBuffer(
   width: number,
   height: number,
   palette: string[],
+  allowLegacy = true,
 ): FrameBuffer {
-  const expected = width * height;
+  const cells = width * height;
+  const expected = cells * 4;
   return {
     width,
     height,
@@ -118,9 +123,41 @@ export function frameToBuffer(
       ...(layer.parentGroupId !== undefined
         ? { parentGroupId: layer.parentGroupId }
         : {}),
-      pixels: decodePixels(layer.pixels, expected),
+      pixels: decodeLayerPixels(layer.pixels, cells, palette, expected, allowLegacy),
     })),
   };
+}
+
+/**
+ * Stored layers may predate the RGBA format. A one-byte-per-cell buffer is
+ * expanded through the asset palette on read, then saved as RGBA next write.
+ */
+function decodeLayerPixels(
+  encoded: string,
+  cells: number,
+  palette: string[],
+  expected: number,
+  allowLegacy: boolean,
+): Uint8Array {
+  const binary = atob(encoded);
+  if (binary.length === cells * 4) {
+    const pixels = new Uint8Array(expected);
+    for (let index = 0; index < binary.length; index += 1) {
+      pixels[index] = binary.charCodeAt(index);
+    }
+    return pixels;
+  }
+  if (allowLegacy && binary.length === cells) {
+    const pixels = new Uint8Array(expected);
+    for (let cell = 0; cell < cells; cell += 1) {
+      const color = hexToColor(palette[binary.charCodeAt(cell)] ?? "#00000000") ?? 0;
+      writeCell(pixels, cell, color);
+    }
+    return pixels;
+  }
+  throw new Error(
+    `Pixel buffer length ${binary.length} does not match ${expected} RGBA bytes or ${cells} indexed cells.`,
+  );
 }
 
 export function bufferToFrame(
@@ -162,8 +199,10 @@ export function bufferToFrame(
 export function usedColorCount(buffer: FrameBuffer): number {
   const seen = new Set<number>();
   const composited = composite(buffer);
-  for (const color of composited) {
-    if (color !== 0) seen.add(color);
+  const cells = buffer.width * buffer.height;
+  for (let cell = 0; cell < cells; cell += 1) {
+    const color = readCell(composited, cell);
+    if ((color & 0xff) !== 0) seen.add(color);
   }
   return seen.size;
 }

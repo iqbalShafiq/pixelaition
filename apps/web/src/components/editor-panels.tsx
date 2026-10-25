@@ -1,7 +1,6 @@
 import {
   blendModes,
   colorModes,
-  composite,
   frameToBuffer,
   type FrameBuffer,
   type Layer,
@@ -23,7 +22,12 @@ import { artboardForFrame } from "../lib/artboard.js";
 import type { AssetDto } from "../lib/types.js";
 import type { PaletteAction } from "../lib/palette.js";
 import { decodeImageFile } from "../lib/image-import.js";
-import { paletteFromImage } from "@pixelaition/pixel";
+import {
+  colorToHex,
+  hexToColor,
+  paletteFromImage,
+  renderFrameDocument,
+} from "@pixelaition/pixel";
 import {
   Check,
   Copy,
@@ -52,7 +56,6 @@ import {
   SelectControl,
   TextInput,
 } from "./ui.js";
-import { hexToRgba } from "../lib/color.js";
 import { hexToHsv, hsvToHex } from "../lib/hsv.js";
 import { base64ToBytes, type FrameDto } from "../lib/types.js";
 
@@ -95,17 +98,7 @@ function paintThumb(canvas: HTMLCanvasElement, buffer: FrameBuffer) {
   const context = canvas.getContext("2d");
   if (!context) return;
   const image = context.createImageData(buffer.width, buffer.height);
-  const indexes = composite(buffer);
-  for (let index = 0; index < indexes.length; index += 1) {
-    const value = indexes[index] ?? 0;
-    if (value === 0) continue;
-    const [r, g, b, a] = hexToRgba(buffer.palette[value] ?? "#000000");
-    const offset = index * 4;
-    image.data[offset] = r;
-    image.data[offset + 1] = g;
-    image.data[offset + 2] = b;
-    image.data[offset + 3] = a;
-  }
+  image.data.set(renderFrameDocument(buffer).data);
   context.putImageData(image, 0, 0);
 }
 
@@ -1438,7 +1431,7 @@ export function PalettePanel({
   color: number;
   usedColors: number;
   locked?: boolean;
-  onPick: (index: number) => void;
+  onPick: (hex: string) => void;
   onAdd: (hex: string) => void;
   onPalette?: (action: PaletteAction) => void;
   onImportPalette?: () => void;
@@ -1511,10 +1504,12 @@ export function PalettePanel({
             key={`${swatch}-${index}`}
             type="button"
             aria-label={`Color ${index} ${index === 0 ? "transparent" : swatch}`}
-            aria-pressed={color === index}
-            onClick={() => onPick(index)}
+            aria-pressed={colorToHex(color) === swatch}
+            onClick={() => onPick(swatch)}
             className={`aspect-square border-2 transition-colors duration-150 ${
-              color === index ? "border-accent" : "border-line hover:border-line-strong"
+              colorToHex(color) === swatch
+                ? "border-accent"
+                : "border-line hover:border-line-strong"
             } ${index === 0 ? "checkerboard" : ""}`}
             style={index === 0 ? undefined : { background: swatch }}
           />
@@ -1996,16 +1991,16 @@ export function TextPanel({
         </Field>
         <Field label="Colour" htmlFor="text-color">
           <div id="text-color" className="flex flex-wrap gap-1">
-            {palette.map((hex, index) => (
+            {palette.map((hex) => (
               <button
                 key={hex}
                 type="button"
                 aria-label={`Text colour ${hex}`}
-                aria-pressed={spec.color === index}
+                aria-pressed={colorToHex(spec.color) === hex}
                 disabled={locked}
-                onClick={() => onChange({ color: index })}
+                onClick={() => onChange({ color: hexToColor(hex) ?? 0 })}
                 className={`h-5 w-5 border-2 ${
-                  spec.color === index ? "border-accent" : "border-line"
+                  colorToHex(spec.color) === hex ? "border-accent" : "border-line"
                 } disabled:opacity-50`}
                 style={{ background: hex }}
               />

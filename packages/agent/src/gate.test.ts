@@ -1,4 +1,4 @@
-import { createBuffer, defaultStyle } from "@pixelaition/pixel";
+import { createBuffer, defaultStyle, hexToColor, writeCell } from "@pixelaition/pixel";
 import { afterEach, describe, expect, it } from "vitest";
 import { gateIsHarmless, gateToolCall, toGateOutcome } from "./gate.js";
 import type { RunBinding } from "./runs.js";
@@ -81,7 +81,11 @@ describe("jev tool gate", () => {
         layerName: "pixels",
       });
       painted.forEach((value, index) => {
-        buffer.layers[0]!.pixels[index] = value;
+        writeCell(
+          buffer.layers[0]!.pixels,
+          index,
+          hexToColor(buffer.palette[value] ?? "#00000000") ?? 0,
+        );
       });
       const layerId = buffer.layers[0]!.id;
       return {

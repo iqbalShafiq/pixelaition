@@ -4,6 +4,7 @@
 /* eslint-enable @typescript-eslint/triple-slash-reference */
 import {
   pixelProjectSchema,
+  upgradeProject,
   type FrameBuffer,
   type PixelProject,
 } from "@pixelaition/pixel";
@@ -16,11 +17,11 @@ export const exportScales = [1, 2, 4, 8, 10] as const;
 export type ExportScale = (typeof exportScales)[number];
 
 export function serializeProject(project: PixelProject): string {
-  return `${JSON.stringify(pixelProjectSchema.parse(project), null, 2)}\n`;
+  return `${JSON.stringify(pixelProjectSchema.parse(upgradeProject(project)), null, 2)}\n`;
 }
 
 export function parseProject(source: string): PixelProject {
-  return pixelProjectSchema.parse(JSON.parse(source));
+  return upgradeProject(pixelProjectSchema.parse(JSON.parse(source)));
 }
 
 export function frameToPng(buffer: FrameBuffer, scale: number): Uint8Array {

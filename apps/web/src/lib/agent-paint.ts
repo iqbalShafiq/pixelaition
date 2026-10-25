@@ -1,4 +1,4 @@
-import { composite, type FrameBuffer } from "@pixelaition/pixel";
+import { composite, readCell, writeCell, type FrameBuffer } from "@pixelaition/pixel";
 import { base64ToBytes } from "./types.js";
 
 export type Point = { x: number; y: number };
@@ -386,8 +386,8 @@ export class AgentPaintSession {
 export function orderChangedCells(
   width: number,
   height: number,
-  before: Uint8Array,
-  after: Uint8Array,
+  before: Uint8Array | Uint32Array,
+  after: Uint8Array | Uint32Array,
   hinted: Point[],
 ): Point[] {
   const changed = new Set<number>();
@@ -458,14 +458,19 @@ export function decodeStroke(
   };
 }
 
-function compositeIndexes(view: FrameView): Uint8Array {
+function compositeIndexes(view: FrameView): Uint32Array {
   const buffer: FrameBuffer = {
     width: view.width,
     height: view.height,
     palette: ["#00000000"],
     layers: view.layers,
   };
-  return composite(buffer);
+  const image = composite(buffer);
+  const cells = new Uint32Array(view.width * view.height);
+  for (let cell = 0; cell < cells.length; cell += 1) {
+    cells[cell] = readCell(image, cell);
+  }
+  return cells;
 }
 
 function sameComposite(view: FrameView, layers: DecodedLayer[]): boolean {
@@ -482,7 +487,7 @@ function sameComposite(view: FrameView, layers: DecodedLayer[]): boolean {
 function compatible(view: FrameView, layers: DecodedLayer[]): boolean {
   if (view.width <= 0 || view.height <= 0) return false;
   if (view.layers.length === 0 || view.layers.length !== layers.length) return false;
-  const expected = view.width * view.height;
+  const expected = view.width * view.height * 4;
   return layers.every(
     (layer, index) =>
       layer.id === view.layers[index]?.id &&
@@ -523,7 +528,9 @@ function holdBack(
     const source = before[index];
     const pixels = new Uint8Array(layer.pixels);
     if (source) {
-      for (const pixel of indexes) pixels[pixel] = source.pixels[pixel] ?? 0;
+      for (const cell of indexes) {
+        writeCell(pixels, cell, readCell(source.pixels, cell));
+      }
     }
     return { id: layer.id, name: layer.name, visible: layer.visible, pixels };
   });
@@ -541,11 +548,11 @@ function paintCells(
     const source = target[index];
     if (!source) return layer;
     let pixels: Uint8Array | null = null;
-    for (const pixel of indexes) {
-      const value = source.pixels[pixel] ?? 0;
-      if ((layer.pixels[pixel] ?? 0) === value) continue;
+    for (const cell of indexes) {
+      const value = readCell(source.pixels, cell);
+      if (readCell(layer.pixels, cell) === value) continue;
       if (!pixels) pixels = new Uint8Array(layer.pixels);
-      pixels[pixel] = value;
+      writeCell(pixels, cell, value);
     }
     if (!pixels) return layer;
     changed = true;

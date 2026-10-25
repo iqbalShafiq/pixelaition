@@ -43,6 +43,7 @@ export {
   textBounds,
   wrapText,
   drawText,
+  drawTextRgba,
   type TextLayout,
   type TextLine,
 } from "./text.js";

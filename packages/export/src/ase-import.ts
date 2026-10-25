@@ -2,6 +2,7 @@ import { inflateSync } from "node:zlib";
 import {
   bufferToFrame,
   createBuffer,
+  hexToColor,
   type Asset,
   type FrameTag,
   type Slice,
@@ -68,12 +69,16 @@ export function parseAse(bytes: Uint8Array): AseImport {
   const width = view.getUint16(8, true);
   const height = view.getUint16(10, true);
   const depth = view.getUint16(12, true);
-  if (depth !== 8) {
+  if (depth !== 8 && depth !== 32) {
     throw new Error(
-      `Only indexed (8-bit) Aseprite files are supported, not ${depth}-bit.`,
+      `Only indexed (8-bit) and RGBA (32-bit) Aseprite files are supported, not ${depth}-bit.`,
     );
   }
-  const palette = Array.from({ length: 256 }, () => "#00000000");
+  const bytesPerPixel = depth === 32 ? 4 : 1;
+  const palette =
+    depth === 32
+      ? ["#00000000", "#0b0906", "#f1efe9", "#d8a64e"]
+      : Array.from({ length: 256 }, () => "#00000000");
   const layerDefs: LayerDef[] = [];
   const groupStack: string[] = [];
   const frameCels: Array<
@@ -209,7 +214,7 @@ export function parseAse(bytes: Uint8Array): AseImport {
           (def) => def.kind === "layer" && def.chunkIndex === layerIndex,
         );
         if (!layer) throw new Error("An Aseprite cel names a missing image layer.");
-        const expected = layer.width * layer.height;
+        const expected = layer.width * layer.height * bytesPerPixel;
         let pixels = bytes.subarray(data + 16, end);
         if (celType === 2) {
           pixels = new Uint8Array(inflateSync(pixels));
@@ -349,7 +354,7 @@ export function parseAse(bytes: Uint8Array): AseImport {
         ...(layer.opacity < 1 ? { opacity: layer.opacity } : {}),
         ...(layer.blend !== "normal" ? { blend: layer.blend as never } : {}),
         ...(layer.parentGroupId ? { parentGroupId: layer.parentGroupId } : {}),
-        pixels: new Uint8Array(width * height),
+        pixels: new Uint8Array(width * height * 4),
       }));
     for (const cel of cels) {
       const layerDef = layerDefs.find(
@@ -358,14 +363,38 @@ export function parseAse(bytes: Uint8Array): AseImport {
       if (!layerDef || layerDef.imageIndex === undefined) continue;
       const layer = buffer.layers[layerDef.imageIndex];
       if (!layer) continue;
-      for (let row = 0; row < layerDef.height; row += 1) {
-        for (let column = 0; column < layerDef.width; column += 1) {
-          const targetX = cel.x + column;
-          const targetY = cel.y + row;
-          if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height)
-            continue;
-          layer.pixels[targetY * width + targetX] =
-            cel.pixels[row * layerDef.width + column] ?? 0;
+      if (depth === 32) {
+        for (let row = 0; row < layerDef.height; row += 1) {
+          for (let column = 0; column < layerDef.width; column += 1) {
+            const targetX = cel.x + column;
+            const targetY = cel.y + row;
+            if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height)
+              continue;
+            const source = (row * layerDef.width + column) * 4;
+            const target = (targetY * width + targetX) * 4;
+            layer.pixels[target] = cel.pixels[source] ?? 0;
+            layer.pixels[target + 1] = cel.pixels[source + 1] ?? 0;
+            layer.pixels[target + 2] = cel.pixels[source + 2] ?? 0;
+            layer.pixels[target + 3] = cel.pixels[source + 3] ?? 0;
+          }
+        }
+      } else {
+        for (let row = 0; row < layerDef.height; row += 1) {
+          for (let column = 0; column < layerDef.width; column += 1) {
+            const targetX = cel.x + column;
+            const targetY = cel.y + row;
+            if (targetX < 0 || targetY < 0 || targetX >= width || targetY >= height)
+              continue;
+            const color =
+              hexToColor(
+                palette[cel.pixels[row * layerDef.width + column] ?? 0] ?? "#00000000",
+              ) ?? 0;
+            const target = (targetY * width + targetX) * 4;
+            layer.pixels[target] = (color >>> 24) & 0xff;
+            layer.pixels[target + 1] = (color >>> 16) & 0xff;
+            layer.pixels[target + 2] = (color >>> 8) & 0xff;
+            layer.pixels[target + 3] = color & 0xff;
+          }
         }
       }
     }

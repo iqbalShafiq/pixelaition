@@ -118,7 +118,7 @@ export const assetSchema = z.object({
 
 export const pixelProjectSchema = z.object({
   format: z.literal("pixelaition"),
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   project: z.object({
     name: z.string().min(1).max(80),
     description: z.string().max(2000),

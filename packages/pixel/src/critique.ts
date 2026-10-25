@@ -1,5 +1,6 @@
 import { composite } from "./buffer.js";
-import { indexOf, normalizeHex } from "./pixels.js";
+import { colorToHex, hexToColor } from "./color.js";
+import { indexOf, readCell } from "./pixels.js";
 import type { CritiqueIssue, FrameBuffer, StyleGuide } from "./types.js";
 
 /**
@@ -34,35 +35,31 @@ export function critiqueFrame(
 ): CritiqueIssue[] {
   const issues: CritiqueIssue[] = [];
   const composited = composite(buffer);
-  const opaque = composited.some((color) => color !== 0);
+  const cells = buffer.width * buffer.height;
+  let opaque = false;
+  for (let cell = 0; cell < cells; cell += 1) {
+    if ((readCell(composited, cell) & 0xff) !== 0) {
+      opaque = true;
+      break;
+    }
+  }
   if (!opaque) {
     issues.push({ code: "EMPTY", message: "The frame has no painted pixels." });
   }
-  for (const layer of buffer.layers) {
-    for (const color of layer.pixels) {
-      if (color >= buffer.palette.length) {
-        issues.push({
-          code: "PALETTE_INDEX",
-          message: "A pixel uses an index outside the palette.",
-        });
-        return issues;
+  const outline = hexToColor(style.outline);
+  let usesOutline = false;
+  if (outline !== null) {
+    for (let cell = 0; cell < cells; cell += 1) {
+      if (readCell(composited, cell) === outline) {
+        usesOutline = true;
+        break;
       }
     }
   }
-  const outline = normalizeHex(style.outline);
-  const outlineIndex = outline
-    ? buffer.palette.findIndex((color) => color === outline)
-    : -1;
-  if (opaque && outline && outlineIndex <= 0) {
-    issues.push({
-      code: "OUTLINE_MISSING",
-      message: "The style guide outline color is not in the palette.",
-    });
-  }
-  if (opaque && outlineIndex > 0 && !composited.includes(outlineIndex)) {
+  if (opaque && outline !== null && !usesOutline) {
     issues.push({
       code: "OUTLINE_UNUSED",
-      message: "The frame does not use the style guide outline.",
+      message: `The frame does not use the style guide outline ${colorToHex(outline)}.`,
     });
   }
   if (!opaque) return issues;
@@ -74,8 +71,8 @@ export function critiqueFrame(
         const nextY = y + offset.y;
         return nextX >= 0 && nextY >= 0 && nextX < buffer.width && nextY < buffer.height;
       })
-      .map(
-        (offset) => composited[indexOf(buffer.width, x + offset.x, y + offset.y)] ?? 0,
+      .map((offset) =>
+        readCell(composited, indexOf(buffer.width, x + offset.x, y + offset.y)),
       );
 
   let stray = 0;
@@ -83,17 +80,20 @@ export function critiqueFrame(
   let edge = 0;
   for (let y = 0; y < buffer.height; y += 1) {
     for (let x = 0; x < buffer.width; x += 1) {
-      const color = composited[indexOf(buffer.width, x, y)];
-      if (color === 0) continue;
+      const color = readCell(composited, indexOf(buffer.width, x, y));
+      if ((color & 0xff) === 0) continue;
       const around = neighbors(x, y);
       const touches = around8.some(
-        (offset) => composited[indexOf(buffer.width, x + offset.x, y + offset.y)] ?? 0,
+        (offset) =>
+          (readCell(composited, indexOf(buffer.width, x + offset.x, y + offset.y)) &
+            0xff) !==
+          0,
       );
       if (!touches) stray += 1;
       if (
-        color === outlineIndex &&
-        outlineIndex > 0 &&
-        !around.some((value) => value === 0)
+        outline !== null &&
+        color === outline &&
+        !around.some((value) => (value & 0xff) === 0)
       ) {
         interiorOutline += 1;
       }

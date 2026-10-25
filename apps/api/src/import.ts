@@ -5,10 +5,10 @@ import {
   MAX_SIZE,
   MIN_SIZE,
   bufferToFrame,
-  decodePixels,
   encodePixels,
+  hexToColor,
   normalizeHex,
-  paletteIndexMap,
+  writeCell,
   type Frame,
   type Layer,
   type LayerGroup,
@@ -23,7 +23,7 @@ import {
 
 export type ImportedLayer = {
   name?: string;
-  /** Base64 of one palette index per pixel, in the import palette. */
+  /** Base64 RGBA bytes (four per pixel); legacy one-byte palettes are accepted. */
   pixels: string;
 };
 
@@ -36,7 +36,7 @@ export type ImportedFrame = {
 };
 
 export type ImportRequest = {
-  /** The palette the frame indices refer to. Index 0 must be transparent. */
+  /** Swatches for the asset; no longer used to index incoming RGBA pixels. */
   palette: string[];
   mode: "frames" | "layers";
   targetFrameId?: string;
@@ -75,6 +75,33 @@ function uniqueName(
   return name;
 }
 
+/** RGBA bytes from the browser; a one-byte-per-cell payload is a legacy import. */
+function decodeImportedPixels(
+  encoded: string,
+  cells: number,
+  palette: string[],
+): Uint8Array {
+  const binary = atob(encoded);
+  if (binary.length === cells * 4) {
+    const pixels = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      pixels[index] = binary.charCodeAt(index);
+    }
+    return pixels;
+  }
+  if (binary.length === cells) {
+    const pixels = new Uint8Array(cells * 4);
+    for (let cell = 0; cell < cells; cell += 1) {
+      const color = hexToColor(palette[binary.charCodeAt(cell)] ?? "#00000000") ?? 0;
+      writeCell(pixels, cell, color);
+    }
+    return pixels;
+  }
+  throw new Error(
+    `An imported layer holds ${binary.length} bytes; expected ${cells * 4} RGBA bytes or ${cells} legacy indices.`,
+  );
+}
+
 /**
  * Import already-indexed frames. The browser owns decoding and quantization;
  * the server owns palette mapping, bounds, transactionality and persistence, so
@@ -93,10 +120,7 @@ export async function importFrames(
   if (!record) return fail("NOT_FOUND", "That asset is not available.");
   const sourcePalette = cleanPalette(input.palette);
   if (!sourcePalette) {
-    return fail(
-      "INVALID_PALETTE",
-      "Import needs a palette with index 0 transparent and at most 255 colours.",
-    );
+    return fail("INVALID_PALETTE", "Import needs between 1 and 256 valid hex swatches.");
   }
   if (input.frames.length === 0) return fail("NO_FRAMES", "There is nothing to import.");
   if (input.frames.length > MAX_IMPORT_FRAMES) {
@@ -130,11 +154,7 @@ export async function importFrames(
   }
 
   const assetPalette = record.palette as string[];
-  const mapping = paletteIndexMap(sourcePalette, assetPalette);
-  // An import maps into the asset's palette. Replacing the palette here would
-  // rewrite every existing frame, which is a separate, explicit operation.
   const nextPalette = assetPalette;
-  const mapIndex = (value: number) => mapping[value] ?? 0;
 
   const versions: Array<{
     frameId: string;
@@ -161,12 +181,16 @@ export async function importFrames(
         const existing = target.layers as Frame["layers"];
         const names = new Set(existing.map((layer) => layer.name.toLowerCase()));
         const added = source.layers.map((layer, index) => {
-          const pixels = decodePixels(layer.pixels, width * height).map(mapIndex);
+          const pixels = decodeImportedPixels(
+            layer.pixels,
+            width * height,
+            sourcePalette,
+          );
           return {
             id: randomUUID(),
             name: uniqueName(names, layer.name, existing.length + index),
             visible: true,
-            pixels: encodePixels(Uint8Array.from(pixels)),
+            pixels: encodePixels(pixels),
           } satisfies Frame["layers"][number];
         });
         const layers = [...existing, ...added];
@@ -183,8 +207,11 @@ export async function importFrames(
         for (const [offset, source] of input.frames.entries()) {
           const id = randomUUID();
           const layers = source.layers.map((layer, layerIndex) => {
-            const raw = decodePixels(layer.pixels, source.width * source.height);
-            const mapped = Uint8Array.from(raw, mapIndex);
+            const pixels = decodeImportedPixels(
+              layer.pixels,
+              source.width * source.height,
+              sourcePalette,
+            );
             const id = randomUUID();
             const next: Layer = {
               id,
@@ -193,7 +220,7 @@ export async function importFrames(
                 80,
               ),
               visible: true,
-              pixels: mapped,
+              pixels,
             };
             return next;
           });

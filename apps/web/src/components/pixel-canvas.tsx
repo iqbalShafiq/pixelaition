@@ -2,6 +2,7 @@ import {
   composite,
   ellipsePoints,
   hexToRgba,
+  readCell,
   renderFrameDocument,
   stepZoom,
   zoomAt,
@@ -26,8 +27,8 @@ export type BrushPattern = {
   width: number;
   height: number;
   mask: Uint8Array;
-  /** Palette indices captured from the selection; custom brushes keep colour. */
-  pixels: Uint8Array;
+  /** Packed RGBA colours captured from the selection. */
+  pixels: Uint32Array;
 };
 
 export type Tool =
@@ -48,7 +49,7 @@ export type CanvasAction =
   | { kind: "paint"; points: Array<Point & { color?: number }> }
   | { kind: "erase"; points: Point[] }
   | { kind: "fill"; point: Point }
-  | { kind: "pick"; index: number }
+  | { kind: "pick"; color: number }
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean }
   | { kind: "ellipse"; from: Point; to: Point; filled: boolean }
@@ -221,7 +222,7 @@ function wandSelection(doc: FrameBuffer, point: Point): Rect | null {
   if (point.x < 0 || point.y < 0 || point.x >= doc.width || point.y >= doc.height)
     return null;
   const pixels = composite(doc);
-  const target = pixels[point.y * doc.width + point.x] ?? 0;
+  const target = readCell(pixels, point.y * doc.width + point.x);
   const seen = new Uint8Array(doc.width * doc.height);
   const stack: Point[] = [point];
   const cells: Point[] = [];
@@ -241,7 +242,7 @@ function wandSelection(doc: FrameBuffer, point: Point): Rect | null {
       continue;
     const index = current.y * doc.width + current.x;
     if (seen[index] === 1) continue;
-    if ((pixels[index] ?? 0) !== target) continue;
+    if (readCell(pixels, index) !== target) continue;
     seen[index] = 1;
     cells.push(current);
     minX = Math.min(minX, current.x);
@@ -960,7 +961,7 @@ export function PixelCanvas({
       if (!strokeBefore.current.has(key)) {
         strokeBefore.current.set(
           key,
-          layer.pixels[point.y * latest.current.buffer.width + point.x] ?? 0,
+          readCell(layer.pixels, point.y * latest.current.buffer.width + point.x),
         );
       }
     }
@@ -1212,8 +1213,8 @@ export function PixelCanvas({
         }
         if (active === "picker") {
           if (!inside(point)) return;
-          const index = composite(doc)[point.y * doc.width + point.x] ?? 0;
-          emit({ kind: "pick", index });
+          const color = readCell(composite(doc), point.y * doc.width + point.x);
+          emit({ kind: "pick", color });
           return;
         }
         if (active === "fill") {

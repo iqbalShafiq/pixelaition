@@ -3,11 +3,11 @@ import {
   composite,
   createId,
   normalizeHex,
+  readCell,
   type CommandResult,
   type FrameBuffer,
 } from "@pixelaition/pixel";
 import type { BoundRunBinding, FrameRef, ProjectAsset } from "./runs.js";
-import { paletteLegend } from "./tasks/worker-prompt.js";
 
 /**
  * Reading frames and moving pixels between them.
@@ -272,7 +272,7 @@ export function readRegion(
   frame: FrameView,
   rect: Rect,
   layerRef?: string,
-): { pixels: Uint8Array; layerId: string; layerName: string } {
+): { pixels: Uint32Array; layerId: string; layerName: string } {
   if (rect.width < 1 || rect.height < 1) {
     throw new Error("A copied region needs a positive width and height.");
   }
@@ -294,10 +294,14 @@ export function readRegion(
         .join(", ")}.`,
     );
   }
-  const copy = new Uint8Array(rect.width * rect.height);
+  const copy = new Uint32Array(rect.width * rect.height);
   for (let row = 0; row < rect.height; row += 1) {
-    const start = (rect.y + row) * frame.width + rect.x;
-    copy.set(source.pixels.subarray(start, start + rect.width), row * rect.width);
+    for (let column = 0; column < rect.width; column += 1) {
+      copy[row * rect.width + column] = readCell(
+        source.pixels,
+        (rect.y + row) * frame.width + rect.x + column,
+      );
+    }
   }
   return { pixels: copy, layerId: source.layerId, layerName: source.layerName };
 }
@@ -393,19 +397,10 @@ export function stampRegion(
     y: number;
     width: number;
     height: number;
-    pixels: Uint8Array;
-    mapping: MappingResult;
+    pixels: Uint32Array | number[];
+    mapping?: MappingResult;
   },
 ): CommandResult {
-  if (!input.mapping.ok) {
-    throw new Error(
-      `These source colours are not in this asset's palette: ${input.mapping.unmapped.join(", ")}. ` +
-        `Target palette: ${paletteLegend(buffer.palette)}. Call again with a map for each source colour, for example ${JSON.stringify(
-          input.mapping.suggestion,
-        )}.`,
-    );
-  }
-  const indexOf = input.mapping.indexOf;
   return applyCommand(buffer, {
     type: "stamp",
     layerId: input.layerId,
@@ -413,7 +408,7 @@ export function stampRegion(
     y: input.y,
     width: input.width,
     height: input.height,
-    pixels: Array.from(input.pixels, (value) => indexOf(value)),
+    pixels: Array.from(input.pixels),
   });
 }
 
@@ -461,7 +456,9 @@ export function copyLayers(
       y: 0,
       width: source.width,
       height: source.height,
-      pixels: from.pixels,
+      pixels: Array.from({ length: source.width * source.height }, (_, cell) =>
+        readCell(from.pixels, cell),
+      ),
       mapping: paletteMapping(source.palette, next.palette, entry.map),
     });
     if (!stamped.ok) throw new Error(stamped.message);

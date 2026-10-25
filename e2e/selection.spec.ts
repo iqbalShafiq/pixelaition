@@ -24,7 +24,12 @@ test("magic wand selects a flat region and clears it", async ({ page }) => {
   const frame = assetBody.frames[0];
   const layer = frame?.layers[0];
   if (!frame || !layer) throw new Error("missing fixture");
-  const filled = Buffer.alloc(32 * 32, 1).toString("base64");
+  const filledBytes = Buffer.alloc(32 * 32 * 4);
+  for (let cell = 0; cell < 32 * 32; cell += 1) {
+    filledBytes[cell * 4] = 255;
+    filledBytes[cell * 4 + 3] = 255;
+  }
+  const filled = filledBytes.toString("base64");
   await page.request.put(`/api/assets/${assetBody.id}/frames/${frame.id}`, {
     data: {
       layers: [{ id: layer.id, name: layer.name, visible: true, pixels: filled }],
@@ -87,7 +92,7 @@ test("lasso selects a polygon and clears only inside it", async ({ page }) => {
           id: layer.id,
           name: layer.name,
           visible: true,
-          pixels: Buffer.alloc(32 * 32, 1).toString("base64"),
+          pixels: Buffer.alloc(32 * 32 * 4, 255).toString("base64"),
         },
       ],
       groups: [],
@@ -121,8 +126,8 @@ test("lasso selects a polygon and clears only inside it", async ({ page }) => {
   const body = (await saved.json()) as {
     frames: Array<{ layers: Array<{ pixels: string }> }>;
   };
-  const pixels = [...Buffer.from(body.frames[0]?.layers[0]?.pixels ?? "", "base64")];
-  expect(pixels.some((value) => value === 1)).toBe(true);
-  expect(pixels.some((value) => value === 0)).toBe(true);
+  const pixels = Buffer.from(body.frames[0]?.layers[0]?.pixels ?? "", "base64");
+  expect(pixels.includes(0)).toBe(true);
+  expect(pixels.includes(255)).toBe(true);
   await page.request.delete(`/api/projects/${projectBody.id}`).catch(() => undefined);
 });

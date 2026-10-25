@@ -16,10 +16,12 @@ import {
   fitZoom,
   ellipsePoints,
   frameToBuffer,
+  hexToColor,
   linePoints,
   paletteFromImage,
   quantizeToPalette,
   pushHistory,
+  readCell,
   redoHistory,
   stepZoom,
   undoHistory,
@@ -314,7 +316,7 @@ export function EditorScreen() {
   const [brushShape, setBrushShape] = useState<BrushShape>("square");
   const [pixelPerfect, setPixelPerfect] = useState(false);
   const [dynamics, setDynamics] = useState(false);
-  const [color, setColor] = useState(1);
+  const [color, setColor] = useState(() => hexToColor("#0b0906") ?? 0xff000000);
   const [activeLayerId, setActiveLayerId] = useState("");
   const [selectedLayerId, setSelectedLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
@@ -323,7 +325,7 @@ export function EditorScreen() {
   const [clipboard, setClipboard] = useState<{
     width: number;
     height: number;
-    pixels: Uint8Array;
+    pixels: Uint32Array;
     mask?: Uint8Array;
   } | null>(null);
   const [grid, setGrid] = useState(true);
@@ -1048,14 +1050,16 @@ export function EditorScreen() {
     const mask =
       selection.mask ?? new Uint8Array(selection.width * selection.height).fill(1);
     const layer = selectionLayer();
-    const pixels = new Uint8Array(selection.width * selection.height);
+    const pixels = new Uint32Array(selection.width * selection.height);
     if (layer && buffer) {
       for (let row = 0; row < selection.height; row += 1) {
         for (let column = 0; column < selection.width; column += 1) {
           const local = row * selection.width + column;
           if (mask[local] !== 1) continue;
-          pixels[local] =
-            layer.pixels[(selection.y + row) * buffer.width + selection.x + column] ?? 0;
+          pixels[local] = readCell(
+            layer.pixels,
+            (selection.y + row) * buffer.width + selection.x + column,
+          );
         }
       }
     }
@@ -2631,7 +2635,7 @@ export function EditorScreen() {
     if (!frameId) return;
     if (preview) return;
     if (action.kind === "pick") {
-      setColor(action.index);
+      setColor(action.color);
       setTool("pencil");
       return;
     }
@@ -2807,7 +2811,11 @@ export function EditorScreen() {
           }
           for (let row = 0; row < tileSource.height; row += 1) {
             for (let column = 0; column < tileSource.width; column += 1) {
-              if (layer.pixels[(cellY + row) * buffer.width + cellX + column] !== 0) {
+              if (
+                (readCell(layer.pixels, (cellY + row) * buffer.width + cellX + column) &
+                  0xff) !==
+                0
+              ) {
                 return true;
               }
             }
@@ -2849,8 +2857,10 @@ export function EditorScreen() {
               if (x > 0) {
                 compared += 1;
                 if (
-                  layer.pixels[(candidate.y + row) * buffer.width + candidate.x] ===
-                  layer.pixels[(y + row) * buffer.width + x - 1]
+                  readCell(
+                    layer.pixels,
+                    (candidate.y + row) * buffer.width + candidate.x,
+                  ) === readCell(layer.pixels, (y + row) * buffer.width + x - 1)
                 ) {
                   matches += 1;
                 }
@@ -2858,9 +2868,14 @@ export function EditorScreen() {
               if (x + candidate.width < buffer.width) {
                 compared += 1;
                 if (
-                  layer.pixels[
-                    (candidate.y + row) * buffer.width + candidate.x + candidate.width - 1
-                  ] === layer.pixels[(y + row) * buffer.width + x + candidate.width]
+                  readCell(
+                    layer.pixels,
+                    (candidate.y + row) * buffer.width +
+                      candidate.x +
+                      candidate.width -
+                      1,
+                  ) ===
+                  readCell(layer.pixels, (y + row) * buffer.width + x + candidate.width)
                 ) {
                   matches += 1;
                 }
@@ -2870,8 +2885,10 @@ export function EditorScreen() {
               if (y > 0) {
                 compared += 1;
                 if (
-                  layer.pixels[candidate.y * buffer.width + candidate.x + column] ===
-                  layer.pixels[(y - 1) * buffer.width + x + column]
+                  readCell(
+                    layer.pixels,
+                    candidate.y * buffer.width + candidate.x + column,
+                  ) === readCell(layer.pixels, (y - 1) * buffer.width + x + column)
                 ) {
                   matches += 1;
                 }
@@ -2879,11 +2896,16 @@ export function EditorScreen() {
               if (y + candidate.height < buffer.height) {
                 compared += 1;
                 if (
-                  layer.pixels[
+                  readCell(
+                    layer.pixels,
                     (candidate.y + candidate.height - 1) * buffer.width +
                       candidate.x +
-                      column
-                  ] === layer.pixels[(y + candidate.height) * buffer.width + x + column]
+                      column,
+                  ) ===
+                  readCell(
+                    layer.pixels,
+                    (y + candidate.height) * buffer.width + x + column,
+                  )
                 ) {
                   matches += 1;
                 }
@@ -2900,7 +2922,7 @@ export function EditorScreen() {
         for (let row = 0; row < chosen.height; row += 1) {
           for (let column = 0; column < chosen.width; column += 1) {
             pixels.push(
-              layer.pixels[(chosen.y + row) * buffer.width + chosen.x + column] ?? 0,
+              readCell(layer.pixels, (chosen.y + row) * buffer.width + chosen.x + column),
             );
           }
         }
@@ -3014,15 +3036,17 @@ export function EditorScreen() {
     if (running || !selection) return;
     const layer = selectionLayer();
     if (!layer || !buffer) return;
-    const pixels = new Uint8Array(selection.width * selection.height);
+    const pixels = new Uint32Array(selection.width * selection.height);
     for (let row = 0; row < selection.height; row += 1) {
       for (let column = 0; column < selection.width; column += 1) {
         const inside = selection.mask
           ? selection.mask[row * selection.width + column] === 1
           : true;
         if (!inside) continue;
-        pixels[row * selection.width + column] =
-          layer.pixels[(selection.y + row) * buffer.width + selection.x + column] ?? 0;
+        pixels[row * selection.width + column] = readCell(
+          layer.pixels,
+          (selection.y + row) * buffer.width + selection.x + column,
+        );
       }
     }
     setClipboard({
@@ -3066,7 +3090,9 @@ export function EditorScreen() {
         for (let column = 0; column < clipboard.width; column += 1) {
           if (clipboard.mask[row * clipboard.width + column] !== 1) continue;
           const color = clipboard.pixels[row * clipboard.width + column] ?? 0;
-          if (color > 0) points.push({ x: x + column, y: y + row, color });
+          if ((color & 0xff) !== 0) {
+            points.push({ x: x + column, y: y + row, color });
+          }
         }
       }
       if (points.length > 0) {
@@ -3987,7 +4013,7 @@ export function EditorScreen() {
       color={color}
       usedColors={usedColors}
       locked={asset.data?.paletteLocked ?? false}
-      onPick={(index) => setColor(index)}
+      onPick={(hex) => setColor(hexToColor(hex) ?? 0)}
       onPalette={(action) => void paletteAction(action)}
       onImportPalette={() => {
         if (asset.data?.paletteLocked) {
@@ -4001,11 +4027,10 @@ export function EditorScreen() {
         setPaletteImportOpen(true);
       }}
       onAdd={(hex) => {
-        if (activePalette.includes(hex)) {
-          setColor(activePalette.indexOf(hex));
-          return;
+        setColor(hexToColor(hex) ?? 0);
+        if (!activePalette.includes(hex)) {
+          void paletteAction({ action: "add", color: hex });
         }
-        void paletteAction({ action: "add", color: hex });
       }}
     />
   );

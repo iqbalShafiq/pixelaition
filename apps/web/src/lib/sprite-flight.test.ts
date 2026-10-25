@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { FrameBuffer } from "@pixelaition/pixel";
+import { hexToColor, writeCell, type FrameBuffer } from "@pixelaition/pixel";
 import { paintedBounds } from "./sprite-flight.js";
 
 function buffer(width: number, height: number, pixels: number[]): FrameBuffer {
-  const layer = new Uint8Array(width * height);
+  const layer = new Uint8Array(width * height * 4);
   for (const [index, value] of pixels.entries()) {
-    layer[index] = value;
+    writeCell(
+      layer,
+      index,
+      value === 0 ? 0 : (hexToColor(`#${value.toString(16).padStart(6, "0")}ff`) ?? 0),
+    );
   }
   return {
     width,

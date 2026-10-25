@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createBuffer, createId } from "@pixelaition/pixel";
+import {
+  colorToHex,
+  createBuffer,
+  createId,
+  hexToColor,
+  readCell,
+  writeCell,
+} from "@pixelaition/pixel";
 import {
   copyLayers,
   layerOf,
@@ -25,14 +32,25 @@ function view(
     height,
     palette,
     layers: layers.map((layer) => {
-      const pixels = new Uint8Array(width * height);
-      for (const [x, y, color] of layer.pixels) pixels[y * width + x] = color;
+      const pixels = new Uint8Array(width * height * 4);
+      for (const [x, y, color] of layer.pixels) {
+        writeCell(pixels, y * width + x, hexToColor(palette[color] ?? "#00000000") ?? 0);
+      }
       return { id: createId(), name: layer.name, visible: true, pixels };
     }),
   };
 }
 
 const PALETTE = ["#00000000", "#1a1c2c", "#f4efe4"];
+
+function paletteAt(
+  buffer: { layers: Array<{ pixels: Uint8Array }>; palette: string[] },
+  layerIndex: number,
+  cell: number,
+): number {
+  const hex = colorToHex(readCell(buffer.layers[layerIndex]!.pixels, cell));
+  return buffer.palette.findIndex((swatch) => swatch === hex);
+}
 
 describe("palette mapping", () => {
   it("passes indices through when the palettes match", () => {
@@ -82,7 +100,12 @@ describe("region transfer", () => {
       },
     ]);
     const copied = readRegion(source, { x: 1, y: 1, width: 2, height: 2 }, "body");
-    expect([...copied.pixels]).toEqual([1, 2, 1, 2]);
+    expect([...copied.pixels].map(colorToHex)).toEqual([
+      "#1a1c2c",
+      "#f4efe4",
+      "#1a1c2c",
+      "#f4efe4",
+    ]);
 
     const target = createBuffer({ width: 8, height: 8, palette: PALETTE });
     const layerId = target.layers[0]?.id ?? "";
@@ -96,8 +119,14 @@ describe("region transfer", () => {
       mapping: paletteMapping(source.palette, target.palette),
     });
     expect(stamped.ok).toBe(true);
-    const pixels = stamped.ok ? stamped.buffer.layers[0]!.pixels : new Uint8Array();
-    expect([pixels[4 * 8 + 4], pixels[4 * 8 + 5]]).toEqual([1, 2]);
+    expect(
+      stamped.ok
+        ? [
+            paletteAt(stamped.buffer, 0, 4 * 8 + 4),
+            paletteAt(stamped.buffer, 0, 4 * 8 + 5),
+          ]
+        : [],
+    ).toEqual([1, 2]);
   });
 
   it("refuses a region outside the frame with the frame's size named", () => {
@@ -107,24 +136,25 @@ describe("region transfer", () => {
     );
   });
 
-  it("refuses a copy across palettes that differ instead of remapping silently", () => {
+  it("copies an RGBA colour across different palettes unchanged", () => {
     const target = createBuffer({
       width: 8,
       height: 8,
       palette: ["#00000000", "#ff0000"],
     });
     const layerId = target.layers[0]?.id ?? "";
-    expect(() =>
-      stampRegion(target, {
-        layerId,
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-        pixels: new Uint8Array([1]),
-        mapping: paletteMapping(PALETTE, target.palette),
-      }),
-    ).toThrow(/not in this asset's palette/);
+    const stamped = stampRegion(target, {
+      layerId,
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      pixels: new Uint32Array([0xff3366ff]),
+    });
+    expect(stamped.ok).toBe(true);
+    if (stamped.ok) {
+      expect(readCell(stamped.buffer.layers[0]!.pixels, 0)).toBe(0xff3366ff);
+    }
   });
 
   it("copies a whole layer into a frame, keeping an existing layer by name", () => {
@@ -141,7 +171,14 @@ describe("region transfer", () => {
     const copied = copyLayers(target, source, [{ name: "body" }]);
     expect(copied.layers.map((layer) => layer.name)).toEqual(["pixels", "body"]);
     const body = copied.layers.find((layer) => layer.name === "body");
-    expect([body?.pixels[0], body?.pixels[1]]).toEqual([1, 2]);
+    expect(
+      body
+        ? [
+            paletteAt({ layers: [body], palette: PALETTE }, 0, 0),
+            paletteAt({ layers: [body], palette: PALETTE }, 0, 1),
+          ]
+        : [],
+    ).toEqual([1, 2]);
   });
 
   it("reads a layer by name and the composite when no layer is named", () => {
@@ -149,6 +186,8 @@ describe("region transfer", () => {
     expect(layerOf(source, "body")?.layerName).toBe("body");
     expect(layerOf(source)?.layerName).toBe("(composite)");
     expect(toFrameBuffer(source).width).toBe(8);
-    expect(layerOf(source, undefined)?.pixels[0]).toBe(2);
+    expect(
+      colorToHex(readCell(layerOf(source, undefined)?.pixels ?? new Uint8Array(), 0)),
+    ).toBe(PALETTE[2]);
   });
 });
