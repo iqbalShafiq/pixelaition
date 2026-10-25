@@ -340,6 +340,7 @@ export function EditorScreen() {
   const [customBrush, setCustomBrush] = useState<BrushPattern | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
   const asepriteInput = useRef<HTMLInputElement | null>(null);
+  const tilemapInput = useRef<HTMLInputElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
@@ -970,6 +971,24 @@ export function EditorScreen() {
       });
     },
   });
+
+  async function applyTilemapFile(file: File | undefined) {
+    if (!file || !frameId) return;
+    try {
+      const tilemap = JSON.parse(await file.text()) as unknown;
+      const data = await api<AssetDto>(`/api/assets/${assetId}/tilemap`, {
+        method: "POST",
+        body: JSON.stringify({ frameId, tilemap }),
+      });
+      client.setQueryData(["asset", assetId], data);
+      notify({ title: "Tilemap applied" });
+    } catch (reason) {
+      notify({
+        title: "The tilemap did not apply",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
 
   async function importAseprite(file: File | undefined) {
     if (!file) return;
@@ -4038,6 +4057,7 @@ export function EditorScreen() {
             description: `${slice.width}×${slice.height} — click the canvas to stamp it`,
           });
         }}
+        onApplyTilemap={() => tilemapInput.current?.click()}
         onTileFill={(slice) => {
           if (!frameId || !buffer || !activeLayerId) return;
           const destination = selection ?? {
@@ -4987,6 +5007,16 @@ export function EditorScreen() {
         onPick={(presetId) => addSocialFrame.mutate(presetId)}
         onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
         busy={addSocialFrame.isPending || addCustomFrame.isPending}
+      />
+      <input
+        ref={tilemapInput}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(event) => {
+          void applyTilemapFile(event.currentTarget.files?.[0]);
+          event.currentTarget.value = "";
+        }}
       />
       <input
         ref={asepriteInput}

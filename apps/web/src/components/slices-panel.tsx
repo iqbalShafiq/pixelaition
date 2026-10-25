@@ -13,6 +13,7 @@ export function SlicesPanel({
   onUseTile,
   autoTile = false,
   onAutoTile,
+  onApplyTilemap,
 }: {
   slices: Slice[];
   width: number;
@@ -23,6 +24,7 @@ export function SlicesPanel({
   onUseTile?: (slice: Slice) => void;
   autoTile?: boolean;
   onAutoTile?: (next: boolean) => void;
+  onApplyTilemap?: () => void;
 }) {
   const [draft, setDraft] = useState<Slice[]>(slices);
   const [dirty, setDirty] = useState(false);
@@ -50,27 +52,39 @@ export function SlicesPanel({
     <Panel
       title="Slices"
       action={
-        <Button
-          tone="ghost"
-          className="px-2 py-1 text-pixel-label"
-          disabled={locked}
-          onClick={() => {
-            setDraft((current) => [
-              ...current,
-              {
-                id: crypto.randomUUID(),
-                name: `slice-${current.length + 1}`,
-                x: 0,
-                y: 0,
-                width: Math.min(16, width),
-                height: Math.min(16, height),
-              },
-            ]);
-            setDirty(true);
-          }}
-        >
-          Add slice
-        </Button>
+        <div className="flex items-center gap-1">
+          {onApplyTilemap ? (
+            <Button
+              tone="ghost"
+              className="px-2 py-1 text-pixel-label"
+              disabled={locked}
+              onClick={onApplyTilemap}
+            >
+              Apply JSON
+            </Button>
+          ) : null}
+          <Button
+            tone="ghost"
+            className="px-2 py-1 text-pixel-label"
+            disabled={locked}
+            onClick={() => {
+              setDraft((current) => [
+                ...current,
+                {
+                  id: crypto.randomUUID(),
+                  name: `slice-${current.length + 1}`,
+                  x: 0,
+                  y: 0,
+                  width: Math.min(16, width),
+                  height: Math.min(16, height),
+                },
+              ]);
+              setDirty(true);
+            }}
+          >
+            Add slice
+          </Button>
+        </div>
       }
     >
       {draft.length === 0 ? (
