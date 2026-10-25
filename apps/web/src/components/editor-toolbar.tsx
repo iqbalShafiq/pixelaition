@@ -93,6 +93,7 @@ export function Toolbar({
   brushShape = "square",
   pixelPerfect = false,
   dynamics = false,
+  jitter = false,
   selectionActive,
   clipboardReady,
   locked,
@@ -101,6 +102,7 @@ export function Toolbar({
   onBrushShape,
   onPixelPerfect,
   onDynamics,
+  onJitter,
   onSelectionFill,
   onSelectionClear,
   onSelectionBrush,
@@ -120,6 +122,7 @@ export function Toolbar({
   brushShape?: BrushShape;
   pixelPerfect?: boolean;
   dynamics?: boolean;
+  jitter?: boolean;
   selectionActive: boolean;
   clipboardReady: boolean;
   locked: boolean;
@@ -128,6 +131,7 @@ export function Toolbar({
   onBrushShape?: (shape: BrushShape) => void;
   onPixelPerfect?: (next: boolean) => void;
   onDynamics?: (next: boolean) => void;
+  onJitter?: (next: boolean) => void;
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onSelectionBrush?: () => void;
@@ -224,6 +228,18 @@ export function Toolbar({
           onClick={() => onDynamics(!dynamics)}
         >
           <Pencil />
+        </IconButton>
+      ) : null}
+
+      {onJitter ? (
+        <IconButton
+          label="Brush jitter"
+          hint="Scatter stroke cells by one pixel"
+          subtle
+          active={jitter}
+          onClick={() => onJitter(!jitter)}
+        >
+          <Transparency />
         </IconButton>
       ) : null}
 

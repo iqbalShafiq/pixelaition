@@ -86,6 +86,7 @@ type Props = {
   customBrush?: BrushPattern | null;
   pixelPerfect?: boolean;
   dynamics?: boolean;
+  jitter?: boolean;
   activeLayerId?: string;
   grid: boolean;
   checker: boolean;
@@ -429,6 +430,7 @@ export function PixelCanvas({
   customBrush = null,
   pixelPerfect = false,
   dynamics = false,
+  jitter = false,
   activeLayerId,
   grid,
   checker,
@@ -505,6 +507,7 @@ export function PixelCanvas({
     brushSize,
     brushShape,
     customBrush,
+    jitter,
     pixelPerfect,
     dynamics,
     activeLayerId,
@@ -531,6 +534,7 @@ export function PixelCanvas({
     brushSize,
     brushShape,
     customBrush,
+    jitter,
     pixelPerfect,
     dynamics,
     activeLayerId,
@@ -1025,9 +1029,18 @@ export function PixelCanvas({
 
   function footprint(point: Point, size: number): Point[] {
     const pattern = latest.current.customBrush;
-    return pattern
-      ? patternCells(point, pattern)
-      : brushPoints(point, size, latest.current.brushShape);
+    if (pattern) return patternCells(point, pattern);
+    if (!latest.current.jitter)
+      return brushPoints(point, size, latest.current.brushShape);
+    const hash = Math.abs((point.x * 73856093) ^ (point.y * 19349663));
+    return brushPoints(
+      {
+        x: point.x + ((hash % 3) - 1),
+        y: point.y + ((Math.floor(hash / 3) % 3) - 1),
+      },
+      size,
+      latest.current.brushShape,
+    );
   }
 
   function brushSizeFor(event: { pointerType: string; pressure: number }): number {

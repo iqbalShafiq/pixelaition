@@ -337,6 +337,7 @@ export function EditorScreen() {
     NonNullable<AssetDto["slices"]>[number] | null
   >(null);
   const [autoTile, setAutoTile] = useState(false);
+  const [jitter, setJitter] = useState(false);
   const [customBrush, setCustomBrush] = useState<BrushPattern | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
   const asepriteInput = useRef<HTMLInputElement | null>(null);
@@ -4334,6 +4335,8 @@ export function EditorScreen() {
                     brushShape={brushShape}
                     pixelPerfect={pixelPerfect}
                     dynamics={dynamics}
+                    jitter={jitter}
+                    onJitter={setJitter}
                     selectionActive={selection !== null}
                     clipboardReady={clipboard !== null}
                     locked={locked || socialFrame !== null}
@@ -4458,6 +4461,7 @@ export function EditorScreen() {
                     customBrush={customBrush}
                     pixelPerfect={pixelPerfect}
                     dynamics={dynamics}
+                    jitter={jitter}
                     activeLayerId={activeLayerId}
                     grid={grid}
                     checker={checker}
