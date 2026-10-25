@@ -21,6 +21,8 @@ export type SheetOptions = {
   background?: string;
   imageName?: string;
   slices?: Slice[];
+  /** Shelf-pack non-uniform frames instead of a fixed grid. */
+  packed?: boolean;
 };
 
 export type AtlasFrame = {
@@ -44,6 +46,7 @@ export type SheetAtlas = {
   frames: AtlasFrame[];
   tags: FrameTag[];
   slices: Slice[];
+  layout: "grid" | "packed";
 };
 
 export type SheetResult = {
@@ -73,16 +76,48 @@ export function framesToSheet(
   }));
   const cellWidth = Math.max(...rendered.map((frame) => frame.image.width));
   const cellHeight = Math.max(...rendered.map((frame) => frame.image.height));
-  const columns = Math.max(
-    1,
-    Math.min(
-      frames.length,
-      Math.round(options.columns ?? Math.ceil(Math.sqrt(frames.length))),
-    ),
-  );
-  const rows = Math.ceil(frames.length / columns);
-  const width = margin * 2 + columns * cellWidth + Math.max(0, columns - 1) * padding;
-  const height = margin * 2 + rows * cellHeight + Math.max(0, rows - 1) * padding;
+  const packed = options.packed ?? false;
+  const placements: Array<{ x: number; y: number }> = [];
+  let width = 0;
+  let height = 0;
+  let columns = 0;
+  let rows = 0;
+  if (packed) {
+    const area = rendered.reduce(
+      (sum, frame) => sum + frame.image.width * frame.image.height,
+      0,
+    );
+    const shelfWidth = Math.max(cellWidth, Math.ceil(Math.sqrt(area)) + padding * 2);
+    let x = margin;
+    let y = margin;
+    let shelfHeight = 0;
+    let right = margin;
+    for (const frame of rendered) {
+      const frameWidth = frame.image.width;
+      if (x > margin && x + frameWidth > shelfWidth + margin) {
+        y += shelfHeight + padding;
+        x = margin;
+        shelfHeight = 0;
+      }
+      placements.push({ x, y });
+      x += frameWidth + padding;
+      shelfHeight = Math.max(shelfHeight, frame.image.height);
+      right = Math.max(right, x - padding);
+    }
+    width = right + margin;
+    height = y + shelfHeight + margin;
+  } else {
+    columns = Math.max(
+      1,
+      Math.min(
+        frames.length,
+        Math.round(options.columns ?? Math.ceil(Math.sqrt(frames.length))),
+      ),
+    );
+    rows = Math.ceil(frames.length / columns);
+    width = margin * 2 + columns * cellWidth + Math.max(0, columns - 1) * padding;
+    height = margin * 2 + rows * cellHeight + Math.max(0, rows - 1) * padding;
+  }
   const image = new PNG({ width, height });
   if (options.background) {
     const [r, g, b, a] = hexToRgba(options.background);
@@ -95,10 +130,11 @@ export function framesToSheet(
   }
   const atlasFrames: AtlasFrame[] = [];
   rendered.forEach((frame, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const x = margin + column * (cellWidth + padding);
-    const y = margin + row * (cellHeight + padding);
+    const placement = placements[index];
+    const column = index % Math.max(1, columns);
+    const row = Math.floor(index / Math.max(1, columns));
+    const x = placement?.x ?? margin + column * (cellWidth + padding);
+    const y = placement?.y ?? margin + row * (cellHeight + padding);
     for (let sourceY = 0; sourceY < frame.image.height; sourceY += 1) {
       for (let sourceX = 0; sourceX < frame.image.width; sourceX += 1) {
         const source = (sourceY * frame.image.width + sourceX) * 4;
@@ -132,6 +168,7 @@ export function framesToSheet(
       frames: atlasFrames,
       tags,
       slices: options.slices ?? [],
+      layout: packed ? "packed" : "grid",
     },
     columns,
     rows,

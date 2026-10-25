@@ -14,19 +14,41 @@ test("removes a flat background from a layer", async ({ page }) => {
   const asset = await page.request.post(`/api/projects/${projectBody.id}/assets`, {
     data: { name: "background" },
   });
-  const assetBody = (await asset.json()) as { id: string };
+  const assetBody = (await asset.json()) as {
+    id: string;
+    frames: Array<{
+      id: string;
+      layers: Array<{ id: string; name: string; visible: boolean }>;
+    }>;
+  };
+  const frame = assetBody.frames[0];
+  const layer = frame?.layers[0];
+  if (!frame || !layer) throw new Error("missing frame fixture");
+  const filled = Buffer.alloc(32 * 32, 1).toString("base64");
+  const put = await page.request.put(`/api/assets/${assetBody.id}/frames/${frame.id}`, {
+    data: {
+      layers: [
+        {
+          id: layer.id,
+          name: layer.name,
+          visible: true,
+          pixels: filled,
+        },
+      ],
+      groups: [],
+    },
+  });
+  expect(put.ok()).toBe(true);
   await page.goto(`/projects/${projectBody.id}/assets/${assetBody.id}`);
   const canvas = page.getByRole("img", { name: /Pixel canvas/ });
   await expect(canvas).toBeVisible();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("canvas has no box");
 
-  await page.getByRole("button", { name: "Fill", exact: true }).click();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(500);
 
-  const layer = page.getByRole("button", { name: "Settings for pixels" }).first();
-  await layer.click();
+  const settings = page.getByRole("button", { name: "Settings for pixels" }).first();
+  await settings.click();
   await page.getByRole("button", { name: "Remove background" }).click();
   await page.waitForTimeout(800);
 

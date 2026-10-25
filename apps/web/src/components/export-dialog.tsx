@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Button,
   Callout,
+  Checkbox,
   Dialog,
   DialogClose,
   Field,
@@ -66,6 +67,7 @@ export function ExportDialog({
   const [loop, setLoop] = useState("0");
   const [columns, setColumns] = useState("");
   const [atlasPreset, setAtlasPreset] = useState("native");
+  const [packed, setPacked] = useState(false);
   const [state, setState] = useState<{
     kind: "idle" | "busy" | "failed";
     message?: string;
@@ -228,6 +230,7 @@ export function ExportDialog({
                 onChange={setAtlasPreset}
               />
             </Field>
+            <Checkbox label="Pack frames" checked={packed} onChange={setPacked} />
           </>
         ) : null}
         {format === "jpg" || format === "zip" ? (

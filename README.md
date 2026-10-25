@@ -209,6 +209,7 @@ pnpm cli import hero.png --out hero.pxl --name hero --colors 32
 pnpm cli inspect hero.pxl
 pnpm cli export hero.pxl --format gif --out hero.gif
 pnpm cli export hero.pxl --format sheet --out hero-sheet.zip
+pnpm cli import-aseprite sheet.png sheet.json --out hero.pxl
 ```
 
 ## MCP

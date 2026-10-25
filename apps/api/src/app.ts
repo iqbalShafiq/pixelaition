@@ -3627,6 +3627,7 @@ export function createApp() {
         padding: z.number().int().min(0).max(64).optional(),
         margin: z.number().int().min(0).max(64).optional(),
         atlasPreset: z.enum(atlasPresets).default("native"),
+        packed: z.boolean().default(false),
       })
       .parse(req.body);
     const userId = res.locals.userId as string;
@@ -3768,6 +3769,7 @@ export function createApp() {
           ...(body.background !== undefined ? { background: body.background } : {}),
           imageName: `${slugName}.png`,
           slices: (asset.slices ?? []) as never,
+          packed: body.packed,
         },
       );
       if (body.format === "aseprite-json") {
