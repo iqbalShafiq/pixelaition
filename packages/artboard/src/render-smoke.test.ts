@@ -63,8 +63,12 @@ describe("artboard render smoke", () => {
     });
     expect(result.image.width).toBe(1080);
     console.log(JSON.stringify(checks, null, 2));
+    expect(result.image.rgba).toHaveLength(result.image.width * result.image.height * 4);
+    expect(
+      Buffer.compare(Buffer.from(result.image.rgba), Buffer.from(toRgba(result.image))),
+    ).toBe(0);
     const png = new PNG({ width: result.image.width, height: result.image.height });
-    png.data.set(toRgba(result.image));
+    png.data.set(result.image.rgba);
     const encoded = PNG.sync.write(png);
     writeFileSync("/tmp/artboard-post.png", encoded);
     expect(encoded.length).toBeGreaterThan(0);

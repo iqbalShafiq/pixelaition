@@ -33,7 +33,7 @@ import {
   type StyleGuide,
   type TextLayerSpec,
 } from "@pixelaition/pixel";
-import type { PaletteImage } from "@pixelaition/artboard";
+import { indicesToRgba, type PaletteImage } from "@pixelaition/artboard";
 import type { BrushPattern, BrushShape } from "../components/pixel-canvas.js";
 import {
   checkScene,
@@ -4136,11 +4136,13 @@ export function EditorScreen() {
       if (!palette[0] || palette[0].slice(-2).toLowerCase() !== "00") {
         palette.unshift("#00000000");
       }
+      const indices = quantizeToPalette(image, palette);
       setReference({
         width: image.width,
         height: image.height,
         palette,
-        indices: quantizeToPalette(image, palette),
+        indices,
+        rgba: indicesToRgba(indices, image.width, image.height, palette),
       });
     } catch (reason) {
       notify({

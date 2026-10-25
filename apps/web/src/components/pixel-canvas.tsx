@@ -1,7 +1,6 @@
 import {
   composite,
   ellipsePoints,
-  hexToRgba,
   readCell,
   renderFrameDocument,
   stepZoom,
@@ -300,16 +299,7 @@ function overlayBitmapFor(
   const context = canvas.getContext("2d");
   if (context) {
     const pixels = context.createImageData(image.width, image.height);
-    for (let index = 0; index < image.indices.length; index += 1) {
-      const value = image.indices[index] ?? 0;
-      if (value === 0) continue;
-      const [r, g, b, a] = hexToRgba(image.palette[value] ?? "#000000");
-      const offset = index * 4;
-      pixels.data[offset] = r;
-      pixels.data[offset + 1] = g;
-      pixels.data[offset + 2] = b;
-      pixels.data[offset + 3] = a;
-    }
+    pixels.data.set(image.rgba);
     context.putImageData(pixels, 0, 0);
   }
   cache.set(image, canvas);

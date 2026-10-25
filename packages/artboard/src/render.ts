@@ -39,7 +39,16 @@ export function renderScene(input: RenderInput): RenderResult {
     }
   }
   const usedColors = [...used].filter((color) => color > 0 && color < palette.length);
-  return { image: { width, height, palette: [...palette], indices: target }, usedColors };
+  return {
+    image: {
+      width,
+      height,
+      palette: [...palette],
+      indices: target,
+      rgba: indicesToRgba(target, width, height, palette),
+    },
+    usedColors,
+  };
 }
 
 export function paintBackground(
@@ -327,10 +336,23 @@ export function elementLabel(element: Element): string {
 }
 
 export function toRgba(image: PaletteImage): Uint8Array {
-  const data = new Uint8Array(image.width * image.height * 4);
-  const colors = image.palette.map((hex) => hexToRgba(hex));
-  for (let index = 0; index < image.indices.length; index += 1) {
-    const color = image.indices[index] ?? 0;
+  if (image.rgba.length === image.width * image.height * 4) {
+    return new Uint8Array(image.rgba);
+  }
+  return indicesToRgba(image.indices, image.width, image.height, image.palette);
+}
+
+/** Resolve one indexed image into straight RGBA bytes. */
+export function indicesToRgba(
+  indices: Uint8Array,
+  width: number,
+  height: number,
+  palette: string[],
+): Uint8Array {
+  const data = new Uint8Array(width * height * 4);
+  const colors = palette.map((hex) => hexToRgba(hex));
+  for (let index = 0; index < indices.length; index += 1) {
+    const color = indices[index] ?? 0;
     const rgba = colors[color] ?? [0, 0, 0, 0];
     const offset = index * 4;
     data[offset] = rgba[0];

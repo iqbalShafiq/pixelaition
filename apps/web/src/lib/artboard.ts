@@ -1,6 +1,7 @@
 import {
   checkScene,
   getPreset,
+  indicesToRgba,
   renderScene,
   type Artboard,
   type ArtboardCheck,
@@ -10,7 +11,7 @@ import {
   type PaletteImage,
   type SpriteSource,
 } from "@pixelaition/artboard";
-import { frameToBuffer, hexToRgba } from "@pixelaition/pixel";
+import { frameToBuffer } from "@pixelaition/pixel";
 import type { AssetDto } from "./types.js";
 
 /** A frame's palette indices, ready for the shared artboard renderer. */
@@ -64,17 +65,7 @@ export function drawPaletteImage(canvas: HTMLCanvasElement, image: PaletteImage)
   canvas.height = image.height;
   const context = canvas.getContext("2d");
   if (!context) return;
-  const pixels = new Uint8ClampedArray(image.width * image.height * 4);
-  const colors = image.palette.map(hexToRgba);
-  for (let index = 0; index < image.indices.length; index += 1) {
-    const color = image.indices[index] ?? 0;
-    const rgba = colors[color] ?? [0, 0, 0, 0];
-    const offset = index * 4;
-    pixels[offset] = rgba[0];
-    pixels[offset + 1] = rgba[1];
-    pixels[offset + 2] = rgba[2];
-    pixels[offset + 3] = color === 0 ? 0 : rgba[3];
-  }
+  const pixels = new Uint8ClampedArray(image.rgba);
   context.putImageData(new ImageData(pixels, image.width, image.height), 0, 0);
 }
 
@@ -108,7 +99,13 @@ export function downsamplePalette(image: PaletteImage, maxEdge: number): Palette
       indices[y * width + x] = best;
     }
   }
-  return { ...image, width, height, indices };
+  return {
+    ...image,
+    width,
+    height,
+    indices,
+    rgba: indicesToRgba(indices, width, height, image.palette),
+  };
 }
 
 export function copyWith(copy: CopyDeck, key: keyof CopyDeck, value: string): CopyDeck {

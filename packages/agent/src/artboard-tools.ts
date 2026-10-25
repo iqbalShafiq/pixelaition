@@ -9,6 +9,7 @@ import {
   formatBytes,
   formatPresets,
   getPreset,
+  indicesToRgba,
   layoutText,
   missingGlyphs,
   resolveFont,
@@ -129,7 +130,13 @@ function downsample(image: PaletteImage, factor: number): PaletteImage {
       indices[y * width + x] = best;
     }
   }
-  return { ...image, width, height, indices };
+  return {
+    ...image,
+    width,
+    height,
+    indices,
+    rgba: indicesToRgba(indices, width, height, image.palette),
+  };
 }
 
 function checksJson(checks: ArtboardCheck[]): {

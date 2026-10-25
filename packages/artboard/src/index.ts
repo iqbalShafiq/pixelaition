@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./presets.js";
 export * from "./font.js";
+export { indicesToRgba } from "./render.js";
 export {
   resolveCopy,
   hasImageCopy,

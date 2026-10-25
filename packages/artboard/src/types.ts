@@ -200,9 +200,12 @@ export type SetWithArtboards = ArtboardSet & { artboards: Artboard[] };
 export type PaletteImage = {
   width: number;
   height: number;
+  /** Swatches used by `indices`; retained for old scene comparisons. */
   palette: string[];
   /** One palette index per pixel; index 0 is transparent. */
   indices: Uint8Array;
+  /** The same image as straight RGBA bytes, four per pixel. */
+  rgba: Uint8Array;
 };
 
 export type SpriteSource = {
