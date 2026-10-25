@@ -132,17 +132,26 @@ function paletteChunk(buffer: FrameBuffer): Uint8Array {
   return chunk(CHUNK_PALETTE, body.finish());
 }
 
-function celChunk(buffer: FrameBuffer, layer: Layer, layerIndex: number): Uint8Array {
+function celChunk(
+  buffer: FrameBuffer,
+  layer: Layer,
+  layerIndex: number,
+  linkTo?: number,
+): Uint8Array {
   const body = new Writer();
   body.u16(layerIndex);
   body.i16(0);
   body.i16(0);
   body.u8(255);
-  body.u16(0);
+  body.u16(linkTo === undefined ? 0 : 1);
   body.i16(layerIndex);
   for (let index = 0; index < 5; index += 1) body.u8(0);
-  for (let index = 0; index < buffer.width * buffer.height; index += 1) {
-    body.u8(layer.pixels[index] ?? 0);
+  if (linkTo !== undefined) {
+    body.u16(linkTo);
+  } else {
+    for (let index = 0; index < buffer.width * buffer.height; index += 1) {
+      body.u8(layer.pixels[index] ?? 0);
+    }
   }
   return chunk(CHUNK_CEL, body.finish());
 }
@@ -266,9 +275,22 @@ export function framesToAse(frames: AseFrame[], tags: AseTag[] = []): Uint8Array
       if (entry.kind !== "layer") continue;
       const layer = frame.buffer.layers.find((item) => item.name === entry.layer.name);
       const layerIndex = layerIndexFor.get(entry.layer.name);
-      if (layer && layerIndex !== undefined) {
-        chunks.push(celChunk(frame.buffer, layer, layerIndex));
+      if (!layer || layerIndex === undefined) continue;
+      let linkTo: number | undefined;
+      for (let earlier = 0; earlier < frameIndex; earlier += 1) {
+        const candidate = frames[earlier]?.buffer.layers.find(
+          (item) => item.name === entry.layer.name,
+        );
+        if (
+          candidate &&
+          candidate.pixels.length === layer.pixels.length &&
+          candidate.pixels.every((value, index) => value === layer.pixels[index])
+        ) {
+          linkTo = earlier;
+          break;
+        }
       }
+      chunks.push(celChunk(frame.buffer, layer, layerIndex, linkTo));
     }
     if (frameIndex === 0) {
       const tagChunk = tagsChunk(tags);

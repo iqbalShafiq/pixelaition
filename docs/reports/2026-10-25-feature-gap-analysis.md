@@ -414,9 +414,8 @@ Implemented:
 
 Still open from the matrix above:
 
-- Binary `.ase`/`.aseprite` linked cel **export**; linked cels import, indexed
-  image layers, groups, raw/zlib cels, palette, tags and slices import, and
-  indexed export with groups, are in.
+- Named slices in binary `.ase`; frames, layers, groups, linked cels, palette,
+  tags and slices metadata round-trip through `.pxl` and Aseprite JSON.
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
