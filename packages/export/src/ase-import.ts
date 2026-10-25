@@ -79,6 +79,7 @@ export function parseAse(bytes: Uint8Array): AseImport {
   const frameCels: Array<
     Array<{ layer: number; x: number; y: number; pixels: Uint8Array }>
   > = [];
+  const linkedCels: Array<{ frame: number; layer: number; target: number }> = [];
   const durations: number[] = [];
   const rawTags: Array<{
     from: number;
@@ -193,8 +194,16 @@ export function parseAse(bytes: Uint8Array): AseImport {
         const x = view.getInt16(data + 2, true);
         const y = view.getInt16(data + 4, true);
         const celType = view.getUint16(data + 7, true);
-        if (celType === 1 || celType === 3) {
-          throw new Error("Linked cels are not supported in .ase import yet.");
+        if (celType === 1) {
+          const target = view.getUint16(data + 16, true);
+          linkedCels.push({ frame: frameIndex, layer: layerIndex, target });
+          cursor = end;
+          continue;
+        }
+        if (celType === 3) {
+          throw new Error(
+            "Compressed tilemap cels are not supported in .ase import yet.",
+          );
         }
         const layer = layerDefs.find(
           (def) => def.kind === "layer" && def.chunkIndex === layerIndex,
@@ -297,6 +306,13 @@ export function parseAse(bytes: Uint8Array): AseImport {
     }
     frameCels.push(cels);
     offset += frameSize;
+  }
+  for (const link of linkedCels) {
+    const source = frameCels[link.target]?.find((cel) => cel.layer === link.layer);
+    if (!source) {
+      throw new Error("An Aseprite linked cel points at a missing frame or layer.");
+    }
+    frameCels[link.frame]?.push({ ...source });
   }
   if (layerDefs.every((def) => def.kind !== "layer")) {
     layerDefs.push({
