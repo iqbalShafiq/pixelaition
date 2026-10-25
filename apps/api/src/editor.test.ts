@@ -187,6 +187,31 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(aseImport.status).toBe(201);
       expect(aseImport.body.frames.length).toBeGreaterThan(asset.frames.length);
 
+      const firstLayer = first.layers[0];
+      if (!firstLayer) throw new Error("missing layer fixture");
+      const scripted = await request(app)
+        .post(`/api/assets/${asset.id}/script`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          frameId: first.id,
+          commands: [
+            {
+              type: "fill",
+              layerId: firstLayer.id,
+              x: 0,
+              y: 0,
+              color: 1,
+            },
+          ],
+        });
+      expect(scripted.status).toBe(200);
+      const scriptedPixels = Buffer.from(
+        scripted.body.frames.find((frame: { id: string }) => frame.id === first.id)
+          .layers[0].pixels,
+        "base64",
+      );
+      expect(scriptedPixels[0]).toBe(1);
+
       const timing = await request(app)
         .patch(`/api/assets/${asset.id}/frames/${first.id}`)
         .set("authorization", `Bearer ${token}`)

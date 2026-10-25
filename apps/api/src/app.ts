@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  applyCommand,
   assetFrameBuffer,
   blendModes,
   colorModes,
@@ -1299,6 +1300,74 @@ export function createApp() {
         result.failure?.message ?? "That frame is gone.",
       );
     res.status(201).json(result.asset);
+  });
+
+  app.post("/api/assets/:id/script", async (req, res) => {
+    const body = z
+      .object({
+        frameId: z.string().min(1),
+        commands: z.array(z.record(z.string(), z.unknown())).min(1).max(1000),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is drawing on this asset right now.",
+      );
+    }
+    const userId = res.locals.userId as string;
+    const assetId = req.params.id ?? "";
+    const record = await getAssetRecord(db, userId, assetId);
+    if (!record) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const frame = record.frames.find((item) => item.id === body.frameId);
+    if (!frame || frame.kind === "social") {
+      return fail(res, 404, "NOT_FOUND", "That sprite frame is not available.");
+    }
+    let buffer = frameToBuffer(
+      frame,
+      frame.width ?? record.width,
+      frame.height ?? record.height,
+      record.palette as string[],
+    );
+    for (const [index, raw] of body.commands.entries()) {
+      const result = applyCommand(buffer, raw as never);
+      if (!result.ok) {
+        return fail(
+          res,
+          422,
+          result.code ?? "SCRIPT_REFUSED",
+          `Command ${index + 1}: ${result.message}`,
+        );
+      }
+      buffer = result.buffer;
+    }
+    const next = bufferToFrame(buffer, {
+      id: frame.id,
+      name: frame.name,
+      index: frame.index,
+      ...(frame.width !== null ? { width: frame.width } : {}),
+      ...(frame.height !== null ? { height: frame.height } : {}),
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+    });
+    const saved = await saveFrame(
+      db,
+      userId,
+      assetId,
+      frame.id,
+      next.layers,
+      next.groups,
+    );
+    if (!saved.asset) {
+      return fail(
+        res,
+        422,
+        saved.failure?.code ?? "SCRIPT_FAILED",
+        saved.failure?.message ?? "The script could not be saved.",
+      );
+    }
+    res.json(saved.asset);
   });
 
   app.post("/api/assets/:id/frames/:frameId/variant", async (req, res) => {
