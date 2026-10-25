@@ -399,7 +399,8 @@ Implemented:
   (Unity, Godot, Phaser), Aseprite JSON export/import, slices with nine-slice
   borders and pivots.
 - Pixel-perfect pencil cleanup, round/spray brushes, lasso and magic-wand
-  selections, a reference overlay, and tile-size suggestions from the seam scan.
+  selections, mask-aware clipboard/fill, pen-pressure sizing, a reference
+  overlay, and tile-size suggestions from the seam scan.
 - Tileset packaging (`tileset` export), Aseprite JSON import in the CLI, a
   `.pxl` command-script runner, and `create_variant` for mirrored/remapped
   frames.
@@ -417,7 +418,10 @@ Still open from the matrix above:
   raw/zlib cels, palette, tags and slices import, and indexed export, are in.
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
-- Custom brush images, brush dynamics, RGB/grayscale color modes and scripting.
-- AI variants, linked/shared layers, a style lock and auto-tiling remain design
-  work; selection-scoped prompts, AI animation through frames/tags, and
-  reference overlays are in place.
+- Custom brush images, richer dynamics, true RGB color mode and Lua/visual
+  scripting; grayscale/monochrome modes, pressure sizing and a command-script
+  CLI exist.
+- AI variant gallery, linked/shared layers, a style lock and auto-tiling remain
+  design work; selection-scoped prompts, an agent variant tool, AI animation
+  through frames/tags, and reference overlays are in place.
+- Flip/rotate/move on masked selections remain rectangular.
