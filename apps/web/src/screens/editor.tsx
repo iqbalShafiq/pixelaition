@@ -2674,7 +2674,31 @@ export function EditorScreen() {
 
   function flipSelection(axis: "horizontal" | "vertical") {
     if (running || !selection || !frameId || !activeLayerId) return;
-    if (maskedSelection()) return;
+    if (selection.mask) {
+      const transform = axis === "horizontal" ? "flipHorizontal" : "flipVertical";
+      edit(frameId, drafts[frameId], {
+        type: "transformMask",
+        layerId: activeLayerId,
+        x: selection.x,
+        y: selection.y,
+        width: selection.width,
+        height: selection.height,
+        mask: Array.from(selection.mask),
+        transform,
+      });
+      const mask = new Uint8Array(selection.mask.length);
+      for (let row = 0; row < selection.height; row += 1) {
+        for (let column = 0; column < selection.width; column += 1) {
+          mask[row * selection.width + column] =
+            selection.mask[
+              (axis === "vertical" ? selection.height - 1 - row : row) * selection.width +
+                (axis === "horizontal" ? selection.width - 1 - column : column)
+            ] ?? 0;
+        }
+      }
+      setSelection({ ...selection, mask });
+      return;
+    }
     edit(frameId, drafts[frameId], {
       type: "mirrorRegion",
       layerId: activeLayerId,
@@ -2685,12 +2709,33 @@ export function EditorScreen() {
 
   function rotateSelection() {
     if (running || !selection || !frameId || !activeLayerId) return;
-    if (maskedSelection()) return;
     if (selection.width !== selection.height) {
       notify({
         title: "A quarter-turn needs a square",
         description: "Select a square region, or use the flip buttons.",
       });
+      return;
+    }
+    if (selection.mask) {
+      edit(frameId, drafts[frameId], {
+        type: "transformMask",
+        layerId: activeLayerId,
+        x: selection.x,
+        y: selection.y,
+        width: selection.width,
+        height: selection.height,
+        mask: Array.from(selection.mask),
+        transform: "rotateCW",
+      });
+      const size = selection.width;
+      const mask = new Uint8Array(selection.mask.length);
+      for (let row = 0; row < size; row += 1) {
+        for (let column = 0; column < size; column += 1) {
+          mask[row * size + column] =
+            selection.mask[(size - 1 - column) * size + row] ?? 0;
+        }
+      }
+      setSelection({ ...selection, mask });
       return;
     }
     edit(frameId, drafts[frameId], {

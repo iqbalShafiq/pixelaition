@@ -792,6 +792,68 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
       return mirrorRegion(buffer, command);
     case "outline":
       return outline(buffer, command.layerId, command.color);
+    case "transformMask": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (
+        !withinRegion(buffer, command.x, command.y, command.width, command.height) ||
+        command.mask.length !== command.width * command.height
+      ) {
+        return fail("SHAPE", "The masked transform has the wrong region or mask size.");
+      }
+      if (
+        (command.transform === "rotateCW" || command.transform === "rotateCCW") &&
+        command.width !== command.height
+      ) {
+        return fail("SQUARE_REQUIRED", "A masked quarter-turn needs a square selection.");
+      }
+      const layer = layerById(buffer, command.layerId);
+      if (!layer) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const source = new Uint8Array(command.width * command.height);
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          const local = row * command.width + column;
+          if (command.mask[local] !== 1) continue;
+          source[local] = readCell(
+            layer.pixels,
+            indexOf(buffer.width, command.x + column, command.y + row),
+          );
+        }
+      }
+      const next = clonePixels(layer.pixels);
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          if (command.mask[row * command.width + column] !== 1) continue;
+          next[indexOf(buffer.width, command.x + column, command.y + row)] = 0;
+        }
+      }
+      const size = command.width;
+      for (let row = 0; row < command.height; row += 1) {
+        for (let column = 0; column < command.width; column += 1) {
+          let sourceColumn = column;
+          let sourceRow = row;
+          if (command.transform === "flipHorizontal") {
+            sourceColumn = command.width - 1 - column;
+          }
+          if (command.transform === "flipVertical") {
+            sourceRow = command.height - 1 - row;
+          }
+          if (command.transform === "rotateCW") {
+            sourceColumn = row;
+            sourceRow = size - 1 - column;
+          }
+          if (command.transform === "rotateCCW") {
+            sourceColumn = size - 1 - row;
+            sourceRow = column;
+          }
+          const local = sourceRow * size + sourceColumn;
+          if (command.mask[local] !== 1) continue;
+          next[indexOf(buffer.width, command.x + column, command.y + row)] =
+            source[local] ?? 0;
+        }
+      }
+      return { ok: true, buffer: replaceLayer(buffer, command.layerId, next) };
+    }
     case "fillMask": {
       const gate = requireLayer(buffer, command.layerId);
       if ("ok" in gate) return gate;

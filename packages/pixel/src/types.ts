@@ -197,6 +197,17 @@ export type Command =
       mode: "fill" | "clear" | "flood";
     }
   | {
+      type: "transformMask";
+      layerId: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      /** 1 inside the selection, 0 outside; row-major in the bounding box. */
+      mask: number[];
+      transform: "flipHorizontal" | "flipVertical" | "rotateCW" | "rotateCCW";
+    }
+  | {
       type: "fillMask";
       layerId: string;
       x: number;
