@@ -410,8 +410,8 @@ Implemented:
 
 Still open from the matrix above:
 
-- Binary `.ase`/`.aseprite` import (indexed `.ase` export is in; import and
-  group/slice chunks are not).
+- Binary `.ase`/`.aseprite` group layers and linked cels; indexed image layers,
+  raw/zlib cels, palette, tags and slices import, and indexed export, are in.
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, brush dynamics, RGB/grayscale color modes and scripting.

@@ -93,3 +93,5 @@ export { atlasForEngine, atlasPresets, type AtlasPreset } from "./atlas-presets.
 export { frameToTileset, type TilesetResult, type TilesetTile } from "./tileset.js";
 
 export { framesToAse, type AseFrame, type AseTag } from "./ase.js";
+
+export { parseAse, type AseImport } from "./ase-import.js";

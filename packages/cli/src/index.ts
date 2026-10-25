@@ -24,6 +24,7 @@ import {
   framesToAse,
   framesToGif,
   framesToSheet,
+  parseAse,
   sheetToAsepriteJson,
   zipFiles,
 } from "@pixelaition/export";
@@ -51,6 +52,10 @@ export async function runCli(argv: string[]): Promise<void> {
     await importAsepriteJson(rest);
     return;
   }
+  if (command === "import-ase") {
+    await importAse(rest);
+    return;
+  }
   if (command === "inspect") {
     await inspectProject(rest);
     return;
@@ -69,6 +74,7 @@ function printHelp(): void {
   pixelaition export <project.pxl> --out <path> [--format png|jpg|gif|apng|sheet|png-sequence] [--asset name] [--scale n]
   pixelaition import <image.png> --out <project.pxl> [--name name] [--colors 32]
   pixelaition import-aseprite <sheet.png> <atlas.json> --out <project.pxl> [--name name] [--colors 32]
+  pixelaition import-ase <sprite.ase> --out <project.pxl> [--name name]
   pixelaition apply-script <project.pxl> <script.json> --out <project.pxl>
 
 Formats use the editor's palette, renderer, and atlas contract.`);
@@ -342,6 +348,27 @@ type AsepriteAtlas = {
     }>;
   };
 };
+
+/** Import an indexed .ase file through the shared parser. */
+async function importAse(args: string[]): Promise<void> {
+  const input = args[0];
+  const out = option(args, "out");
+  if (!input || !out) throw new Error("import-ase needs an .ase file and --out.");
+  const imported = parseAse(new Uint8Array(await readFile(input)));
+  const asset: Asset = {
+    id: crypto.randomUUID(),
+    name: option(args, "name") ?? "aseprite",
+    width: imported.width,
+    height: imported.height,
+    palette: imported.palette,
+    frames: imported.frames,
+    tags: imported.tags,
+    slices: imported.slices,
+  };
+  const project = createProject(asset.name);
+  project.assets.push(asset);
+  await writeFile(out, `${JSON.stringify(project, null, 2)}\n`);
+}
 
 /** Import Aseprite's JSON spritesheet export (not the binary .ase format). */
 async function importAsepriteJson(args: string[]): Promise<void> {
