@@ -43,6 +43,10 @@ describe("export", () => {
     const png = frameToPng(buffer, 1);
     expect(png[0]).toBe(0x89);
     expect(png[1]).toBe(0x50);
+    // Agent previews can shrink below 1× to fit a payload budget.
+    const small = frameToPng(buffer, 0.5);
+    expect(small[0]).toBe(0x89);
+    expect(small.length).toBeLessThan(png.length);
     const svg = frameToSvg(buffer, 1);
     expect(svg).toContain("<svg");
     const zip = zipFiles({ "icon.svg": svg, "project.pxl": serializeProject(project) });

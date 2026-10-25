@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_COLORS } from "@pixelaition/pixel";
+import { MAX_COLORS, MAX_SIZE, MIN_SIZE } from "@pixelaition/pixel";
 
 /**
  * The plan a supervisor produces for one drawing request, before a single
@@ -18,6 +18,13 @@ import { MAX_COLORS } from "@pixelaition/pixel";
 export const drawPlanFrameSchema = z.object({
   name: z.string().min(1).max(40),
   intent: z.string().min(1),
+  /**
+   * A frame is its own pixel canvas. A request that names a real output size
+   * (X profile, X cover, LinkedIn cover) carries that size here so add_frame
+   * creates the right canvas instead of silently inheriting the asset's size.
+   */
+  width: z.number().int().min(MIN_SIZE).max(MAX_SIZE).optional(),
+  height: z.number().int().min(MIN_SIZE).max(MAX_SIZE).optional(),
   layers: z
     .array(z.string().min(1).max(40))
     .describe("Layers this frame paints on, by the plan's layer names."),
@@ -41,6 +48,12 @@ export const drawPlanSchema = z.object({
   palette: z.array(paletteAdditionSchema),
   references: z.array(planReferenceSchema).max(8),
   workers: z.array(planWorkerSchema).min(1).max(4),
+  /**
+   * Existing frames this plan replaces and wants removed. The supervisor
+   * executes it after adding the planned frames, so a blank default `idle`
+   * cannot survive a request that defines a new set of canvases.
+   */
+  removeFrames: z.array(z.string().min(1).max(40)).optional(),
   review: z.boolean(),
 });
 export type DrawPlan = z.infer<typeof drawPlanSchema>;
@@ -133,6 +146,14 @@ export function validatePlan(
       ok: false,
       error: `The request describes movement, so the plan needs at least ${minFrames} key frames; it drew ${plan.frames.length}.`,
     };
+  }
+  for (const name of plan.removeFrames ?? []) {
+    if (seen.has(name)) {
+      return {
+        ok: false,
+        error: `The plan both creates and removes frame "${name}"; choose one.`,
+      };
+    }
   }
   const keys = new Set<string>();
   for (const worker of plan.workers) {

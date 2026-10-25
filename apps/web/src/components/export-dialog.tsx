@@ -29,6 +29,7 @@ export function ExportDialog({
   frameId,
   frameName,
   assetName,
+  social = false,
   onBeforeExport,
 }: {
   open: boolean;
@@ -38,8 +39,10 @@ export function ExportDialog({
   frameId: string;
   frameName: string;
   assetName: string;
-  /** Writes any pending stroke before the server renders the export. */
-  onBeforeExport: () => void;
+  /** Social frames render at the preset's native size, not the sprite grid. */
+  social?: boolean;
+  /** Writes any pending edit before the server renders the export. */
+  onBeforeExport: () => void | Promise<void>;
 }) {
   const [scope, setScope] = useState<Scope>("frame");
   const [format, setFormat] = useState<Format>("png");
@@ -51,26 +54,36 @@ export function ExportDialog({
   }>({ kind: "idle" });
 
   const pxlNeedsProject = format === "pxl" && scope !== "project";
-  const available = formats.filter((item) => !(item === "pxl" && scope !== "project"));
+  const socialFormats = formats.filter((item) => item === "png" || item === "jpg");
+  const available = social
+    ? socialFormats
+    : formats.filter((item) => !(item === "pxl" && scope !== "project"));
 
   async function run() {
     setState({ kind: "busy", message: "Rendering on the server." });
-    onBeforeExport();
     try {
-      const response = await fetch("/api/export", {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          scope,
-          projectId,
-          assetId,
-          frameId,
-          format,
-          scale: Number(scale),
-          background,
-        }),
-      });
+      await onBeforeExport();
+      const response = await fetch(
+        social ? `/api/assets/${assetId}/social-export` : "/api/export",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            social
+              ? { frameId, format: format === "jpg" ? "jpg" : "png" }
+              : {
+                  scope,
+                  projectId,
+                  assetId,
+                  frameId,
+                  format,
+                  scale: Number(scale),
+                  background,
+                },
+          ),
+        },
+      );
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as {
           message?: string;
@@ -98,7 +111,7 @@ export function ExportDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Export"
-      description={`${assetName} · ${frameName}`}
+      description={`${assetName} · ${frameName}${social ? " · native frame size" : ""}`}
     >
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Scope" htmlFor="export-scope">
@@ -106,14 +119,22 @@ export function ExportDialog({
             id="export-scope"
             label="Scope"
             value={scope}
-            options={scopes.map((item) => item.id)}
+            options={(social ? scopes.filter((item) => item.id === "frame") : scopes).map(
+              (item) => item.id,
+            )}
             onChange={(next) => setScope(next as Scope)}
           />
         </Field>
         <Field
           label="Format"
           htmlFor="export-format"
-          hint={scope !== "project" ? ".pxl needs the project" : undefined}
+          hint={
+            social
+              ? undefined
+              : scope !== "project"
+                ? ".pxl needs the project"
+                : undefined
+          }
         >
           <SelectControl
             id="export-format"
@@ -123,15 +144,17 @@ export function ExportDialog({
             onChange={(next) => setFormat(next as Format)}
           />
         </Field>
-        <Field label="Scale" htmlFor="export-scale">
-          <SelectControl
-            id="export-scale"
-            label="Scale"
-            value={scale}
-            options={[...scales]}
-            onChange={setScale}
-          />
-        </Field>
+        {social ? null : (
+          <Field label="Scale" htmlFor="export-scale">
+            <SelectControl
+              id="export-scale"
+              label="Scale"
+              value={scale}
+              options={[...scales]}
+              onChange={setScale}
+            />
+          </Field>
+        )}
         {format === "jpg" || format === "zip" ? (
           <Field label="Background" htmlFor="export-background">
             <TextInput

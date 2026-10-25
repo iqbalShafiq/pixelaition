@@ -1,5 +1,5 @@
 export const MIN_SIZE = 8;
-export const MAX_SIZE = 128;
+export const MAX_SIZE = 4096;
 export const MAX_COLORS = 255;
 export const TRANSPARENT = 0;
 export const MAX_HISTORY = 100;
@@ -15,11 +15,32 @@ export type StyleGuide = {
   notes: string;
 };
 
+export type TextLayerSpec = {
+  text: string;
+  face: "silkscreen" | "pixelify" | "mono";
+  weight: 400 | 700;
+  size: number;
+  color: number;
+  x: number;
+  y: number;
+  width: number;
+  align: "left" | "center" | "right";
+  lineHeight?: number;
+  maxLines?: number;
+  letterSpacing?: number;
+  scale?: number;
+  height?: number;
+  /** Clockwise degrees around the text box centre. */
+  rotation?: number;
+};
+
 export type Layer = {
   id: string;
   name: string;
   visible: boolean;
   pixels: Uint8Array;
+  /** A text layer stays editable: this is the spec its pixels were painted from. */
+  text?: TextLayerSpec;
 };
 
 export type FrameBuffer = {
@@ -33,6 +54,9 @@ export type Frame = {
   id: string;
   name: string;
   index: number;
+  /** Native-size frames carry their own canvas; absent means the asset size. */
+  width?: number | null;
+  height?: number | null;
   layers: Array<Omit<Layer, "pixels"> & { pixels: string }>;
 };
 
@@ -118,6 +142,12 @@ export type Command =
   | { type: "reindexPalette"; palette: string[]; mapping: Record<string, number> }
   | { type: "resize"; width: number; height: number }
   | { type: "addLayer"; id: string; name: string }
+  | {
+      type: "replaceLayer";
+      layerId: string;
+      pixels: Uint8Array;
+      text?: TextLayerSpec | null;
+    }
   | { type: "renameLayer"; layerId: string; name: string }
   | { type: "setLayerVisible"; layerId: string; visible: boolean }
   | { type: "removeLayer"; layerId: string }
@@ -157,4 +187,6 @@ export type CritiqueIssue = { code: string; message: string };
 
 export type Camera = { x: number; y: number; zoom: number };
 
-export const zoomSteps = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32] as const;
+export const zoomSteps = [
+  0.1, 0.25, 0.5, 0.75, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32,
+] as const;

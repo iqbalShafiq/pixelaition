@@ -2,12 +2,23 @@ import {
   composite,
   frameToBuffer,
   type FrameBuffer,
+  type Layer,
   type StyleGuide,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
 import { FrameStatus, type FrameTaskState } from "./frame-status.js";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
+import {
+  getPreset,
+  presetAspect,
+  type Element,
+  type SpriteSource,
+} from "@pixelaition/artboard";
+import { ArtboardCanvas } from "./artboard-canvas.js";
+import { artboardForFrame } from "../lib/artboard.js";
+import type { AssetDto } from "../lib/types.js";
 import {
   Check,
   Copy,
@@ -118,7 +129,12 @@ export function FrameThumb({
       ref={ref}
       aria-hidden
       className="shrink-0 border-2 border-line bg-screen"
-      style={{ width: size, height: size, imageRendering: "pixelated" }}
+      style={{
+        width: size,
+        height: size,
+        imageRendering: "pixelated",
+        objectFit: "contain",
+      }}
     />
   );
 }
@@ -142,6 +158,8 @@ function FrameRow({
   pixelWidth,
   pixelHeight,
   live,
+  asset,
+  sprites,
   current,
   locked,
   editing,
@@ -165,6 +183,8 @@ function FrameRow({
   pixelWidth?: number;
   pixelHeight?: number;
   live?: FrameBuffer;
+  asset?: AssetDto;
+  sprites?: Map<string, SpriteSource>;
   current: boolean;
   locked: boolean;
   editing: boolean;
@@ -180,6 +200,9 @@ function FrameRow({
   onDragFinished: () => void;
 }) {
   const controls = useDragControls();
+  const frameWidth = frame.width ?? pixelWidth;
+  const frameHeight = frame.height ?? pixelHeight;
+  const dimensions = frameWidth && frameHeight ? `${frameWidth}×${frameHeight}` : null;
   return (
     <Reorder.Item
       data-frame-row={frame.id}
@@ -226,13 +249,27 @@ function FrameRow({
           className="pointer-events-none relative shrink-0 overflow-hidden"
           style={{ height: 36 }}
         >
-          <FrameThumb
-            frame={frame}
-            palette={live?.palette ?? palette}
-            width={pixelWidth}
-            height={pixelHeight}
-            live={live}
-          />
+          {frame.kind === "social" && asset && frame.presetId && frame.scene ? (
+            <span className="grid h-9 w-9 place-items-center overflow-hidden border-2 border-line bg-screen">
+              <ArtboardCanvas
+                artboard={artboardForFrame(asset, frame)!}
+                preset={getPreset(frame.presetId)}
+                asset={asset}
+                sprites={sprites ?? new Map()}
+                fit
+                showZones={false}
+                thumbnail
+              />
+            </span>
+          ) : (
+            <FrameThumb
+              frame={frame}
+              palette={live?.palette ?? palette}
+              width={frame.width ?? pixelWidth}
+              height={frame.height ?? pixelHeight}
+              live={live}
+            />
+          )}
           {taskState?.painting === true ? (
             // The agent's own cursor, painting inside this frame's square.
             <span aria-hidden className="agent-cursor">
@@ -264,13 +301,20 @@ function FrameRow({
         ) : (
           <span className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center leading-5">
             <span className="truncate">{frame.name}</span>
-            {taskState !== undefined ? (
-              <span className="flex min-w-0">
+            <span className="flex min-w-0 items-center gap-1">
+              {taskState !== undefined ? (
                 <FrameStatus state={taskState} />
-              </span>
-            ) : current && locked ? (
-              <span className="text-pixel-mono">drawing</span>
-            ) : null}
+              ) : current && locked ? (
+                <span className="text-pixel-mono">drawing</span>
+              ) : null}
+              {dimensions !== null ? (
+                <span className="shrink-0 font-mono text-[9px] text-muted">
+                  {frame.kind === "social" && frame.presetId
+                    ? `${dimensions} · ${presetAspect(getPreset(frame.presetId))}`
+                    : dimensions}
+                </span>
+              ) : null}
+            </span>
           </span>
         )}
         <span
@@ -376,9 +420,12 @@ export function FramePanel({
   locked,
   activity,
   taskFrames,
+  asset,
+  sprites,
   onSelect,
   onTogglePlay,
   onAdd,
+  onImport,
   onDuplicate,
   onRename,
   onDelete,
@@ -397,9 +444,12 @@ export function FramePanel({
   activity?: string;
   /** Per-frame task state, keyed by frame id, while a task runs. */
   taskFrames?: Map<string, FrameTaskState>;
+  asset?: AssetDto;
+  sprites?: Map<string, SpriteSource>;
   onSelect: (frameId: string) => void;
   onTogglePlay: () => void;
   onAdd: () => void;
+  onImport?: () => void;
   onDuplicate: (frameId: string) => void;
   onRename: (frameId: string, name: string) => void;
   onDelete: (frameId: string) => void;
@@ -493,7 +543,7 @@ export function FramePanel({
       {frames.length === 0 ? (
         <EmptyState
           title="No frames"
-          body="A frame holds the pixels for one state of this asset."
+          body="A frame holds one image state of this asset."
         />
       ) : (
         <div
@@ -521,6 +571,8 @@ export function FramePanel({
                   pixelWidth={pixelWidth}
                   pixelHeight={pixelHeight}
                   live={liveFrames?.[frame.id]}
+                  asset={asset}
+                  sprites={sprites}
                   current={current}
                   {...(taskFrames?.get(frame.id) !== undefined
                     ? { taskState: taskFrames.get(frame.id) }
@@ -544,6 +596,17 @@ export function FramePanel({
         </div>
       )}
 
+      {onImport ? (
+        <Button
+          tone="ghost"
+          className="mt-1 justify-start px-2 py-1 text-pixel-label"
+          onClick={onImport}
+          disabled={locked}
+        >
+          Import project frame
+        </Button>
+      ) : null}
+
       <ConfirmDialog
         open={pendingDelete !== null}
         onOpenChange={(next) => {
@@ -552,7 +615,7 @@ export function FramePanel({
         title="Delete this frame?"
         description={
           pendingDelete
-            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            ? `“${pendingDelete.name}” and its content will be removed. This cannot be undone.`
             : ""
         }
         onConfirm={() => {
@@ -564,10 +627,72 @@ export function FramePanel({
   );
 }
 
+/* ------------------------------------------------------------------ inspector */
+
+export function FrameHeaderPanel({
+  name,
+  width,
+  height,
+  meta,
+  detail,
+  disabled,
+  onRename,
+}: {
+  name: string;
+  width: number;
+  height: number;
+  meta?: string;
+  detail?: string;
+  disabled?: boolean;
+  onRename: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+
+  useEffect(() => setDraft(name), [name]);
+
+  function commit() {
+    const next = draft.trim();
+    if (next && next !== name) onRename(next);
+    else setDraft(name);
+  }
+
+  return (
+    <Panel
+      title="Frame"
+      action={
+        <span className="shrink-0 font-mono text-[10px] text-muted">
+          {width}×{height}
+        </span>
+      }
+    >
+      <Field label="Name" htmlFor="frame-header-name">
+        <TextInput
+          id="frame-header-name"
+          value={draft}
+          disabled={disabled}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setDraft(name);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      </Field>
+      {meta ? <p className="text-pixel-mono text-muted">{meta}</p> : null}
+      {detail ? <p className="text-pixel-mono text-accent">{detail}</p> : null}
+    </Panel>
+  );
+}
+
 /* ------------------------------------------------------------------ layers */
 
 export function LayerPanel({
   buffer,
+  elements = [],
+  selectedElementId = null,
   activeId,
   locked,
   onSelect,
@@ -575,15 +700,30 @@ export function LayerPanel({
   onAdd,
   onRename,
   onDelete,
+  onSelectElement,
+  onToggleElement,
+  background,
+  onSelectBackground,
+  onToggleBackground,
+  onDeleteElement,
 }: {
   buffer: FrameBuffer | undefined;
+  /** Scene content sits in the same list as the pixel layers. */
+  elements?: Element[];
+  selectedElementId?: string | null;
   activeId: string;
   locked: boolean;
   onSelect: (layerId: string) => void;
   onToggleVisible: (layerId: string, visible: boolean) => void;
-  onAdd: () => void;
+  onAdd?: () => void;
   onRename: (layerId: string, name: string) => void;
   onDelete: (layerId: string) => void;
+  onSelectElement?: (id: string) => void;
+  onToggleElement?: (id: string, visible: boolean) => void;
+  background?: { visible: boolean };
+  onSelectBackground?: () => void;
+  onToggleBackground?: () => void;
+  onDeleteElement?: (id: string) => void;
 }) {
   const layers = buffer?.layers ?? [];
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -608,15 +748,101 @@ export function LayerPanel({
       className="min-h-0 flex-1"
       title="Layers"
       action={
-        <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
-          <Plus />
-        </IconButton>
+        buffer && onAdd ? (
+          <IconButton label="Add layer" disabled={locked} onClick={onAdd}>
+            <Plus />
+          </IconButton>
+        ) : undefined
       }
     >
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
         {/* The layer list fills what is left and scrolls on its own, apart
             from the frame list. */}
         <ul className="grid gap-1">
+          {background ? (
+            <li
+              className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                background.visible
+                  ? "border-transparent hover:border-line hover:bg-raised"
+                  : "border-transparent opacity-55"
+              }`}
+            >
+              <Checkbox
+                label="Show background"
+                hideLabel
+                checked={background.visible}
+                disabled={locked}
+                onChange={() => onToggleBackground?.()}
+              />
+              <button
+                type="button"
+                disabled={locked}
+                onClick={() => onSelectBackground?.()}
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+              >
+                <span className="truncate font-mono text-[11px]">Background</span>
+                <span className="shrink-0 font-mono text-[9px] text-muted">layer 1</span>
+              </button>
+              <IconButton
+                label="Edit background"
+                disabled={locked}
+                onClick={() => onSelectBackground?.()}
+              >
+                <Pencil />
+              </IconButton>
+            </li>
+          ) : null}
+          {elements.map((element) => {
+            const visible = element.visible !== false;
+            const current = selectedElementId === element.id;
+            return (
+              <li
+                key={element.id}
+                className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                  current
+                    ? "border-accent bg-raised"
+                    : "border-transparent hover:border-line hover:bg-raised"
+                } ${visible ? "" : "opacity-55"}`}
+              >
+                <Checkbox
+                  label={`Show ${elementLabel(element)}`}
+                  hideLabel
+                  checked={visible}
+                  disabled={locked}
+                  onChange={(next) => onToggleElement?.(element.id, next)}
+                />
+                <button
+                  type="button"
+                  aria-current={current}
+                  disabled={locked}
+                  onClick={() => onSelectElement?.(element.id)}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                >
+                  <span className="truncate font-mono text-[11px]">
+                    {elementLabel(element)}
+                  </span>
+                  <span className="shrink-0 font-mono text-[9px] text-muted">
+                    {element.id.slice(0, 8)}
+                  </span>
+                </button>
+                <IconButton
+                  label={`Edit ${elementLabel(element)}`}
+                  disabled={locked}
+                  onClick={() => onSelectElement?.(element.id)}
+                >
+                  <Pencil />
+                </IconButton>
+                <Menu label={`Actions for ${elementLabel(element)}`}>
+                  <MenuItem
+                    disabled={locked}
+                    onClick={() => onDeleteElement?.(element.id)}
+                  >
+                    <Trash /> Delete
+                  </MenuItem>
+                </Menu>
+              </li>
+            );
+          })}
           {layers.map((layer) => {
             const current = layer.id === activeId;
             return (
@@ -686,6 +912,11 @@ export function LayerPanel({
                     }`}
                   >
                     {layer.name}
+                    {layer.text ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-accent">
+                        TEXT
+                      </span>
+                    ) : null}
                   </span>
                 )}
                 <span className="relative z-10 ml-auto flex w-[74px] shrink-0 items-center justify-end gap-0.5">
@@ -713,13 +944,29 @@ export function LayerPanel({
                         className="flex items-center gap-0.5"
                       >
                         <IconButton
-                          label={`Rename ${layer.name}`}
+                          label={
+                            layer.text
+                              ? `Edit text ${layer.name}`
+                              : `Rename ${layer.name}`
+                          }
                           disabled={locked}
-                          onClick={() => startEdit(layer.id, layer.name)}
+                          onClick={() =>
+                            layer.text
+                              ? onSelect(layer.id)
+                              : startEdit(layer.id, layer.name)
+                          }
                         >
                           <Pencil />
                         </IconButton>
                         <Menu label={`Actions for ${layer.name}`}>
+                          {layer.text ? (
+                            <MenuItem
+                              disabled={locked}
+                              onClick={() => startEdit(layer.id, layer.name)}
+                            >
+                              <Pencil /> Rename layer
+                            </MenuItem>
+                          ) : null}
                           <MenuItem
                             disabled={locked || layers.length <= 1}
                             onClick={() =>
@@ -739,7 +986,10 @@ export function LayerPanel({
         </ul>
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-pixel-mono text-muted">{layers.length} layers</span>
+        <span className="text-pixel-mono text-muted">
+          {layers.length + elements.length}{" "}
+          {layers.length + elements.length === 1 ? "layer" : "layers"}
+        </span>
       </div>
 
       <ConfirmDialog
@@ -750,7 +1000,7 @@ export function LayerPanel({
         title="Delete this layer?"
         description={
           pendingDelete
-            ? `“${pendingDelete.name}” and its pixels will be removed. This cannot be undone.`
+            ? `“${pendingDelete.name}” and its content will be removed. This cannot be undone.`
             : ""
         }
         onConfirm={() => {
@@ -758,6 +1008,91 @@ export function LayerPanel({
           setPendingDelete(null);
         }}
       />
+    </Panel>
+  );
+}
+
+/* ----------------------------------------------------------------- elements */
+
+function elementLabel(element: Element): string {
+  if (element.kind === "text") return `“${element.text.slice(0, 22)}”`;
+  if (element.kind === "sprite") return "image";
+  if (element.kind === "rect") return "block";
+  return element.kind;
+}
+
+/**
+ * The left rail's layer list for a native-size frame. Scene elements are the
+ * layers here: selecting one drives the same element editor as the canvas.
+ */
+export function ElementLayerPanel({
+  elements,
+  selectedId,
+  disabled,
+  onSelect,
+  onToggle,
+}: {
+  elements: Element[];
+  selectedId: string | null;
+  disabled: boolean;
+  onSelect: (id: string) => void;
+  onToggle: (id: string, visible: boolean) => void;
+}) {
+  return (
+    <Panel
+      className="min-h-0 flex-1"
+      title="Layers"
+      action={
+        <span className="text-pixel-mono text-muted">
+          {elements.length} {elements.length === 1 ? "layer" : "layers"}
+        </span>
+      }
+    >
+      {elements.length === 0 ? (
+        <EmptyState
+          title="No layers"
+          body="Add text, a block, or a pattern from the top bar."
+        />
+      ) : (
+        <ul className="grid gap-1">
+          {elements.map((element) => {
+            const current = selectedId === element.id;
+            const visible = element.visible !== false;
+            return (
+              <li
+                key={element.id}
+                className={`flex min-w-0 items-center gap-2 border-2 px-2 py-1.5 transition-colors duration-150 ${
+                  current
+                    ? "border-accent bg-raised"
+                    : "border-transparent hover:border-line hover:bg-raised"
+                } ${visible ? "" : "opacity-55"}`}
+              >
+                <Checkbox
+                  label={`Show ${elementLabel(element)}`}
+                  hideLabel
+                  checked={visible}
+                  disabled={disabled}
+                  onChange={(next) => onToggle(element.id, next)}
+                />
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onSelect(element.id)}
+                  aria-current={current}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                >
+                  <span className="truncate font-mono text-[11px]">
+                    {elementLabel(element)}
+                  </span>
+                  <span className="shrink-0 font-mono text-[9px] text-muted">
+                    {element.id.slice(0, 8)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Panel>
   );
 }
@@ -770,12 +1105,14 @@ export function PalettePanel({
   usedColors,
   onPick,
   onAdd,
+  onImportPalette,
 }: {
   palette: string[];
   color: number;
   usedColors: number;
   onPick: (index: number) => void;
   onAdd: (hex: string) => void;
+  onImportPalette?: () => void;
 }) {
   const [draft, setDraft] = useState("#d8a64e");
   const [hsv, setHsv] = useState(() => hexToHsv("#d8a64e"));
@@ -928,6 +1265,15 @@ export function PalettePanel({
           </div>
         </Popover>
       </div>
+      {onImportPalette ? (
+        <Button
+          tone="ghost"
+          className="justify-start px-2 py-1 text-pixel-label"
+          onClick={onImportPalette}
+        >
+          Import project palette
+        </Button>
+      ) : null}
     </Panel>
   );
 }
@@ -939,11 +1285,14 @@ export function StylePanel({
   width,
   height,
   onResize,
+  readOnly = false,
 }: {
   style: StyleGuide;
   width: number;
   height: number;
-  onResize: (width: number, height: number) => void;
+  onResize?: (width: number, height: number) => void;
+  /** Native-size frames show their real output size and cannot be resized. */
+  readOnly?: boolean;
 }) {
   const [w, setW] = useState(String(width));
   const [h, setH] = useState(String(height));
@@ -970,48 +1319,174 @@ export function StylePanel({
       </dl>
       {style.notes ? <p className="text-[12px] text-muted">{style.notes}</p> : null}
 
-      <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 128">
-        <div className="flex items-center gap-1.5">
-          <TextInput
-            id="canvas-width"
-            value={w}
-            inputMode="numeric"
-            aria-label="Canvas width"
-            placeholder="32"
-            onChange={(event) => setW(event.target.value)}
-            onBlur={() => {
-              const next = Number(w);
-              if (next !== width) onResize(next, height);
-              else setW(String(width));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") setW(String(width));
-            }}
-          />
-          <span className="text-pixel-mono text-muted">×</span>
-          <TextInput
-            id="canvas-height"
-            value={h}
-            inputMode="numeric"
-            aria-label="Canvas height"
-            placeholder="32"
-            onChange={(event) => setH(event.target.value)}
-            onBlur={() => {
-              const next = Number(h);
-              if (next !== height) onResize(width, next);
-              else setH(String(height));
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-              if (event.key === "Escape") setH(String(height));
-            }}
-          />
+      {readOnly ? (
+        <div className="flex items-baseline justify-between gap-2 border-t-2 border-line pt-1.5 text-pixel-mono">
+          <span className="text-muted">canvas</span>
+          <span className="text-ink">
+            {width}×{height}
+          </span>
         </div>
-      </Field>
+      ) : (
+        <Field label="Canvas size" htmlFor="canvas-width" hint="8 to 4096">
+          <div className="flex items-center gap-1.5">
+            <TextInput
+              id="canvas-width"
+              value={w}
+              inputMode="numeric"
+              aria-label="Canvas width"
+              placeholder="32"
+              onChange={(event) => setW(event.target.value)}
+              onBlur={() => {
+                const next = Number(w);
+                if (next !== width) onResize?.(next, height);
+                else setW(String(width));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") setW(String(width));
+              }}
+            />
+            <span className="text-pixel-mono text-muted">×</span>
+            <TextInput
+              id="canvas-height"
+              value={h}
+              inputMode="numeric"
+              aria-label="Canvas height"
+              placeholder="32"
+              onChange={(event) => setH(event.target.value)}
+              onBlur={() => {
+                const next = Number(h);
+                if (next !== height) onResize?.(width, next);
+                else setH(String(height));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") setH(String(height));
+              }}
+            />
+          </div>
+        </Field>
+      )}
       <p className="text-xs text-muted">
         The style guide belongs to the project, so every asset in it stays related.
       </p>
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------------------- text */
+
+/**
+ * A text layer keeps its layout while its pixels stay palette-indexed. The
+ * panel edits the spec; the canvas rasterizes it again, so text never leaves
+ * the pixel document.
+ */
+export function TextPanel({
+  layer,
+  palette,
+  locked,
+  onChange,
+  onRemove,
+}: {
+  layer: Layer;
+  palette: string[];
+  locked: boolean;
+  onChange: (patch: Partial<TextLayerSpec>) => void;
+  onRemove: () => void;
+}) {
+  const spec = layer.text;
+  const contentRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    contentRef.current?.focus();
+    contentRef.current?.select();
+  }, [layer.id]);
+  if (!spec) return null;
+  return (
+    <Panel
+      title="Text"
+      className="shrink-0"
+      action={
+        <IconButton label="Delete text" disabled={locked} onClick={onRemove}>
+          <Trash />
+        </IconButton>
+      }
+    >
+      <div className="grid gap-2">
+        <Field label="Content" htmlFor="text-content">
+          <textarea
+            ref={contentRef}
+            id="text-content"
+            value={spec.text}
+            disabled={locked}
+            rows={2}
+            onChange={(event) => onChange({ text: event.target.value })}
+            className="w-full resize-y border-2 border-line bg-field px-2 py-1.5 text-pixel-body text-ink outline-none focus-visible:border-accent disabled:opacity-50"
+          />
+        </Field>
+        <Field label="Size" htmlFor="text-size">
+          <div className="flex items-stretch border-2 border-line bg-field focus-within:border-accent">
+            <input
+              id="text-size"
+              type="number"
+              min={1}
+              max={4096}
+              step={1}
+              value={spec.size}
+              disabled={locked}
+              aria-label="Text size"
+              onChange={(event) => {
+                const next = Number.parseInt(event.target.value, 10);
+                if (Number.isInteger(next) && next >= 1 && next <= 4096) {
+                  onChange({ size: next });
+                }
+              }}
+              className="min-w-0 flex-1 bg-transparent px-2 py-1.5 font-mono text-[13px] text-ink outline-none disabled:opacity-50"
+            />
+            <div className="flex w-7 shrink-0 flex-col border-l-2 border-line">
+              <button
+                type="button"
+                aria-label="Increase text size"
+                disabled={locked || spec.size >= 4096}
+                onClick={() => onChange({ size: Math.min(4096, spec.size + 1) })}
+                className="flex flex-1 items-center justify-center border-b-2 border-line text-[11px] leading-none text-muted hover:text-ink disabled:opacity-40"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                aria-label="Decrease text size"
+                disabled={locked || spec.size <= 1}
+                onClick={() => onChange({ size: Math.max(1, spec.size - 1) })}
+                className="flex flex-1 items-center justify-center text-[11px] leading-none text-muted hover:text-ink disabled:opacity-40"
+              >
+                −
+              </button>
+            </div>
+          </div>
+        </Field>
+        <Field label="Colour" htmlFor="text-color">
+          <div id="text-color" className="flex flex-wrap gap-1">
+            {palette.map((hex, index) => (
+              <button
+                key={hex}
+                type="button"
+                aria-label={`Text colour ${hex}`}
+                aria-pressed={spec.color === index}
+                disabled={locked}
+                onClick={() => onChange({ color: index })}
+                className={`h-5 w-5 border-2 ${
+                  spec.color === index ? "border-accent" : "border-line"
+                } disabled:opacity-50`}
+                style={{ background: hex }}
+              />
+            ))}
+          </div>
+        </Field>
+        <p className="text-[11px] leading-snug text-muted">
+          Click the text on the canvas to select it, then drag to move it. Every edit is
+          rasterized back into this pixel layer.
+        </p>
+      </div>
     </Panel>
   );
 }

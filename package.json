@@ -29,6 +29,7 @@
     "prepare": "husky",
     "eval:jev": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev",
     "eval:jev:decisions": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:jev:decisions",
+    "eval:social": "dotenv -e .env -- pnpm --filter @pixelaition/agent eval:social",
     "postinstall": "node tools/patch-anvia-openai.mjs"
   },
   "lint-staged": {

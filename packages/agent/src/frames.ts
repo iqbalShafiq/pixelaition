@@ -29,10 +29,18 @@ export type FrameView = {
   assetName: string;
   frameId: string;
   frameName: string;
+  index?: number;
+  summary?: string;
   width: number;
   height: number;
   palette: string[];
-  layers: Array<{ id: string; name: string; visible: boolean; pixels: Uint8Array }>;
+  layers: Array<{
+    id: string;
+    name: string;
+    visible: boolean;
+    text?: NonNullable<FrameBuffer["layers"][number]["text"]>;
+    pixels: Uint8Array;
+  }>;
 };
 
 /** `{ hex, to }`: a source colour and the target palette index that replaces it. */
@@ -63,8 +71,11 @@ export function viewOfAsset(asset: ProjectAsset, frameId: string): FrameView | u
     assetName: asset.name,
     frameId: frame.id,
     frameName: frame.name,
-    width: asset.width,
-    height: asset.height,
+    index: frame.index,
+    summary: frame.summary,
+    // Native-size frames share the asset palette but not its canvas size.
+    width: frame.buffer.width,
+    height: frame.buffer.height,
     palette: asset.palette,
     layers: frame.buffer.layers,
   };
@@ -81,6 +92,8 @@ export function viewOfRunFrame(
     assetName: run.assetName,
     frameId,
     frameName: frame.name,
+    index: frame.index,
+    summary: frame.summary ?? "",
     width: frame.buffer.width,
     height: frame.buffer.height,
     palette: frame.buffer.palette,
@@ -176,7 +189,20 @@ export async function projectListing(run: BoundRunBinding): Promise<
     width: number;
     height: number;
     palette: string[];
-    frames: Array<{ name: string; summary: string; index: number }>;
+    frames: Array<{
+      id: string;
+      name: string;
+      summary: string;
+      index: number;
+      width: number;
+      height: number;
+      layers: Array<{
+        id: string;
+        name: string;
+        visible: boolean;
+        text?: NonNullable<FrameBuffer["layers"][number]["text"]>;
+      }>;
+    }>;
   }>
 > {
   const current: ProjectAsset = {
@@ -203,7 +229,20 @@ export async function projectListing(run: BoundRunBinding): Promise<
     palette: asset.palette,
     frames: [...asset.frames]
       .sort((left, right) => left.index - right.index)
-      .map((frame) => ({ name: frame.name, summary: frame.summary, index: frame.index })),
+      .map((frame) => ({
+        id: frame.id,
+        name: frame.name,
+        summary: frame.summary,
+        index: frame.index,
+        width: frame.buffer.width,
+        height: frame.buffer.height,
+        layers: frame.buffer.layers.map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+          ...(layer.text ? { text: layer.text } : {}),
+        })),
+      })),
   }));
 }
 

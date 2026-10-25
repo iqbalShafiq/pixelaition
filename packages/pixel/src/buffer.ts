@@ -43,7 +43,7 @@ export function createBuffer(input: {
   layerName?: string;
 }): FrameBuffer {
   if (!isSizeAllowed(input.width) || !isSizeAllowed(input.height)) {
-    throw new Error("Canvas size must be an integer from 8 to 128.");
+    throw new Error("Canvas size must be an integer from 8 to 4096.");
   }
   const palette = input.palette ?? defaultPalette;
   return {
@@ -105,6 +105,7 @@ export function frameToBuffer(
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
+      ...(layer.text ? { text: { ...layer.text } } : {}),
       pixels: decodePixels(layer.pixels, expected),
     })),
   };
@@ -112,16 +113,22 @@ export function frameToBuffer(
 
 export function bufferToFrame(
   buffer: FrameBuffer,
-  frame: Pick<Frame, "id" | "name" | "index">,
+  frame: Pick<Frame, "id" | "name" | "index"> & {
+    width?: number | null;
+    height?: number | null;
+  },
 ): Frame {
   return {
     id: frame.id,
     name: frame.name,
     index: frame.index,
+    ...(frame.width !== undefined ? { width: frame.width } : {}),
+    ...(frame.height !== undefined ? { height: frame.height } : {}),
     layers: buffer.layers.map((layer) => ({
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
+      ...(layer.text ? { text: { ...layer.text } } : {}),
       pixels: encodePixels(layer.pixels),
     })),
   };

@@ -170,6 +170,214 @@ describe.skipIf(!db)("API routes", () => {
     }
   });
 
+  it("creates, edits, checks, previews, and exports native-size frames", async () => {
+    const project = await request(app)
+      .post("/api/projects")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "social routes" });
+    expect(project.status).toBe(201);
+    const asset = await request(app)
+      .post(`/api/projects/${project.body.id}/assets`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "orbit" });
+    expect(asset.status).toBe(201);
+    try {
+      const created = await request(app)
+        .post(`/api/projects/${project.body.id}/sets`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          assetId: asset.body.id,
+          presetIds: ["linkedin-profile", "instagram-post"],
+        });
+      expect(created.status).toBe(201);
+      expect(created.body.artboards).toHaveLength(2);
+      const board = created.body.artboards[0];
+      expect(board.width).toBe(400);
+      expect(board.scene.elements.length).toBeGreaterThan(0);
+
+      const preview = await request(app)
+        .get(`/api/artboards/${board.id}/preview`)
+        .set("authorization", `Bearer ${token}`);
+      expect(preview.status).toBe(200);
+      expect(preview.headers["content-type"]).toBe("image/png");
+      expect((preview.body as Buffer).readUInt32BE(16)).toBe(400);
+      expect((preview.body as Buffer).readUInt32BE(20)).toBe(400);
+
+      const state = await request(app)
+        .get(`/api/sets/${created.body.id}/state`)
+        .set("authorization", `Bearer ${token}`);
+      expect(state.status).toBe(200);
+      expect(state.body.artboards).toHaveLength(2);
+      expect(state.body.summary.errors).toBe(0);
+
+      const patched = await request(app)
+        .patch(`/api/artboards/${board.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: board.version, name: "LinkedIn avatar", status: "ready" });
+      expect(patched.status).toBe(200);
+      expect(patched.body.artboard.version).toBe(board.version + 1);
+
+      const stale = await request(app)
+        .patch(`/api/artboards/${board.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ version: board.version, name: "stale" });
+      expect(stale.status).toBe(409);
+
+      const png = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "artboard", artboardId: board.id, format: "png" });
+      expect(png.status).toBe(200);
+      expect(png.headers["content-type"]).toBe("image/png");
+
+      const zip = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "set", setId: created.body.id, format: "zip" });
+      expect(zip.status).toBe(200);
+      expect(zip.headers["content-type"]).toBe("application/zip");
+    } finally {
+      await live.delete(projects).where(eq(projects.id, project.body.id));
+    }
+  });
+
+  it("adds a native-size layer frame, reads resources, and exports it", async () => {
+    const project = await request(app)
+      .post("/api/projects")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "mixed frames" });
+    expect(project.status).toBe(201);
+    const asset = await request(app)
+      .post(`/api/projects/${project.body.id}/assets`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: "orbit mixed" });
+    expect(asset.status).toBe(201);
+    try {
+      const added = await request(app)
+        .post(`/api/assets/${asset.body.id}/frames`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          kind: "social",
+          presetId: "linkedin-cover",
+          copy: { headline: "Orbit is live", subhead: "One mark, every feed." },
+        });
+      expect(added.status).toBe(201);
+      const social = added.body.frames.find(
+        (frame: { width?: number }) => frame.width === 1584,
+      );
+      expect(social.presetId).toBe("linkedin-cover");
+      expect(social.width).toBe(1584);
+      expect(social.kind).toBe("sprite");
+      expect(social.layers.length).toBe(2);
+      expect(social.layers[0].name).toBe("Background");
+
+      const custom = await request(app)
+        .post(`/api/assets/${asset.body.id}/frames`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ kind: "social", width: 320, height: 180 });
+      expect(custom.status).toBe(201);
+      const customFrame = custom.body.frames.find(
+        (frame: { width?: number }) => frame.width === 320,
+      );
+      expect(customFrame.height).toBe(180);
+      expect(customFrame.layers.map((layer: { name: string }) => layer.name)).toEqual([
+        "Background",
+        "Artwork",
+      ]);
+      const textSpec = {
+        text: "Hello",
+        face: "silkscreen",
+        weight: 700,
+        size: 16,
+        color: 1,
+        x: 8,
+        y: 8,
+        width: 200,
+        align: "left",
+        maxLines: 2,
+      };
+      const savedText = await request(app)
+        .put(`/api/assets/${asset.body.id}/frames/${customFrame.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          layers: [
+            ...customFrame.layers,
+            {
+              id: "text-layer",
+              name: "Text",
+              visible: true,
+              text: textSpec,
+              pixels: customFrame.layers[0].pixels,
+            },
+          ],
+        });
+      expect(savedText.status).toBe(200);
+      expect(
+        savedText.body.frames
+          .find((frame: { id: string }) => frame.id === customFrame.id)
+          .layers.find((layer: { id: string }) => layer.id === "text-layer").text,
+      ).toEqual(textSpec);
+
+      const resources = await request(app)
+        .get(`/api/projects/${project.body.id}/resources`)
+        .set("authorization", `Bearer ${token}`);
+      expect(resources.status).toBe(200);
+      expect(resources.body.assets[0].frames).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "sprite" }),
+          expect.objectContaining({ width: 1584, presetId: "linkedin-cover" }),
+        ]),
+      );
+
+      const saved = await request(app)
+        .put(`/api/assets/${asset.body.id}/frames/${social.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ layers: social.layers });
+      expect(saved.status).toBe(200);
+      expect(
+        saved.body.frames.find((frame: { id: string }) => frame.id === social.id).layers
+          .length,
+      ).toBe(2);
+
+      await request(app)
+        .patch(`/api/assets/${asset.body.id}/copy`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          copy: {
+            eyebrow: "ORBIT",
+            headline: "Orbit is live",
+            subhead: "One mark, every feed.",
+            cta: "Make yours",
+            handle: "@orbit",
+          },
+        });
+
+      const target = await request(app)
+        .post(`/api/projects/${project.body.id}/assets`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ name: "import target" });
+      expect(target.status).toBe(201);
+      const spriteFrame = added.body.frames.find(
+        (frame: { kind?: string }) => frame.kind !== "social",
+      );
+      const importedSprite = await request(app)
+        .post(`/api/assets/${target.body.id}/frames/import`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          sourceAssetId: asset.body.id,
+          sourceFrameId: spriteFrame.id,
+        });
+      expect(importedSprite.status).toBe(201);
+      expect(
+        importedSprite.body.asset.frames.some(
+          (frame: { kind?: string }) => frame.kind === "sprite",
+        ),
+      ).toBe(true);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, project.body.id));
+    }
+  });
+
   it("surfaces a bound workspace run as the asset's active run with its card", async () => {
     const projectId = randomUUID();
     const asset = createAsset({ name: "bound-run", width: 8, height: 8 });

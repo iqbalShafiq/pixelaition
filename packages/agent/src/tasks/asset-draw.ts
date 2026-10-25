@@ -48,6 +48,15 @@ export const assetDrawInputSchema = z.object({
   maxWorkers: z.number().int().min(1).max(4),
   review: z.boolean(),
   maxPalette: z.number().int().min(0).max(255),
+  /** The frame the user had open, so an edit names the real frame, not a stale summary. */
+  selectedFrame: z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      width: z.number().int().min(1),
+      height: z.number().int().min(1),
+    })
+    .optional(),
   /**
    * The public run_tasks id. Prior-turn loading uses it to skip this request.
    * Older tasks omit it; the loader then skips the newest live row instead.
@@ -256,12 +265,13 @@ export function userRequestFromPrompt(
 export const PLAN_SCHEMA_EXAMPLE = [
   "Answer with exactly this JSON shape (no other fields):",
   '{"assetId":"<the asset id from read_project>",',
-  '"frames":[{"name":"idle","intent":"what this frame shows","layers":["body","shadow"]}],',
+  '"frames":[{"name":"idle","intent":"what this frame shows","width":32,"height":32,"layers":["body","shadow"]}],',
   '"palette":[{"color":"#rrggbb","name":"glow"}],',
   '"references":[{"url":"https://...","note":"what to look at","appliesTo":"all"}],',
   '"workers":[{"key":"w1","frames":["idle"]}],',
+  '"removeFrames":[],',
   '"review":true}',
-  "Every frame appears in exactly one worker; palette holds only the colours you added; references only when you actually searched.",
+  "Every frame appears in exactly one worker; width and height are the frame's real pixel canvas (use the size the request names); palette holds only the colours you added; references only when you actually searched.",
 ].join("\n");
 
 /** A request that describes the subject acting needs key frames, not one pose. */
@@ -276,6 +286,11 @@ export function buildPlanPrompt(input: AssetDrawInput, retryError?: string): str
   return [
     input.request,
     planInstructions,
+    ...(input.selectedFrame
+      ? [
+          `The user has this frame open: ${input.selectedFrame.name} (${input.selectedFrame.id}), ${input.selectedFrame.width}×${input.selectedFrame.height}. For an edit to this frame, plan exactly this frame and its existing layers; do not create a replacement frame or rename it.`,
+        ]
+      : []),
     `Limits: at most ${input.maxWorkers} workers. The palette holds up to ${
       MAX_COLORS + 1
     } entries including transparent; ${input.maxPalette} more can be added.` +

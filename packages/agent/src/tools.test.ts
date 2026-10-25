@@ -124,6 +124,61 @@ describe("worker frame ownership", () => {
     );
     releaseRun("run-1");
   });
+  it("paints a native-size frame and emits its full-size stroke", async () => {
+    const native = new Uint8Array(1080 * 1080);
+    const strokes: Array<{ width: number; height: number; frameId: string }> = [];
+    bindRun("run-1", {
+      assetId: "asset-1",
+      assetName: "native",
+      originFrameId: "frame-1",
+      currentFrameId: "frame-1",
+      frames: new Map([
+        [
+          "frame-1",
+          {
+            name: "Instagram announcement",
+            index: 0,
+            buffer: {
+              width: 1080,
+              height: 1080,
+              palette: [...palette],
+              layers: [
+                {
+                  id: "artwork",
+                  name: "Artwork",
+                  visible: true,
+                  pixels: native,
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+      palette: [...palette],
+      width: 4,
+      height: 4,
+      style: { outline: "#f4f4f4", maxColors: 12 } as never,
+      approvedScope: new Set(["frame-1"]),
+      touchedFrames: new Set(),
+      strokes: [],
+      issues: [],
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+      onStroke: (_stroke, buffer, frameId) =>
+        strokes.push({ width: buffer.width, height: buffer.height, frameId }),
+    });
+    await tool("paint_stroke").call(
+      {
+        frameId: "frame-1",
+        layerId: "artwork",
+        label: "native dot",
+        points: [{ x: 540, y: 540, color: 1 }],
+      },
+      { operationId: "run-1" },
+    );
+    expect(strokes).toEqual([{ width: 1080, height: 1080, frameId: "frame-1" }]);
+    releaseRun("run-1");
+  });
   it("refuses a structural tool to a worker, with the cause named", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
@@ -149,6 +204,34 @@ describe("worker frame ownership", () => {
     ).rejects.toThrow("The review role cannot call paint_stroke.");
     releaseRun("run-1");
   });
+  it("resizes one frame without a human approval card", async () => {
+    boundRun();
+    expect(
+      await approval("resize_frame", { frameId: "frame-1", width: 8, height: 6 }),
+    ).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("lets a worker resize its own frame but never a sibling frame", async () => {
+    boundRun(undefined, undefined, {
+      role: "worker",
+      ownedFrameIds: new Set(["frame-1"]),
+    });
+    const result = await tool("resize_frame").call(
+      { frameId: "frame-1", width: 8, height: 6 },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ width: 8, height: 6 });
+    expect(getRun("run-1")?.frames.get("frame-1")?.buffer.width).toBe(8);
+    await expect(
+      tool("resize_frame").call(
+        { frameId: "frame-2", width: 8, height: 6 },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow("That frame belongs to another worker.");
+    releaseRun("run-1");
+  });
+
   it("refuses a structural tool when the operation id carries the durable run prefix", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
@@ -345,7 +428,14 @@ describe("read tools", () => {
     const result = (await tool("read_project").call({}, { operationId: "run-1" })) as {
       assetId: string;
       name: string;
-      frames: Array<{ id: string; name: string; index: number }>;
+      frames: Array<{
+        id: string;
+        name: string;
+        index: number;
+        width: number;
+        height: number;
+        layers: Array<{ id: string; name: string; visible: boolean }>;
+      }>;
       currentFrame: { id: string; name: string };
       palette: Array<{ index: number; hex: string }>;
       layers: Array<{ id: string; name: string; visible: boolean }>;
@@ -353,8 +443,27 @@ describe("read tools", () => {
     expect(result.assetId).toBe("asset-1");
     expect(result.name).toBe("slime");
     expect(result.frames).toEqual([
-      { id: "frame-1", name: "idle", summary: "", index: 0 },
-      { id: "frame-2", name: "hop", summary: "", index: 1 },
+      {
+        id: "frame-1",
+        name: "idle",
+        summary: "",
+        index: 0,
+        width: 4,
+        height: 4,
+        layers: [
+          { id: "layer-base", name: "base", visible: true },
+          { id: "layer-detail", name: "detail", visible: true },
+        ],
+      },
+      {
+        id: "frame-2",
+        name: "hop",
+        summary: "",
+        index: 1,
+        width: 4,
+        height: 4,
+        layers: [{ id: "layer-a", name: "a", visible: true }],
+      },
     ]);
     expect(result.currentFrame).toEqual({ id: "frame-1", name: "idle" });
     expect(result.palette).toHaveLength(12);
@@ -711,6 +820,46 @@ describe("frame tools", () => {
     releaseRun("run-1");
   });
 
+  it("refuses a second frame with the same name", async () => {
+    boundFrameRun();
+    await expect(
+      tool("add_frame").call({ name: "idle" }, { operationId: "run-1" }),
+    ).rejects.toThrow('A frame named "idle" already exists.');
+    await expect(
+      tool("rename_frame").call(
+        { frameId: "frame-1", name: "hop" },
+        { operationId: "run-1" },
+      ),
+    ).rejects.toThrow('A frame named "hop" already exists.');
+    releaseRun("run-1");
+  });
+
+  it("add_frame creates a frame at its own canvas size", async () => {
+    boundFrameRun();
+    const result = (await tool("add_frame").call(
+      { name: "cover", width: 40, height: 20 },
+      { operationId: "run-1" },
+    )) as { frameId: string };
+    const added = getRun("run-1")?.frames.get(result.frameId);
+    expect(added?.buffer.width).toBe(40);
+    expect(added?.buffer.height).toBe(20);
+    expect(added?.buffer.layers[0]?.pixels).toHaveLength(800);
+    releaseRun("run-1");
+  });
+
+  it("resize_frame changes one frame without changing the asset canvas", async () => {
+    boundFrameRun();
+    const result = await tool("resize_frame").call(
+      { frameId: "frame-1", width: 40, height: 20 },
+      { operationId: "run-1" },
+    );
+    expect(result).toMatchObject({ frameId: "frame-1", width: 40, height: 20 });
+    const run = getRun("run-1");
+    expect(run?.frames.get("frame-1")?.buffer.width).toBe(40);
+    expect(run?.frames.get("frame-2")?.buffer.width).toBe(8);
+    releaseRun("run-1");
+  });
+
   it("add_frame appends a blank frame, makes it current, and joins the approved scope", async () => {
     const changes: FrameChange[] = [];
     boundFrameRun((change) => {
@@ -987,6 +1136,71 @@ describe("layer tools", () => {
     expect(layers.at(-1)!.pixels.every((value) => value === 0)).toBe(true);
     expect(result).toMatchObject({ name: "shade", layers: 3 });
     expect(seen).toEqual([{ frameId: "frame-1", layers: 3 }]);
+    releaseRun("run-1");
+  });
+
+  it("add_text creates editable pixel text and edit_text rewrites it", async () => {
+    boundRun();
+    const added = (await tool("add_text").call(
+      { text: "A", x: 0, y: 0, size: 16, color: 1 },
+      { operationId: "run-1" },
+    )) as { layerId: string };
+    const run = getRun("run-1");
+    const before = run!.frames
+      .get("frame-1")!
+      .buffer.layers.find((layer) => layer.id === added.layerId);
+    expect(before?.text).toMatchObject({ text: "A", color: 1, size: 16 });
+    expect(before?.pixels).toHaveLength(16);
+
+    await tool("edit_text").call(
+      { layerId: added.layerId, text: "B", x: 1, y: 1, color: 2, rotation: 45 },
+      { operationId: "run-1" },
+    );
+    const after = getRun("run-1")!
+      .frames.get("frame-1")!
+      .buffer.layers.find((layer) => layer.id === added.layerId);
+    expect(after?.text).toMatchObject({
+      text: "B",
+      color: 2,
+      x: 1,
+      y: 1,
+      rotation: 45,
+    });
+    expect(after?.pixels).toHaveLength(16);
+    releaseRun("run-1");
+  });
+
+  it("add_text rasterizes glyph pixels on a normal frame", async () => {
+    const pixels = new Uint8Array(32 * 32);
+    const nativeFrame = {
+      width: 32,
+      height: 32,
+      palette: [...palette],
+      layers: [{ id: "artwork", name: "Artwork", visible: true, pixels }],
+    };
+    boundRun(undefined, undefined, {
+      width: 32,
+      height: 32,
+      frames: new Map([
+        [
+          "frame-1",
+          {
+            name: "Instagram announcement",
+            index: 0,
+            buffer: nativeFrame,
+          },
+        ],
+      ]),
+    });
+    await tool("add_text").call(
+      { text: "A", x: 4, y: 4, size: 16, color: 1 },
+      { operationId: "run-1" },
+    );
+    const layer = getRun("run-1")!
+      .frames.get("frame-1")!
+      .buffer.layers.find((item) => item.text);
+    expect(layer?.text?.text).toBe("A");
+    expect(layer?.pixels.some((value) => value === 1)).toBe(true);
     releaseRun("run-1");
   });
 
@@ -1614,6 +1828,18 @@ describe("drawing approval", () => {
     expect(await approval("resize_canvas", { width: 4, height: 4 })).toBe(false);
     stubJev(0.97);
     expect(await approval("resize_canvas", { width: 8, height: 8 })).toBe(false);
+    releaseRun("run-1");
+  });
+
+  it("resizes past the retired 128 cap without a human approval", async () => {
+    boundRun();
+    expect(await approval("resize_canvas", { width: 400, height: 400 })).toBe(false);
+    const result = await tool("resize_canvas").call(
+      { width: 400, height: 400 },
+      { operationId: "run-1" },
+    );
+    expect(result).toEqual({ width: 400, height: 400, frames: 2 });
+    expect(getRun("run-1")?.frames.get("frame-1")?.buffer.width).toBe(400);
     releaseRun("run-1");
   });
 

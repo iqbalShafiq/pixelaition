@@ -47,6 +47,11 @@ import {
   screenOutput,
   seesUserImages,
   selectRunTarget,
+  artboardDirectorInstructions,
+  ARTBOARD_DIRECTOR_TOOLS,
+  bindArtboardRun,
+  createArtboardTools,
+  releaseArtboardRun,
   stagedOverrideSchema,
   traceIdFor,
   PLAN_TOOL_NAMES,
@@ -65,6 +70,9 @@ import {
 import {
   createDatabase,
   createVersion,
+  artboardSets,
+  artboardVersions,
+  artboards,
   assets,
   frames,
   generationRuns,
@@ -73,6 +81,18 @@ import {
   projects,
   runTasks,
 } from "@pixelaition/db";
+import {
+  buildTemplateScene,
+  getPreset,
+  sceneSchema,
+  syncCopyScene,
+  type Artboard,
+  type ArtboardSet,
+  type CopyDeck,
+  type CopyOverride,
+  type FormatPreset,
+  type SpriteSource,
+} from "@pixelaition/artboard";
 import {
   MAX_COLORS,
   bufferToFrame,
@@ -105,7 +125,7 @@ import {
 } from "./summarize.js";
 import { buildRunPrompt, type RecentRun } from "./prompt.js";
 import { parseDurableRecord } from "./prior-context.js";
-import { askSessionId } from "./sessions.js";
+import { askSessionId, composeSessionId } from "./sessions.js";
 import {
   buildTaskDeps,
   loadPriorContextFor,
@@ -494,6 +514,11 @@ const ASK_TOOL_NAMES = new Set([
   "read_project",
   "read_frame",
   "read_region",
+  "list_formats",
+  "read_set",
+  "read_artboard",
+  "check_artboard",
+  "list_project_sprites",
   "list_projects",
   "list_assets",
   "use_asset",
@@ -520,13 +545,14 @@ const observability = {
  * agent that carries the painting, transfer and reading tools and nothing
  * structural — a worker is never offered a tool it may not call.
  */
-const AGENT_ROLES = ["supervisor", "painter", "ask"] as const;
+const AGENT_ROLES = ["supervisor", "painter", "ask", "art-director"] as const;
 export type AgentRoleName = (typeof AGENT_ROLES)[number];
 
 const ROLE_TOOLS: Record<AgentRoleName, ReadonlySet<string>> = {
   supervisor: PLAN_TOOL_NAMES,
   painter: WORKER_TOOL_NAMES,
   ask: ASK_TOOL_NAMES,
+  "art-director": ARTBOARD_DIRECTOR_TOOLS,
 };
 
 /**
@@ -553,9 +579,16 @@ function compactionFor(model: CompletionModel, window: number | undefined) {
 // Durable submits carry no model controls, so one agent is registered per
 // model, reasoning effort, and role, and a child's spawn picks the trio. Every
 // role's tool list is fixed here, so the model only ever sees what it owns.
+// Compaction is a summarisation job, not an art call. Muse/Responses reviewers
+// can return an empty summary at the end of a long read; the catalog's
+// summary-text model writes the compact history for every agent instead.
+const summaryModel = completions.find(({ spec }) =>
+  spec.roles.includes("summary-text"),
+)?.model;
 const agents = completions.flatMap(({ spec, model }) => {
   const questionTool = createQuestionTool();
   const catalogue = createPixelTools({ vision: spec.vision, webSearch });
+  const artboardCatalogue = createArtboardTools({ vision: spec.vision });
   const tool = (name: string) => {
     const entry = catalogue.find((candidate) => candidate.name === name);
     if (entry === undefined) return [];
@@ -570,23 +603,32 @@ const agents = completions.flatMap(({ spec, model }) => {
     };
     return [{ ...entry, call }];
   };
-  const compaction = compactionFor(model, spec.contextWindow);
+  const compaction = compactionFor(summaryModel ?? model, spec.contextWindow);
   return spec.efforts.flatMap((effort) =>
     AGENT_ROLES.map((role) => {
       // Registration order matters for the ask agent only in that its tool
       // list is explicit; every role filters the same catalogue.
-      const roleTools = catalogue.filter((entry) =>
-        role === "ask"
-          ? ROLE_TOOLS.ask.has(entry.name)
-          : ROLE_TOOLS[role].has(entry.name),
-      );
+      const roleTools =
+        role === "art-director"
+          ? artboardCatalogue.filter((entry) => ROLE_TOOLS[role].has(entry.name))
+          : role === "ask"
+            ? [
+                ...new Map(
+                  [...catalogue, ...artboardCatalogue]
+                    .filter((entry) => ROLE_TOOLS.ask.has(entry.name))
+                    .map((entry) => [entry.name, entry]),
+                ).values(),
+              ]
+            : catalogue.filter((entry) => ROLE_TOOLS[role].has(entry.name));
       // `ask_user` belongs to the roles that talk to the user; the review
       // answers with its verdict and never interrupts.
       const tools =
-        role === "ask" || role === "painter"
-          ? [...roleTools, ...tool(questionTool.name)]
-          : roleTools;
-      const id = `${agentPrefix}:${role}:${spec.id}:${effort}`;
+        role === "art-director"
+          ? [...roleTools, questionTool]
+          : role === "ask" || role === "painter"
+            ? [...roleTools, ...tool(questionTool.name)]
+            : roleTools;
+      const id = `${agentPrefix}:${role}:${encodeURIComponent(spec.id)}:${effort}`;
       return {
         id,
         role,
@@ -596,7 +638,12 @@ const agents = completions.flatMap(({ spec, model }) => {
         agent: new Agent({
           id,
           model,
-          instructions: role === "ask" ? askInstructions : pixelInstructions,
+          instructions:
+            role === "ask"
+              ? askInstructions
+              : role === "art-director"
+                ? artboardDirectorInstructions
+                : pixelInstructions,
           tools,
           // A painting run needs room for many tool rounds; a question is one
           // or two turns. Floor and per-run `maxModelTurns` do the bounding.
@@ -614,7 +661,10 @@ const agents = completions.flatMap(({ spec, model }) => {
  * conversation, so they all live on the supervisor agent.
  */
 function drawAgentId(role: AgentRoleName, target: RunTarget): string {
-  return `${agentPrefix}:${role}:${target.modelId}:${target.effort}`;
+  // A provider slug may itself contain a colon (`minimax/...:free`), so the
+  // model segment must be encoded or parsing the agent id from the right
+  // silently records the model as "free".
+  return `${agentPrefix}:${role}:${encodeURIComponent(target.modelId)}:${target.effort}`;
 }
 
 /** The agent a child with this key runs on: workers paint, everyone else supervises. */
@@ -624,11 +674,14 @@ export function agentRoleForKey(key: string): AgentRoleName {
 
 function agentForTarget(
   target: RunTarget,
-  mode: "draw" | "ask",
+  mode: "draw" | "ask" | "compose",
   role: AgentRoleName = "supervisor",
 ): Agent | undefined {
   if (mode === "ask")
     return agents.find((entry) => entry.id === drawAgentId("ask", target))?.agent;
+  if (mode === "compose")
+    return agents.find((entry) => entry.id === drawAgentId("art-director", target))
+      ?.agent;
   return agents.find((entry) => entry.id === drawAgentId(role, target))?.agent;
 }
 
@@ -651,10 +704,12 @@ async function loadFrameForSummary(frameId: string) {
       id: row.frame.id,
       name: row.frame.name,
       index: row.frame.index,
+      width: row.frame.width,
+      height: row.frame.height,
       layers: row.frame.layers as Frame["layers"],
     },
-    row.asset.width,
-    row.asset.height,
+    row.frame.width ?? row.asset.width,
+    row.frame.height ?? row.asset.height,
     palette,
   );
   return {
@@ -894,7 +949,7 @@ function modelEffortFromAgentId(agentId: string): { modelId: string; effort: str
   const parts = agentId.split(":");
   return {
     effort: parts.at(-1) ?? "medium",
-    modelId: parts.at(-2) ?? "unknown",
+    modelId: decodeURIComponent(parts.at(-2) ?? "unknown"),
   };
 }
 
@@ -1250,6 +1305,118 @@ async function rollupTaskUsage(taskRowId: string, durableTaskId: string): Promis
   publish(durableTaskId, "usage", { ...totals });
 }
 
+type SocialFollowUp = {
+  prompt: string;
+  modelId: string;
+  reasoningEffort: string;
+  userId: string;
+  threadId: string;
+  started?: boolean;
+};
+
+/**
+ * A natural campaign request draws first. Once those pixel frames are saved,
+ * the same asset gets the native-size phase: one compose run creates the
+ * Instagram/LinkedIn frames from the pixels the drawing pass just made. The
+ * follow-up is recorded on the task, so a restart can see it happened.
+ */
+async function startComposeFollowUp(
+  runtime: DurableRuntime,
+  taskId: string,
+  taskShape: Record<string, unknown>,
+  assetId: string,
+  followUp: SocialFollowUp,
+): Promise<void> {
+  const target = selectRunTarget(specs, followUp.modelId, followUp.reasoningEffort);
+  const targetSpec = target
+    ? specs.find((spec) => spec.id === target.modelId)
+    : undefined;
+  if (!target || !targetSpec || !openai) {
+    console.error("[compose-followup] the drawing model is no longer available");
+    return;
+  }
+  const nextShape = {
+    ...taskShape,
+    followUp: { ...followUp, started: true },
+  };
+  await db.update(runTasks).set({ shape: nextShape }).where(eq(runTasks.id, taskId));
+
+  const publicRunId = randomUUID();
+  const requestId = randomUUID();
+  const prompt = `${followUp.prompt}
+
+---
+The pixel frames for this request are already drawn and saved. Now compose only
+the native-size marketing frames the request named (Instagram post, LinkedIn
+cover, and similar) from those pixel frames. Do not create or repaint pixel
+frames; use them as the source images. Keep the shared copy short and quiet.`;
+  await db.insert(generationRuns).values({
+    id: publicRunId,
+    threadId: followUp.threadId,
+    requestId,
+    status: "queued",
+    modelId: target.modelId,
+    reasoningEffort: target.effort,
+    prompt,
+    mode: "compose",
+  });
+
+  const loaded = await loadSocialAssetForRun(assetId, followUp.userId);
+  if (!loaded) {
+    await db
+      .update(generationRuns)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(generationRuns.id, publicRunId));
+    console.error("[compose-followup] the asset disappeared before the social phase");
+    return;
+  }
+  const bind = (durableRunId: string) => {
+    bindSocialAssetRunFor({
+      durableRunId,
+      publicRunId,
+      loaded,
+      userId: followUp.userId,
+    });
+  };
+  bind("");
+  let run: Awaited<ReturnType<typeof runtime.submit>>;
+  try {
+    run = await runtime.submit({
+      agentId: drawAgentId("art-director", target),
+      sessionId: composeSessionId(
+        followUp.threadId,
+        `asset:${assetId}`,
+        target.modelId,
+        targetSpec.api,
+      ),
+      requestId,
+      prompt: buildSocialPrompt(prompt, loaded),
+    });
+  } catch (reason) {
+    await db
+      .update(generationRuns)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(generationRuns.id, publicRunId));
+    console.error(`[compose-followup] could not start: ${boundedReason(reason)}`);
+    return;
+  }
+  bind(run.id);
+  await db
+    .update(generationRuns)
+    .set({ durableRunId: run.id, status: "running" })
+    .where(eq(generationRuns.id, publicRunId));
+  publicIdByDurable.set(run.id, publicRunId);
+  seedUsage(run.id, undefined);
+  telemetry?.setTraceContext(run.id, {
+    name: "image-compose",
+    userId: followUp.userId,
+    sessionId: followUp.threadId,
+    tags: ["pixelaition", "image", "compose", "follow-up"],
+    metadata: { assetId, modelId: target.modelId, reasoningEffort: target.effort },
+  });
+  void follow(runtime, run.id, publicRunId, target.effort);
+}
+
 async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promise<void> {
   if (taskWatchers.has(durableTaskId)) return;
   const controller = new AbortController();
@@ -1327,12 +1494,23 @@ async function watchTask(runtime: DurableRuntime, durableTaskId: string): Promis
             // verdict on a finished run, never a system failure.
             ...(reviewOfTaskRecord(record) ?? {}),
           });
+          if (record.status === "completed") {
+            const shape = (row.shape ?? {}) as {
+              followUp?: SocialFollowUp;
+              [key: string]: unknown;
+            };
+            const followUp = shape.followUp;
+            const followAssetId = plan?.assetId ?? row.assetId;
+            if (followUp && !followUp.started && followAssetId) {
+              void startComposeFollowUp(runtime, row.id, shape, followAssetId, followUp);
+            }
+          }
           break;
         }
       } catch (reason) {
         // A transient failure on one cycle must not end the whole watcher and
         // leave the task row non-terminal (and the asset locked).
-        console.error(`[task] watch ${durableTaskId} cycle: ${boundedReason(reason)}`);
+        console.error(`[task] watch ${durableTaskId} cycle`, reason);
       }
     }
   } catch (reason) {
@@ -1465,6 +1643,14 @@ function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
     plan: "safe" as const,
     present_plan: "safe" as const,
     preview_frame: "safe" as const,
+    // Artboard inspection is read-only too. An interrupted preview must be
+    // replayed, not parked behind "uncertain outcome" forever.
+    list_formats: "safe" as const,
+    read_set: "safe" as const,
+    read_artboard: "safe" as const,
+    preview_artboard: "safe" as const,
+    check_artboard: "safe" as const,
+    list_project_sprites: "safe" as const,
     // A repeated search or image fetch is a read: safe to replay.
     web_search: "safe" as const,
     view_image: "safe" as const,
@@ -1491,6 +1677,7 @@ function toolRecovery(tools: ReadonlyArray<{ name: string }>) {
     apply_outline: "idempotent" as const,
     dither_rect: "idempotent" as const,
     resize_canvas: "idempotent" as const,
+    resize_frame: "idempotent" as const,
     set_palette: "idempotent" as const,
     rename_layer: "idempotent" as const,
     set_layer_visible: "idempotent" as const,
@@ -1575,7 +1762,9 @@ app.post("/internal/runs", async (req, res) => {
       userId: z.string(),
       threadId: z.string(),
       // The decision chooses the mode; the run picks the matching agent.
-      mode: z.enum(["draw", "ask"]).default("draw"),
+      mode: z.enum(["draw", "ask", "compose"]).default("draw"),
+      /** The social set a compose run lays out. */
+      setId: z.string().optional(),
       // Jev's shape for the task: how many workers, whether a review round is
       // worth it. The API always sends it; a missing one fails loud below.
       shape: z
@@ -1639,6 +1828,102 @@ app.post("/internal/runs", async (req, res) => {
   const runtime = await runtimeOr503(res);
   if (!runtime) return;
 
+  if (body.mode === "compose") {
+    if (!body.assetId) {
+      return res.status(422).json({ message: "A compose run needs an assetId." });
+    }
+    const legacy = body.setId
+      ? await loadArtboardSetForRun(body.setId, body.assetId, body.userId)
+      : undefined;
+    const social = legacy
+      ? undefined
+      : await loadSocialAssetForRun(body.assetId, body.userId);
+    if (body.setId && !legacy) {
+      return res.status(404).json({ message: "That layout was not found." });
+    }
+    if (!legacy && !social) {
+      return res.status(404).json({ message: "That asset was not found." });
+    }
+    const bind = (durableRunId: string) => {
+      if (legacy) {
+        bindArtboardRunFor({
+          durableRunId,
+          publicRunId: body.runId,
+          loaded: legacy,
+          userId: body.userId,
+        });
+      } else if (social) {
+        bindSocialAssetRunFor({
+          durableRunId,
+          publicRunId: body.runId,
+          loaded: social,
+          userId: body.userId,
+        });
+      }
+    };
+    bind("");
+    const promptText = legacy
+      ? buildArtboardPrompt(body.prompt, legacy)
+      : buildSocialPrompt(body.prompt, social!);
+    const mediaParts = body.attachments ?? [];
+    const prompt: AgentPrompt =
+      mediaParts.length > 0
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              ...mediaParts.map((attachment) => ({
+                type: "image" as const,
+                image: { type: "data" as const, data: attachment.data },
+                mediaType: attachment.mediaType,
+              })),
+            ],
+          }
+        : promptText;
+    let run: Awaited<ReturnType<typeof runtime.submit>>;
+    try {
+      run = await runtime.submit({
+        agentId: drawAgentId("art-director", target),
+        sessionId: composeSessionId(
+          body.threadId,
+          legacy?.set.id ?? `asset:${body.assetId}`,
+          target.modelId,
+          targetSpec.api,
+        ),
+        requestId: body.requestId,
+        prompt,
+      });
+    } catch (reason) {
+      if (reason instanceof DurableConflictError) {
+        return res.status(409).json({
+          message: "This asset already has an unfinished run; wait for it to finish.",
+        });
+      }
+      return res.status(502).json({
+        message: `The compose run could not start: ${boundedReason(reason)}`,
+      });
+    }
+    // Rebind with the real durable id; the first bind exists so a very fast
+    // first tool call cannot race the submission.
+    bind(run.id);
+    publicIdByDurable.set(run.id, body.runId);
+    seedUsage(run.id, body.usage);
+    telemetry?.setTraceContext(run.id, {
+      name: "image-compose",
+      userId: body.userId,
+      sessionId: body.threadId,
+      tags: ["pixelaition", "image", "compose"],
+      metadata: {
+        ...(body.setId ? { setId: body.setId } : {}),
+        assetId: body.assetId,
+        modelId: target.modelId,
+        reasoningEffort: target.effort,
+      },
+    });
+    void follow(runtime, run.id, body.runId, target.effort);
+    return res.status(202).json({ durableRunId: run.id });
+  }
+
   // An asset run binds its asset up front. A workspace run stays unbound until
   // a tool picks an asset, so its drawing tools fail closed in the meantime.
   let asset: LoadedAsset | undefined;
@@ -1684,6 +1969,8 @@ app.post("/internal/runs", async (req, res) => {
           frames: asset.frames.map((frame) => ({
             name: frame.name,
             current: frame.id === originFrameId,
+            kind: frame.kind,
+            presetId: frame.presetId,
           })),
           palette: asset.palette,
           ...(asset.projectSummary.length > 0
@@ -1788,6 +2075,21 @@ app.post("/internal/runs", async (req, res) => {
           maxWorkers: shape.workers,
           review: shape.review,
           maxPalette: asset ? paletteCapacity(asset.palette.length) : MAX_COLORS,
+          ...(asset && originFrameId
+            ? (() => {
+                const selected = asset.frames.find((frame) => frame.id === originFrameId);
+                return selected
+                  ? {
+                      selectedFrame: {
+                        id: selected.id,
+                        name: selected.name,
+                        width: selected.width ?? asset.width,
+                        height: selected.height ?? asset.height,
+                      },
+                    }
+                  : {};
+              })()
+            : {}),
         },
       });
     } catch (reason) {
@@ -1883,6 +2185,18 @@ app.post("/internal/runs", async (req, res) => {
       request: body.prompt,
       userId: body.userId,
     });
+    if (body.mode === "ask") {
+      const social = await loadSocialAssetForRun(asset.id, body.userId);
+      if (social && social.artboards.length > 0) {
+        bindSocialAssetRunFor({
+          durableRunId: run.id,
+          publicRunId: body.runId,
+          loaded: social,
+          userId: body.userId,
+          planApproved: true,
+        });
+      }
+    }
   } else if (body.scope === "workspace") {
     // A workspace run starts with no asset; its tools bind one lazily.
     bindWorkspaceRun({
@@ -2576,6 +2890,7 @@ async function follow(
     }
   } finally {
     releaseRun(durableId);
+    releaseArtboardRun(durableId);
     clearGateOutcomes(durableId);
     clearSteerQueue(durableId);
     usageByRun.delete(durableId);
@@ -2615,6 +2930,7 @@ async function loadAsset(assetId: string, userId?: string) {
     style: (row.style as StyleGuide) ?? defaultStyle,
     projectName: row.projectName,
     projectSummary: row.projectSummary,
+    copy: row.asset.copy as CopyDeck,
     frames: frameRows.map((frame) => ({
       id: frame.id,
       name: frame.name,
@@ -2626,6 +2942,14 @@ async function loadAsset(assetId: string, userId?: string) {
         visible: boolean;
         pixels: string;
       }>,
+      kind: frame.kind,
+      width: frame.width,
+      height: frame.height,
+      presetId: frame.presetId,
+      scene: frame.scene,
+      copyOverride: frame.copyOverride,
+      status: frame.status,
+      version: frame.version,
     })),
   };
 }
@@ -2801,14 +3125,21 @@ function bindAssetRun(options: {
     originFrameId,
     currentFrameId: originFrameId,
     frames: new Map(
-      asset.frames.map((item) => [
-        item.id,
-        {
-          name: item.name,
-          index: item.index,
-          buffer: frameToBuffer(item, asset.width, asset.height, asset.palette),
-        },
-      ]),
+      asset.frames
+        .filter((item) => item.kind !== "social")
+        .map((item) => [
+          item.id,
+          {
+            name: item.name,
+            index: item.index,
+            buffer: frameToBuffer(
+              item,
+              item.width ?? asset.width,
+              item.height ?? asset.height,
+              asset.palette,
+            ),
+          },
+        ]),
     ),
     palette: [...asset.palette],
     width: asset.width,
@@ -2862,6 +3193,641 @@ function bindAssetRun(options: {
       summarizer?.queue("frame", frameId);
     },
   });
+}
+
+type LoadedArtboardSet = {
+  set: typeof artboardSets.$inferSelect;
+  artboards: Artboard[];
+  asset: LoadedAsset;
+};
+
+function artboardFromRow(row: typeof artboards.$inferSelect): Artboard {
+  return {
+    id: row.id,
+    setId: row.setId,
+    presetId: row.presetId,
+    name: row.name,
+    width: row.width,
+    height: row.height,
+    pixelUnit: row.pixelUnit,
+    scene: sceneSchema.parse(row.scene),
+    copyOverride: row.copyOverride as CopyOverride,
+    status: row.status as Artboard["status"],
+    version: row.version,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function loadArtboardSetForRun(
+  setId: string,
+  assetId: string,
+  userId: string,
+): Promise<LoadedArtboardSet | undefined> {
+  const [set] = await db
+    .select()
+    .from(artboardSets)
+    .where(and(eq(artboardSets.id, setId), eq(artboardSets.assetId, assetId)));
+  if (!set) return undefined;
+  const rows = await db
+    .select()
+    .from(artboards)
+    .where(eq(artboards.setId, setId))
+    .orderBy(asc(artboards.createdAt), asc(artboards.id));
+  const asset = await loadAsset(assetId, userId);
+  if (!asset) return undefined;
+  return { set, artboards: rows.map(artboardFromRow), asset };
+}
+
+function spritesForAsset(asset: LoadedAsset): Map<string, SpriteSource> {
+  const sprites = new Map<string, SpriteSource>();
+  for (const frame of asset.frames) {
+    if (frame.kind === "social") continue;
+    const buffer = frameToBuffer(
+      frame,
+      frame.width ?? asset.width,
+      frame.height ?? asset.height,
+      asset.palette,
+    );
+    sprites.set(`${asset.id}:${frame.id}`, {
+      assetId: asset.id,
+      assetName: asset.name,
+      frameId: frame.id,
+      frameName: frame.name,
+      buffer,
+    });
+  }
+  return sprites;
+}
+
+function setDtoFromRow(row: typeof artboardSets.$inferSelect) {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    assetId: row.assetId,
+    name: row.name,
+    copy: row.copy as CopyDeck,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function saveArtboardRecord(artboard: Artboard): Promise<Artboard> {
+  const scene = sceneSchema.parse(artboard.scene);
+  const [existing] = await db
+    .select()
+    .from(artboards)
+    .where(and(eq(artboards.id, artboard.id), eq(artboards.version, artboard.version)));
+  if (!existing) {
+    throw new Error(
+      `Artboard "${artboard.name}" changed while the agent was working; reload it before saving.`,
+    );
+  }
+  await db.insert(artboardVersions).values({
+    id: randomUUID(),
+    setId: existing.setId,
+    artboardId: existing.id,
+    scope: "artboard",
+    kind: "agent-update",
+    author: "agent",
+    runId: null,
+    snapshot: { scene: existing.scene, name: existing.name },
+  });
+  const [row] = await db
+    .update(artboards)
+    .set({
+      scene,
+      name: artboard.name,
+      copyOverride: artboard.copyOverride,
+      status: artboard.status,
+      version: artboard.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(artboards.id, artboard.id), eq(artboards.version, artboard.version)))
+    .returning();
+  if (!row) {
+    throw new Error(
+      `Artboard "${artboard.name}" changed while the agent was working; reload it before saving.`,
+    );
+  }
+  await db
+    .update(artboardSets)
+    .set({ updatedAt: new Date() })
+    .where(eq(artboardSets.id, artboard.setId));
+  return artboardFromRow(row);
+}
+
+async function createArtboardRecord(input: {
+  setId: string;
+  presetId: string;
+  name?: string;
+  template?: string;
+  copy?: CopyDeck;
+  palette: string[];
+  sprites: Map<string, SpriteSource>;
+  assetId: string;
+}): Promise<Artboard> {
+  const preset: FormatPreset = getPreset(input.presetId);
+  const template = (input.template ??
+    preset.defaultTemplate) as FormatPreset["defaultTemplate"];
+  const primary = [...input.sprites.values()].find(
+    (source) => source.assetId === input.assetId,
+  );
+  const scene = buildTemplateScene({
+    preset,
+    template,
+    copy: input.copy ?? {},
+    palette: input.palette,
+    ...(primary ? { sprite: primary } : {}),
+  });
+  const id = randomUUID();
+  const [row] = await db
+    .insert(artboards)
+    .values({
+      id,
+      setId: input.setId,
+      presetId: preset.id,
+      name: input.name?.trim() || preset.label,
+      width: preset.width,
+      height: preset.height,
+      pixelUnit: preset.pixelUnit,
+      scene,
+      copyOverride: {},
+      status: "draft",
+      version: 1,
+    })
+    .returning();
+  if (!row) throw new Error("The artboard could not be created.");
+  await db
+    .update(artboardSets)
+    .set({ updatedAt: new Date() })
+    .where(eq(artboardSets.id, input.setId));
+  return artboardFromRow(row);
+}
+
+async function setCopyRecord(
+  setId: string,
+  copy: CopyDeck,
+): Promise<{ set: ReturnType<typeof setDtoFromRow>; artboards: Artboard[] }> {
+  const [set] = await db
+    .update(artboardSets)
+    .set({ copy, updatedAt: new Date() })
+    .where(eq(artboardSets.id, setId))
+    .returning();
+  if (!set) throw new Error("The set was not found.");
+  const rows = await db.select().from(artboards).where(eq(artboards.setId, setId));
+  const next: Artboard[] = [];
+  for (const row of rows) {
+    const current = artboardFromRow(row);
+    const scene = syncCopyScene(current.scene, copy, current.copyOverride);
+    if (JSON.stringify(scene) === JSON.stringify(current.scene)) {
+      next.push(current);
+      continue;
+    }
+    await db.insert(artboardVersions).values({
+      id: randomUUID(),
+      setId,
+      artboardId: current.id,
+      scope: "artboard",
+      kind: "copy-sync",
+      author: "agent",
+      runId: null,
+      snapshot: { scene: current.scene, name: current.name },
+    });
+    const [updated] = await db
+      .update(artboards)
+      .set({ scene, version: current.version + 1, updatedAt: new Date() })
+      .where(eq(artboards.id, current.id))
+      .returning();
+    if (updated) next.push(artboardFromRow(updated));
+  }
+  return { set: setDtoFromRow(set), artboards: next };
+}
+
+function buildArtboardPrompt(request: string, loaded: LoadedArtboardSet): string {
+  const boards = loaded.artboards
+    .map(
+      (artboard) =>
+        `- ${artboard.name} [${artboard.presetId}] ${artboard.width}×${artboard.height} (${artboard.status})`,
+    )
+    .join("\n");
+  return [
+    "You are the art director and layout worker for one social kit. Compose it, then stop.",
+    `Set: ${loaded.set.name}. Mark: ${loaded.asset.name} [${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours].`,
+    "The set is the deliverable: profile, cover, feed post, vertical video, thumbnail or banner, each at its native size.",
+    "Call list_formats before choosing a layout. Call read_set to see the current boards and shared copy. Call list_project_sprites to reuse any sprite frame from this project; place_sprite accepts its assetId/frameId.",
+    "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
+    "After approval: create the planned boards that do not exist with create_artboard, keep the shared copy with set_copy, and compose each board with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent across the family; adapt the layout, not the identity.",
+    "Work visibly: call those tools one edit at a time. Every call updates the frame for the user; never hold the whole layout in your head and reveal it only at save.",
+    "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
+    "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
+    "Fix every check error before saving. Save each finished board with save_artboard immediately, then answer in the language of the request with a short summary of the family and what still needs the user's words. Do not call set_copy after composing: it re-syncs text and can undo per-board layout. If copy must change, change it before the boards.",
+    `Current boards:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
+    `Request: ${request}`,
+  ].join("\n");
+}
+
+function bindArtboardRunFor(options: {
+  durableRunId: string;
+  publicRunId: string;
+  loaded: LoadedArtboardSet;
+  userId: string;
+  planApproved?: boolean;
+}): void {
+  const { loaded, durableRunId, publicRunId, userId } = options;
+  const sprites = spritesForAsset(loaded.asset);
+  bindArtboardRun(durableRunId, {
+    setId: loaded.set.id,
+    setName: loaded.set.name,
+    projectId: loaded.set.projectId,
+    assetId: loaded.asset.id,
+    assetName: loaded.asset.name,
+    palette: [...loaded.asset.palette],
+    copy: loaded.set.copy as CopyDeck,
+    artboards: new Map(loaded.artboards.map((artboard) => [artboard.id, artboard])),
+    sprites,
+    planApproved: options.planApproved ?? false,
+    onSave: (artboard) => saveArtboardRecord(artboard),
+    onCreate: (input) =>
+      createArtboardRecord({
+        setId: loaded.set.id,
+        assetId: loaded.asset.id,
+        palette: loaded.asset.palette,
+        sprites,
+        presetId: input.presetId,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.template !== undefined ? { template: input.template } : {}),
+        ...(input.copy !== undefined ? { copy: input.copy } : {}),
+      }),
+    onDelete: async (artboardId) => {
+      await db.delete(artboards).where(eq(artboards.id, artboardId));
+      await db
+        .update(artboardSets)
+        .set({ updatedAt: new Date() })
+        .where(eq(artboardSets.id, loaded.set.id));
+    },
+    onSetCopy: (copy) => setCopyRecord(loaded.set.id, copy),
+    onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
+    onLoadSprite: async (assetId, frameId) => {
+      if (assetId !== loaded.asset.id) return undefined;
+      if (frameId) return sprites.get(`${assetId}:${frameId}`);
+      return [...sprites.values()].find((source) => source.assetId === assetId);
+    },
+  });
+  // A compose run is not a drawing child; keep the console's frame focus on
+  // the primary frame so a refresh has a stable anchor.
+  void publicRunId;
+  void userId;
+}
+
+type LoadedSocialAsset = {
+  asset: LoadedAsset;
+  artboards: Artboard[];
+  copy: CopyDeck;
+  sprites: Map<string, SpriteSource>;
+};
+
+function socialArtboardFromFrame(
+  frame: LoadedAsset["frames"][number],
+): Artboard | undefined {
+  if (frame.kind !== "social" || !frame.presetId || !frame.scene) return undefined;
+  const preset = getPreset(frame.presetId);
+  return {
+    id: frame.id,
+    setId: "asset",
+    presetId: frame.presetId,
+    name: frame.name,
+    width: frame.width ?? preset.width,
+    height: frame.height ?? preset.height,
+    pixelUnit: preset.pixelUnit,
+    scene: sceneSchema.parse(frame.scene),
+    copyOverride: (frame.copyOverride ?? {}) as CopyOverride,
+    status:
+      frame.status === "ready" || frame.status === "needs-fix" ? frame.status : "draft",
+    version: frame.version ?? 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function spritesForProject(projectId: string): Promise<Map<string, SpriteSource>> {
+  const projectAssets = await db
+    .select()
+    .from(assets)
+    .where(eq(assets.projectId, projectId));
+  const sprites = new Map<string, SpriteSource>();
+  for (const asset of projectAssets) {
+    const frameRows = await db
+      .select()
+      .from(frames)
+      .where(eq(frames.assetId, asset.id))
+      .orderBy(asc(frames.index));
+    for (const frame of frameRows) {
+      if (frame.kind === "social") continue;
+      const buffer = frameToBuffer(
+        frame as unknown as Frame,
+        frame.width ?? asset.width,
+        frame.height ?? asset.height,
+        asset.palette as string[],
+      );
+      sprites.set(`${asset.id}:${frame.id}`, {
+        assetId: asset.id,
+        assetName: asset.name,
+        frameId: frame.id,
+        frameName: frame.name,
+        buffer,
+      });
+    }
+  }
+  return sprites;
+}
+
+async function loadSocialAssetForRun(
+  assetId: string,
+  userId: string,
+): Promise<LoadedSocialAsset | undefined> {
+  const asset = await loadAsset(assetId, userId);
+  if (!asset) return undefined;
+  const rows = await db
+    .select()
+    .from(frames)
+    .where(and(eq(frames.assetId, assetId), eq(frames.kind, "social")))
+    .orderBy(asc(frames.index), asc(frames.id));
+  const artboards = rows
+    .map((row) => socialArtboardFromFrame(row as LoadedAsset["frames"][number]))
+    .filter((artboard): artboard is Artboard => artboard !== undefined);
+  const sprites = await spritesForProject(asset.projectId);
+  return { asset, artboards, copy: (asset.copy ?? {}) as CopyDeck, sprites };
+}
+
+async function saveSocialFrameRecord(artboard: Artboard): Promise<Artboard> {
+  const scene = sceneSchema.parse(artboard.scene);
+  const [existing] = await db
+    .select()
+    .from(frames)
+    .where(and(eq(frames.id, artboard.id), eq(frames.version, artboard.version)));
+  if (!existing || existing.kind !== "social") {
+    throw new Error(
+      `Social frame "${artboard.name}" changed while the agent was working; reload it before saving.`,
+    );
+  }
+  const [row] = await db
+    .update(frames)
+    .set({
+      name: artboard.name,
+      scene,
+      copyOverride: artboard.copyOverride,
+      status: artboard.status,
+      version: artboard.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(frames.id, artboard.id), eq(frames.version, artboard.version)))
+    .returning();
+  if (!row) throw new Error("That frame changed while it was saving.");
+  await db
+    .update(assets)
+    .set({ updatedAt: new Date() })
+    .where(eq(assets.id, row.assetId));
+  await createVersion(db, {
+    assetId: row.assetId,
+    frameId: row.id,
+    scope: "frame",
+    kind: "edit",
+    author: "agent",
+    snapshot: {
+      name: row.name,
+      layers: [],
+      social: {
+        presetId: row.presetId,
+        width: row.width,
+        height: row.height,
+        scene: row.scene,
+        copyOverride: row.copyOverride,
+        status: row.status,
+      },
+    },
+  });
+  return artboardFromFrameRow(row);
+}
+
+function artboardFromFrameRow(row: typeof frames.$inferSelect): Artboard {
+  const preset = getPreset(row.presetId ?? "og-image");
+  return {
+    id: row.id,
+    setId: row.assetId,
+    presetId: row.presetId ?? preset.id,
+    name: row.name,
+    width: row.width ?? preset.width,
+    height: row.height ?? preset.height,
+    pixelUnit: preset.pixelUnit,
+    scene: sceneSchema.parse(row.scene),
+    copyOverride: row.copyOverride as CopyOverride,
+    status: row.status === "ready" || row.status === "needs-fix" ? row.status : "draft",
+    version: row.version,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function createSocialFrameRecord(input: {
+  assetId: string;
+  presetId: string;
+  name?: string;
+  template?: string;
+  copy?: CopyDeck;
+  palette: string[];
+  sprites: Map<string, SpriteSource>;
+}): Promise<Artboard> {
+  const preset = getPreset(input.presetId);
+  const copy = input.copy ?? {};
+  const source =
+    [...input.sprites.values()].find((sprite) => sprite.assetId === input.assetId) ??
+    [...input.sprites.values()][0];
+  const scene = buildTemplateScene({
+    preset,
+    template: (input.template ??
+      preset.defaultTemplate) as FormatPreset["defaultTemplate"],
+    copy,
+    palette: input.palette,
+    ...(source ? { sprite: source } : {}),
+  });
+  const [last] = await db
+    .select({ index: frames.index })
+    .from(frames)
+    .where(eq(frames.assetId, input.assetId))
+    .orderBy(desc(frames.index))
+    .limit(1);
+  const [row] = await db
+    .insert(frames)
+    .values({
+      id: randomUUID(),
+      assetId: input.assetId,
+      name: input.name?.trim() || preset.label,
+      index: (last?.index ?? -1) + 1,
+      layers: [],
+      kind: "social",
+      width: preset.width,
+      height: preset.height,
+      presetId: preset.id,
+      scene,
+      copyOverride: {},
+      status: "draft",
+      version: 1,
+    })
+    .returning();
+  if (!row) throw new Error("The frame could not be created.");
+  await db
+    .update(assets)
+    .set({ updatedAt: new Date() })
+    .where(eq(assets.id, input.assetId));
+  await createVersion(db, {
+    assetId: row.assetId,
+    frameId: row.id,
+    scope: "frame",
+    kind: "create",
+    author: "agent",
+    snapshot: {
+      name: row.name,
+      layers: [],
+      social: {
+        presetId: row.presetId,
+        width: row.width,
+        height: row.height,
+        scene: row.scene,
+        copyOverride: row.copyOverride,
+        status: row.status,
+      },
+    },
+  });
+  return artboardFromFrameRow(row);
+}
+
+async function setSocialCopyRecord(
+  assetId: string,
+  copy: CopyDeck,
+): Promise<{ set: ArtboardSet; artboards: Artboard[] }> {
+  const [asset] = await db
+    .update(assets)
+    .set({ copy, updatedAt: new Date() })
+    .where(eq(assets.id, assetId))
+    .returning();
+  if (!asset) throw new Error("The asset was not found.");
+  const rows = await db
+    .select()
+    .from(frames)
+    .where(and(eq(frames.assetId, assetId), eq(frames.kind, "social")));
+  const next: Artboard[] = [];
+  for (const row of rows) {
+    const current = artboardFromFrameRow(row);
+    const scene = syncCopyScene(current.scene, copy, current.copyOverride);
+    if (JSON.stringify(scene) === JSON.stringify(current.scene)) {
+      next.push(current);
+      continue;
+    }
+    const [updated] = await db
+      .update(frames)
+      .set({ scene, version: current.version + 1, updatedAt: new Date() })
+      .where(eq(frames.id, current.id))
+      .returning();
+    if (updated) next.push(artboardFromFrameRow(updated));
+  }
+  return {
+    set: {
+      id: assetId,
+      projectId: asset.projectId,
+      assetId,
+      name: asset.name,
+      copy,
+      createdAt: asset.createdAt.toISOString(),
+      updatedAt: asset.updatedAt.toISOString(),
+    },
+    artboards: next,
+  };
+}
+
+function buildSocialPrompt(request: string, loaded: LoadedSocialAsset): string {
+  const boards = loaded.artboards
+    .map(
+      (artboard) =>
+        `- ${artboard.name} [${artboard.presetId}] ${artboard.width}×${artboard.height} (${artboard.status})`,
+    )
+    .join("\n");
+  return [
+    "You are the art director and layout worker for one image asset. Compose its frames, then stop.",
+    "Write to the user in image, frame and canvas language. Never call frames sprites, social media, a kit or artboards; those are internal storage/tool names.",
+    `Asset: ${loaded.asset.name}. Base canvas: ${loaded.asset.width}×${loaded.asset.height}, ${loaded.asset.palette.length} colours.`,
+    "The asset holds frames together. Some frames are pixel images used as ingredients; others are native-size canvases for covers, posts, thumbnails and stories.",
+    "This phase only creates or edits native-size frames. Pixel-backed frames already drawn are read-only ingredients; do not create, resize or repaint them.",
+    "Call list_formats before choosing a canvas size. Call read_set to see the current frames and shared copy. Call list_project_sprites to reuse any image frame from this project; place_sprite accepts its assetId/frameId.",
+    "Use assetId and frameId exactly as list_project_sprites returns them. Never shorten, reconstruct or guess an id; if place_sprite refuses a source, re-read the list and retry once with the exact pair.",
+    "Plan the family as one JSON object in your reply: {setName, concept, copy:{headline,subhead,eyebrow,cta,handle}, artboards:[{format, template, role}], review:true}. Then call present_artboard_plan once with a short summary. Do not create or edit any artboard before the user approves.",
+    "After approval: create the planned frames with create_artboard, keep the shared copy with set_copy, and compose each with apply_template, set_text, place_sprite, set_background and shapes. Keep the mark and headline consistent; adapt the layout, not the identity.",
+    "Work visibly: call those tools one edit at a time. Every call updates the frame for the user; never hold the whole layout in your head and reveal it only at save.",
+    "Stay inside safe areas, crops and exclusions. The deterministic checks decide geometry; never claim a fit you did not check. preview_artboard at scale 1 for detail and scale 4 for the thumbnail test.",
+    "Every sprite scale is a whole number. Every colour is a palette index. Read list_formats.fonts for atlas sizes; set_text snaps a requested final size to the nearest atlas size plus whole-pixel scale and reports effectiveSize.",
+    "Fix every check error before saving. Save each finished frame with save_artboard immediately, then answer in the language of the request with a short summary and what still needs the user's words. Do not call set_copy after composing.",
+    `Current frames:\n${boards.length > 0 ? boards : "- (none yet; create them from the plan)"}`,
+    `Request: ${request}`,
+  ].join("\n");
+}
+
+function bindSocialAssetRunFor(options: {
+  durableRunId: string;
+  publicRunId: string;
+  loaded: LoadedSocialAsset;
+  userId: string;
+  planApproved?: boolean;
+}): void {
+  const { loaded, durableRunId, publicRunId } = options;
+  bindArtboardRun(durableRunId, {
+    setId: loaded.asset.id,
+    setName: loaded.asset.name,
+    projectId: loaded.asset.projectId,
+    assetId: loaded.asset.id,
+    assetName: loaded.asset.name,
+    palette: [...loaded.asset.palette],
+    copy: loaded.copy,
+    artboards: new Map(loaded.artboards.map((artboard) => [artboard.id, artboard])),
+    sprites: loaded.sprites,
+    planApproved: options.planApproved ?? false,
+    onChange: (artboard) => {
+      publish(publicRunId, "frame-scene", { artboard });
+    },
+    onSave: (artboard) => saveSocialFrameRecord(artboard),
+    onCreate: (input) =>
+      createSocialFrameRecord({
+        assetId: loaded.asset.id,
+        presetId: input.presetId,
+        palette: loaded.asset.palette,
+        sprites: loaded.sprites,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.template !== undefined ? { template: input.template } : {}),
+        copy: input.copy ?? loaded.copy,
+      }),
+    onDelete: async (artboardId) => {
+      await db
+        .delete(frames)
+        .where(and(eq(frames.id, artboardId), eq(frames.kind, "social")));
+      await db
+        .update(assets)
+        .set({ updatedAt: new Date() })
+        .where(eq(assets.id, loaded.asset.id));
+      publish(publicRunId, "frame-deleted", { frameId: artboardId });
+    },
+    onSetCopy: async (copy) => {
+      const result = await setSocialCopyRecord(loaded.asset.id, copy);
+      for (const artboard of result.artboards) {
+        publish(publicRunId, "frame-scene", { artboard });
+      }
+      return result;
+    },
+    onDescribeImage: (image) => describeReferenceImage(durableRunId, image),
+    onLoadSprite: async (assetId, frameId) => {
+      if (frameId) return loaded.sprites.get(`${assetId}:${frameId}`);
+      return [...loaded.sprites.values()].find((source) => source.assetId === assetId);
+    },
+  });
+  void publicRunId;
 }
 
 /**
@@ -2959,9 +3925,16 @@ async function loadProjectAssetForRead(
       summary: frame.summary,
       index: frame.index,
       buffer: frameToBuffer(
-        { id: frame.id, name: frame.name, index: frame.index, layers: frame.layers },
-        loaded.width,
-        loaded.height,
+        {
+          id: frame.id,
+          name: frame.name,
+          index: frame.index,
+          width: frame.width,
+          height: frame.height,
+          layers: frame.layers,
+        },
+        frame.width ?? loaded.width,
+        frame.height ?? loaded.height,
         loaded.palette,
       ),
     })),
@@ -3057,7 +4030,12 @@ function bindWorkspaceRun(options: {
         name: frame.name,
         summary: frame.summary,
         index: frame.index,
-        buffer: frameToBuffer(frame, asset.width, asset.height, asset.palette),
+        buffer: frameToBuffer(
+          frame,
+          frame.width ?? asset.width,
+          frame.height ?? asset.height,
+          asset.palette,
+        ),
       })),
     };
   };
@@ -3125,6 +4103,7 @@ function bindWorkspaceRun(options: {
         projectName: project.name,
         projectSummary: project.summary,
         style: project.style as StyleGuide,
+        copy: {},
         createdAt: new Date(),
         updatedAt: new Date(),
         frames: asset.frames.map((frame) => ({
@@ -3133,6 +4112,14 @@ function bindWorkspaceRun(options: {
           summary: "",
           index: frame.index,
           layers: frame.layers,
+          kind: "sprite" as const,
+          width: asset.width,
+          height: asset.height,
+          presetId: null,
+          scene: null,
+          copyOverride: {},
+          status: "ready",
+          version: 1,
         })),
       };
       const bound = await register(loaded);
@@ -3274,6 +4261,31 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
         console.log(`[recovery] re-attached workspace run ${run.id} (${run.status})`);
         continue;
       }
+      if (run.mode === "compose" && !run.setId) {
+        const social = await loadSocialAssetForRun(assetId, userId);
+        if (!social) {
+          console.error(
+            `[recovery] social asset ${assetId} for run ${run.id} was not found; leaving the run unrecovered`,
+          );
+          continue;
+        }
+        bindSocialAssetRunFor({
+          durableRunId,
+          publicRunId: run.id,
+          loaded: social,
+          userId,
+          planApproved: social.artboards.some(
+            (artboard) => artboard.version > 1 || artboard.status === "ready",
+          ),
+        });
+        void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
+          (reason: unknown) => {
+            console.error(`[recovery] run ${run.id} stopped: ${boundedReason(reason)}`);
+          },
+        );
+        console.log(`[recovery] re-attached social run ${run.id} (${run.status})`);
+        continue;
+      }
       const asset = await loadAsset(assetId);
       if (!asset) {
         console.error(
@@ -3290,6 +4302,26 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
           `[recovery] asset ${assetId} for run ${run.id} has no frames; leaving the run unrecovered`,
         );
         continue;
+      }
+      if (run.setId) {
+        const loaded = await loadArtboardSetForRun(run.setId, assetId, userId);
+        if (!loaded) {
+          console.error(
+            `[recovery] artboard set ${run.setId} for run ${run.id} was not found; the artboard tools will be unavailable`,
+          );
+        } else {
+          bindArtboardRunFor({
+            durableRunId,
+            publicRunId: run.id,
+            loaded,
+            userId,
+            // A scene at version > 1 means the user already approved the plan
+            // and boards were written; otherwise the resumed agent re-asks.
+            planApproved: loaded.artboards.some(
+              (artboard) => artboard.version > 1 || artboard.status === "ready",
+            ),
+          });
+        }
       }
       bindAssetRun({
         durableRunId,
@@ -3315,6 +4347,18 @@ async function recoverInterruptedRuns(runtime: DurableRuntime): Promise<void> {
           : {}),
         userId,
       });
+      if (run.mode === "ask") {
+        const social = await loadSocialAssetForRun(assetId, userId);
+        if (social && social.artboards.length > 0) {
+          bindSocialAssetRunFor({
+            durableRunId,
+            publicRunId: run.id,
+            loaded: social,
+            userId,
+            planApproved: true,
+          });
+        }
+      }
       void follow(runtime, durableRunId, run.id, run.reasoningEffort).catch(
         (reason: unknown) => {
           console.error(`[recovery] run ${run.id} stopped: ${boundedReason(reason)}`);

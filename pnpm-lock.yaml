@@ -46,6 +46,9 @@ importers:
       '@pixelaition/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../../packages/artboard
       '@pixelaition/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -104,6 +107,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
         version: 1.32.1(zod@4.6.5)
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../../packages/artboard
       '@pixelaition/pixel':
         specifier: workspace:*
         version: link:../../packages/pixel
@@ -150,6 +156,9 @@ importers:
       '@fontsource/silkscreen':
         specifier: ^5.3.0
         version: 5.3.0
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../../packages/artboard
       '@pixelaition/pixel':
         specifier: workspace:*
         version: link:../../packages/pixel
@@ -220,6 +229,9 @@ importers:
       '@pixelaition/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../../packages/artboard
       '@pixelaition/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -278,6 +290,9 @@ importers:
       '@anvia/openai':
         specifier: ^1.3.0
         version: 1.3.0(patch_hash=dcf6094e95d096d6d5763448038f8eea117eb26323a662fbd1e3a27af7491356)(@anvia/core@1.14.0(zod@4.6.5))(zod@4.6.5)
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../artboard
       '@pixelaition/export':
         specifier: workspace:*
         version: link:../export
@@ -303,6 +318,37 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.23.15
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.4
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@7.3.7(@types/node@26.6.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/artboard:
+    dependencies:
+      '@pixelaition/pixel':
+        specifier: workspace:*
+        version: link:../pixel
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@pixelaition/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      '@types/pngjs':
+        specifier: ^6.0.5
+        version: 6.0.5
+      eslint:
+        specifier: ^9.39.4
+        version: 9.39.5(jiti@2.7.0)
+      pngjs:
+        specifier: ^7.0.0
+        version: 7.0.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -352,6 +398,9 @@ importers:
 
   packages/export:
     dependencies:
+      '@pixelaition/artboard':
+        specifier: workspace:*
+        version: link:../artboard
       '@pixelaition/pixel':
         specifier: workspace:*
         version: link:../pixel

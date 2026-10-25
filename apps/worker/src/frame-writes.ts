@@ -76,6 +76,8 @@ export function frameWrites(
       assetId,
       name: frame.name,
       index: frame.index,
+      width: frame.buffer.width,
+      height: frame.buffer.height,
       layers: bufferToFrame(frame.buffer, frame).layers,
     });
     framesById.set(frame.id, { id: frame.id, name: frame.name, index: frame.index });
@@ -117,7 +119,12 @@ export function frameWrites(
       try {
         await db
           .update(frames)
-          .set({ layers: bufferToFrame(buffer, edited).layers, updatedAt: new Date() })
+          .set({
+            width: buffer.width,
+            height: buffer.height,
+            layers: bufferToFrame(buffer, edited).layers,
+            updatedAt: new Date(),
+          })
           .where(eq(frames.id, editedFrameId));
       } catch (error) {
         console.error("[onStroke] frame persist failed", error);
@@ -187,6 +194,8 @@ export function frameWrites(
         await db
           .update(frames)
           .set({
+            width: change.buffer.width,
+            height: change.buffer.height,
             layers: bufferToFrame(change.buffer, { ...known, id: change.frameId }).layers,
             updatedAt: new Date(),
           })

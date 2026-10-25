@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  openCodeGoHeaders,
   parseModelSpecRow,
   seesUserImages,
   selectRunTarget,
@@ -213,5 +214,21 @@ describe("model specs", () => {
     expect(selectRunTarget(specs, "deepseek-v4.1-flash", "medium")).toBeUndefined();
     expect(selectRunTarget(specs, "muse-spark-1.3-contributor", "high")).toBeUndefined();
     expect(selectRunTarget([], "deepseek-v4.1-flash", "low")).toBeUndefined();
+  });
+});
+
+describe("OpenCode Go headers", () => {
+  it("sends the session, client and user-agent only to OpenCode", () => {
+    expect(openCodeGoHeaders("https://opencode.ai/inference/go/v1", "session-1")).toEqual(
+      {
+        "x-opencode-session": "session-1",
+        "x-opencode-client": "pixelaition",
+        "user-agent": "pixelaition/0.1",
+      },
+    );
+    expect(
+      openCodeGoHeaders("https://openrouter.ai/api/v1", "session-1"),
+    ).toBeUndefined();
+    expect(openCodeGoHeaders(undefined, "session-1")).toBeUndefined();
   });
 });

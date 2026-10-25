@@ -60,7 +60,7 @@ const client = new OpenAIClient({
     ...(process.env.AGENT_BASE_URL ? { baseURL: process.env.AGENT_BASE_URL } : {}),
   }),
 });
-const model = client.completionModel({ modelId: "deepseek/deepseek-v4.1-flash-1017", api: "chat" });
+const model = client.completionModel({ modelId: "deepseek-v4.1-flash", api: "chat" });
 try {
   // Tool-call assistant messages carry a null content; the SDK's own file-input
   // check expects a string or an array, so normalize before replaying.

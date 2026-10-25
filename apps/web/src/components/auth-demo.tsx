@@ -395,7 +395,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
   if (compact) {
     return (
       <aside
-        aria-label="A cast of sprites drawing themselves"
+        aria-label="A cast of characters drawing themselves"
         className="bg-paper px-4 pt-4"
       >
         <Wordmark flight />
@@ -417,7 +417,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
 
   return (
     <aside
-      aria-label="A cast of sprites drawing themselves"
+      aria-label="A cast of characters drawing themselves"
       className="relative h-dvh min-h-0 overflow-hidden bg-paper"
     >
       <div
@@ -435,7 +435,7 @@ export function AuthDemo({ compact = false }: { compact?: boolean }) {
           <Wordmark size="display" flight />
         </div>
         <div className="mt-10 max-w-md">
-          <p className="text-pixel-mono text-accent">Sprite families</p>
+          <p className="text-pixel-mono text-accent">Image families</p>
           <p className="mt-3 max-w-[14ch] text-pixel-hero text-balance text-ink">
             One palette. A whole cast.
           </p>

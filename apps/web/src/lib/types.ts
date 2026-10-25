@@ -1,6 +1,30 @@
-export type LayerDto = { id: string; name: string; visible: boolean; pixels: string };
+import type { TextLayerSpec } from "@pixelaition/pixel";
 
-export type FrameDto = { id: string; name: string; index: number; layers: LayerDto[] };
+export type LayerDto = {
+  id: string;
+  name: string;
+  visible: boolean;
+  pixels: string;
+  text?: TextLayerSpec;
+};
+
+import type { ArtboardScene, CopyOverride, CopyDeck } from "@pixelaition/artboard";
+
+export type FrameDto = {
+  id: string;
+  name: string;
+  index: number;
+  layers: LayerDto[];
+  kind?: "sprite" | "social";
+  width?: number | null;
+  height?: number | null;
+  presetId?: string | null;
+  scene?: ArtboardScene | null;
+  copyOverride?: CopyOverride;
+  status?: string;
+  version?: number;
+  updatedAt?: string;
+};
 
 export type AssetDto = {
   id: string;
@@ -8,6 +32,7 @@ export type AssetDto = {
   width: number;
   height: number;
   palette: string[];
+  copy: CopyDeck;
   frames: FrameDto[];
   projectId: string;
   projectName: string;

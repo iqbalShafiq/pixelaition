@@ -9,7 +9,7 @@ const baseURL = process.env.AGENT_BASE_URL;
 const client = new OpenAIClient({
   client: new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) }),
 });
-const model = client.completionModel({ modelId: "deepseek/deepseek-v4.1-flash-1017", api: "chat" });
+const model = client.completionModel({ modelId: "deepseek-v4.1-flash", api: "chat" });
 
 const tools = Array.from({ length: 6 }, (_, index) => ({
   name: `tool_${index}`,

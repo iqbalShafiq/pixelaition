@@ -75,6 +75,9 @@ export function HistoryPanel({
   const snapshots = new Map(
     (versions.data?.versions ?? []).map((version) => [version.id, version.snapshot]),
   );
+  // Native-size frames share this timeline too. Their snapshots have no pixel
+  // layers, so the row shows a placeholder and preview stays disabled while
+  // restore still works through the same version route.
   const rows = toHistoryRows(versions.data?.versions ?? [], runModels);
   const frameRows = rows.filter(
     (row) => row.scope === "frame" && row.frameId === frameId,

@@ -109,6 +109,8 @@ export const assets = pgTable("assets", {
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   palette: jsonb("palette").notNull(),
+  /** Shared social copy deck; sprite frames ignore it. */
+  copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -126,10 +128,93 @@ export const frames = pgTable(
     summaryAt: timestamp("summary_at", { withTimezone: true }),
     index: integer("index").notNull(),
     layers: jsonb("layers").notNull(),
+    /** `sprite` frames paint layers; `social` frames own a scene at native size. */
+    kind: text("kind").$type<"sprite" | "social">().notNull().default("sprite"),
+    width: integer("width"),
+    height: integer("height"),
+    presetId: text("preset_id"),
+    scene: jsonb("scene"),
+    copyOverride: jsonb("copy_override").notNull().default({}),
+    status: text("status").notNull().default("ready"),
+    version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("frames_asset_index").on(table.assetId, table.index)],
+);
+
+/**
+ * A social set is one asset's family of formats. The asset remains the
+ * conversation and palette anchor; the set only adds layouts that place that
+ * asset (and its copy deck) at native platform sizes.
+ */
+export const artboardSets = pgTable("artboard_sets", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  assetId: text("asset_id")
+    .notNull()
+    .references(() => assets.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  copy: jsonb("copy").notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const artboards = pgTable(
+  "artboards",
+  {
+    id: text("id").primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => artboardSets.id, { onDelete: "cascade" }),
+    presetId: text("preset_id").notNull(),
+    name: text("name").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    pixelUnit: integer("pixel_unit").notNull(),
+    scene: jsonb("scene").notNull(),
+    copyOverride: jsonb("copy_override").notNull().default({}),
+    status: text("status").notNull().default("draft"),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("artboards_set_created").on(
+      table.setId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+  ],
+);
+
+export const artboardVersions = pgTable(
+  "artboard_versions",
+  {
+    id: text("id").primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => artboardSets.id, { onDelete: "cascade" }),
+    artboardId: text("artboard_id").references(() => artboards.id, {
+      onDelete: "cascade",
+    }),
+    scope: text("scope").$type<"set" | "artboard">().notNull(),
+    kind: text("kind").notNull(),
+    author: text("author").$type<VersionAuthor>().notNull(),
+    runId: text("run_id"),
+    label: text("label"),
+    snapshot: jsonb("snapshot").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("artboard_versions_set_created").on(
+      table.setId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+  ],
 );
 
 /**
@@ -229,6 +314,8 @@ export const generationRuns = pgTable("generation_runs", {
   durableRunId: text("durable_run_id"),
   requestId: text("request_id").notNull(),
   status: text("status").notNull(),
+  /** `draw`, `ask`, or `compose` — recovery binds a compose run to social frames. */
+  mode: text("mode").$type<"draw" | "ask" | "compose">().notNull().default("draw"),
   modelId: text("model_id").notNull(),
   reasoningEffort: text("reasoning_effort").notNull(),
   frameId: text("frame_id"),
@@ -249,6 +336,8 @@ export const generationRuns = pgTable("generation_runs", {
   workerKey: text("worker_key"),
   /** Frame ids this child owns; every write is checked against it. */
   frameIds: jsonb("frame_ids"),
+  /** The social set this run composes, when it is an artboard task. */
+  setId: text("set_id").references(() => artboardSets.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
@@ -263,6 +352,7 @@ export const runTasks = pgTable("run_tasks", {
     .notNull()
     .references(() => generationThreads.id, { onDelete: "cascade" }),
   assetId: text("asset_id").references(() => assets.id, { onDelete: "cascade" }),
+  setId: text("set_id").references(() => artboardSets.id, { onDelete: "cascade" }),
   status: text("status").notNull(),
   phase: text("phase").notNull(),
   shape: jsonb("shape"),
@@ -326,6 +416,7 @@ export const assetRelations = relations(assets, ({ one, many }) => ({
   project: one(projects, { fields: [assets.projectId], references: [projects.id] }),
   frames: many(frames),
   versions: many(versions),
+  artboardSets: many(artboardSets),
 }));
 
 export const frameRelations = relations(frames, ({ one }) => ({
@@ -335,4 +426,16 @@ export const frameRelations = relations(frames, ({ one }) => ({
 export const versionRelations = relations(versions, ({ one }) => ({
   asset: one(assets, { fields: [versions.assetId], references: [assets.id] }),
   frame: one(frames, { fields: [versions.frameId], references: [frames.id] }),
+}));
+
+export const artboardSetRelations = relations(artboardSets, ({ one, many }) => ({
+  project: one(projects, { fields: [artboardSets.projectId], references: [projects.id] }),
+  asset: one(assets, { fields: [artboardSets.assetId], references: [assets.id] }),
+  artboards: many(artboards),
+  versions: many(artboardVersions),
+}));
+
+export const artboardRelations = relations(artboards, ({ one, many }) => ({
+  set: one(artboardSets, { fields: [artboards.setId], references: [artboardSets.id] }),
+  versions: many(artboardVersions),
 }));

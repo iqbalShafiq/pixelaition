@@ -23,7 +23,7 @@ export function createAsset(input: {
   palette?: string[];
 }): Asset {
   if (!isSizeAllowed(input.width) || !isSizeAllowed(input.height)) {
-    throw new Error("Canvas size must be an integer from 8 to 128.");
+    throw new Error("Canvas size must be an integer from 8 to 4096.");
   }
   const buffer = createBuffer({
     width: input.width,
@@ -44,7 +44,12 @@ export function createAsset(input: {
 export function assetFrameBuffer(asset: Asset, frameId: string): FrameBuffer | undefined {
   const frame = asset.frames.find((item) => item.id === frameId);
   if (!frame) return undefined;
-  return frameToBuffer(frame, asset.width, asset.height, asset.palette);
+  return frameToBuffer(
+    frame,
+    frame.width ?? asset.width,
+    frame.height ?? asset.height,
+    asset.palette,
+  );
 }
 
 export function writeFrame(asset: Asset, frameId: string, buffer: FrameBuffer): Asset {
@@ -81,9 +86,13 @@ function samePalette(left: string[], right: string[]): boolean {
   );
 }
 
-export function addFrame(asset: Asset, name: string): Asset {
-  const width = asset.width;
-  const height = asset.height;
+export function addFrame(
+  asset: Asset,
+  name: string,
+  size?: { width?: number; height?: number },
+): Asset {
+  const width = size?.width ?? asset.width;
+  const height = size?.height ?? asset.height;
   const blank = createBuffer({
     width,
     height,
@@ -94,6 +103,8 @@ export function addFrame(asset: Asset, name: string): Asset {
     id: createId(),
     name: name.trim() || `frame-${asset.frames.length + 1}`,
     index: nextIndex(asset),
+    width,
+    height,
   });
   if (asset.frames.length === 0) return { ...asset, frames: [frame] };
   return { ...asset, frames: [...asset.frames, frame] };
@@ -110,14 +121,15 @@ export function duplicateFrame(
 ): Asset | undefined {
   const source = asset.frames.find((frame) => frame.id === frameId);
   if (!source) return undefined;
-  const copy = bufferToFrame(
-    frameToBuffer(source, asset.width, asset.height, asset.palette),
-    {
-      id: createId(),
-      name: name.trim() || `${source.name} copy`,
-      index: nextIndex(asset),
-    },
-  );
+  const width = source.width ?? asset.width;
+  const height = source.height ?? asset.height;
+  const copy = bufferToFrame(frameToBuffer(source, width, height, asset.palette), {
+    id: createId(),
+    name: name.trim() || `${source.name} copy`,
+    index: nextIndex(asset),
+    width,
+    height,
+  });
   copy.layers = copy.layers.map((layer) => ({ ...layer, id: createId() }));
   return { ...asset, frames: [...asset.frames, copy] };
 }

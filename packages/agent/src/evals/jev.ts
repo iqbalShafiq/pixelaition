@@ -20,8 +20,7 @@ const jevModel = process.env.DECISION_MODEL?.trim();
 const baseUrl = process.env.DECISION_MODEL_BASE_URL?.trim();
 const agentKey = process.env.AGENT_API_KEY?.trim();
 const agentBaseUrl = process.env.AGENT_BASE_URL?.trim();
-const baselineModel =
-  process.env.EVAL_BASELINE_MODEL?.trim() ?? "deepseek/deepseek-v4.1-flash-1017";
+const baselineModel = process.env.EVAL_BASELINE_MODEL?.trim() ?? "deepseek-v4.1-flash";
 if (!apiKey || !jevModel || !baseUrl) {
   console.error(
     "DECISION_MODEL_API_KEY, DECISION_MODEL, and DECISION_MODEL_BASE_URL are required.",

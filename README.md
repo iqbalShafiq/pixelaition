@@ -15,7 +15,7 @@
   <a href="https://pnpm.io"><img src="https://img.shields.io/badge/pnpm-10.30.3-F69220?logo=pnpm&logoColor=white" alt="pnpm 10.30.3"></a>
 </p>
 
-Pixelaition is a pixel-asset studio. You draw on a canvas, or describe a sprite and watch the pixels appear while an agent works. A project keeps one palette and one style guide, so every asset inside it stays related. A finished asset can grow a new state, such as another facing or another action, from a frame that already exists.
+Pixelaition is a pixel-asset studio. You draw on a canvas, or describe an image and watch it appear while an agent works. A project keeps one palette and one style guide, so every asset inside it stays related. A finished asset can grow a new state, such as another facing or another action, from a frame that already exists.
 
 Before any generation starts, a decision layer reads the thread and picks the mode. A drawing run gets painting tools. An answering-only run gets read-only tools. That one call is the difference between the product working and the product politely explaining why it will not.
 
@@ -32,6 +32,32 @@ It runs on [Anvia](https://github.com/anvia-hq/anvia), the agent runtime behind 
 | <img src="docs/images/editor.png" alt="The editor showing the komputer asset: two frames, five layers, a 32 by 32 canvas, the palette, the style guide, and the run history"> **A canvas you share with the agent.** Frames, layers, palette and style guide sit around the canvas. A generation streams in as it paints, and every stroke lands through the same edit command the toolbar uses. | <img src="docs/images/frames.png" alt="Two rows of pixel frames. The first draft has a keyboard bar for a base and the two monitors sit one row apart. After the fix both frames share a solid base and line up."> **States that stay related.** Ask for a second frame and the agent builds it from the first one. When it drifts, the frame pair shows exactly where. |
 
 The same screen holds projects, assets, frames, layers and the run history. A composer docks at the bottom of both the workspace and the editor, so a new request and a follow-up are the same motion.
+
+## One image asset, many frames
+
+An asset is an image document. Every frame lives in the same editor and uses the
+same frame rail, canvas well, view controls, composer and export sheet. A frame
+can be **pixel-backed** — a small palette-indexed raster canvas with layers —
+or **output-size** — a native canvas for a cover, post, thumbnail or story with
+safe zones, crops, deterministic checks and a shared copy deck. One asset can
+hold a 32×32 pixel frame, a Facebook cover, a Reels thumbnail and a YouTube
+thumbnail as different frames.
+
+Select a small canvas and draw; select an output-size canvas and the same stage
+shows its native-size image, its layout/copy/checks inspector and the same
+`Fit / 1:1 / Zones` controls. Sizes come from 44 official presets, and adding a
+frame from a size creates another frame in the same asset. The layout agent is
+one compose run for the asset: it plans the frames, waits for approval, composes
+and saves each one through the same composer and console as any other edit.
+
+Project resources are reusable without copying a whole asset. Image elements
+name an `assetId`/`frameId`, the source picker lists every frame in the project,
+frame import copies any frame, palette import remaps pixels and scenes, and a
+frame's background can be copied from another project frame. Output-size frames
+export as PNG or JPG at native size; pixel frames keep PNG/JPG/SVG/ZIP and `.pxl`.
+
+The architecture and the trade-offs are in
+[docs/reports/2026-10-20-social-artboards.md](docs/reports/2026-10-20-social-artboards.md).
 
 ## Quick start
 
@@ -65,16 +91,16 @@ The web app proxies `/api` to port 3001. One `.env` at the repository root feeds
 
 Copy `.env.example` and fill the keys for the parts you want running. Manual editing works with none of them.
 
-| Variable                                                              | What it unlocks                                                                                                   |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `AGENT_BASE_URL`, `AGENT_API_KEY`                                     | The drawing models. Point the base URL at any OpenAI-compatible endpoint, such as `https://openrouter.ai/api/v1`. |
-| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | The decision layer. Required before a run will start. It is a real model call, never a local heuristic.           |
-| `DATABASE_URL`                                                        | Postgres. The Compose file already sets it.                                                                       |
-| `BETTER_AUTH_SECRET`                                                  | Signed session cookies. Generate one with `openssl rand -base64 32`.                                              |
-| `WORKER_INTERNAL_TOKEN`                                               | The API-to-worker handshake.                                                                                      |
-| `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`     | Traces for every run. Leave them empty to run without telemetry.                                                  |
-| `TAVILY_API_KEY`                                                      | Web search. Without it the agent has no search tools.                                                             |
-| `EVAL_MODEL`                                                          | The model-judged metrics behind `pnpm eval:judge`.                                                                |
+| Variable                                                              | What it unlocks                                                                                                                                                                                                    |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AGENT_BASE_URL`, `AGENT_API_KEY`                                     | The drawing models. This setup uses OpenCode Go at `https://opencode.ai/inference/go/v1`; Jev stays on OpenRouter. The worker sends `x-opencode-session`, `x-opencode-client`, and a `pixelaition/0.1` user-agent. |
+| `DECISION_MODEL`, `DECISION_MODEL_BASE_URL`, `DECISION_MODEL_API_KEY` | The decision layer. Required before a run will start. It is a real model call, never a local heuristic.                                                                                                            |
+| `DATABASE_URL`                                                        | Postgres. The Compose file already sets it.                                                                                                                                                                        |
+| `BETTER_AUTH_SECRET`                                                  | Signed session cookies. Generate one with `openssl rand -base64 32`.                                                                                                                                               |
+| `WORKER_INTERNAL_TOKEN`                                               | The API-to-worker handshake.                                                                                                                                                                                       |
+| `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`     | Traces for every run. Leave them empty to run without telemetry.                                                                                                                                                   |
+| `TAVILY_API_KEY`                                                      | Web search. Without it the agent has no search tools.                                                                                                                                                              |
+| `EVAL_MODEL`                                                          | The model-judged metrics behind `pnpm eval:judge`.                                                                                                                                                                 |
 
 The drawing models and their reasoning efforts live in the `models` table, seeded by migrations. The composer reads them from there, so a model that leaves the seed is deleted by the next migration.
 
@@ -141,7 +167,7 @@ Three columns on a wide screen. Frames and layers on the left, the canvas in the
 | `E` | Eraser    | `L` | Line       |
 | `R` | Rectangle | `H` | Pan        |
 
-Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the sprite at one to one. The wheel zooms toward the cursor.
+Pan with `H`, the space bar, or the middle button of a drag. `[` and `]` change the brush size. `Escape` drops the selection. Ctrl or Cmd+Z undoes, Ctrl or Cmd+Shift+Z redoes, Ctrl or Cmd+0 fits, and Ctrl or Cmd+1 shows the image at one to one. The wheel zooms toward the cursor.
 
 A frame keeps up to four layers. Frames are added, duplicated, renamed and deleted from the left column, and the play button steps through them. Onion skin draws the neighbouring frames underneath the one you are editing, at display opacity only. Drawing is saved 500ms after you stop.
 

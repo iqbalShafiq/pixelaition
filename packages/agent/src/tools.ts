@@ -12,12 +12,15 @@ import {
   frameToBuffer,
   linePoints,
   moveFrame,
+  emptyPixels,
   normalizeHex,
   type Asset,
   type Command,
   type Frame,
   type FrameBuffer,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
+import { drawText } from "@pixelaition/artboard";
 import { z } from "zod";
 import { encodeRowsRle } from "./format.js";
 import {
@@ -441,7 +444,12 @@ function runFrameFrom(frame: Frame, run: BoundRunBinding): RunFrame {
   return {
     name: frame.name,
     index: frame.index,
-    buffer: frameToBuffer(frame, run.width, run.height, run.palette),
+    buffer: frameToBuffer(
+      frame,
+      frame.width ?? run.width,
+      frame.height ?? run.height,
+      run.palette,
+    ),
   };
 }
 
@@ -558,6 +566,14 @@ export function createPixelTools(
           name: item.name,
           summary: item.summary ?? "",
           index: item.index,
+          width: item.buffer.width,
+          height: item.buffer.height,
+          layers: item.buffer.layers.map((layer) => ({
+            id: layer.id,
+            name: layer.name,
+            visible: layer.visible,
+            ...(layer.text ? { text: layer.text } : {}),
+          })),
         })),
         currentFrame: { id: frame.id, name: frame.name },
         width: run.width,
@@ -594,17 +610,31 @@ export function createPixelTools(
       const view = input.view ?? (input.layerId === undefined ? "composite" : "layer");
       const frame = await resolveReadFrame(run, input);
       const read = layerOf(frame, view === "composite" ? undefined : input.layerId);
-      if (!read) throw new Error(`That layer is not on ${frame.frameName}.`);
+      if (!read) {
+        throw new Error(
+          `That layer is not on ${frame.frameName}. Layers: ${frame.layers
+            .map((layer) => layer.name)
+            .join(", ")}.`,
+        );
+      }
       return {
         assetId: frame.assetId,
         assetName: frame.assetName,
         frameId: frame.frameId,
         name: frame.frameName,
+        index: frame.index ?? null,
+        summary: frame.summary ?? "",
         view,
-        // Composite reads have no layer; an undefined key is not strict JSON.
-        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
         width: frame.width,
         height: frame.height,
+        layers: frame.layers.map((layer) => ({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible,
+          ...(layer.text ? { text: layer.text } : {}),
+        })),
+        // Composite reads have no layer; an undefined key is not strict JSON.
+        ...(read.layerId === "" ? {} : { layerId: read.layerId }),
         palette: frame.palette.map((hex, index) => ({ index, hex })),
         rows: encodeRowsRle(read.pixels, frame.width, frame.height),
         colors: colorCounts(read.pixels, frame.palette),
@@ -1116,12 +1146,12 @@ export function createPixelTools(
   const resizeCanvas = createTool({
     name: "resize_canvas",
     description:
-      "Resize the whole canvas (8–128). Every frame keeps the pixels that fit and drops the rest.",
+      "Resize the whole canvas to any positive size. Every frame keeps the pixels that fit and drops the rest. This structural call does not pause for human approval.",
     inputSchema: z.object({
       width: z.number().int(),
       height: z.number().int(),
     }),
-    requiresApproval: gatedApproval("resize_canvas", frameNeedsApproval),
+    requiresApproval: () => false,
     execute: async (input, context) => {
       const refused = gateRefusal(context.operationId, "resize_canvas");
       if (refused) return { refused: refused.reason };
@@ -1162,6 +1192,39 @@ export function createPixelTools(
 
   const setPaletteDescription =
     "Replace the asset's palette; every frame uses it. Index 0 must stay #00000000. Add the colours the request needs before painting with them.";
+  const resizeFrame = createTool({
+    name: "resize_frame",
+    description:
+      "Resize one frame's pixel canvas without changing the asset's other frames. Use this for a profile or cover whose output size differs from the asset canvas; pass width and height in pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      width: z.number().int().min(1).max(4096),
+      height: z.number().int().min(1).max(4096),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const result = applyCommand(frame.buffer, {
+        type: "resize",
+        width: input.width,
+        height: input.height,
+      });
+      if (!result.ok) throw new Error(result.message);
+      replaceFrameBuffer(run, frame.id, result.buffer);
+      run.touchedFrames.add(frame.id);
+      run.onStroke?.({ label: "resize", points: [] }, result.buffer, frame.id);
+      return {
+        frameId: frame.id,
+        name: frame.name,
+        width: result.buffer.width,
+        height: result.buffer.height,
+      };
+    },
+  });
+
   const setPalette = createTool({
     name: "set_palette",
     description: `${setPaletteDescription} The pixels follow their colours: a colour that moves to another index is rewritten, and a new colour is simply appended (or given an index and used by the next stroke), so one frame changing the palette never repaints another.`,
@@ -1219,6 +1282,182 @@ export function createPixelTools(
       return {
         palette: run.palette,
         repainted: adopted.map((item) => item.id),
+      };
+    },
+  });
+
+  const textSizes = [4, 6, 8, 10, 12, 16, 24, 32, 48, 64, 96, 120];
+  function textSizeFor(height: number, requested?: number): number {
+    if (requested) return Math.max(1, Math.round(requested));
+    const preferred = height <= 64 ? Math.max(4, height * 0.25) : height * 0.06;
+    return textSizes.reduce((best, value) =>
+      Math.abs(value - preferred) < Math.abs(best - preferred) ? value : best,
+    );
+  }
+
+  function textSpec(
+    buffer: FrameBuffer,
+    input: {
+      text: string;
+      x?: number;
+      y?: number;
+      size?: number;
+      color?: number;
+      width?: number;
+      align?: "left" | "center" | "right";
+      face?: "silkscreen" | "pixelify" | "mono";
+      weight?: 400 | 700;
+      lineHeight?: number;
+      maxLines?: number;
+      letterSpacing?: number;
+      scale?: number;
+      height?: number;
+      rotation?: number;
+    },
+  ): TextLayerSpec {
+    const color = input.color ?? 1;
+    if (!Number.isInteger(color) || color < 1 || color >= buffer.palette.length) {
+      throw new Error("That text colour is not in the palette.");
+    }
+    return {
+      text: input.text,
+      face: input.face ?? "silkscreen",
+      weight: input.weight ?? 700,
+      size: textSizeFor(buffer.height, input.size),
+      color,
+      x: Math.max(
+        0,
+        Math.min(input.x ?? Math.round(buffer.width * 0.06), buffer.width - 1),
+      ),
+      y: Math.max(
+        0,
+        Math.min(input.y ?? Math.round(buffer.height * 0.12), buffer.height - 1),
+      ),
+      width: Math.max(
+        1,
+        Math.min(input.width ?? Math.round(buffer.width * 0.8), buffer.width),
+      ),
+      align: input.align ?? "left",
+      ...(input.lineHeight !== undefined ? { lineHeight: input.lineHeight } : {}),
+      ...(input.maxLines !== undefined ? { maxLines: input.maxLines } : { maxLines: 3 }),
+      ...(input.letterSpacing !== undefined
+        ? { letterSpacing: input.letterSpacing }
+        : {}),
+      ...(input.scale !== undefined ? { scale: input.scale } : {}),
+      ...(input.height !== undefined ? { height: input.height } : {}),
+      ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
+    };
+  }
+
+  function textPixels(buffer: FrameBuffer, spec: TextLayerSpec): Uint8Array {
+    const pixels = emptyPixels(buffer.width, buffer.height);
+    drawText(
+      pixels,
+      buffer.width,
+      buffer.height,
+      { ...spec, id: "text", kind: "text" },
+      buffer.palette.length,
+    );
+    return pixels;
+  }
+
+  const addTextTool = createTool({
+    name: "add_text",
+    description:
+      "Add editable pixel text to the current frame. Text survives as a text layer: its content, colour, size, width, alignment and position can be edited with edit_text later. Coordinates and size are document pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      text: z.string().min(1).max(500),
+      x: z.number().int().nonnegative().optional(),
+      y: z.number().int().nonnegative().optional(),
+      size: z.number().int().positive().optional(),
+      color: z.number().int().positive().optional(),
+      width: z.number().int().positive().optional(),
+      align: z.enum(["left", "center", "right"]).optional(),
+      rotation: z.number().min(-360).max(360).optional(),
+      layerName: z.string().min(1).max(40).optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const spec = textSpec(frame.buffer, input);
+      const layerId = crypto.randomUUID().slice(0, 8);
+      const baseName = input.layerName ?? "Text";
+      const used = new Set(frame.buffer.layers.map((layer) => layer.name));
+      let layerName = baseName;
+      for (let suffix = 2; used.has(layerName); suffix += 1) {
+        layerName = `${baseName} ${suffix}`;
+      }
+      const added = editFrame(run, frame.id, {
+        type: "addLayer",
+        id: layerId,
+        name: layerName,
+      });
+      const edited = editFrame(run, frame.id, {
+        type: "replaceLayer",
+        layerId,
+        pixels: textPixels(added.buffer, spec),
+        text: spec,
+      });
+      run.onStroke?.({ label: "text", points: [] }, edited.buffer, edited.id);
+      return {
+        layerId,
+        text: spec.text,
+        box: { x: spec.x, y: spec.y, width: spec.width },
+      };
+    },
+  });
+
+  const editTextTool = createTool({
+    name: "edit_text",
+    description:
+      "Edit an editable text layer on the current frame: content, size, colour, width, alignment or position. layerId takes the layer id or its name. Moving x/y is a drag in the model; the pixels are rebuilt at the same canvas size.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      layerId: z.string(),
+      text: z.string().max(500).optional(),
+      x: z.number().int().nonnegative().optional(),
+      y: z.number().int().nonnegative().optional(),
+      size: z.number().int().positive().optional(),
+      color: z.number().int().positive().optional(),
+      width: z.number().int().positive().optional(),
+      align: z.enum(["left", "center", "right"]).optional(),
+      rotation: z.number().min(-360).max(360).optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      assertOwnedFrame(run, frame.id);
+      const layerId = resolveLayerRef(frame.buffer, input.layerId);
+      const layer = frame.buffer.layers.find((item) => item.id === layerId);
+      if (!layer?.text) throw new Error("That layer is not editable text.");
+      const spec = textSpec(frame.buffer, {
+        ...layer.text,
+        ...(input.text !== undefined ? { text: input.text } : {}),
+        ...(input.x !== undefined ? { x: input.x } : {}),
+        ...(input.y !== undefined ? { y: input.y } : {}),
+        ...(input.size !== undefined ? { size: input.size } : {}),
+        ...(input.color !== undefined ? { color: input.color } : {}),
+        ...(input.width !== undefined ? { width: input.width } : {}),
+        ...(input.align !== undefined ? { align: input.align } : {}),
+        ...(input.rotation !== undefined ? { rotation: input.rotation } : {}),
+      });
+      const edited = editFrame(run, frame.id, {
+        type: "replaceLayer",
+        layerId,
+        pixels: textPixels(frame.buffer, spec),
+        text: spec,
+      });
+      run.onStroke?.({ label: "text", points: [] }, edited.buffer, edited.id);
+      return {
+        layerId,
+        text: spec.text,
+        box: { x: spec.x, y: spec.y, width: spec.width },
       };
     },
   });
@@ -1364,7 +1603,7 @@ export function createPixelTools(
         approved: true,
         summary: input.summary,
         scope: [...scope],
-        next: "Create the approved frames now with add_frame using exactly those names, then add the plan's palette colours with set_palette.",
+        next: "Create the approved frames now with add_frame using exactly those names and each frame's planned width and height, then add the plan's palette colours with set_palette and delete every frame named in removeFrames.",
       };
     },
   });
@@ -1399,7 +1638,7 @@ export function createPixelTools(
   const createAssetTool = createTool({
     name: "create_asset",
     description:
-      "Create a new asset in a project and bind this run to it, so you can read and draw on it right away. The size is 8–128; the palette is optional and index 0 must stay #00000000.",
+      "Create a new asset in a project and bind this run to it, so you can read and draw on it right away. The size is 8–4096; the palette is optional and index 0 must stay #00000000.",
     inputSchema: z.object({
       projectId: z.string().min(1),
       name: z.string().min(1).max(80),
@@ -1535,23 +1774,39 @@ export function createPixelTools(
   const addFrameTool = createTool({
     name: "add_frame",
     description:
-      "Add a frame after the last one and make it current. Blank by default; pass copyOf to copy a frame's pixels. Use it to build animation frames.",
+      "Add a frame after the last one and make it current. Blank by default; pass copyOf to copy a frame's pixels. Pass width and height to make this frame its own canvas, such as a 400×400 profile or a 1500×500 cover; without them it inherits the asset's canvas.",
     inputSchema: z.object({
       name: z.string().max(40).optional(),
       copyOf: z.string().optional(),
+      width: z.number().int().min(8).max(4096).optional(),
+      height: z.number().int().min(8).max(4096).optional(),
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
       requireAsset(run);
       const source =
         input.copyOf === undefined ? undefined : resolveFrame(run, input.copyOf);
+      const requestedName = input.name?.trim();
+      if (requestedName && requestedName.length > 0) {
+        const duplicate = [...run.frames.values()].find(
+          (frame) => frame.name.trim().toLowerCase() === requestedName.toLowerCase(),
+        );
+        if (duplicate) {
+          throw new Error(
+            `A frame named "${requestedName}" already exists. Use that frame or choose a different name.`,
+          );
+        }
+      }
       const next = source
         ? duplicateFrame(
             assetView(run, { withPixels: [source.id] }),
             source.id,
-            input.name ?? "",
+            requestedName ?? "",
           )
-        : addFrame(assetView(run), input.name ?? "");
+        : addFrame(assetView(run), requestedName ?? "", {
+            width: input.width,
+            height: input.height,
+          });
       if (!next) throw new Error(`Frame ${input.copyOf} is not part of this asset.`);
       const added = next.frames.at(-1);
       if (!added) throw new Error("The frame could not be added.");
@@ -1585,6 +1840,15 @@ export function createPixelTools(
       const frame = resolveFrame(run, input.frameId);
       const name = input.name.trim();
       if (!name) throw new Error("A frame name cannot be blank.");
+      const duplicate = [...run.frames.entries()].find(
+        ([id, candidate]) =>
+          id !== frame.id && candidate.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+      if (duplicate) {
+        throw new Error(
+          `A frame named "${name}" already exists. Choose a different name.`,
+        );
+      }
       // Persist first: a refused save leaves the name exactly as it was.
       await run.onFrameChange?.({ type: "rename", frameId: frame.id, name });
       frame.frame.name = name;
@@ -1695,7 +1959,7 @@ export function createPixelTools(
         .object(comparedFrameLocator)
         .optional()
         .describe("A second frame to show beside the first."),
-      scale: z.number().int().min(1).max(10).default(4),
+      scale: z.number().min(0.25).max(10).default(4),
     }),
     execute: async (input, context) => {
       const run = requireRun(context.operationId);
@@ -1767,7 +2031,7 @@ export function createPixelTools(
             },
           ],
         },
-        input.scale as ExportScale,
+        input.scale,
       );
       if (png.length > MAX_PREVIEW_BYTES) {
         throw new Error(
@@ -1902,7 +2166,7 @@ export function createPixelTools(
   const listProjectFrames = createTool({
     name: "list_project_frames",
     description:
-      "List every asset of this project with its size, palette and frames. Each frame's names, summaries and indices — the style evidence across the whole project.",
+      "List every asset of this project with its size, palette and frames. Every frame carries its id, name, summary, index, width, height and layers — the complete metadata for the current frame and every other frame.",
     inputSchema: z.object({}),
     execute: async (_input, context) => {
       const run = requireRun(context.operationId);
@@ -2053,8 +2317,11 @@ export function createPixelTools(
     applyOutline,
     ditherRect,
     resizeCanvas,
+    resizeFrame,
     setPalette,
     addLayerTool,
+    addTextTool,
+    editTextTool,
     renameLayerTool,
     setLayerVisibleTool,
     removeLayerTool,

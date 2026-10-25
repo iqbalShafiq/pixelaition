@@ -26,7 +26,28 @@ import {
   type FrameBuffer,
   type History,
   type StyleGuide,
+  type TextLayerSpec,
 } from "@pixelaition/pixel";
+import {
+  checkScene,
+  getPreset,
+  paletteRoles,
+  summarizeChecks,
+  type Artboard,
+  type ArtboardCheck,
+} from "@pixelaition/artboard";
+import { ArtboardCanvas } from "../components/artboard-canvas.js";
+import {
+  artboardForFrame,
+  presetForFrame,
+  renderArtboard,
+  type ProjectResourceAsset,
+  sceneSpritesReady,
+  spritesForAsset,
+  spritesForResources,
+} from "../lib/artboard.js";
+import { FormatPicker } from "../components/artboard-panels.js";
+import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
@@ -64,12 +85,15 @@ import {
   type QueuedRun,
 } from "../lib/run-queue.js";
 import {
+  FrameHeaderPanel,
   FramePanel,
   LayerPanel,
   PalettePanel,
   StylePanel,
+  TextPanel,
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
+import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
 import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
@@ -84,7 +108,10 @@ import {
   Callout,
   EmptyState,
   ConfirmDialog,
+  Dialog,
+  Field,
   IconButton,
+  SelectControl,
   Sheet,
   Wordmark,
   useToast,
@@ -180,6 +207,21 @@ function steerOutcome(
   };
 }
 
+const SOCIAL_ZOOM_STEPS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
+
+function stepSocialZoom(value: number, direction: 1 | -1): number {
+  if (direction > 0) {
+    return (
+      SOCIAL_ZOOM_STEPS.find((step) => step > value) ?? SOCIAL_ZOOM_STEPS.at(-1) ?? value
+    );
+  }
+  return (
+    [...SOCIAL_ZOOM_STEPS].reverse().find((step) => step < value) ??
+    SOCIAL_ZOOM_STEPS[0] ??
+    value
+  );
+}
+
 export function EditorScreen() {
   const { assetId } = useParams({ from: "/projects/$projectId/assets/$assetId" });
   const navigate = useNavigate();
@@ -190,6 +232,14 @@ export function EditorScreen() {
   const asset = useQuery({
     queryKey: ["asset", assetId],
     queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
+  });
+  const resources = useQuery({
+    queryKey: ["project-resources", asset.data?.projectId ?? ""],
+    enabled: Boolean(asset.data?.projectId),
+    queryFn: () =>
+      api<{ assets: ProjectResourceAsset[] }>(
+        `/api/projects/${asset.data?.projectId}/resources`,
+      ),
   });
   const preferences = useQuery({
     queryKey: ["preferences"],
@@ -251,10 +301,11 @@ export function EditorScreen() {
   const [brushSize, setBrushSize] = useState(1);
   const [color, setColor] = useState(1);
   const [activeLayerId, setActiveLayerId] = useState("");
+  const [selectedLayerId, setSelectedLayerId] = useState("");
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 16 });
   const [viewMode, setViewMode] = useState<"fit" | "actual" | "free">("fit");
   const [selection, setSelection] = useState<Rect | null>(null);
-  const [grid, setGrid] = useState(false);
+  const [grid, setGrid] = useState(true);
   const [checker, setChecker] = useState(true);
   const [onion, setOnion] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -362,6 +413,21 @@ export function EditorScreen() {
   const [earlierTurns, setEarlierTurns] = useState<ConsoleTurn[]>([]);
   const [leftSheet, setLeftSheet] = useState(false);
   const [rightSheet, setRightSheet] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<"frame" | "content" | "history">(
+    "frame",
+  );
+  const [socialElementId, setSocialElementId] = useState<string | null>(null);
+  const [socialFit, setSocialFit] = useState(true);
+  const [socialZoom, setSocialZoom] = useState(1);
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+  const textDragHistory = useRef<{ frameId: string; history: History } | null>(null);
+  const [socialPickerOpen, setSocialPickerOpen] = useState(false);
+  const [importFrameOpen, setImportFrameOpen] = useState(false);
+  const [paletteImportOpen, setPaletteImportOpen] = useState(false);
+  const [backgroundImportOpen, setBackgroundImportOpen] = useState(false);
+  const [paletteSourceId, setPaletteSourceId] = useState("");
+  const socialSaveTimers = useRef(new Map<string, number>());
+  const socialSaveChains = useRef(new Map<string, Promise<void>>());
   // Below lg the columns become sheets. Keeping them mounted at desktop widths
   // strands Base UI's exit animation and its inert overlay blocks the page.
   const wide = useMediaQuery("(min-width: 1024px)");
@@ -571,14 +637,82 @@ export function EditorScreen() {
     return next;
   }, [drafts]);
   const frame = frames.find((item) => item.id === frameId) ?? null;
+  const socialFrame = frame?.kind === "social" ? frame : null;
+  const socialPreset = socialFrame?.presetId
+    ? getPreset(socialFrame.presetId)
+    : undefined;
+  const socialArtboard =
+    asset.data && socialFrame ? artboardForFrame(asset.data, socialFrame) : null;
+  const sceneFrame = frame;
+  const scenePreset = asset.data && frame ? presetForFrame(asset.data, frame) : undefined;
+  const sceneArtboard = asset.data && frame ? artboardForFrame(asset.data, frame) : null;
+  const socialSprites = useMemo(() => {
+    if (resources.data && resources.data.assets.length > 0) {
+      return spritesForResources(resources.data.assets);
+    }
+    return asset.data ? spritesForAsset(asset.data) : new Map();
+  }, [asset.data, resources.data]);
+  const sceneOverlay = useMemo(() => {
+    if (!asset.data || !sceneArtboard || !scenePreset) return null;
+    if (
+      sceneArtboard.scene.elements.length === 0 &&
+      sceneArtboard.scene.background.kind === "transparent"
+    )
+      return null;
+    return renderArtboard(sceneArtboard, scenePreset, asset.data, socialSprites);
+  }, [asset.data, sceneArtboard, scenePreset, socialSprites]);
+
+  const socialChecks = useMemo<ArtboardCheck[]>(() => {
+    if (!asset.data || !sceneFrame || !scenePreset || !sceneArtboard) return [];
+    if (!sceneSpritesReady(sceneArtboard.scene, socialSprites)) return [];
+    return checkScene({
+      scene: sceneArtboard.scene,
+      preset: scenePreset,
+      palette: asset.data.palette,
+      sprites: socialSprites,
+    });
+  }, [asset.data, sceneFrame, scenePreset, sceneArtboard, socialSprites]);
+  useEffect(() => {
+    if (!running || !socialFrame) return;
+    const timer = window.setInterval(() => {
+      void asset.refetch();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [running, socialFrame?.id, asset.refetch]);
+
   const history = frameId ? drafts[frameId] : undefined;
   const buffer = history?.present;
   // While playback cycles frames, the layer selection must not blink: fall back
   // to the first layer of whichever frame the panel is showing.
   const panelLayerId =
-    buffer && buffer.layers.some((layer) => layer.id === activeLayerId)
-      ? activeLayerId
-      : (buffer?.layers[0]?.id ?? "");
+    buffer && buffer.layers.some((layer) => layer.id === selectedLayerId)
+      ? selectedLayerId
+      : "";
+  const selectedTextLayer =
+    buffer?.layers.find((layer) => layer.id === selectedTextId && layer.text) ?? null;
+  const textBoxes = useMemo(
+    () =>
+      buffer
+        ? buffer.layers.flatMap((layer) => {
+            if (!layer.text || !layer.visible) return [];
+            const box = textLayerBox(layer, buffer.width, buffer.height);
+            return box
+              ? [
+                  {
+                    id: layer.id,
+                    fontSize: layer.text.size,
+                    rotation: layer.text.rotation ?? 0,
+                    ...box,
+                  },
+                ]
+              : [];
+          })
+        : [],
+    [buffer],
+  );
+  useEffect(() => {
+    if (selectedTextId && !selectedTextLayer) setSelectedTextId(null);
+  }, [selectedTextId, selectedTextLayer]);
   const style = (asset.data?.style as StyleGuide | undefined) ?? fallbackStyle;
   // A live run can touch every frame of the asset, so the editor locks all of
   // them; runFrameId still marks the frame the agent is painting on.
@@ -597,14 +731,27 @@ export function EditorScreen() {
 
   // Opening an asset should show the whole sprite, not a corner of it.
   useEffect(() => {
-    const key = asset.data ? `${assetId}:${asset.data.width}x${asset.data.height}` : null;
+    const key = asset.data
+      ? `${assetId}:${frameId}:${buffer?.width ?? asset.data.width}x${buffer?.height ?? asset.data.height}`
+      : null;
     if (!key || !buffer || fitted.current === key) return;
     const rect = viewRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0) return;
     fitted.current = key;
     fit();
     setViewMode("fit");
-  }, [assetId, asset.data, buffer, fit]);
+  }, [assetId, asset.data, buffer, fit, frameId]);
+
+  // The viewport may not have its measured size on the same tick the frame
+  // changes (native frames are much larger than a sprite). Re-fit once after
+  // layout so opening a 1080px frame never inherits the 32px camera.
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => {
+      fit();
+      setViewMode("fit");
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [frameId, buffer?.width, buffer?.height, fit]);
 
   // Seed a draft for every frame the server knows about, keeping local edits.
   useEffect(() => {
@@ -614,9 +761,14 @@ export function EditorScreen() {
       let changed = false;
       const next = { ...current };
       for (const item of data.frames) {
-        if (next[item.id]) continue;
+        if (next[item.id] || item.kind === "social") continue;
         next[item.id] = createHistory(
-          frameToBuffer(item, data.width, data.height, data.palette),
+          frameToBuffer(
+            item,
+            item.width ?? data.width,
+            item.height ?? data.height,
+            data.palette,
+          ),
         );
         changed = true;
       }
@@ -625,25 +777,39 @@ export function EditorScreen() {
     setFrameId((current) => current ?? data.frames[0]?.id ?? null);
   }, [asset.data]);
 
+  // Hydrate the composer once, after both the catalog and the saved
+  // preference are readable. The two used to race: the catalog effect ran with
+  // an empty model id and wrote the first model over the saved Muse choice,
+  // while the effort effect wrote that model's first effort over "medium".
+  const modelInitialised = useRef(false);
   useEffect(() => {
-    if (preferences.data?.lastModelId) setModelId(preferences.data.lastModelId);
-    if (preferences.data?.lastReasoningEffort) {
-      setEffort(preferences.data.lastReasoningEffort);
-    }
-  }, [preferences.data]);
-
-  // A stored preference can name a model or effort that is no longer offered;
-  // the composer must always show a selectable pair.
-  useEffect(() => {
-    const options = catalog.data?.models ?? [];
+    if (modelInitialised.current || !catalog.data || preferences.isLoading) return;
+    const options = catalog.data.models;
     if (options.length === 0) return;
-    if (!options.some((item) => item.id === modelId)) setModelId(options[0]?.id ?? "");
-  }, [catalog.data, modelId]);
+    const chosen =
+      options.find((item) => item.id === preferences.data?.lastModelId) ?? options[0]!;
+    setModelId(chosen.id);
+    const preferred = preferences.data?.lastReasoningEffort;
+    setEffort(
+      preferred && chosen.efforts.includes(preferred)
+        ? preferred
+        : (chosen.efforts[0] ?? ""),
+    );
+    modelInitialised.current = true;
+  }, [catalog.data, preferences.data, preferences.isLoading]);
 
+  // After hydration, a model that disappears from the catalog or an effort it
+  // no longer offers must still leave a selectable pair. Never run this before
+  // hydration: modelId is still empty then and would clobber the saved choice.
   useEffect(() => {
-    const options =
-      catalog.data?.models.find((item) => item.id === modelId)?.efforts ?? [];
-    if (options.length > 0 && !options.includes(effort)) setEffort(options[0] ?? "");
+    if (!modelInitialised.current || !modelId) return;
+    const options = catalog.data?.models ?? [];
+    if (!options.some((item) => item.id === modelId)) {
+      setModelId(options[0]?.id ?? "");
+      return;
+    }
+    const efforts = options.find((item) => item.id === modelId)?.efforts ?? [];
+    if (efforts.length > 0 && !efforts.includes(effort)) setEffort(efforts[0] ?? "");
   }, [catalog.data, modelId, effort]);
 
   useEffect(() => {
@@ -655,7 +821,10 @@ export function EditorScreen() {
     if (!layers.some((layer) => layer.id === activeLayerId)) {
       setActiveLayerId(layers[0]?.id ?? "");
     }
-  }, [buffer, activeLayerId]);
+    if (selectedLayerId && !layers.some((layer) => layer.id === selectedLayerId)) {
+      setSelectedLayerId("");
+    }
+  }, [buffer, activeLayerId, selectedLayerId]);
 
   const onionSkin = useMemo(() => {
     if (!onion || !asset.data || !frame) return [];
@@ -663,9 +832,14 @@ export function EditorScreen() {
     const neighbors: FrameBuffer[] = [];
     for (const offset of [-1, 1]) {
       const item = asset.data.frames[index + offset];
-      if (item) {
+      if (item && item.kind !== "social") {
         neighbors.push(
-          frameToBuffer(item, asset.data.width, asset.data.height, asset.data.palette),
+          frameToBuffer(
+            item,
+            item.width ?? asset.data.width,
+            item.height ?? asset.data.height,
+            asset.data.palette,
+          ),
         );
       }
     }
@@ -700,11 +874,393 @@ export function EditorScreen() {
             id: layer.id,
             name: layer.name,
             visible: layer.visible,
+            ...(layer.text ? { text: layer.text } : {}),
             pixels: bytesToBase64(layer.pixels),
           })),
         }),
       });
     },
+  });
+
+  function cachedAsset(): AssetDto | undefined {
+    return client.getQueryData<AssetDto>(["asset", assetId]) ?? asset.data;
+  }
+
+  function socialFrameNow(id: string) {
+    return cachedAsset()?.frames.find((item) => item.id === id);
+  }
+
+  function flushSocialSave(id: string): void {
+    const timer = socialSaveTimers.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      socialSaveTimers.current.delete(id);
+    }
+    const previous = socialSaveChains.current.get(id) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const current = socialFrameNow(id);
+        if (!current?.scene) return;
+        if (running) return;
+        const sentScene = current.scene;
+        try {
+          const updated = await api<AssetDto>(
+            `/api/assets/${assetId}/frames/${id}/scene`,
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                version: current.version ?? 1,
+                scene: current.scene,
+                copyOverride: current.copyOverride ?? {},
+                status: current.status ?? "draft",
+                name: current.name,
+              }),
+            },
+          );
+          const serverFrame = updated.frames.find((item) => item.id === id);
+          if (!serverFrame) return;
+          client.setQueryData(["asset", assetId], (live: AssetDto | undefined) => {
+            if (!live) return updated;
+            return {
+              ...live,
+              copy: updated.copy ?? live.copy,
+              frames: live.frames.map((item) => {
+                if (item.id !== id) return item;
+                const sceneChanged =
+                  JSON.stringify(item.scene) !== JSON.stringify(sentScene);
+                return {
+                  ...item,
+                  version: serverFrame.version,
+                  status: serverFrame.status,
+                  updatedAt: serverFrame.updatedAt,
+                  ...(sceneChanged
+                    ? {}
+                    : {
+                        scene: serverFrame.scene,
+                        copyOverride: serverFrame.copyOverride,
+                        name: serverFrame.name,
+                      }),
+                };
+              }),
+            };
+          });
+        } catch (reason) {
+          if (reason instanceof ApiError && reason.status === 409) {
+            void asset.refetch();
+            notify({
+              title: "That frame changed elsewhere",
+              description: "Reloaded the latest version.",
+            });
+          } else {
+            notify({
+              title: "Could not save the frame",
+              description: reason instanceof Error ? reason.message : "Unknown error",
+            });
+          }
+        }
+      });
+    socialSaveChains.current.set(id, next);
+  }
+
+  function addTextLayer(): void {
+    if (!asset.data || !frame || !buffer || !frameId) return;
+    const roles = paletteRoles(asset.data.palette);
+    const width = frame.width ?? asset.data.width;
+    const height = frame.height ?? asset.data.height;
+    const spec = defaultTextSpec(width, height, roles.ink);
+    const layerId = `text-${crypto.randomUUID().slice(0, 8)}`;
+    const added = applyCommand(buffer, { type: "addLayer", id: layerId, name: "Text" });
+    if (!added.ok) {
+      setError(added.message);
+      return;
+    }
+    const pixels = renderTextSpec(spec, width, height, buffer.palette.length);
+    const stamped = applyCommand(added.buffer, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!stamped.ok) {
+      setError(stamped.message);
+      return;
+    }
+    update(frameId, pushHistory(drafts[frameId]!, stamped.buffer));
+    setActiveLayerId(layerId);
+    setSelectedLayerId(layerId);
+    setSelectedTextId(layerId);
+    setError(null);
+  }
+
+  function updateTextLayer(layerId: string, patch: Partial<TextLayerSpec>): void {
+    if (!buffer || !frameId) return;
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = { ...layer.text, ...patch };
+    const pixels = renderTextSpec(
+      spec,
+      buffer.width,
+      buffer.height,
+      buffer.palette.length,
+    );
+    edit(frameId, drafts[frameId], {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+  }
+
+  function beginTextDrag(layerId: string): void {
+    if (!frameId) return;
+    const history = draftsRef.current[frameId];
+    textDragHistory.current = history ? { frameId, history } : null;
+    setActiveLayerId(layerId);
+    setSelectedLayerId(layerId);
+    setSelectedTextId(layerId);
+  }
+
+  function moveTextLayer(layerId: string, x: number, y: number): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      x: Math.max(0, Math.min(x, bufferNow.width - 1)),
+      y: Math.max(0, Math.min(y, bufferNow.height - 1)),
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
+    // A drag is one edit: update the present while the pointer moves, and fold
+    // the whole gesture into history when the pointer is released. The ref is
+    // updated immediately so a burst of pointer moves never reads a stale box.
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function resizeTextLayer(
+    layerId: string,
+    width: number,
+    fontSize: number,
+    x?: number,
+    y?: number,
+  ): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const size = Math.max(1, Math.min(4096, Math.round(fontSize)));
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      width: Math.max(1, Math.min(Math.round(width), bufferNow.width)),
+      size,
+      x:
+        x !== undefined
+          ? Math.max(0, Math.min(Math.round(x), bufferNow.width - 1))
+          : layer.text.x,
+      y:
+        y !== undefined
+          ? Math.max(0, Math.min(Math.round(y), bufferNow.height - 1))
+          : layer.text.y,
+      height: Math.max(1, Math.round(size * 1.5)),
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function rotateTextLayer(layerId: string, rotation: number): void {
+    if (!frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    const bufferNow = current.present;
+    const layer = bufferNow.layers.find((item) => item.id === layerId);
+    if (!layer?.text) return;
+    const spec: TextLayerSpec = {
+      ...layer.text,
+      rotation: Math.round(rotation * 10) / 10,
+    };
+    const pixels = renderTextSpec(
+      spec,
+      bufferNow.width,
+      bufferNow.height,
+      bufferNow.palette.length,
+    );
+    const result = applyCommand(bufferNow, {
+      type: "replaceLayer",
+      layerId,
+      pixels,
+      text: spec,
+    });
+    if (!result.ok) return;
+    const next = { ...current, present: result.buffer };
+    draftsRef.current = { ...draftsRef.current, [frameId]: next };
+    update(frameId, next);
+  }
+
+  function endTextDrag(): void {
+    const start = textDragHistory.current;
+    textDragHistory.current = null;
+    if (!start || !frameId) return;
+    const current = draftsRef.current[frameId];
+    if (!current) return;
+    if (current.present === start.history.present) return;
+    update(frameId, {
+      past: [...start.history.past, start.history.present].slice(-100),
+      present: current.present,
+      future: [],
+    });
+  }
+
+  async function flushSocialSaves(): Promise<void> {
+    for (const id of [...socialSaveTimers.current.keys()]) flushSocialSave(id);
+    await Promise.all([...socialSaveChains.current.values()]);
+  }
+
+  const addSocialFrame = useMutation({
+    mutationFn: (presetId: string) =>
+      api<AssetDto>(`/api/assets/${assetId}/frames`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "social", presetId }),
+      }),
+    onSuccess: (data) => {
+      const previous = new Set(asset.data?.frames.map((item) => item.id) ?? []);
+      const created = data.frames.find((item) => !previous.has(item.id));
+      client.setQueryData(["asset", assetId], data);
+      if (created) {
+        setFrameId(created.id);
+        setSocialElementId(null);
+      }
+      setSocialPickerOpen(false);
+      notify({
+        title: "Frame added",
+        description: "Native size and safe areas are ready.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not add the frame",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const addCustomFrame = useMutation({
+    mutationFn: (input: { width: number; height: number }) =>
+      api<AssetDto>(`/api/assets/${assetId}/frames`, {
+        method: "POST",
+        body: JSON.stringify({ kind: "social", ...input }),
+      }),
+    onSuccess: (data) => {
+      const previous = new Set(asset.data?.frames.map((item) => item.id) ?? []);
+      const created = data.frames.find((item) => !previous.has(item.id));
+      client.setQueryData(["asset", assetId], data);
+      if (created) setFrameId(created.id);
+      setSocialPickerOpen(false);
+      notify({ title: "Frame added", description: "Custom canvas is ready." });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not add the frame",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const importFrame = useMutation({
+    mutationFn: (input: { sourceAssetId: string; sourceFrameId: string }) =>
+      api<{ asset: AssetDto; frameId: string }>(`/api/assets/${assetId}/frames/import`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data.asset);
+      setImportFrameOpen(false);
+      if (data.frameId) {
+        setFrameId(data.frameId);
+        setSocialElementId(null);
+      }
+      notify({ title: "Frame imported", description: "Palette colours were mapped." });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not import the frame",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const importPalette = useMutation({
+    mutationFn: (sourceAssetId: string) =>
+      api<AssetDto>(`/api/assets/${assetId}/palette/import`, {
+        method: "POST",
+        body: JSON.stringify({ sourceAssetId }),
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data);
+      setDrafts({});
+      setPaletteImportOpen(false);
+      notify({
+        title: "Palette imported",
+        description: "Frame pixels and scenes were remapped.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not import the palette",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
+  });
+
+  const copyBackground = useMutation({
+    mutationFn: (input: { sourceAssetId: string; sourceFrameId: string }) => {
+      if (!socialFrame) throw new Error("Open a frame first.");
+      return api<AssetDto>(`/api/assets/${assetId}/frames/${socialFrame.id}/background`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+    },
+    onSuccess: (data) => {
+      client.setQueryData(["asset", assetId], data);
+      setBackgroundImportOpen(false);
+      notify({
+        title: "Background copied",
+        description: "Colours mapped through the palette.",
+      });
+    },
+    onError: (reason: unknown) =>
+      notify({
+        title: "Could not copy the background",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      }),
   });
 
   const present = history?.present;
@@ -952,13 +1508,19 @@ export function EditorScreen() {
         queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
       })
       .then((data) => {
+        client.setQueryData(["asset", assetId], data);
         setDrafts((current) => {
           let changed = false;
           const next = { ...current };
           for (const item of data.frames) {
-            if (next[item.id]) continue;
+            if (next[item.id] || item.kind === "social") continue;
             next[item.id] = createHistory(
-              frameToBuffer(item, data.width, data.height, data.palette),
+              frameToBuffer(
+                item,
+                item.width ?? data.width,
+                item.height ?? data.height,
+                data.palette,
+              ),
             );
             changed = true;
           }
@@ -1422,6 +1984,81 @@ export function EditorScreen() {
     },
     [assetId],
   );
+  const sceneStream = useRef<EventSource | null>(null);
+  useEffect(() => {
+    sceneStream.current?.close();
+    sceneStream.current = null;
+    if (!runId) return;
+    const source = new EventSource(`/api/runs/${runId}/stream?after=0`);
+    source.onmessage = (event) => {
+      const body = JSON.parse(event.data) as { type: string; data: unknown };
+      if (body.type === "frame-deleted") {
+        const frameId = (body.data as { frameId?: unknown }).frameId;
+        if (typeof frameId !== "string") return;
+        client.setQueryData(["asset", assetId], (current: AssetDto | undefined) => {
+          if (!current) return current;
+          return {
+            ...current,
+            frames: current.frames.filter((item) => item.id !== frameId),
+          };
+        });
+        setFrameId((active) => (active === frameId ? null : active));
+        return;
+      }
+      if (body.type !== "frame-scene") return;
+      const incoming = (body.data as { artboard?: Artboard }).artboard;
+      if (!incoming) return;
+      client.setQueryData(["asset", assetId], (current: AssetDto | undefined) => {
+        if (!current) return current;
+        const existing = current.frames.find((item) => item.id === incoming.id);
+        if (existing) {
+          return {
+            ...current,
+            frames: current.frames.map((item) =>
+              item.id === incoming.id
+                ? {
+                    ...item,
+                    name: incoming.name,
+                    scene: incoming.scene,
+                    copyOverride: incoming.copyOverride,
+                    status: incoming.status,
+                    version: incoming.version,
+                    updatedAt: incoming.updatedAt,
+                  }
+                : item,
+            ),
+          };
+        }
+        return {
+          ...current,
+          frames: [
+            ...current.frames,
+            {
+              id: incoming.id,
+              name: incoming.name,
+              index: current.frames.length,
+              layers: [],
+              kind: "social",
+              width: incoming.width,
+              height: incoming.height,
+              presetId: incoming.presetId,
+              scene: incoming.scene,
+              copyOverride: incoming.copyOverride,
+              status: incoming.status,
+              version: incoming.version,
+              updatedAt: incoming.updatedAt,
+            },
+          ],
+        };
+      });
+      setFrameId((active) => active ?? incoming.id);
+    };
+    sceneStream.current = source;
+    return () => {
+      source.close();
+      if (sceneStream.current === source) sceneStream.current = null;
+    };
+  }, [assetId, client, runId]);
 
   // task-complete is the live signal. A missed event still leaves the row
   // completed, and a run id that outlives that row keeps the editor locked
@@ -1860,6 +2497,11 @@ export function EditorScreen() {
         });
       } else if (kind === "delete") {
         await api(`/api/assets/${assetId}/frames/${target}`, { method: "DELETE" });
+        const timer = socialSaveTimers.current.get(target);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          socialSaveTimers.current.delete(target);
+        }
         flush();
         setDrafts((current) => {
           const next = { ...current };
@@ -1906,7 +2548,7 @@ export function EditorScreen() {
       (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
       (input.height !== undefined && (input.height < 8 || input.height > 128))
     ) {
-      const text = "Canvas size must be a whole number from 8 to 128.";
+      const text = "Canvas size must be a whole number from 8 to 4096.";
       setError(text);
       notify({ title: "Size refused", description: text });
       return;
@@ -2006,10 +2648,12 @@ export function EditorScreen() {
       try {
         // Local edits made before the run must land before the agent starts.
         await flush();
+        await flushSocialSaves();
         await api("/api/preferences", {
           method: "PATCH",
           body: JSON.stringify({ lastModelId: modelId, lastReasoningEffort: effort }),
         });
+        const social = frame?.kind === "social";
         const started = await api<{ runId: string; kind?: "task" | "run" }>("/api/runs", {
           method: "POST",
           body: JSON.stringify({
@@ -2018,6 +2662,7 @@ export function EditorScreen() {
             prompt: text,
             modelId,
             reasoningEffort: effort,
+            ...(social ? { social: true } : {}),
             ...(staged.length > 0
               ? {
                   attachments: staged.map(({ mediaType, data }) => ({
@@ -2282,7 +2927,8 @@ export function EditorScreen() {
     [runModels, modelNames],
   );
   const ghost = preview && preview.frameId === frameId ? preview.buffer : null;
-
+  const activePalette = buffer?.palette ?? asset.data?.palette ?? [];
+  const socialSummary = summarizeChecks(socialChecks);
   const leftPanels = (
     <>
       <FramePanel
@@ -2291,6 +2937,8 @@ export function EditorScreen() {
         pixelWidth={asset.data?.width}
         pixelHeight={asset.data?.height}
         liveFrames={liveFrames}
+        asset={asset.data}
+        sprites={socialSprites}
         activeId={frameId}
         playing={playing}
         locked={running}
@@ -2354,9 +3002,11 @@ export function EditorScreen() {
           setFrameId(id);
           setSelection(null);
           setPreview(null);
+          setSocialElementId(null);
         }}
         onTogglePlay={() => setPlaying((value) => !value)}
-        onAdd={() => void frameAction("add")}
+        onAdd={() => setSocialPickerOpen(true)}
+        onImport={() => setImportFrameOpen(true)}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
         onRename={(id, name) => void frameAction("rename", name, id)}
         onDelete={(id) => void frameAction("delete", undefined, id)}
@@ -2364,9 +3014,22 @@ export function EditorScreen() {
       />
       <LayerPanel
         buffer={buffer}
+        elements={[]}
+        selectedElementId={null}
         activeId={panelLayerId}
         locked={locked}
-        onSelect={setActiveLayerId}
+        onSelect={(layerId) => {
+          if (selectedLayerId === layerId) {
+            setSelectedLayerId("");
+            setSelectedTextId(null);
+            return;
+          }
+          setActiveLayerId(layerId);
+          setSelectedLayerId(layerId);
+          const layer = buffer?.layers.find((item) => item.id === layerId);
+          setSelectedTextId(layer?.text ? layerId : null);
+          if (layer?.text) setInspectorTab("frame");
+        }}
         onToggleVisible={(layerId, visible) =>
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
@@ -2390,43 +3053,141 @@ export function EditorScreen() {
             layerId,
           })
         }
+        onSelectElement={(id) => setSocialElementId(id)}
       />
     </>
   );
 
-  // The upper panels keep their height; only the history list scrolls, so the
-  // desktop column never turns into one long scroll surface.
-  const topPanels = (
-    <>
-      <PalettePanel
-        palette={buffer?.palette ?? []}
-        color={color}
-        usedColors={usedColors}
-        onPick={setColor}
-        onAdd={(hex) => {
-          if (!buffer) return;
-          if (buffer.palette.includes(hex)) {
-            setColor(buffer.palette.indexOf(hex));
-            return;
-          }
-          void updateAsset({ palette: [...buffer.palette, hex] });
-        }}
-      />
-      <ViewPanel
-        grid={grid}
-        checker={checker}
-        onion={onion}
-        onGrid={setGrid}
-        onChecker={setChecker}
-        onOnion={setOnion}
-      />
+  const frameHeaderPanel = frame ? (
+    <FrameHeaderPanel
+      name={frame.name}
+      width={frame?.width ?? asset.data?.width ?? buffer?.width ?? 0}
+      height={frame?.height ?? asset.data?.height ?? buffer?.height ?? 0}
+      meta={`${buffer?.layers.length ?? 0} layer${(buffer?.layers.length ?? 0) === 1 ? "" : "s"}`}
+      detail={
+        socialFrame
+          ? `${socialSummary.errors} ${socialSummary.errors === 1 ? "error" : "errors"} · ${socialSummary.warnings} ${socialSummary.warnings === 1 ? "warning" : "warnings"}`
+          : undefined
+      }
+      disabled={locked}
+      onRename={(name) => void frameAction("rename", name, frame.id)}
+    />
+  ) : null;
+
+  const palettePanel = (
+    <PalettePanel
+      palette={activePalette}
+      color={color}
+      usedColors={usedColors}
+      onPick={(index) => setColor(index)}
+      onImportPalette={() => {
+        setPaletteSourceId("");
+        setPaletteImportOpen(true);
+      }}
+      onAdd={(hex) => {
+        if (activePalette.includes(hex)) {
+          setColor(activePalette.indexOf(hex));
+          return;
+        }
+        void updateAsset({ palette: [...activePalette, hex] });
+      }}
+    />
+  );
+
+  const viewPanel = socialFrame ? (
+    <ViewPanel
+      grid={grid}
+      checker={checker}
+      onion={onion}
+      onGrid={setGrid}
+      onChecker={setChecker}
+      onOnion={setOnion}
+    />
+  ) : (
+    <ViewPanel
+      grid={grid}
+      checker={checker}
+      onion={onion}
+      onGrid={setGrid}
+      onChecker={setChecker}
+      onOnion={setOnion}
+    />
+  );
+
+  const frameTabBody = (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 [&>*]:shrink-0">
+      {frameHeaderPanel}
+      {selectedTextLayer ? (
+        <TextPanel
+          layer={selectedTextLayer}
+          palette={activePalette}
+          locked={locked}
+          onChange={(patch) => updateTextLayer(selectedTextLayer.id, patch)}
+          onRemove={() => {
+            if (!frameId || !buffer) return;
+            edit(frameId, drafts[frameId], {
+              type: "removeLayer",
+              layerId: selectedTextLayer.id,
+            });
+            setSelectedTextId(null);
+          }}
+        />
+      ) : null}
+      {palettePanel}
+      {viewPanel}
       <StylePanel
         style={style}
-        width={asset.data?.width ?? 32}
-        height={asset.data?.height ?? 32}
+        width={frame?.width ?? asset.data?.width ?? 32}
+        height={frame?.height ?? asset.data?.height ?? 32}
+        readOnly={frame !== null && frame.width !== asset.data?.width}
         onResize={(width, height) => void updateAsset({ width, height })}
       />
-    </>
+    </div>
+  );
+
+  const contentTabBody = (
+    <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-1">
+      <section className="grid gap-2 border-2 border-line bg-field p-2">
+        <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">
+          Frame content
+        </p>
+        <p className="text-[12px] text-muted">
+          {buffer?.layers.length ?? 0} layers on a {buffer?.width ?? 0}×
+          {buffer?.height ?? 0} canvas. Every layer is edited in the left rail; use the
+          canvas tools to paint, or Add Text beside the brush sizes to place editable
+          pixel text.
+        </p>
+      </section>
+      <section className="grid gap-2 border-2 border-line bg-field p-2">
+        <p className="text-pixel-mono tracking-[0.14em] text-accent uppercase">Checks</p>
+        <p className="text-[12px] text-muted">No deterministic findings.</p>
+      </section>
+    </div>
+  );
+
+  const inspectorTabs = (
+    <div
+      role="tablist"
+      aria-label="Frame inspector"
+      className="grid shrink-0 grid-cols-3 border-2 border-line"
+    >
+      {(["frame", "content", "history"] as const).map((value) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={inspectorTab === value}
+          onClick={() => setInspectorTab(value)}
+          className={`px-2 py-1.5 text-pixel-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
+            inspectorTab === value
+              ? "bg-accent text-coffee"
+              : "text-muted hover:bg-raised hover:text-ink"
+          }`}
+        >
+          {value}
+        </button>
+      ))}
+    </div>
   );
 
   const historyPanel = (className?: string) => (
@@ -2443,6 +3204,17 @@ export function EditorScreen() {
       onRestore={reloadAfterRestore}
     />
   );
+
+  const historyTabBody = (
+    <div className="flex min-h-0 flex-1 flex-col">{historyPanel("min-h-0 flex-1")}</div>
+  );
+
+  const inspectorBody =
+    inspectorTab === "frame"
+      ? frameTabBody
+      : inspectorTab === "content"
+        ? contentTabBody
+        : historyTabBody;
 
   /**
    * Back to the home: the artwork itself shrinks into its thumbnail in the
@@ -2556,14 +3328,14 @@ export function EditorScreen() {
         </p>
         <span data-flight="bar-actions" className="ml-auto flex items-center gap-1.5">
           <IconButton
-            label="Frames and layers"
+            label="Frames"
             className="lg:hidden"
             onClick={() => setLeftSheet(true)}
           >
             ☰
           </IconButton>
           <IconButton
-            label="Palette, style, and history"
+            label="Inspector"
             className="lg:hidden"
             onClick={() => setRightSheet(true)}
           >
@@ -2598,22 +3370,28 @@ export function EditorScreen() {
           </aside>
 
           <div className="relative flex min-h-0 min-w-0 flex-col bg-field">
-            <div className="order-2 min-w-0 border-t-2 border-line bg-panel px-2 pt-2 pb-1.5 sm:order-1 sm:border-t-0 sm:border-b-2">
-              <Toolbar
-                tool={tool}
-                brushSize={brushSize}
-                selectionActive={selection !== null}
-                locked={locked}
-                onTool={setTool}
-                onBrush={setBrushSize}
-                onSelectionFill={() => selectionCommand("fill")}
-                onSelectionClear={() => selectionCommand("clear")}
-                onDeselect={() => setSelection(null)}
-              />
+            <div className="order-1 min-w-0 border-b-2 border-line bg-panel px-2 pt-2 pb-1.5">
+              <div className="flex min-h-9 min-w-0 items-center gap-2">
+                <div className="min-w-0 flex-1 overflow-x-auto">
+                  <Toolbar
+                    tool={tool}
+                    brushSize={brushSize}
+                    selectionActive={selection !== null}
+                    locked={locked || socialFrame !== null}
+                    onTool={setTool}
+                    onBrush={setBrushSize}
+                    onSelectionFill={() => selectionCommand("fill")}
+                    onSelectionClear={() => selectionCommand("clear")}
+                    onDeselect={() => setSelection(null)}
+                    onAddText={addTextLayer}
+                    addTextDisabled={running || !buffer}
+                  />
+                </div>
+              </div>
             </div>
             <div
               ref={viewRef}
-              className="relative order-1 min-h-0 min-w-0 flex-1 [view-transition-name:asset-flight] sm:order-2"
+              className={`relative ${socialFrame ? "order-2" : "order-1"} min-h-0 min-w-0 flex-1 [view-transition-name:asset-flight] sm:order-2`}
               data-flight-frame=""
             >
               {asset.isPending ? (
@@ -2632,6 +3410,39 @@ export function EditorScreen() {
                       Try again
                     </Button>
                   </div>
+                </Centered>
+              ) : socialFrame && socialArtboard && socialPreset && asset.data ? (
+                <div
+                  className="checkerboard h-full w-full overflow-hidden"
+                  style={{
+                    paddingBottom: consoleOpen ? "min(56vh, 32rem)" : "9rem",
+                  }}
+                >
+                  <div className="flex h-full min-h-0 w-full items-center justify-center p-6">
+                    <ArtboardCanvas
+                      artboard={socialArtboard}
+                      preset={socialPreset}
+                      asset={asset.data}
+                      sprites={socialSprites}
+                      fit={socialFit}
+                      zoom={socialZoom}
+                      panTool={tool === "pan"}
+                      checker={checker}
+                      onZoom={(direction) =>
+                        setSocialZoom((value) => stepSocialZoom(value, direction))
+                      }
+                      showZones={false}
+                      selectedId={socialElementId}
+                      onSelect={setSocialElementId}
+                      locked={running}
+                    />
+                  </div>
+                </div>
+              ) : socialFrame ? (
+                <Centered>
+                  <p className="max-w-sm text-center text-sm text-muted">
+                    Loading the project's sprite frames so this social scene can render.
+                  </p>
                 </Centered>
               ) : frames.length === 0 ? (
                 <Centered>
@@ -2670,6 +3481,24 @@ export function EditorScreen() {
                     selection={selection}
                     locked={locked || preview !== null}
                     agentCursor={frameId ? (agentCursors[frameId] ?? null) : null}
+                    overlay={socialFrame ? null : sceneOverlay}
+                    textBoxes={textBoxes}
+                    selectedTextBoxId={selectedTextId}
+                    onSelectText={(id) => {
+                      setActiveLayerId(id);
+                      setSelectedLayerId(id);
+                      setSelectedTextId(id);
+                      setInspectorTab("frame");
+                    }}
+                    onTextDragStart={beginTextDrag}
+                    onMoveText={moveTextLayer}
+                    onResizeText={resizeTextLayer}
+                    onRotateText={rotateTextLayer}
+                    onTextDragEnd={endTextDrag}
+                    onDeselect={() => {
+                      setSelectedLayerId("");
+                      setSelectedTextId(null);
+                    }}
                     onAction={onAction}
                     onCamera={(next) => {
                       setViewMode((mode) => (next.zoom !== camera.zoom ? "free" : mode));
@@ -2697,77 +3526,146 @@ export function EditorScreen() {
                   </button>
                 </div>
               ) : null}
-              <div className="absolute right-3 bottom-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1">
-                <span className="w-full text-center text-pixel-mono text-muted">
-                  {Math.round(camera.zoom * 100)}%
-                </span>
-                <IconButton
-                  label="Zoom out"
-                  size="sm"
-                  onClick={() => {
-                    setViewMode("free");
-                    setCamera((current) => ({
-                      ...current,
-                      zoom: stepZoom(current.zoom, -1),
-                    }));
-                  }}
-                >
-                  <Minus />
-                </IconButton>
-                <IconButton
-                  label="Zoom in"
-                  size="sm"
-                  onClick={() => {
-                    setViewMode("free");
-                    setCamera((current) => ({
-                      ...current,
-                      zoom: stepZoom(current.zoom, 1),
-                    }));
-                  }}
-                >
-                  <Plus />
-                </IconButton>
-                <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
-                <button
-                  type="button"
-                  aria-label="Fit to view"
-                  aria-pressed={viewMode === "fit"}
-                  title="Fit to view (Ctrl+0)"
-                  onClick={() => {
-                    fit();
-                    setViewMode("fit");
-                  }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                    viewMode === "fit"
-                      ? "border-accent text-accent"
-                      : "border-line text-muted hover:text-ink"
-                  }`}
-                >
-                  Fit
-                </button>
-                <button
-                  type="button"
-                  aria-label="Actual size"
-                  aria-pressed={viewMode === "actual"}
-                  title="Actual size (Ctrl+1)"
-                  onClick={() => {
-                    const rect = viewRef.current?.getBoundingClientRect();
-                    const doc = bufferRef.current;
-                    if (rect && doc) {
-                      setCamera(
-                        centerCamera(rect.width, rect.height, doc.width, doc.height, 1),
-                      );
-                    }
-                    setViewMode("actual");
-                  }}
-                  className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
-                    viewMode === "actual"
-                      ? "border-accent text-accent"
-                      : "border-line text-muted hover:text-ink"
-                  }`}
-                >
-                  1:1
-                </button>
+              <div className="absolute top-3 right-3 z-30 flex w-11 flex-col items-center gap-1 border-2 border-line-strong bg-panel p-1 lg:top-auto lg:bottom-3">
+                {socialFrame ? (
+                  <>
+                    <span className="w-full text-center text-pixel-mono text-muted">
+                      {Math.round(socialZoom * 100)}%
+                    </span>
+                    <IconButton
+                      label="Zoom out"
+                      size="sm"
+                      onClick={() => {
+                        setSocialZoom((value) => stepSocialZoom(value, -1));
+                      }}
+                    >
+                      <Minus />
+                    </IconButton>
+                    <IconButton
+                      label="Zoom in"
+                      size="sm"
+                      onClick={() => {
+                        setSocialZoom((value) => stepSocialZoom(value, 1));
+                      }}
+                    >
+                      <Plus />
+                    </IconButton>
+                    <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                    <button
+                      type="button"
+                      aria-label="Fit to view"
+                      aria-pressed={socialFit}
+                      title="Fit to view"
+                      onClick={() => {
+                        setSocialFit(true);
+                        setSocialZoom(1);
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        socialFit
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Actual size"
+                      aria-pressed={!socialFit}
+                      title="Actual size"
+                      onClick={() => {
+                        setSocialFit(false);
+                        setSocialZoom(1);
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        !socialFit
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      1:1
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-full text-center text-pixel-mono text-muted">
+                      {Math.round(camera.zoom * 100)}%
+                    </span>
+                    <IconButton
+                      label="Zoom out"
+                      size="sm"
+                      onClick={() => {
+                        setViewMode("free");
+                        setCamera((current) => ({
+                          ...current,
+                          zoom: stepZoom(current.zoom, -1),
+                        }));
+                      }}
+                    >
+                      <Minus />
+                    </IconButton>
+                    <IconButton
+                      label="Zoom in"
+                      size="sm"
+                      onClick={() => {
+                        setViewMode("free");
+                        setCamera((current) => ({
+                          ...current,
+                          zoom: stepZoom(current.zoom, 1),
+                        }));
+                      }}
+                    >
+                      <Plus />
+                    </IconButton>
+                    <span className="my-0.5 h-px w-7 bg-line" aria-hidden />
+                    <button
+                      type="button"
+                      aria-label="Fit to view"
+                      aria-pressed={viewMode === "fit"}
+                      title="Fit to view (Ctrl+0)"
+                      onClick={() => {
+                        fit();
+                        setViewMode("fit");
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        viewMode === "fit"
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      Fit
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Actual size"
+                      aria-pressed={viewMode === "actual"}
+                      title="Actual size (Ctrl+1)"
+                      onClick={() => {
+                        const rect = viewRef.current?.getBoundingClientRect();
+                        const doc = bufferRef.current;
+                        if (rect && doc) {
+                          setCamera(
+                            centerCamera(
+                              rect.width,
+                              rect.height,
+                              doc.width,
+                              doc.height,
+                              1,
+                            ),
+                          );
+                        }
+                        setViewMode("actual");
+                      }}
+                      className={`flex h-7 w-7 items-center justify-center border-2 text-pixel-mono transition-colors duration-150 ${
+                        viewMode === "actual"
+                          ? "border-accent text-accent"
+                          : "border-line text-muted hover:text-ink"
+                      }`}
+                    >
+                      1:1
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <div className="pointer-events-none absolute inset-x-0 top-3 bottom-3 z-20 flex flex-col items-center justify-end overflow-hidden px-3">
@@ -3013,37 +3911,96 @@ export function EditorScreen() {
             </div>
           </div>
 
-          <aside className="hidden min-h-0 min-w-0 flex-col gap-4 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
-            <div className="flex shrink-0 flex-col gap-4">{topPanels}</div>
-            {historyPanel("min-h-0 flex-1")}
+          <aside className="hidden min-h-0 min-w-0 flex-col gap-3 overflow-hidden border-l-2 border-line bg-panel p-3 lg:flex">
+            {inspectorTabs}
+            {inspectorBody}
           </aside>
         </div>
       </div>
 
       {wide ? null : (
         <>
-          <Sheet
-            open={leftSheet}
-            onOpenChange={setLeftSheet}
-            title="Frames and layers"
-            side="left"
-          >
+          <Sheet open={leftSheet} onOpenChange={setLeftSheet} title="Frames" side="left">
             <div className="grid gap-4">{leftPanels}</div>
           </Sheet>
           <Sheet
             open={rightSheet}
             onOpenChange={setRightSheet}
-            title="Palette, style, and history"
+            title="Inspector"
             side="right"
           >
             <div className="grid gap-4">
-              {topPanels}
-              {historyPanel()}
+              {inspectorTabs}
+              {inspectorBody}
             </div>
           </Sheet>
         </>
       )}
 
+      <Dialog
+        open={paletteImportOpen}
+        onOpenChange={setPaletteImportOpen}
+        title="Import a project palette"
+        description="The source palette becomes this asset's palette. Pixels and scene colours map to the nearest colour."
+        width="34rem"
+      >
+        <Field label="Source asset" htmlFor="palette-source">
+          <SelectControl
+            id="palette-source"
+            label="Source asset"
+            value={paletteSourceId}
+            options={(resources.data?.assets ?? []).map((item) => ({
+              value: item.id,
+              label: item.name,
+            }))}
+            onChange={setPaletteSourceId}
+          />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Button tone="ghost" onClick={() => setPaletteImportOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!paletteSourceId || importPalette.isPending}
+            onClick={() => importPalette.mutate(paletteSourceId)}
+          >
+            {importPalette.isPending ? "Importing" : "Import palette"}
+          </Button>
+        </div>
+      </Dialog>
+      <ImportFrameDialog
+        open={backgroundImportOpen}
+        onOpenChange={setBackgroundImportOpen}
+        mode="background"
+        assets={resources.data?.assets ?? []}
+        currentAssetId={assetId}
+        busy={copyBackground.isPending}
+        onImport={(sourceAssetId, sourceFrameId) =>
+          copyBackground.mutate({ sourceAssetId, sourceFrameId })
+        }
+      />
+      <ImportFrameDialog
+        open={importFrameOpen}
+        onOpenChange={setImportFrameOpen}
+        assets={resources.data?.assets ?? []}
+        currentAssetId={assetId}
+        busy={importFrame.isPending}
+        onImport={(sourceAssetId, sourceFrameId) =>
+          importFrame.mutate({ sourceAssetId, sourceFrameId })
+        }
+      />
+      <FormatPicker
+        open={socialPickerOpen}
+        onOpenChange={setSocialPickerOpen}
+        existing={
+          new Set(
+            frames.filter((item) => item.presetId).map((item) => item.presetId as string),
+          )
+        }
+        onPick={(presetId) => addSocialFrame.mutate(presetId)}
+        onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
+        busy={addSocialFrame.isPending || addCustomFrame.isPending}
+      />
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
@@ -3052,7 +4009,11 @@ export function EditorScreen() {
         frameId={frameId ?? ""}
         frameName={frame?.name ?? ""}
         assetName={asset.data?.name ?? ""}
-        onBeforeExport={flush}
+        social={socialFrame !== null}
+        onBeforeExport={async () => {
+          await flush();
+          await flushSocialSaves();
+        }}
       />
       <ConfirmDialog
         open={deleteOpen}

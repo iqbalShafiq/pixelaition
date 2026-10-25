@@ -13,7 +13,8 @@
     "eval": "vitest run src/evals/deterministic.test.ts",
     "eval:judge": "tsx src/evals/judge.ts",
     "eval:jev": "tsx src/evals/jev.ts",
-    "eval:jev:decisions": "tsx src/evals/jev-decisions.ts"
+    "eval:jev:decisions": "tsx src/evals/jev-decisions.ts",
+    "eval:social": "tsx src/evals/social.ts"
   },
   "dependencies": {
     "@anvia/core": "^1.14.0",
@@ -22,7 +23,8 @@
     "@pixelaition/export": "workspace:*",
     "@pixelaition/pixel": "workspace:*",
     "openai": "^7.32.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@pixelaition/artboard": "workspace:*"
   },
   "devDependencies": {
     "@pixelaition/config": "workspace:*",

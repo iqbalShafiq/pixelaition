@@ -11,11 +11,30 @@ export const styleGuideSchema = z.object({
   notes: z.string().max(2000),
 });
 
+export const textLayerSchema = z.object({
+  text: z.string().max(2000),
+  face: z.enum(["silkscreen", "pixelify", "mono"]),
+  weight: z.union([z.literal(400), z.literal(700)]),
+  size: z.number().int().min(1).max(4096),
+  color: z.number().int().nonnegative(),
+  x: z.number().int(),
+  y: z.number().int(),
+  width: z.number().int().positive(),
+  align: z.enum(["left", "center", "right"]),
+  lineHeight: z.number().int().positive().optional(),
+  maxLines: z.number().int().positive().optional(),
+  letterSpacing: z.number().int().optional(),
+  scale: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  rotation: z.number().min(-360).max(360).optional(),
+});
+
 export const layerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
   visible: z.boolean(),
   pixels: z.string(),
+  text: textLayerSchema.optional(),
 });
 
 export const frameSchema = z.object({

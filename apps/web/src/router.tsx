@@ -91,12 +91,24 @@ const editorRoute = createRoute({
   component: EditorScreen,
 });
 
+const legacyStudioRedirect = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$projectId/assets/$assetId/studio",
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/projects/$projectId/assets/$assetId",
+      params,
+    });
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   registerRoute,
   projectsRoute,
   editorRoute,
+  legacyStudioRedirect,
 ]);
 
 export const router = createRouter({ routeTree, defaultNotFoundComponent: NotFound });

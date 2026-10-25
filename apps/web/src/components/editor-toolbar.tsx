@@ -11,6 +11,7 @@ import {
   Picker,
   Select,
   Square,
+  Text,
   Transparency,
   type IconProps,
 } from "./pixel-icons.js";
@@ -88,6 +89,8 @@ export function Toolbar({
   onSelectionFill,
   onSelectionClear,
   onDeselect,
+  onAddText,
+  addTextDisabled,
 }: {
   tool: Tool;
   brushSize: number;
@@ -98,6 +101,8 @@ export function Toolbar({
   onSelectionFill: () => void;
   onSelectionClear: () => void;
   onDeselect: () => void;
+  onAddText?: () => void;
+  addTextDisabled?: boolean;
 }) {
   return (
     <div className="relative flex min-w-0 items-center gap-1 overflow-x-auto bg-panel">
@@ -128,6 +133,15 @@ export function Toolbar({
           <PixelDot level={value} />
         </IconButton>
       ))}
+
+      {onAddText ? (
+        <>
+          <Separator vertical />
+          <IconButton label="Add text" disabled={addTextDisabled} onClick={onAddText}>
+            <Text />
+          </IconButton>
+        </>
+      ) : null}
 
       {selectionActive ? (
         <>
@@ -168,6 +182,8 @@ export function ViewPanel({
   onGrid,
   onChecker,
   onOnion,
+  zones,
+  onZones,
 }: {
   grid: boolean;
   checker: boolean;
@@ -175,7 +191,26 @@ export function ViewPanel({
   onGrid: (next: boolean) => void;
   onChecker: (next: boolean) => void;
   onOnion: (next: boolean) => void;
+  /** Scene-backed frames show safe-zone visibility instead of pixel layers. */
+  zones?: boolean;
+  onZones?: (next: boolean) => void;
 }) {
+  if (onZones) {
+    return (
+      <Panel title="View">
+        <div className="flex items-center gap-1">
+          <Button
+            tone={zones ? "solid" : "ghost"}
+            className="px-2 py-1 text-pixel-label"
+            onClick={() => onZones(!zones)}
+          >
+            Safe zones
+          </Button>
+          <span className="text-pixel-mono text-muted">guides only</span>
+        </div>
+      </Panel>
+    );
+  }
   return (
     <Panel title="View">
       <div className="flex items-center gap-1">

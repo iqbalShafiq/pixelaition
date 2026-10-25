@@ -208,17 +208,17 @@ describe("per-chat meta lines", () => {
     const now = new Date(2026, 9, 17, 14, 40).getTime();
     const turn = meta({
       startedAt: new Date(2026, 9, 17, 14, 32).toISOString(),
-      modelId: "deepseek/deepseek-v4.1-flash-1017",
+      modelId: "deepseek-v4.1-flash",
       effort: "high",
       usage: { input: 4, cached: 6, output: 2, cost: 0.00165 },
     });
     expect(userMetaText(turn, now)).toBe(
-      "14:32 · deepseek/deepseek-v4.1-flash-1017 · high · $0.00165 · 12 tok",
+      "14:32 · deepseek-v4.1-flash · high · $0.00165 · 12 tok",
     );
     // The popover reads the same buckets, cached input included.
     expect(userMetaParts(turn, now)).toEqual({
       clock: "14:32",
-      model: "deepseek/deepseek-v4.1-flash-1017 · high",
+      model: "deepseek-v4.1-flash · high",
       cost: "$0.00165",
       tokens: "12 tok",
       usage: { input: 4, cached: 6, output: 2, cost: 0.00165 },

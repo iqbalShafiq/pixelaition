@@ -95,7 +95,29 @@ export async function askJev(
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) {
-    throw new Error(`The Jev decision provider returned ${response.status}.`);
+    // Provider failures (quota, model availability, policy) carry the reason
+    // in their body. Keep it with the status so the person reading the run can
+    // act instead of seeing a bare “403”.
+    const detail = await response
+      .text()
+      .then((text) => {
+        try {
+          const parsed = JSON.parse(text) as { error?: { message?: unknown } | string };
+          const message =
+            typeof parsed.error === "string"
+              ? parsed.error
+              : typeof parsed.error?.message === "string"
+                ? parsed.error.message
+                : text;
+          return message.trim().slice(0, 400);
+        } catch {
+          return text.trim().slice(0, 400);
+        }
+      })
+      .catch(() => "");
+    throw new Error(
+      `The Jev decision provider returned ${response.status}${detail.length > 0 ? `: ${detail}` : "."}`,
+    );
   }
   const parsed = answerSchema.safeParse(await response.json());
   if (!parsed.success) {

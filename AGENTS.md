@@ -29,7 +29,7 @@ pnpm db:migrate
 - One task per asset thread: a second drawing request answers `RUN_IN_PROGRESS` (guarded in the API and again in the worker before submission).
 - The editor shows per-frame task state (colour, shape, and label; whole-pixel `steps()` animation that `prefers-reduced-motion` turns off), streams the task tree into the console, feeds each frame's canvas from its own worker's stream, and anchors a message to the frame in view through the composer's frame-context toggle.
 - Steering while workers run is routed by Jev (target worker and frame, with a confidence threshold); below it the user picks the frame and the answer re-sends the message anchored. A worker's `ask_user` surfaces as a per-frame badge, a waiting counter, and the question card when its frame is open.
-- Every agentic case is read back from its Langfuse trace (`tools/trace-check.mjs`); a case without a readable trace is not a passed case.
+- Every agentic case is read back from its Langfuse trace (`tools/trace-check.mjs`; use `--run <durableRunId>` for a single compose/ask run); a case without a readable trace is not a passed case.
 - The drawing agent decides the artwork's own structure: a request that describes the subject acting means key frames, named parts (a sword, a glow, a shadow, wings, leaves) mean layers, and a real species or character means a web_search reference to look at before painting. The user never has to name frames, layers, or searches.
 - Destructive frame tools (`replace_color`, `delete_frame`, `resize_canvas`) pass a Jev request check before they run: a call that cannot touch a painted pixel runs without a request, a clearly supported one proceeds, a clearly unsupported one is refused to the model, and an unclear one pauses through the normal durable approval. The check reads the run's recorded user request; a missing key or an unreachable provider fails with a named cause.
 - Every prompt passes the Jev guardrail before a run exists, and every closing message is screened before it is stored: one request per message with hazard Nouls plus a severity Score, and the pass/review/block thresholds in code. A blocked or unscreenable message is withheld, and the reason names the hazard.
@@ -55,18 +55,53 @@ pnpm db:migrate
 - Interface type comes from the pixel scale in `apps/web/src/styles.css` (`text-pixel-hero/display/title/label/body/mono`, each face on its design grid); pixel craft comes from the utilities there (`pixel-corners`, `pixel-window`, `bevel`, `shadow-pixel-*`, `pixel-grid`, `dither-*`). Components use both instead of hand-rolling sizes, radii, or soft shadows.
 - Commit messages follow Conventional Commits.
 
+- One asset is one image document. Every frame shares the editor's rail, canvas
+  shell, view controls, composer and export; the internal `frames.kind` values
+  `sprite` and `social` are storage details, never product language. A
+  pixel-backed frame holds palette-indexed layers at the asset canvas; an
+  output-size frame holds a palette-indexed scene graph at its size preset and
+  shares the asset palette and copy deck. There is no separate Studio surface.
+- `packages/artboard` is shared by the web, API, worker and MCP; do not fork the
+  renderer or the preset registry. An output-size frame's dimensions, safe
+  zones, crops, exclusions, minimum text size and byte budget come from
+  `packages/artboard/src/presets.ts`. A check error is a real geometry failure,
+  never a warning to wave through.
+- Jev chooses the mode from the prompt: an edit on an output-size frame becomes
+  a compose run, and a question stays an ask run with the artboard read tools
+  (`list_formats`, `read_set`, `read_artboard`, `check_artboard`,
+  `list_project_sprites`) bound to the asset.
+- The layout agent is one compose run per asset, bound to the asset's
+  output-size frames and the project's pixel frames; it plans through
+  `present_artboard_plan`, writes only after approval, saves each frame with
+  optimistic versioning, and leaves a version snapshot. Boot recovery re-binds
+  the asset and artboard tools from `generation_runs.mode`.
+- An output-size frame is created with `POST /api/assets/:id/frames`
+  (`kind: social` internally), edited through its scene route, and exported at
+  native size. `GET /api/projects/:id/resources` is the project-wide read:
+  assets, pixel frames, output-size frames, palettes and dimensions. Cross-asset
+  reuse is explicit: image elements name `assetId/frameId`; frame import maps the
+  palette; palette import remaps every pixel layer and scene; background import
+  copies one frame's backdrop.
+- Output-size frames are not extra pixel canvases: their `layers` are `[]`, and
+  every pixel-only helper (`frameToBuffer`, version preview, pixel PUT) must
+  filter `kind !== "social"` or refuse it with a named cause.
+- The migration from `artboard_sets`/`artboards` is one-way and idempotent:
+  `0027_mixed_asset_frames` moves rows into `frames` and copies the latest copy
+  deck onto the asset. Legacy tables stay read-only for old URLs until removal.
+
 ## Packages
 
-| Path              | Role                                  |
-| ----------------- | ------------------------------------- |
-| `packages/pixel`  | Document, commands, camera, critique  |
-| `packages/export` | `.pxl`, PNG, JPG, SVG, ZIP            |
-| `packages/agent`  | Tools, decisions, instructions, evals |
-| `packages/db`     | Drizzle schema                        |
-| `apps/web`        | Editor                                |
-| `apps/api`        | Auth, CRUD, export, run proxy         |
-| `apps/worker`     | Durable runtime                       |
-| `apps/mcp`        | Stdio MCP                             |
+| Path                | Role                                        |
+| ------------------- | ------------------------------------------- |
+| `packages/pixel`    | Document, commands, camera, critique        |
+| `packages/artboard` | Native-size scene renderer, presets, checks |
+| `packages/export`   | `.pxl`, PNG, JPG, SVG, ZIP                  |
+| `packages/agent`    | Tools, decisions, instructions, evals       |
+| `packages/db`       | Drizzle schema                              |
+| `apps/web`          | Editor                                      |
+| `apps/api`          | Auth, CRUD, export, run proxy               |
+| `apps/worker`       | Durable runtime                             |
+| `apps/mcp`          | Stdio MCP                                   |
 
 <!-- BEGIN:turborepo-agent-rules -->
 

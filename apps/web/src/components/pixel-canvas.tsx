@@ -5,6 +5,7 @@ import {
   type Camera,
   type FrameBuffer,
 } from "@pixelaition/pixel";
+import type { PaletteImage } from "@pixelaition/artboard";
 import { useEffect, useRef, useState } from "react";
 
 export type Point = { x: number; y: number };
@@ -26,6 +27,23 @@ type ShapePreview =
   | { kind: "line"; from: Point; to: Point }
   | { kind: "rect"; from: Point; to: Point; filled: boolean };
 
+export type TextResizeDirection = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw";
+
+export type CanvasTextBox = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Font size, so a corner drag can scale the text and its box together. */
+  fontSize: number;
+  rotation: number;
+  originX: number;
+  originY: number;
+  baseWidth: number;
+  baseHeight: number;
+};
+
 type Props = {
   buffer: FrameBuffer;
   camera: Camera;
@@ -38,8 +56,27 @@ type Props = {
   ghost?: FrameBuffer | null;
   selection: Rect | null;
   locked: boolean;
+  /** Scene elements drawn over the pixel base, in document coordinates. */
+  overlay?: PaletteImage | null;
   /** The cell the agent is about to ink. Drawn with the same border as a hover. */
   agentCursor?: Point | null;
+  /** Editable text layers, in document coordinates, drawn as selection boxes. */
+  textBoxes?: CanvasTextBox[];
+  selectedTextBoxId?: string | null;
+  onSelectText?: (id: string) => void;
+  onTextDragStart?: (id: string) => void;
+  onMoveText?: (id: string, x: number, y: number) => void;
+  onResizeText?: (
+    id: string,
+    width: number,
+    fontSize: number,
+    x: number,
+    y: number,
+  ) => void;
+  onRotateText?: (id: string, rotation: number) => void;
+  onTextDragEnd?: () => void;
+  /** Clear the layer/text selection when the blank canvas or margin is hit. */
+  onDeselect?: () => void;
   onAction: (action: CanvasAction) => void;
   onCamera: (camera: Camera) => void;
 };
@@ -153,6 +190,34 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
   return canvas;
 }
 
+function overlayBitmapFor(
+  image: PaletteImage,
+  cache: WeakMap<PaletteImage, HTMLCanvasElement>,
+) {
+  const cached = cache.get(image);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const pixels = context.createImageData(image.width, image.height);
+    for (let index = 0; index < image.indices.length; index += 1) {
+      const value = image.indices[index] ?? 0;
+      if (value === 0) continue;
+      const [r, g, b, a] = rgba(image.palette[value] ?? "#000000");
+      const offset = index * 4;
+      pixels.data[offset] = r;
+      pixels.data[offset + 1] = g;
+      pixels.data[offset + 2] = b;
+      pixels.data[offset + 3] = a;
+    }
+    context.putImageData(pixels, 0, 0);
+  }
+  cache.set(image, canvas);
+  return canvas;
+}
+
 function brushPoints(point: Point, size: number): Point[] {
   if (size <= 1) return [point];
   const offsets = size === 2 ? [0, 1] : [-1, 0, 1];
@@ -199,17 +264,33 @@ function strokeCell(
   cell: number,
   point: Point,
 ) {
+  context.lineWidth = 1;
+  // A 1080px document can fit at well under one screen pixel per cell. The
+  // cell itself then has no area to stroke, so mark its centre with a small
+  // fixed-size target instead of letting the hover feedback disappear.
+  if (cell < 4) {
+    const centerX = originX + (point.x + 0.5) * cell;
+    const centerY = originY + (point.y + 0.5) * cell;
+    const radius = 4;
+    context.strokeStyle = "#0b0906";
+    context.strokeRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+    context.strokeStyle = "rgba(216, 166, 78, 0.95)";
+    context.strokeRect(
+      centerX - radius + 1,
+      centerY - radius + 1,
+      radius * 2 - 2,
+      radius * 2 - 2,
+    );
+    return;
+  }
   const x = originX + point.x * cell + 0.5;
   const y = originY + point.y * cell + 0.5;
-  const size = Math.max(0, cell - 1);
-  context.lineWidth = 1;
+  const size = Math.max(1, cell - 1);
   context.strokeStyle = "#0b0906";
   context.strokeRect(x, y, size, size);
   context.strokeStyle = "rgba(216, 166, 78, 0.95)";
   if (cell >= 8) {
     context.strokeRect(x + 1, y + 1, Math.max(0, size - 2), Math.max(0, size - 2));
-  } else {
-    context.strokeRect(x, y, size, size);
   }
 }
 
@@ -240,6 +321,16 @@ export function PixelCanvas({
   selection,
   locked,
   agentCursor = null,
+  overlay = null,
+  textBoxes = [],
+  selectedTextBoxId = null,
+  onSelectText,
+  onTextDragStart,
+  onMoveText,
+  onResizeText,
+  onRotateText,
+  onTextDragEnd,
+  onDeselect,
   onAction,
   onCamera,
 }: Props) {
@@ -252,6 +343,30 @@ export function PixelCanvas({
   const preview = useRef<ShapePreview | null>(null);
   const marquee = useRef<Rect | null>(null);
   const hover = useRef<Point | null>(null);
+  const hoverText = useRef<string | null>(null);
+  const textDrag = useRef<{
+    id: string;
+    start: Point;
+    origin: { x: number; y: number };
+  } | null>(null);
+  const textRotate = useRef<{
+    id: string;
+    startAngle: number;
+    startRotation: number;
+    center: Point;
+  } | null>(null);
+  const textResize = useRef<{
+    id: string;
+    direction: TextResizeDirection;
+    start: Point;
+    center: Point;
+    rotation: number;
+    originX: number;
+    originY: number;
+    width: number;
+    height: number;
+    fontSize: number;
+  } | null>(null);
   // Pan is a ref because the gesture must not re-render; the cursor still has
   // to switch to grabbing, so the fact of panning is mirrored into state.
   const [panning, setPanning] = useState(false);
@@ -259,10 +374,49 @@ export function PixelCanvas({
   const field = useRef(new Map<number, CanvasPattern | null>());
   // One 1:1 bitmap per buffer object, rebuilt only when the pixels change.
   const bitmaps = useRef(new WeakMap<FrameBuffer, HTMLCanvasElement>());
+  const overlayBitmaps = useRef(new WeakMap<PaletteImage, HTMLCanvasElement>());
 
   // Handlers read the latest props without re-binding listeners on every render.
-  const latest = useRef({ camera, buffer, tool, brushSize, onAction, onCamera, ghost });
-  latest.current = { camera, buffer, tool, brushSize, onAction, onCamera, ghost };
+  const latest = useRef({
+    camera,
+    buffer,
+    tool,
+    brushSize,
+    onAction,
+    onCamera,
+    ghost,
+    overlay,
+    locked,
+    textBoxes,
+    selectedTextBoxId,
+    onSelectText,
+    onTextDragStart,
+    onMoveText,
+    onResizeText,
+    onRotateText,
+    onTextDragEnd,
+    onDeselect,
+  });
+  latest.current = {
+    camera,
+    buffer,
+    tool,
+    brushSize,
+    onAction,
+    onCamera,
+    ghost,
+    overlay,
+    locked,
+    textBoxes,
+    selectedTextBoxId,
+    onSelectText,
+    onTextDragStart,
+    onMoveText,
+    onResizeText,
+    onRotateText,
+    onTextDragEnd,
+    onDeselect,
+  };
 
   useEffect(() => {
     function down(event: KeyboardEvent) {
@@ -386,6 +540,17 @@ export function PixelCanvas({
         );
       }
 
+      const sceneOverlay = latest.current.overlay;
+      if (sceneOverlay) {
+        context.drawImage(
+          overlayBitmapFor(sceneOverlay, overlayBitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+      }
+
       // The writable area is the document: an accent border marks exactly the
       // region the tools and the agent may touch.
       const edge = 2;
@@ -395,26 +560,76 @@ export function PixelCanvas({
       context.fillRect(originX - edge, originY, edge, docHeight);
       context.fillRect(originX + docWidth, originY, edge, docHeight);
 
-      // The grid only appears once a cell is wide enough that a boundary line
-      // adds information. Below that it eats a pixel out of every cell, so an
-      // 8px cell becomes 1px line plus 7px body, and over a two-tone checker the
-      // line blends two different colours — three tones per cell, which reads as
-      // texture rather than as a pixel grid. The checker already shows the grid
-      // at those zooms.
-      if (grid && cell >= 12) {
-        context.strokeStyle = "rgba(241, 239, 233, 0.16)";
+      // Below one screen pixel per document cell a per-pixel grid turns into a
+      // flat wash (or vanishes), which is why a native 1080px frame appeared to
+      // ignore View Grid. Draw the finest power-of-two grid that still leaves
+      // readable cells, so the same toggle shows a square grid at every zoom.
+      if (grid) {
+        let step = 1;
+        while (step * cell < 8 && step < 4096) step *= 2;
+        context.strokeStyle = "rgba(241, 239, 233, 0.18)";
         context.beginPath();
-        for (let x = 1; x < doc.width; x += 1) {
+        for (let x = step; x < doc.width; x += step) {
           const px = Math.round(originX + x * cell) + 0.5;
           context.moveTo(px, originY);
           context.lineTo(px, originY + docHeight);
         }
-        for (let y = 1; y < doc.height; y += 1) {
+        for (let y = step; y < doc.height; y += step) {
           const py = Math.round(originY + y * cell) + 0.5;
           context.moveTo(originX, py);
           context.lineTo(originX + docWidth, py);
         }
         context.stroke();
+      }
+
+      // Editable text boxes sit above the pixel document. The border is drawn
+      // in the text's own rotated frame, so rotating the glyphs rotates the
+      // selection and its handles with them.
+      for (const box of latest.current.textBoxes) {
+        const selected = box.id === latest.current.selectedTextBoxId;
+        const hovered = box.id === hoverText.current;
+        if (!selected && !hovered) continue;
+        const centerX = originX + (box.x + box.width / 2) * cell;
+        const centerY = originY + (box.y + box.height / 2) * cell;
+        const radians = (box.rotation * Math.PI) / 180;
+        const width = Math.max(1, box.baseWidth * cell);
+        const height = Math.max(1, box.baseHeight * cell);
+        context.save();
+        context.translate(centerX, centerY);
+        context.rotate(radians);
+        context.lineWidth = selected ? 2 : 1;
+        context.strokeStyle = selected ? "#d8a64e" : "rgba(216, 166, 78, 0.6)";
+        context.setLineDash(selected ? [] : [4, 3]);
+        context.strokeRect(-width / 2, -height / 2, width, height);
+        if (selected) {
+          context.setLineDash([]);
+          context.fillStyle = "#d8a64e";
+          const halfW = width / 2;
+          const halfH = height / 2;
+          const handle = 6;
+          for (const [hx, hy] of [
+            [-halfW, -halfH],
+            [0, -halfH],
+            [halfW, -halfH],
+            [halfW, 0],
+            [halfW, halfH],
+            [0, halfH],
+            [-halfW, halfH],
+            [-halfW, 0],
+          ] as const) {
+            context.fillRect(hx - handle / 2, hy - handle / 2, handle, handle);
+          }
+          const rotateY = -halfH - 14;
+          context.strokeStyle = "rgba(216, 166, 78, 0.8)";
+          context.beginPath();
+          context.moveTo(0, -halfH);
+          context.lineTo(0, rotateY);
+          context.stroke();
+          context.beginPath();
+          context.arc(0, rotateY, 4, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.restore();
       }
 
       const shape = preview.current;
@@ -461,7 +676,90 @@ export function PixelCanvas({
 
     repaint.current = draw;
     draw();
-  }, [buffer, camera, grid, checker, onionSkin, ghost, selection, locked, agentCursor]);
+  }, [
+    buffer,
+    camera,
+    grid,
+    checker,
+    onionSkin,
+    ghost,
+    selection,
+    locked,
+    agentCursor,
+    overlay,
+    selectedTextBoxId,
+    textBoxes,
+  ]);
+
+  function textCenter(box: CanvasTextBox): Point {
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+
+  function textLocal(box: CanvasTextBox, point: Point): Point {
+    const center = textCenter(box);
+    const radians = (box.rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    return { x: dx * cos + dy * sin, y: -dx * sin + dy * cos };
+  }
+
+  function textHandleWorld(box: CanvasTextBox, localX: number, localY: number): Point {
+    const center = textCenter(box);
+    const radians = (box.rotation * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return {
+      x: center.x + localX * cos - localY * sin,
+      y: center.y + localX * sin + localY * cos,
+    };
+  }
+
+  function textAt(point: Point) {
+    return latest.current.textBoxes.find((box) => {
+      const local = textLocal(box, point);
+      return (
+        Math.abs(local.x) <= box.baseWidth / 2 && Math.abs(local.y) <= box.baseHeight / 2
+      );
+    });
+  }
+
+  function textRotateHandle(box: CanvasTextBox): Point {
+    const zoom = latest.current.camera.zoom;
+    return textHandleWorld(box, 0, -box.baseHeight / 2 - 14 / zoom);
+  }
+
+  function nearTextRotateHandle(box: CanvasTextBox, point: Point): boolean {
+    const handle = textRotateHandle(box);
+    const zoom = latest.current.camera.zoom;
+    const pad = 10 / zoom;
+    return Math.abs(point.x - handle.x) <= pad && Math.abs(point.y - handle.y) <= pad;
+  }
+
+  function textResizeDirection(
+    box: CanvasTextBox,
+    point: Point,
+  ): TextResizeDirection | null {
+    const local = textLocal(box, point);
+    const pad = 10 / latest.current.camera.zoom;
+    const hw = box.baseWidth / 2;
+    const hh = box.baseHeight / 2;
+    const nearLeft = Math.abs(local.x + hw) <= pad;
+    const nearRight = Math.abs(local.x - hw) <= pad;
+    const nearTop = Math.abs(local.y + hh) <= pad;
+    const nearBottom = Math.abs(local.y - hh) <= pad;
+    if (Math.abs(local.x) > hw + pad || Math.abs(local.y) > hh + pad) return null;
+    if (nearTop && nearLeft) return "nw";
+    if (nearTop && nearRight) return "ne";
+    if (nearBottom && nearLeft) return "sw";
+    if (nearBottom && nearRight) return "se";
+    if (nearTop) return "n";
+    if (nearBottom) return "s";
+    if (nearLeft) return "w";
+    if (nearRight) return "e";
+    return null;
+  }
 
   function localPoint(event: React.PointerEvent<HTMLCanvasElement>): Point {
     const cam = latest.current.camera;
@@ -483,6 +781,9 @@ export function PixelCanvas({
     preview.current = null;
     stroke.current = null;
     pan.current = null;
+    textDrag.current = null;
+    textResize.current = null;
+    textRotate.current = null;
     setPanning(false);
   }
 
@@ -514,6 +815,73 @@ export function PixelCanvas({
       className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;
+        if (event.button === 0 && !space.current) {
+          const point = localPoint(event);
+          // The rotate handle deliberately floats outside the text box, so it
+          // must be hit-tested before the box itself.
+          const rotateBox = latest.current.textBoxes.find((box) =>
+            nearTextRotateHandle(box, point),
+          );
+          if (rotateBox && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            const center = textCenter(rotateBox);
+            textRotate.current = {
+              id: rotateBox.id,
+              startAngle: Math.atan2(point.y - center.y, point.x - center.x),
+              startRotation: rotateBox.rotation,
+              center,
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(rotateBox.id);
+            latest.current.onSelectText?.(rotateBox.id);
+            repaint.current();
+            return;
+          }
+          const resizeBox = latest.current.textBoxes
+            .map((box) => ({ box, direction: textResizeDirection(box, point) }))
+            .find((entry) => entry.direction !== null);
+          if (resizeBox?.direction && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            textResize.current = {
+              id: resizeBox.box.id,
+              direction: resizeBox.direction,
+              start: point,
+              center: textCenter(resizeBox.box),
+              rotation: resizeBox.box.rotation,
+              originX: resizeBox.box.originX,
+              originY: resizeBox.box.originY,
+              width: resizeBox.box.baseWidth,
+              height: resizeBox.box.baseHeight,
+              fontSize: resizeBox.box.fontSize,
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(resizeBox.box.id);
+            latest.current.onSelectText?.(resizeBox.box.id);
+            repaint.current();
+            return;
+          }
+          const text = textAt(point);
+          if (text && !latest.current.locked) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            textDrag.current = {
+              id: text.id,
+              start: point,
+              origin: { x: text.originX, y: text.originY },
+            };
+            hover.current = null;
+            latest.current.onTextDragStart?.(text.id);
+            latest.current.onSelectText?.(text.id);
+            repaint.current();
+            return;
+          }
+        }
+        if (
+          event.button === 0 &&
+          (active === "select" || active === "pan") &&
+          !space.current
+        ) {
+          latest.current.onDeselect?.();
+        }
         if (event.button === 1 || active === "pan" || space.current) {
           pan.current = {
             x: event.clientX,
@@ -569,6 +937,102 @@ export function PixelCanvas({
           return;
         }
         const point = localPoint(event);
+        if (textRotate.current) {
+          const rotate = textRotate.current;
+          const angle = Math.atan2(point.y - rotate.center.y, point.x - rotate.center.x);
+          const degrees =
+            rotate.startRotation + ((angle - rotate.startAngle) * 180) / Math.PI;
+          latest.current.onRotateText?.(rotate.id, degrees);
+          return;
+        }
+        if (textResize.current) {
+          const resize = textResize.current;
+          const radians = (resize.rotation * Math.PI) / 180;
+          const cos = Math.cos(radians);
+          const sin = Math.sin(radians);
+          const startDx = resize.start.x - resize.center.x;
+          const startDy = resize.start.y - resize.center.y;
+          const dxPoint = point.x - resize.center.x;
+          const dyPoint = point.y - resize.center.y;
+          const startLocal = {
+            x: startDx * cos + startDy * sin,
+            y: -startDx * sin + startDy * cos,
+          };
+          const currentLocal = {
+            x: dxPoint * cos + dyPoint * sin,
+            y: -dxPoint * sin + dyPoint * cos,
+          };
+          const dx = currentLocal.x - startLocal.x;
+          const dy = currentLocal.y - startLocal.y;
+          const direction = resize.direction;
+          let width = resize.width;
+          let height = resize.height;
+          if (direction.includes("e")) width += dx;
+          if (direction.includes("w")) width -= dx;
+          if (direction.includes("s")) height += dy;
+          if (direction.includes("n")) height -= dy;
+          width = Math.max(1, width);
+          height = Math.max(1, height);
+          const fontSize =
+            direction === "n" ||
+            direction === "s" ||
+            direction === "ne" ||
+            direction === "nw" ||
+            direction === "se" ||
+            direction === "sw"
+              ? Math.max(1, Math.round(resize.fontSize * (height / resize.height)))
+              : resize.fontSize;
+          let x = resize.originX;
+          let y = resize.originY;
+          if (direction.includes("w")) {
+            x += dx * cos;
+            y += dx * sin;
+          }
+          if (direction.includes("n")) {
+            x -= dy * sin;
+            y += dy * cos;
+          }
+          latest.current.onResizeText?.(
+            resize.id,
+            Math.round(width),
+            fontSize,
+            Math.round(x),
+            Math.round(y),
+          );
+          return;
+        }
+        if (textDrag.current) {
+          const dragText = textDrag.current;
+          latest.current.onMoveText?.(
+            dragText.id,
+            dragText.origin.x + point.x - dragText.start.x,
+            dragText.origin.y + point.y - dragText.start.y,
+          );
+          return;
+        }
+        const hoveredText = textAt(point);
+        hoverText.current = hoveredText?.id ?? null;
+        const hoverDirection = hoveredText
+          ? textResizeDirection(hoveredText, point)
+          : null;
+        event.currentTarget.style.cursor = hoveredText
+          ? nearTextRotateHandle(hoveredText, point)
+            ? "grab"
+            : hoverDirection === "n" || hoverDirection === "s"
+              ? "ns-resize"
+              : hoverDirection === "e" || hoverDirection === "w"
+                ? "ew-resize"
+                : hoverDirection === "ne" || hoverDirection === "sw"
+                  ? "nesw-resize"
+                  : hoverDirection === "nw" || hoverDirection === "se"
+                    ? "nwse-resize"
+                    : "move"
+          : "";
+        if (hoveredText) {
+          hover.current = null;
+          repaint.current();
+          return;
+        }
         const start = drag.current;
         if (start) {
           start.to = point;
@@ -611,6 +1075,36 @@ export function PixelCanvas({
       }}
       onPointerUp={(event) => {
         const { onAction: emit } = latest.current;
+        if (textRotate.current) {
+          textRotate.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
+        if (textResize.current) {
+          textResize.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
+        if (textDrag.current) {
+          textDrag.current = null;
+          latest.current.onTextDragEnd?.();
+          resetGesture();
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+          repaint.current();
+          return;
+        }
         const start = drag.current;
         if (start) {
           if (marquee.current) {
@@ -643,6 +1137,7 @@ export function PixelCanvas({
       }}
       onPointerLeave={() => {
         hover.current = null;
+        hoverText.current = null;
         repaint.current();
       }}
     />

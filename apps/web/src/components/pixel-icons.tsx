@@ -173,6 +173,22 @@ function glyph(rows: readonly string[]) {
   };
 }
 
+/** A blocky capital T for the common insert toolbar. */
+export const Text = glyph([
+  "............",
+  "XXXXXXXXXXXX",
+  "XXXXXXXXXXXX",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "....XXXX....",
+  "............",
+]);
+
 /** Paint bucket: handle, tapering body, and a drip below. */
 export const Fill = glyph([
   "............",

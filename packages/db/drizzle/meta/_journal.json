@@ -176,6 +176,48 @@
       "when": 1792238779000,
       "tag": "0024_model_display_name",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792500000000,
+      "tag": "0025_social_artboards",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792500100000,
+      "tag": "0026_minimax_eval_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792500200000,
+      "tag": "0027_mixed_asset_frames",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792500300000,
+      "tag": "0028_run_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792500400000,
+      "tag": "0029_retire_minimax_free",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792500500000,
+      "tag": "0030_opencode_go_agent_models",
+      "breakpoints": true
     }
   ]
 }
