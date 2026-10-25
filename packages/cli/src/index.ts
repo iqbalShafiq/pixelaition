@@ -15,6 +15,7 @@ import {
   type Slice,
 } from "@pixelaition/pixel";
 import {
+  applyTilemap,
   atlasForEngine,
   type AtlasPreset,
   frameToJpg,
@@ -65,6 +66,10 @@ export async function runCli(argv: string[]): Promise<void> {
     await applyScript(rest);
     return;
   }
+  if (command === "apply-tilemap") {
+    await applyTilemapFile(rest);
+    return;
+  }
   throw new Error(`Unknown command "${command}". Try --help.`);
 }
 
@@ -72,11 +77,12 @@ function printHelp(): void {
   console.log(`pixelaition
 
   pixelaition inspect <project.pxl>
-  pixelaition export <project.pxl> --out <path> [--format png|jpg|gif|apng|sheet|png-sequence] [--asset name] [--scale n]
+  pixelaition export <project.pxl> --out <path> [--format png|jpg|gif|apng|webp|sheet|png-sequence|aseprite-json|tileset|tilemap-json|ase] [--asset name] [--scale n]
   pixelaition import <image.png> --out <project.pxl> [--name name] [--colors 32]
   pixelaition import-aseprite <sheet.png> <atlas.json> --out <project.pxl> [--name name] [--colors 32]
   pixelaition import-ase <sprite.ase> --out <project.pxl> [--name name]
   pixelaition apply-script <project.pxl> <script.json> --out <project.pxl>
+  pixelaition apply-tilemap <project.pxl> <tilemap.json> --out <project.pxl> [--asset name] [--frame name]
 
 Formats use the editor's palette, renderer, and atlas contract.`);
 }
@@ -516,6 +522,50 @@ async function applyScript(args: string[]): Promise<void> {
   const nextAsset: Asset = {
     ...asset,
     palette: [...buffer.palette],
+    frames: asset.frames.map((item) => (item.id === frame.id ? nextFrame : item)),
+  };
+  await writeFile(
+    out,
+    `${JSON.stringify(
+      {
+        ...project,
+        assets: project.assets.map((item) => (item.id === asset.id ? nextAsset : item)),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+async function applyTilemapFile(args: string[]): Promise<void> {
+  const input = args[0];
+  const mapPath = args[1];
+  const out = option(args, "out");
+  if (!input || !mapPath || !out) {
+    throw new Error("apply-tilemap needs a project, a tilemap, and --out.");
+  }
+  const project = await readProject(input);
+  const asset = selectedAsset(project, option(args, "asset"));
+  const requestedFrame = option(args, "frame");
+  const frame = requestedFrame
+    ? asset.frames.find(
+        (item) => item.name === requestedFrame || item.id === requestedFrame,
+      )
+    : asset.frames[0];
+  if (!frame) throw new Error(`No frame named "${requestedFrame ?? "the first frame"}".`);
+  const tilemap = JSON.parse(await readFile(mapPath, "utf8")) as never;
+  const next = applyTilemap(
+    frameToBuffer(frame, asset.width, asset.height, asset.palette),
+    tilemap,
+  );
+  const nextFrame = bufferToFrame(next, {
+    id: frame.id,
+    name: frame.name,
+    index: frame.index,
+    ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+  });
+  const nextAsset: Asset = {
+    ...asset,
     frames: asset.frames.map((item) => (item.id === frame.id ? nextFrame : item)),
   };
   await writeFile(

@@ -211,6 +211,9 @@ pnpm cli export hero.pxl --format gif --out hero.gif
 pnpm cli export hero.pxl --format sheet --out hero-sheet.zip
 pnpm cli import-aseprite sheet.png sheet.json --out hero.pxl
 pnpm cli import-ase hero.ase --out hero.pxl
+pnpm cli apply-script hero.pxl commands.json --out hero.pxl
+pnpm cli export hero.pxl --format tilemap-json --out hero-tilemap.json
+pnpm cli apply-tilemap hero.pxl hero-tilemap.json --out hero.pxl
 ```
 
 ## MCP
