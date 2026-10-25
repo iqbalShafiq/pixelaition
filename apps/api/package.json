@@ -19,6 +19,7 @@
     "@pixelaition/export": "workspace:*",
     "@pixelaition/pixel": "workspace:*",
     "better-auth": "^1.7.7",
+    "compression": "^1.8.2",
     "drizzle-orm": "^0.45.4",
     "express": "^5.2.1",
     "sharp": "^0.35.5",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@pixelaition/config": "workspace:*",
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.5",
     "@types/supertest": "^6.0.3",

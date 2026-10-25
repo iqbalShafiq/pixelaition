@@ -65,6 +65,7 @@ import { toNodeHandler } from "better-auth/node";
 import { artboards } from "@pixelaition/db";
 import { and, asc, count, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import compression from "compression";
 import express, { type NextFunction, type Request, type Response } from "express";
 import sharp from "sharp";
 import { z } from "zod";
@@ -603,6 +604,9 @@ async function startRunViaWorker(
 
 export function createApp() {
   const app = express();
+  // Frame layers and undo snapshots are large, repetitive base64; gzip cuts
+  // the editor's asset payload without changing the JSON contract.
+  app.use(compression());
   app.use("/api/auth", toNodeHandler(auth));
   // Reference images arrive as base64 with the generate request.
   app.use(express.json({ limit: "12mb" }));
