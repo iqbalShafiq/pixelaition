@@ -375,3 +375,41 @@ Do not set targets before the first instrumented week; the point is to see which
 - Import: `apps/web/src/components/import-frame-dialog.tsx` (project frames only) and `apps/api/src/app.ts` (`POST /api/assets/:id/frames/import`; no raster upload route).
 - Palette UI: `apps/web/src/components/editor-panels.tsx` (add/import; Sweetie 16 helper; no delete/reorder/lock/presets).
 - README claims and current docs: `README.md` (editor tools, export formats, MCP), `AGENTS.md` (product boundaries and architecture).
+
+## 12. Implementation status
+
+The P0/P1 slices landed on `feat/editor-capability-expansion` in the commits
+`62bb807`…`f52a1f1` (see `git log`). One indexed document and one renderer stay
+the rule: the canvas, PNG/JPG, GIF/APNG/WebP, SVG and sheet export all composite
+through `renderFrameDocument`, and every mutation still enters through
+`applyCommand`.
+
+Implemented:
+
+- Raster/sheet import with quantisation, dithering, palette mapping and a
+  locked palette (`apps/web/src/components/import-image-dialog.tsx`,
+  `apps/api/src/import.ts`, `apps/api/src/palette.ts`).
+- Ellipse, selection copy/cut/paste/flip/rotate/nudge, symmetry, 1–8 brushes,
+  background removal and a reference overlay.
+- Layer opacity, blend modes, lock, duplicate, groups and shared group opacity
+  (`packages/pixel/src/commands.ts`, `packages/pixel/src/render.ts`).
+- Frame delays, tags, timeline panel, real-duration playback, and agent
+  timeline/slice/tiling tools.
+- GIF, APNG, WebP, PNG sequence, packed/grid sprite sheets, engine atlas presets
+  (Unity, Godot, Phaser), Aseprite JSON export/import, slices with nine-slice
+  borders and pivots.
+- A `.pxl` CLI for import, inspect and export.
+- Integration tests for palette, timing, tags, slices and every export, plus
+  Playwright coverage for import, drawing/selection, background removal, GIF
+  download and the palette lock.
+
+Still open from the matrix above:
+
+- Binary `.ase`/`.aseprite` import/export (only Aseprite's JSON spritesheet
+  dialect is covered).
+- Tilemap/tileset authoring (the tile preview and seam report are in, the map
+  format and editor are not).
+- Custom brush images, brush dynamics, RGB/grayscale color modes and scripting.
+- AI variants, linked/shared layers, a style lock and auto-tiling remain design
+  work; selection-scoped prompts, AI animation through frames/tags, and
+  reference overlays are in place.
