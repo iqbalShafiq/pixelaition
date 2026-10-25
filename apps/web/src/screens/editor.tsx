@@ -832,6 +832,17 @@ export function EditorScreen() {
     [asset.data],
   );
 
+  // Linked frames are the only siblings an edit must reach immediately. Fetch
+  // them with the first paint instead of waiting for the first stroke.
+  useEffect(() => {
+    if (!asset.data) return;
+    for (const item of asset.data.frames) {
+      if (item.linkIds && item.linkIds.length > 0 && !drafts[item.id]) {
+        loadFrameDetail(item.id);
+      }
+    }
+  }, [asset.data, drafts, loadFrameDetail]);
+
   useEffect(() => {
     if (!asset.data || !frameId) return;
     const item = asset.data.frames.find((entry) => entry.id === frameId);
