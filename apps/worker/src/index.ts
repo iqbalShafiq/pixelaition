@@ -1572,8 +1572,6 @@ function readDurableDraw(durableId: string) {
 }
 
 const assetDraw = createAssetDrawTask(buildTaskDeps(db, readDurableDraw));
-/** The runtime once it is open; tools that act on their own run wait for it here. */
-let runtimeReady: DurableRuntime | undefined;
 const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open({
   store: new SqliteDurableStore(durablePath),
   ...(agents.length > 0
@@ -1600,7 +1598,6 @@ const runtimePromise: Promise<DurableRuntime | undefined> = DurableRuntime.open(
   limits: { maxPayloadBytes: 8 * 1024 * 1024 },
 })
   .then(async (runtime) => {
-    runtimeReady = runtime;
     // Bindings and follow loops come first: resume() starts pending runs
     // immediately, and a run that executes a tool before its binding exists
     // would see an unbound run (every frame "unapproved") and ask the human
@@ -3228,14 +3225,6 @@ function bindAssetRun(options: {
         .update(generationRuns)
         .set({ frameId })
         .where(eq(generationRuns.id, publicRunId));
-      if (runtimeReady !== undefined) {
-        await finishEarlyIfSaved(
-          runtimeReady,
-          durableRunId,
-          publicRunId,
-          options.ownedFrameIds ?? [],
-        );
-      }
       summarizer?.queue("frame", frameId);
     },
   });
@@ -3884,36 +3873,6 @@ function bindSocialAssetRunFor(options: {
  * stopped by its budget left the first frame on a run row that pointed at the
  * second, and the editor kept showing that frame as an unsaved draft.
  */
-async function finishEarlyIfSaved(
-  runtime: DurableRuntime,
-  durableRunId: string,
-  publicRunId: string,
-  ownedFrameIds: string[],
-): Promise<void> {
-  const painted = [...(getRun(durableRunId)?.touchedFrames ?? [])];
-  if (ownedFrameIds.length === 0 || painted.length === 0) return;
-  if (!ownedFrameIds.every((frameId) => painted.includes(frameId))) return;
-  const handle = await runtime.getRun(durableRunId);
-  const status = await handle.status();
-  if (["completed", "failed", "cancelled"].includes(status.status)) return;
-  await handle.cancel();
-  const text = "Every owned frame was saved.";
-  publish(publicRunId, "status", {
-    status: "completed",
-    outcome: { text },
-  });
-  const stored = consoleEvents(publicRunId, interactionsFor(publicRunId));
-  await db
-    .update(generationRuns)
-    .set({
-      status: "succeeded",
-      finishedAt: new Date(),
-      events: stored,
-      answer: text,
-      usage: { ...usageFor(durableRunId) },
-    })
-    .where(and(eq(generationRuns.id, publicRunId), eq(generationRuns.status, "running")));
-}
 
 /**
  * The project a task runs in: every asset is readable, but a sibling asset is
