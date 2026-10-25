@@ -30,6 +30,7 @@ const formats = [
   "png-sequence",
   "aseprite-json",
   "tileset",
+  "tilemap-json",
   "ase",
 ] as const;
 type Format = (typeof formats)[number];
@@ -86,6 +87,7 @@ export function ExportDialog({
     format === "png-sequence" ||
     format === "aseprite-json" ||
     format === "tileset" ||
+    format === "tilemap-json" ||
     format === "ase";
   const socialFormats = formats.filter((item) => item === "png" || item === "jpg");
   const available = social

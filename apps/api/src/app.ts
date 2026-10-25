@@ -23,6 +23,7 @@ import {
   framesToGif,
   atlasForEngine,
   atlasPresets,
+  frameToTilemapJson,
   frameToTileset,
   framesToAse,
   framesToSheet,
@@ -3799,6 +3800,7 @@ export function createApp() {
           "png-sequence",
           "aseprite-json",
           "tileset",
+          "tilemap-json",
           "ase",
         ]),
         scale: scaleSchema.default(1),
@@ -3930,6 +3932,28 @@ export function createApp() {
         res.setHeader("content-type", "image/x-aseprite");
         res.setHeader("content-disposition", `attachment; filename="${slugName}.ase"`);
         return res.send(Buffer.from(bytes));
+      }
+      if (body.format === "tilemap-json") {
+        const first = entries[0];
+        if (!first) {
+          return fail(res, 422, "NOTHING_TO_EXPORT", "There is no frame to tile.");
+        }
+        try {
+          const json = frameToTilemapJson(first.buffer, (asset.slices ?? []) as never);
+          res.setHeader("content-type", "application/json");
+          res.setHeader(
+            "content-disposition",
+            `attachment; filename="${slugName}-tilemap.json"`,
+          );
+          return res.send(`${JSON.stringify(json, null, 2)}\n`);
+        } catch (reason) {
+          return fail(
+            res,
+            422,
+            "TILEMAP_FAILED",
+            reason instanceof Error ? reason.message : "The tilemap could not be built.",
+          );
+        }
       }
       if (body.format === "tileset") {
         const first = entries[0];

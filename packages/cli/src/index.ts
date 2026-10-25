@@ -19,6 +19,7 @@ import {
   type AtlasPreset,
   frameToJpg,
   frameToPng,
+  frameToTilemapJson,
   frameToTileset,
   framesToApng,
   framesToAse,
@@ -186,6 +187,19 @@ async function exportProject(args: string[]): Promise<void> {
         tags,
         (asset.slices ?? []) as never,
       ),
+    );
+    return;
+  }
+  if (format === "tilemap-json") {
+    const first = frames[0];
+    if (!first) throw new Error("That asset has no frames.");
+    await writeFile(
+      out,
+      `${JSON.stringify(
+        frameToTilemapJson(first.buffer, (asset.slices ?? []) as never),
+        null,
+        2,
+      )}\n`,
     );
     return;
   }
