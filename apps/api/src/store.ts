@@ -27,6 +27,7 @@ import {
   emptyPixels,
   encodePixels,
   frameToBuffer,
+  paletteIndexMap,
   writeFrame,
   type Asset,
   type Frame,
@@ -130,7 +131,10 @@ export async function createAssetRecord(
   return asset;
 }
 
-type StoredFrame = typeof frames.$inferSelect & { layers: Frame["layers"] };
+type StoredFrame = typeof frames.$inferSelect & {
+  layers: Frame["layers"];
+  groups: NonNullable<Frame["groups"]>;
+};
 
 export async function getAssetRecord(db: Database, userId: string, assetId: string) {
   const [row] = await db
@@ -270,6 +274,7 @@ export async function saveFrame(
   assetId: string,
   frameId: string,
   layers: Frame["layers"],
+  groups?: Frame["groups"],
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const asset = await getAssetRecord(db, userId, assetId);
   if (!asset) return { asset: undefined };
@@ -306,7 +311,7 @@ export async function saveFrame(
   }
   await db
     .update(frames)
-    .set({ layers, updatedAt: new Date() })
+    .set({ layers, ...(groups !== undefined ? { groups } : {}), updatedAt: new Date() })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   await recordFrameVersion(db, assetId, frameId, "edit", frame.name, layers);
@@ -327,6 +332,7 @@ function asPixelAsset(record: AssetRecord): Asset {
         name: frame.name,
         index: frame.index,
         layers: frame.layers,
+        groups: (frame.groups ?? []) as Frame["groups"],
       })),
   };
 }
@@ -352,11 +358,19 @@ async function persistAsset(
   // clobber a concurrent autosave or a worker stroke on another frame.
   for (const frame of asset.frames) {
     const previous = before.frames.find((item) => item.id === frame.id);
-    if (previous && JSON.stringify(previous.layers) === JSON.stringify(frame.layers))
+    if (
+      previous &&
+      JSON.stringify(previous.layers) === JSON.stringify(frame.layers) &&
+      JSON.stringify(previous.groups ?? []) === JSON.stringify(frame.groups ?? [])
+    )
       continue;
     await db
       .update(frames)
-      .set({ layers: frame.layers, updatedAt: new Date() })
+      .set({
+        layers: frame.layers,
+        ...(frame.groups !== undefined ? { groups: frame.groups } : {}),
+        updatedAt: new Date(),
+      })
       .where(and(eq(frames.id, frame.id), eq(frames.assetId, assetId)));
   }
   return getAssetRecord(db, userId, assetId);
@@ -1748,40 +1762,6 @@ export async function listVersions(
     .where(and(...conditions))
     .orderBy(desc(versions.createdAt), desc(versions.id))
     .limit(limit);
-}
-
-function paletteIndexMap(source: string[], target: string[]): number[] {
-  const normalize = (hex: string) => hex.trim().toLowerCase();
-  const targetByHex = new Map<string, number>();
-  for (let index = 1; index < target.length; index += 1) {
-    const hex = normalize(target[index] ?? "");
-    if (hex) targetByHex.set(hex, index);
-  }
-  const rgb = (hex: string): [number, number, number] => {
-    const value = hex.replace("#", "");
-    return [
-      Number.parseInt(value.slice(0, 2), 16),
-      Number.parseInt(value.slice(2, 4), 16),
-      Number.parseInt(value.slice(4, 6), 16),
-    ];
-  };
-  return source.map((hex, index) => {
-    if (index === 0) return 0;
-    const exact = targetByHex.get(normalize(hex));
-    if (exact !== undefined) return exact;
-    const [r, g, b] = rgb(hex);
-    let best = 0;
-    let distance = Number.POSITIVE_INFINITY;
-    for (let candidate = 1; candidate < target.length; candidate += 1) {
-      const [cr, cg, cb] = rgb(target[candidate] ?? "#000000");
-      const next = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
-      if (next < distance) {
-        distance = next;
-        best = candidate;
-      }
-    }
-    return best;
-  });
 }
 
 function mapScenePalette(

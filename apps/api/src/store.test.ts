@@ -521,10 +521,10 @@ describe.skipIf(!sessionDb)("sessionUsageForThread", () => {
       cost: 0.75,
       elapsedMs: 90_000,
       context: context("deepseek-v4.1-flash", 500_000),
-      // The newest run (still running) names the last model; the fixture's
-      // unprefixed id is not in the catalog, so its window is unknown.
+      // The newest run (still running) names the last model; the catalog row
+      // declares its million-token window.
       modelId: "deepseek-v4.1-flash",
-      contextWindow: null,
+      contextWindow: 1_000_000,
     });
 
     await live.delete(generationThreads).where(eq(generationThreads.id, threadId));

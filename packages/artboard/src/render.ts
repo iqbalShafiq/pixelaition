@@ -1,4 +1,9 @@
-import { composite, normalizeHex, type FrameBuffer } from "@pixelaition/pixel";
+import {
+  composite,
+  hexToRgba as pixelHexToRgba,
+  normalizeHex,
+  type FrameBuffer,
+} from "@pixelaition/pixel";
 import { drawText, textBounds } from "./text.js";
 import type {
   Element,
@@ -339,13 +344,7 @@ export function toRgba(image: PaletteImage): Uint8Array {
 export function hexToRgba(hex: string): [number, number, number, number] {
   const normalized = normalizeHex(hex);
   if (!normalized) throw new Error(`Invalid palette colour "${hex}".`);
-  const value = normalized.slice(1);
-  return [
-    Number.parseInt(value.slice(0, 2), 16),
-    Number.parseInt(value.slice(2, 4), 16),
-    Number.parseInt(value.slice(4, 6), 16),
-    value.length === 8 ? Number.parseInt(value.slice(6, 8), 16) : 255,
-  ];
+  return pixelHexToRgba(normalized);
 }
 
 function assertColor(color: number, paletteSize: number, label: string): void {

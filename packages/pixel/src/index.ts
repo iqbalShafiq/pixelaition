@@ -1,4 +1,12 @@
 export { checkAnimation, frameStats } from "./animation.js";
+export {
+  colorDistance,
+  hexToRgba,
+  nearestPaletteIndex,
+  paletteIndexMap,
+  rgbaToHex,
+  type Rgba,
+} from "./color.js";
 export { centerCamera, fitZoom, stepZoom, zoomAt } from "./camera.js";
 export { applyCommand, linePoints } from "./commands.js";
 export { critiqueFrame } from "./critique.js";
@@ -14,6 +22,13 @@ export {
 } from "./document.js";
 export { createHistory, pushHistory, redoHistory, undoHistory } from "./history.js";
 export {
+  compositeIndexed,
+  renderFrame,
+  renderFrameDocument,
+  type RenderOptions,
+  type RgbaImage,
+} from "./render.js";
+export {
   cloneBuffer,
   composite,
   createBuffer,
@@ -28,6 +43,7 @@ export { decodePixels, emptyPixels, encodePixels, normalizeHex } from "./pixels.
 export { createId } from "./ids.js";
 export {
   assetSchema,
+  layerGroupSchema,
   layerSchema,
   pixelProjectSchema,
   styleGuideSchema,
@@ -38,6 +54,8 @@ export {
   MAX_HISTORY,
   MAX_SIZE,
   MIN_SIZE,
+  blendModes,
+  isBlendMode,
   TRANSPARENT,
   zoomSteps,
 } from "./types.js";
@@ -45,6 +63,7 @@ export type { AnimationReport, FrameStats, PairReport, Rect } from "./animation.
 export type { History } from "./history.js";
 export type {
   Asset,
+  BlendMode,
   Camera,
   Command,
   CommandResult,
@@ -53,6 +72,7 @@ export type {
   Frame,
   FrameBuffer,
   Layer,
+  LayerGroup,
   PixelProject,
   StyleGuide,
   TextLayerSpec,

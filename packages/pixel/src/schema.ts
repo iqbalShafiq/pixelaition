@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_SIZE, MIN_SIZE, shadowDirections } from "./types.js";
+import { MAX_SIZE, MIN_SIZE, blendModes, shadowDirections } from "./types.js";
 
 const hex = z.string().regex(/^#[0-9a-f]{6}$|^#[0-9a-f]{8}$/);
 
@@ -29,12 +29,24 @@ export const textLayerSchema = z.object({
   rotation: z.number().min(-360).max(360).optional(),
 });
 
+export const layerGroupSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(80),
+  visible: z.boolean(),
+  opacity: z.number().min(0).max(1).optional(),
+  parentGroupId: z.string().min(1).optional(),
+});
+
 export const layerSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(80),
   visible: z.boolean(),
   pixels: z.string(),
   text: textLayerSchema.optional(),
+  opacity: z.number().min(0).max(1).optional(),
+  blend: z.enum(blendModes).optional(),
+  locked: z.boolean().optional(),
+  parentGroupId: z.string().min(1).optional(),
 });
 
 export const frameSchema = z.object({
@@ -42,6 +54,7 @@ export const frameSchema = z.object({
   name: z.string().min(1).max(80),
   index: z.number().int().nonnegative(),
   layers: z.array(layerSchema).min(1),
+  groups: z.array(layerGroupSchema).optional(),
 });
 
 export const assetSchema = z.object({

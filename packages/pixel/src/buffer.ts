@@ -33,6 +33,7 @@ export function cloneBuffer(buffer: FrameBuffer): FrameBuffer {
       ...layer,
       pixels: clonePixels(layer.pixels),
     })),
+    ...(buffer.groups ? { groups: buffer.groups.map((group) => ({ ...group })) } : {}),
   };
 }
 
@@ -101,11 +102,18 @@ export function frameToBuffer(
     width,
     height,
     palette: [...palette],
+    ...(frame.groups ? { groups: frame.groups.map((group) => ({ ...group })) } : {}),
     layers: frame.layers.map((layer) => ({
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
       ...(layer.text ? { text: { ...layer.text } } : {}),
+      ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
+      ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
+      ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+      ...(layer.parentGroupId !== undefined
+        ? { parentGroupId: layer.parentGroupId }
+        : {}),
       pixels: decodePixels(layer.pixels, expected),
     })),
   };
@@ -124,11 +132,18 @@ export function bufferToFrame(
     index: frame.index,
     ...(frame.width !== undefined ? { width: frame.width } : {}),
     ...(frame.height !== undefined ? { height: frame.height } : {}),
+    ...(buffer.groups ? { groups: buffer.groups.map((group) => ({ ...group })) } : {}),
     layers: buffer.layers.map((layer) => ({
       id: layer.id,
       name: layer.name,
       visible: layer.visible,
       ...(layer.text ? { text: { ...layer.text } } : {}),
+      ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
+      ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
+      ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+      ...(layer.parentGroupId !== undefined
+        ? { parentGroupId: layer.parentGroupId }
+        : {}),
       pixels: encodePixels(layer.pixels),
     })),
   };

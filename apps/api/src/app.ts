@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   assetFrameBuffer,
+  blendModes,
   bufferToFrame,
   frameToBuffer,
+  layerGroupSchema,
   textLayerSchema,
   type FrameBuffer,
   type PixelProject,
@@ -756,8 +758,13 @@ export function createApp() {
             visible: z.boolean(),
             text: textLayerSchema.optional(),
             pixels: z.string(),
+            opacity: z.number().min(0).max(1).optional(),
+            blend: z.enum(blendModes).optional(),
+            locked: z.boolean().optional(),
+            parentGroupId: z.string().min(1).optional(),
           }),
         ),
+        groups: z.array(layerGroupSchema).optional(),
       })
       .parse(req.body);
     // Defence in depth: a live agent owns every frame, so the client cannot
@@ -776,6 +783,7 @@ export function createApp() {
       req.params.id ?? "",
       req.params.frameId ?? "",
       body.layers,
+      body.groups,
     );
     if (!saved.asset)
       return fail(

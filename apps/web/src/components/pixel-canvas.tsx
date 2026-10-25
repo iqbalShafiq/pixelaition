@@ -1,5 +1,6 @@
 import {
   composite,
+  hexToRgba,
   stepZoom,
   zoomAt,
   type Camera,
@@ -102,31 +103,6 @@ function clampRect(rect: Rect, width: number, height: number): Rect {
   };
 }
 
-/**
- * Palette entries are normalised hex, so a fixed-width parse is enough. Anything
- * unexpected is treated as opaque so a bad colour never silently erases a pixel.
- */
-function rgba(hex: string): [number, number, number, number] {
-  const value = hex.replace("#", "");
-  if (value.length === 8) {
-    return [
-      Number.parseInt(value.slice(0, 2), 16),
-      Number.parseInt(value.slice(2, 4), 16),
-      Number.parseInt(value.slice(4, 6), 16),
-      Number.parseInt(value.slice(6, 8), 16),
-    ];
-  }
-  if (value.length === 6) {
-    return [
-      Number.parseInt(value.slice(0, 2), 16),
-      Number.parseInt(value.slice(2, 4), 16),
-      Number.parseInt(value.slice(4, 6), 16),
-      255,
-    ];
-  }
-  return [0, 0, 0, 255];
-}
-
 const FIELD_DARK = "#100f0e";
 const FIELD_LIGHT = "#181715";
 
@@ -178,7 +154,7 @@ function bitmapFor(doc: FrameBuffer, cache: WeakMap<FrameBuffer, HTMLCanvasEleme
       // Transparent pixels stay transparent: the field pattern drawn behind the
       // bitmap is what shows through as the checker.
       if (value === 0) continue;
-      const [r, g, b, a] = rgba(doc.palette[value] ?? "#000000");
+      const [r, g, b, a] = hexToRgba(doc.palette[value] ?? "#000000");
       image.data[offset] = r;
       image.data[offset + 1] = g;
       image.data[offset + 2] = b;
@@ -205,7 +181,7 @@ function overlayBitmapFor(
     for (let index = 0; index < image.indices.length; index += 1) {
       const value = image.indices[index] ?? 0;
       if (value === 0) continue;
-      const [r, g, b, a] = rgba(image.palette[value] ?? "#000000");
+      const [r, g, b, a] = hexToRgba(image.palette[value] ?? "#000000");
       const offset = index * 4;
       pixels.data[offset] = r;
       pixels.data[offset + 1] = g;
@@ -812,6 +788,8 @@ export function PixelCanvas({
   return (
     <canvas
       ref={viewRef}
+      role="img"
+      aria-label={`Pixel canvas ${buffer.width} by ${buffer.height}`}
       className={`h-full w-full touch-none ${cursorClass}`}
       onPointerDown={(event) => {
         const { tool: active, onAction: emit, buffer: doc } = latest.current;

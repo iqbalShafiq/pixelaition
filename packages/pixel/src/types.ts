@@ -7,6 +7,32 @@ export const MAX_HISTORY = 100;
 export const shadowDirections = ["up", "down", "left", "right"] as const;
 export type ShadowDirection = (typeof shadowDirections)[number];
 
+/**
+ * The blend modes a layer can name. The renderer owns the maths; the document
+ * only carries the name so an unknown mode never silently becomes "normal".
+ */
+export const blendModes = [
+  "normal",
+  "multiply",
+  "screen",
+  "overlay",
+  "add",
+  "subtract",
+  "darken",
+  "lighten",
+  "difference",
+  "exclusion",
+  "hard-light",
+  "soft-light",
+  "color-dodge",
+  "color-burn",
+] as const;
+export type BlendMode = (typeof blendModes)[number];
+
+export function isBlendMode(value: unknown): value is BlendMode {
+  return typeof value === "string" && (blendModes as readonly string[]).includes(value);
+}
+
 export type StyleGuide = {
   defaultWidth: number;
   defaultHeight: number;
@@ -34,6 +60,15 @@ export type TextLayerSpec = {
   rotation?: number;
 };
 
+export type LayerGroup = {
+  id: string;
+  name: string;
+  visible: boolean;
+  /** 0–1; 1 means the group does not change its children's alpha. */
+  opacity?: number;
+  parentGroupId?: string;
+};
+
 export type Layer = {
   id: string;
   name: string;
@@ -41,6 +76,13 @@ export type Layer = {
   pixels: Uint8Array;
   /** A text layer stays editable: this is the spec its pixels were painted from. */
   text?: TextLayerSpec;
+  /** 0–1; omitted means fully opaque. */
+  opacity?: number;
+  /** Omitted means "normal". */
+  blend?: BlendMode;
+  /** A locked layer refuses human and agent writes; the pixels remain readable. */
+  locked?: boolean;
+  parentGroupId?: string;
 };
 
 export type FrameBuffer = {
@@ -48,6 +90,7 @@ export type FrameBuffer = {
   height: number;
   palette: string[];
   layers: Layer[];
+  groups?: LayerGroup[];
 };
 
 export type Frame = {
@@ -58,6 +101,7 @@ export type Frame = {
   width?: number | null;
   height?: number | null;
   layers: Array<Omit<Layer, "pixels"> & { pixels: string }>;
+  groups?: LayerGroup[];
 };
 
 export type Asset = {

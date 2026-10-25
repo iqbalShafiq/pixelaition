@@ -10,7 +10,7 @@ import {
   type PaletteImage,
   type SpriteSource,
 } from "@pixelaition/artboard";
-import { frameToBuffer } from "@pixelaition/pixel";
+import { frameToBuffer, hexToRgba } from "@pixelaition/pixel";
 import type { AssetDto } from "./types.js";
 
 /** A frame's palette indices, ready for the shared artboard renderer. */
@@ -113,16 +113,6 @@ export function downsamplePalette(image: PaletteImage, maxEdge: number): Palette
 
 export function copyWith(copy: CopyDeck, key: keyof CopyDeck, value: string): CopyDeck {
   return { ...copy, [key]: value };
-}
-
-function hexToRgba(hex: string): [number, number, number, number] {
-  const value = hex.replace("#", "");
-  return [
-    Number.parseInt(value.slice(0, 2), 16),
-    Number.parseInt(value.slice(2, 4), 16),
-    Number.parseInt(value.slice(4, 6), 16),
-    value.length === 8 ? Number.parseInt(value.slice(6, 8), 16) : 255,
-  ];
 }
 
 export function emptyScene(): ArtboardScene {
