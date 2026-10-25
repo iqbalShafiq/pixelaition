@@ -7,6 +7,7 @@ import {
   layerGroupSchema,
   textLayerSchema,
   type FrameBuffer,
+  type FrameTag,
   type PixelProject,
   type StyleGuide,
 } from "@pixelaition/pixel";
@@ -15,6 +16,9 @@ import {
   frameToJpg,
   frameToPng,
   frameToSvg,
+  framesToApng,
+  framesToGif,
+  framesToSheet,
   serializeProject,
   zipFiles,
 } from "@pixelaition/export";
@@ -102,6 +106,8 @@ import {
   ensureThread,
   importFrameRecord,
   importPaletteRecord,
+  replaceFrameTags,
+  updateFrameDuration,
   renderSocialFrameRecord,
   updateAssetCopyRecord,
   getAssetRecord,
@@ -1192,10 +1198,15 @@ export function createApp() {
       .object({
         name: z.string().min(1).max(80).optional(),
         index: z.number().int().min(0).optional(),
+        durationMs: z.number().int().min(10).max(60_000).optional(),
       })
-      .refine((value) => value.name !== undefined || value.index !== undefined, {
-        message: "Send a name or an index.",
-      })
+      .refine(
+        (value) =>
+          value.name !== undefined ||
+          value.index !== undefined ||
+          value.durationMs !== undefined,
+        { message: "Send a name, an index, or a duration." },
+      )
       .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {
       return fail(
@@ -1208,6 +1219,23 @@ export function createApp() {
     const userId = res.locals.userId as string;
     const assetId = req.params.id ?? "";
     const frameId = req.params.frameId ?? "";
+    if (body.durationMs !== undefined) {
+      const result = await updateFrameDuration(
+        db,
+        userId,
+        assetId,
+        frameId,
+        body.durationMs,
+      );
+      if (!result.asset)
+        return fail(
+          res,
+          result.failure?.code === "NOT_FOUND" ? 404 : 422,
+          result.failure?.code ?? "INVALID",
+          result.failure?.message ?? "That frame timing could not be saved.",
+        );
+      return res.json(result.asset);
+    }
     if (body.index !== undefined) {
       const result = await moveFrameRecord(db, userId, assetId, frameId, body.index);
       if (!result.asset)
@@ -1222,6 +1250,67 @@ export function createApp() {
     const asset = await renameFrameRecord(db, userId, assetId, frameId, body.name ?? "");
     if (!asset) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
     res.json(asset);
+  });
+
+  app.get("/api/assets/:id/timeline", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    res.json({
+      frames: asset.frames.map((frame) => ({
+        id: frame.id,
+        name: frame.name,
+        index: frame.index,
+        kind: frame.kind,
+        durationMs: frame.durationMs,
+      })),
+      tags: asset.tags,
+    });
+  });
+
+  app.put("/api/assets/:id/tags", async (req, res) => {
+    const body = z
+      .object({
+        tags: z
+          .array(
+            z.object({
+              id: z.string().optional(),
+              name: z.string().min(1).max(40),
+              fromFrameId: z.string().min(1),
+              toFrameId: z.string().min(1),
+              direction: z.enum(["forward", "reverse", "pingpong"]).default("forward"),
+              loop: z.boolean().default(true),
+              color: z.string().optional(),
+            }),
+          )
+          .max(64),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await replaceFrameTags(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body.tags,
+    );
+    if (!result.asset)
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "INVALID",
+        result.failure?.message ?? "Those tags could not be saved.",
+      );
+    res.json(result.asset);
   });
 
   app.delete("/api/assets/:id", async (req, res) => {
@@ -3469,12 +3558,141 @@ export function createApp() {
         frameId: z.string().optional(),
         artboardId: z.string().optional(),
         setId: z.string().optional(),
-        format: z.enum(["pxl", "png", "jpg", "svg", "zip"]),
+        format: z.enum(["pxl", "png", "jpg", "svg", "zip", "gif", "apng", "sheet"]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
+        tagId: z.string().optional(),
+        frameIds: z.array(z.string()).max(512).optional(),
+        loop: z.number().int().min(-1).max(100).default(0),
+        columns: z.number().int().min(1).max(64).optional(),
+        padding: z.number().int().min(0).max(64).optional(),
+        margin: z.number().int().min(0).max(64).optional(),
       })
       .parse(req.body);
     const userId = res.locals.userId as string;
+    if (["gif", "apng", "sheet"].includes(body.format)) {
+      if (body.scope === "project" || body.scope === "artboard" || body.scope === "set") {
+        return fail(
+          res,
+          422,
+          "ANIMATION_SCOPE",
+          "Animation export reads one asset; choose an asset or a frame.",
+        );
+      }
+      if (!body.projectId || !body.assetId) {
+        return fail(
+          res,
+          400,
+          "INVALID",
+          "Animation export needs a project and an asset.",
+        );
+      }
+      const document = await documentForScope(res.locals.userId as string, {
+        projectId: body.projectId,
+        assetId: body.assetId,
+        ...(body.scope === "frame" && body.frameId ? { frameId: body.frameId } : {}),
+      });
+      const asset = document?.assets.find((item) => item.id === body.assetId);
+      if (!asset || !document) {
+        return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+      }
+      const tags = (asset.tags ?? []) as FrameTag[];
+      let selected = [...asset.frames];
+      if (body.frameIds) {
+        const wanted = new Set(body.frameIds);
+        selected = selected.filter((frame) => wanted.has(frame.id));
+        if (selected.length !== wanted.size) {
+          return fail(
+            res,
+            422,
+            "UNKNOWN_FRAME",
+            "One of those frames is not in this asset.",
+          );
+        }
+      }
+      const tag = body.tagId ? tags.find((item) => item.id === body.tagId) : undefined;
+      if (body.tagId && !tag) {
+        return fail(res, 404, "NOT_FOUND", "That tag is not on this asset.");
+      }
+      if (tag) {
+        const start = asset.frames.findIndex((frame) => frame.id === tag.fromFrameId);
+        const end = asset.frames.findIndex((frame) => frame.id === tag.toFrameId);
+        if (start < 0 || end < start) {
+          return fail(
+            res,
+            422,
+            "INVALID_TAG",
+            "That tag points at frames outside this asset.",
+          );
+        }
+        const range = asset.frames.slice(start, end + 1);
+        selected = selected.filter((frame) => range.some((item) => item.id === frame.id));
+        if (tag.direction === "reverse") selected = [...selected].reverse();
+        if (tag.direction === "pingpong" && selected.length > 2) {
+          selected = [...selected, ...selected.slice(1, -1).reverse()];
+        }
+        if (!tag.loop) body.loop = -1;
+      }
+      if (selected.length === 0) {
+        return fail(
+          res,
+          422,
+          "NOTHING_TO_EXPORT",
+          "There are no sprite frames to export.",
+        );
+      }
+      const entries = selected.flatMap((frame) => {
+        const buffer = assetFrameBuffer(asset, frame.id);
+        if (!buffer) return [];
+        return [{ frame, buffer, durationMs: frame.durationMs ?? 100 }];
+      });
+      const slugName = slug(asset.name);
+      if (body.format === "gif") {
+        const bytes = framesToGif(entries, asset.palette, {
+          loop: body.loop,
+          scale: body.scale,
+        });
+        res.setHeader("content-type", "image/gif");
+        res.setHeader("content-disposition", `attachment; filename="${slugName}.gif"`);
+        return res.send(Buffer.from(bytes));
+      }
+      if (body.format === "apng") {
+        const bytes = framesToApng(entries, { loop: body.loop, scale: body.scale });
+        res.setHeader("content-type", "image/apng");
+        res.setHeader("content-disposition", `attachment; filename="${slugName}.png"`);
+        return res.send(Buffer.from(bytes));
+      }
+      const sheet = framesToSheet(
+        entries.map((entry) => ({
+          name: entry.frame.name,
+          buffer: entry.buffer,
+          durationMs: entry.durationMs,
+        })),
+        tag ? [tag] : tags,
+        {
+          scale: body.scale,
+          ...(body.columns !== undefined ? { columns: body.columns } : {}),
+          ...(body.padding !== undefined ? { padding: body.padding } : {}),
+          ...(body.margin !== undefined ? { margin: body.margin } : {}),
+          ...(body.background !== undefined ? { background: body.background } : {}),
+          imageName: `${slugName}.png`,
+        },
+      );
+      res.setHeader("content-type", "application/zip");
+      res.setHeader(
+        "content-disposition",
+        `attachment; filename="${slugName}-sheet.zip"`,
+      );
+      return res.send(
+        Buffer.from(
+          zipFiles({
+            [`${slugName}.png`]: sheet.png,
+            [`${slugName}-atlas.json`]: `${JSON.stringify(sheet.atlas, null, 2)}\n`,
+          }),
+        ),
+      );
+    }
+
     if (body.format === "svg" && (body.scope === "artboard" || body.scope === "set")) {
       return fail(
         res,
@@ -3757,6 +3975,7 @@ async function documentForScope(
       width: full.width,
       height: full.height,
       palette: full.palette as string[],
+      tags: full.tags as FrameTag[],
       frames: frames.map((frame) => {
         const width = frame.width ?? full.width;
         const height = frame.height ?? full.height;

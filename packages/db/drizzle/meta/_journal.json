@@ -232,6 +232,13 @@
       "when": 1792916700273,
       "tag": "0032_palette_lock",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792918058111,
+      "tag": "0033_frame_timing",
+      "breakpoints": true
     }
   ]
 }

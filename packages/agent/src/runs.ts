@@ -5,6 +5,7 @@ import {
   defaultStyle,
   type CritiqueIssue,
   type FrameBuffer,
+  type FrameTag,
   type StyleGuide,
 } from "@pixelaition/pixel";
 import { toolNamesForRole } from "./tasks/roles.js";
@@ -46,6 +47,8 @@ export type RunFrame = {
   summary?: string;
   index: number;
   buffer: FrameBuffer;
+  /** Animation delay in milliseconds. */
+  durationMs?: number;
 };
 
 /**
@@ -63,6 +66,8 @@ export type FrameChange =
   | { type: "rename"; frameId: string; name: string }
   | { type: "move"; order: Array<{ id: string; index: number }> }
   | { type: "palette"; palette: string[] }
+  | { type: "duration"; frameId: string; durationMs: number }
+  | { type: "tags"; tags: FrameTag[] }
   | { type: "resize"; width: number; height: number }
   | {
       type: "delete";
@@ -115,7 +120,9 @@ export type ProjectAsset = {
     summary: string;
     index: number;
     buffer: FrameBuffer;
+    durationMs?: number;
   }>;
+  tags?: FrameTag[];
 };
 
 export type CreateAssetInput = {
@@ -148,7 +155,9 @@ export type RunAsset = {
     summary: string;
     index: number;
     buffer: FrameBuffer;
+    durationMs?: number;
   }>;
+  tags?: FrameTag[];
 };
 
 /** One Jev gate call, for the run's trace. */
@@ -175,6 +184,7 @@ export type RunBinding = {
   frames: Map<string, RunFrame>;
   palette: string[];
   paletteLocked?: boolean;
+  tags?: FrameTag[];
   width?: number;
   height?: number;
   style: StyleGuide;
@@ -326,10 +336,16 @@ export function bindRun(runId: string, binding: RunBinding): void {
     frames: new Map(
       [...binding.frames].map(([id, frame]) => [
         id,
-        { name: frame.name, index: frame.index, buffer: cloneBuffer(frame.buffer) },
+        {
+          name: frame.name,
+          index: frame.index,
+          buffer: cloneBuffer(frame.buffer),
+          ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+        },
       ]),
     ),
     palette: [...binding.palette],
+    ...(binding.tags ? { tags: binding.tags.map((tag) => ({ ...tag })) } : {}),
     approvedScope: new Set(binding.approvedScope),
     touchedFrames: new Set(binding.touchedFrames),
     strokes: [...binding.strokes],

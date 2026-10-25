@@ -93,6 +93,19 @@ export type FrameBuffer = {
   groups?: LayerGroup[];
 };
 
+export const tagDirections = ["forward", "reverse", "pingpong"] as const;
+export type TagDirection = (typeof tagDirections)[number];
+
+export type FrameTag = {
+  id: string;
+  name: string;
+  fromFrameId: string;
+  toFrameId: string;
+  direction: TagDirection;
+  loop: boolean;
+  color?: string;
+};
+
 export type Frame = {
   id: string;
   name: string;
@@ -102,6 +115,8 @@ export type Frame = {
   height?: number | null;
   layers: Array<Omit<Layer, "pixels"> & { pixels: string }>;
   groups?: LayerGroup[];
+  /** Animation delay in milliseconds; native-size frames ignore it. */
+  durationMs?: number;
 };
 
 export type Asset = {
@@ -111,6 +126,7 @@ export type Asset = {
   height: number;
   palette: string[];
   frames: Frame[];
+  tags?: FrameTag[];
 };
 
 export type PixelProject = {
@@ -226,6 +242,10 @@ export type Command =
     }
   | { type: "renameLayer"; layerId: string; name: string }
   | { type: "setLayerVisible"; layerId: string; visible: boolean }
+  | { type: "setLayerOpacity"; layerId: string; opacity: number }
+  | { type: "setLayerBlend"; layerId: string; blend: BlendMode }
+  | { type: "setLayerLocked"; layerId: string; locked: boolean }
+  | { type: "duplicateLayer"; layerId: string; id: string; name: string }
   | { type: "removeLayer"; layerId: string }
   | { type: "mirror" }
   /**

@@ -2,6 +2,7 @@ import { getRun, type FrameChange, type Stroke } from "@pixelaition/agent";
 import {
   assets,
   createVersion,
+  frameTags,
   frames,
   generationRuns,
   type Database,
@@ -123,6 +124,7 @@ export function frameWrites(
             width: buffer.width,
             height: buffer.height,
             layers: bufferToFrame(buffer, edited).layers,
+            groups: bufferToFrame(buffer, edited).groups ?? [],
             updatedAt: new Date(),
           })
           .where(eq(frames.id, editedFrameId));
@@ -241,6 +243,46 @@ export function frameWrites(
           author: "agent",
           runId: publicRunId,
           snapshot: assetVersionSnapshot(after),
+        });
+      } else if (change.type === "duration") {
+        await db
+          .update(frames)
+          .set({ durationMs: change.durationMs, updatedAt: new Date() })
+          .where(and(eq(frames.id, change.frameId), eq(frames.assetId, assetId)));
+        await createVersion(db, {
+          assetId,
+          frameId: change.frameId,
+          scope: "frame",
+          kind: "timing",
+          author: "agent",
+          runId: publicRunId,
+          snapshot: { durationMs: change.durationMs },
+        });
+      } else if (change.type === "tags") {
+        await db.transaction(async (tx) => {
+          await tx.delete(frameTags).where(eq(frameTags.assetId, assetId));
+          if (change.tags.length > 0) {
+            await tx.insert(frameTags).values(
+              change.tags.map((tag) => ({
+                id: tag.id,
+                assetId,
+                name: tag.name,
+                fromFrameId: tag.fromFrameId,
+                toFrameId: tag.toFrameId,
+                direction: tag.direction,
+                loop: tag.loop,
+                ...(tag.color ? { color: tag.color } : {}),
+              })),
+            );
+          }
+        });
+        await createVersion(db, {
+          assetId,
+          scope: "asset",
+          kind: "tags",
+          author: "agent",
+          runId: publicRunId,
+          snapshot: { tags: change.tags },
         });
       } else if (change.type === "rename") {
         const live = getRun(durableRunId)?.frames.get(change.frameId);

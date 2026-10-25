@@ -74,6 +74,7 @@ import {
   artboardVersions,
   artboards,
   assets,
+  frameTags,
   frames,
   generationRuns,
   generationThreads,
@@ -2928,8 +2929,22 @@ async function loadAsset(assetId: string, userId?: string) {
     .from(frames)
     .where(eq(frames.assetId, assetId))
     .orderBy(asc(frames.index));
+  const tagRows = await db
+    .select()
+    .from(frameTags)
+    .where(eq(frameTags.assetId, assetId))
+    .orderBy(frameTags.name);
   return {
     ...row.asset,
+    tags: tagRows.map((tag) => ({
+      id: tag.id,
+      name: tag.name,
+      fromFrameId: tag.fromFrameId,
+      toFrameId: tag.toFrameId,
+      direction: tag.direction as "forward" | "reverse" | "pingpong",
+      loop: tag.loop,
+      ...(tag.color ? { color: tag.color } : {}),
+    })),
     palette: row.asset.palette as string[],
     style: (row.style as StyleGuide) ?? defaultStyle,
     projectName: row.projectName,
@@ -2954,6 +2969,8 @@ async function loadAsset(assetId: string, userId?: string) {
       copyOverride: frame.copyOverride,
       status: frame.status,
       version: frame.version,
+      durationMs: frame.durationMs,
+      groups: (frame.groups ?? []) as Frame["groups"],
     })),
   };
 }
@@ -3142,11 +3159,13 @@ function bindAssetRun(options: {
               item.height ?? asset.height,
               asset.palette,
             ),
+            ...(item.durationMs !== undefined ? { durationMs: item.durationMs } : {}),
           },
         ]),
     ),
     palette: [...asset.palette],
     paletteLocked: asset.paletteLocked,
+    tags: asset.tags,
     width: asset.width,
     height: asset.height,
     style: asset.style,
@@ -4036,6 +4055,7 @@ function bindWorkspaceRun(options: {
         name: frame.name,
         summary: frame.summary,
         index: frame.index,
+        durationMs: frame.durationMs,
         buffer: frameToBuffer(
           frame,
           frame.width ?? asset.width,
@@ -4043,6 +4063,7 @@ function bindWorkspaceRun(options: {
           asset.palette,
         ),
       })),
+      tags: asset.tags,
     };
   };
 
@@ -4111,6 +4132,7 @@ function bindWorkspaceRun(options: {
         projectSummary: project.summary,
         style: project.style as StyleGuide,
         copy: {},
+        tags: [],
         createdAt: new Date(),
         updatedAt: new Date(),
         frames: asset.frames.map((frame) => ({
@@ -4127,6 +4149,8 @@ function bindWorkspaceRun(options: {
           copyOverride: {},
           status: "ready",
           version: 1,
+          durationMs: 100,
+          groups: [],
         })),
       };
       const bound = await register(loaded);

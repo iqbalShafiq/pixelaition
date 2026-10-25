@@ -15,6 +15,7 @@ const READ_TOOLS: readonly string[] = [
   "read_project",
   "list_project_frames",
   "read_frame",
+  "read_timeline",
   "read_region",
   "read_palette",
   "preview_frame",
@@ -46,6 +47,10 @@ const PAINT_TOOLS: readonly string[] = [
   "edit_text",
   "rename_layer",
   "set_layer_visible",
+  "set_layer_opacity",
+  "set_layer_blend",
+  "set_layer_locked",
+  "duplicate_layer",
   "remove_layer",
   // Choosing colours is part of painting: any role that paints may add one,
   // and the pixels follow their colours when the palette changes.
@@ -81,12 +86,20 @@ const SUPERVISOR_TOOLS: readonly string[] = [
   "reorder_palette",
   "resize_canvas",
   "resize_frame",
+  "set_frame_duration",
+  "set_tags",
+  "add_tag",
+  "delete_tag",
   "list_projects",
   "list_assets",
 ];
 
 /** Judging is the review pass's alone, including its two measuring tools. */
-const REVIEW_TOOLS: readonly string[] = ["critique_frame", "check_animation"];
+const REVIEW_TOOLS: readonly string[] = [
+  "critique_frame",
+  "check_animation",
+  "check_timeline",
+];
 
 /** Frame switching is limited to the frames a writer owns. */
 const USE_FRAME = "use_frame";

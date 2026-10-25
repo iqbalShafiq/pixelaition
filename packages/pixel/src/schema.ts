@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { MAX_SIZE, MIN_SIZE, blendModes, shadowDirections } from "./types.js";
+import {
+  MAX_SIZE,
+  MIN_SIZE,
+  blendModes,
+  shadowDirections,
+  tagDirections,
+} from "./types.js";
 
 const hex = z.string().regex(/^#[0-9a-f]{6}$|^#[0-9a-f]{8}$/);
 
@@ -55,6 +61,7 @@ export const frameSchema = z.object({
   index: z.number().int().nonnegative(),
   layers: z.array(layerSchema).min(1),
   groups: z.array(layerGroupSchema).optional(),
+  durationMs: z.number().int().min(10).max(60_000).optional(),
 });
 
 export const assetSchema = z.object({
@@ -64,6 +71,19 @@ export const assetSchema = z.object({
   height: z.number().int().min(MIN_SIZE).max(MAX_SIZE),
   palette: z.array(hex).min(2).max(256),
   frames: z.array(frameSchema).min(1),
+  tags: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).max(40),
+        fromFrameId: z.string().min(1),
+        toFrameId: z.string().min(1),
+        direction: z.enum(tagDirections),
+        loop: z.boolean(),
+        color: hex.optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const pixelProjectSchema = z.object({

@@ -1,4 +1,5 @@
 import {
+  blendModes,
   composite,
   frameToBuffer,
   type FrameBuffer,
@@ -28,6 +29,7 @@ import {
   Menu as MenuIcon,
   Minus,
   Pencil,
+  Wrench,
   Play,
   Plus,
   Stop,
@@ -44,6 +46,7 @@ import {
   MenuItem,
   Panel,
   Popover,
+  SelectControl,
   TextInput,
 } from "./ui.js";
 import { hexToRgba } from "../lib/color.js";
@@ -713,6 +716,10 @@ export function LayerPanel({
   locked,
   onSelect,
   onToggleVisible,
+  onOpacity,
+  onBlend,
+  onLock,
+  onDuplicate,
   onAdd,
   onRename,
   onDelete,
@@ -731,6 +738,10 @@ export function LayerPanel({
   locked: boolean;
   onSelect: (layerId: string) => void;
   onToggleVisible: (layerId: string, visible: boolean) => void;
+  onOpacity?: (layerId: string, opacity: number) => void;
+  onBlend?: (layerId: string, blend: (typeof blendModes)[number]) => void;
+  onLock?: (layerId: string, locked: boolean) => void;
+  onDuplicate?: (layerId: string) => void;
   onAdd?: () => void;
   onRename: (layerId: string, name: string) => void;
   onDelete: (layerId: string) => void;
@@ -933,6 +944,16 @@ export function LayerPanel({
                         TEXT
                       </span>
                     ) : null}
+                    {layer.locked ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-erase">
+                        LOCK
+                      </span>
+                    ) : null}
+                    {(layer.opacity ?? 1) < 1 ? (
+                      <span className="ml-1 text-pixel-mono text-[8px] text-muted">
+                        {Math.round((layer.opacity ?? 1) * 100)}%
+                      </span>
+                    ) : null}
                   </span>
                 )}
                 <span className="relative z-10 ml-auto flex w-[74px] shrink-0 items-center justify-end gap-0.5">
@@ -974,6 +995,53 @@ export function LayerPanel({
                         >
                           <Pencil />
                         </IconButton>
+                        {onOpacity || onBlend || onLock ? (
+                          <Popover
+                            label={`Settings for ${layer.name}`}
+                            trigger={
+                              <IconButton
+                                label={`Settings for ${layer.name}`}
+                                disabled={locked}
+                              >
+                                <Wrench />
+                              </IconButton>
+                            }
+                          >
+                            <div className="grid min-w-48 gap-2">
+                              <Field label="Opacity" htmlFor={`opacity-${layer.id}`}>
+                                <input
+                                  id={`opacity-${layer.id}`}
+                                  type="range"
+                                  min={0}
+                                  max={100}
+                                  value={Math.round((layer.opacity ?? 1) * 100)}
+                                  disabled={locked || !onOpacity}
+                                  onChange={(event) =>
+                                    onOpacity?.(
+                                      layer.id,
+                                      Number(event.currentTarget.value) / 100,
+                                    )
+                                  }
+                                  className="w-full accent-accent"
+                                />
+                              </Field>
+                              <Field label="Blend" htmlFor={`blend-${layer.id}`}>
+                                <SelectControl
+                                  id={`blend-${layer.id}`}
+                                  label="Blend"
+                                  value={layer.blend ?? "normal"}
+                                  options={[...blendModes]}
+                                  onChange={(next) =>
+                                    onBlend?.(
+                                      layer.id,
+                                      next as (typeof blendModes)[number],
+                                    )
+                                  }
+                                />
+                              </Field>
+                            </div>
+                          </Popover>
+                        ) : null}
                         <Menu label={`Actions for ${layer.name}`}>
                           {layer.text ? (
                             <MenuItem
@@ -981,6 +1049,19 @@ export function LayerPanel({
                               onClick={() => startEdit(layer.id, layer.name)}
                             >
                               <Pencil /> Rename layer
+                            </MenuItem>
+                          ) : null}
+                          {onDuplicate ? (
+                            <MenuItem
+                              disabled={locked}
+                              onClick={() => onDuplicate(layer.id)}
+                            >
+                              <Copy /> Duplicate
+                            </MenuItem>
+                          ) : null}
+                          {onLock ? (
+                            <MenuItem onClick={() => onLock(layer.id, !layer.locked)}>
+                              <Wrench /> {layer.locked ? "Unlock" : "Lock"}
                             </MenuItem>
                           ) : null}
                           <MenuItem

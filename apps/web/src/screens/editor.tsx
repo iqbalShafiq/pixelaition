@@ -49,6 +49,7 @@ import {
 import { FormatPicker } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { ImportImageDialog } from "../components/import-image-dialog.js";
+import { TimelinePanel } from "../components/timeline-panel.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
@@ -884,8 +885,15 @@ export function EditorScreen() {
             name: layer.name,
             visible: layer.visible,
             ...(layer.text ? { text: layer.text } : {}),
+            ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
+            ...(layer.blend !== undefined ? { blend: layer.blend } : {}),
+            ...(layer.locked !== undefined ? { locked: layer.locked } : {}),
+            ...(layer.parentGroupId !== undefined
+              ? { parentGroupId: layer.parentGroupId }
+              : {}),
             pixels: bytesToBase64(layer.pixels),
           })),
+          groups: input.buffer.groups ?? [],
         }),
       });
     },
@@ -1459,16 +1467,18 @@ export function EditorScreen() {
 
   useEffect(() => {
     if (!playing || frames.length < 2) return;
-    const timer = window.setInterval(() => {
+    const current = frames.find((item) => item.id === frameId);
+    const delay = Math.max(10, current?.durationMs ?? 100);
+    const timer = window.setTimeout(() => {
       setSelection(null);
-      setFrameId((current) => {
-        const index = frames.findIndex((item) => item.id === current);
+      setFrameId((active) => {
+        const index = frames.findIndex((item) => item.id === active);
         const nextIndex = (index + 1) % frames.length;
-        return frames[nextIndex]?.id ?? current;
+        return frames[nextIndex]?.id ?? active;
       });
-    }, 220);
-    return () => window.clearInterval(timer);
-  }, [playing, frames]);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [playing, frames, frameId]);
 
   const log = useCallback((text: string) => {
     setRows((current) => [...current.slice(-120), noteRow(crypto.randomUUID(), text)]);
@@ -3254,6 +3264,30 @@ export function EditorScreen() {
           frameId &&
           edit(frameId, drafts[frameId], { type: "setLayerVisible", layerId, visible })
         }
+        onOpacity={(layerId, opacity) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "setLayerOpacity", layerId, opacity })
+        }
+        onBlend={(layerId, blend) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "setLayerBlend", layerId, blend })
+        }
+        onLock={(layerId, locked) =>
+          frameId &&
+          edit(frameId, drafts[frameId], { type: "setLayerLocked", layerId, locked })
+        }
+        onDuplicate={(layerId) => {
+          if (!frameId || !buffer) return;
+          const source = buffer.layers.find((layer) => layer.id === layerId);
+          if (!source) return;
+          const name = `${source.name} copy`.slice(0, 40);
+          edit(frameId, drafts[frameId], {
+            type: "duplicateLayer",
+            layerId,
+            id: crypto.randomUUID(),
+            name,
+          });
+        }}
         onAdd={() =>
           frameId &&
           edit(frameId, drafts[frameId], {
@@ -3323,6 +3357,39 @@ export function EditorScreen() {
     />
   );
 
+  async function saveFrameDuration(targetFrameId: string, durationMs: number) {
+    if (running) return;
+    try {
+      const data = await api<AssetDto>(`/api/assets/${assetId}/frames/${targetFrameId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ durationMs }),
+      });
+      client.setQueryData(["asset", assetId], data);
+    } catch (reason) {
+      notify({
+        title: "The frame delay did not save",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
+  async function saveTags(tags: NonNullable<AssetDto["tags"]>) {
+    if (running) return;
+    try {
+      const data = await api<AssetDto>(`/api/assets/${assetId}/tags`, {
+        method: "PUT",
+        body: JSON.stringify({ tags }),
+      });
+      client.setQueryData(["asset", assetId], data);
+      notify({ title: "Timeline tags saved" });
+    } catch (reason) {
+      notify({
+        title: "The tags did not save",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
   const viewPanel = socialFrame ? (
     <ViewPanel
       grid={grid}
@@ -3348,6 +3415,13 @@ export function EditorScreen() {
   const frameTabBody = (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 [&>*]:shrink-0">
       {frameHeaderPanel}
+      <TimelinePanel
+        frames={frames}
+        tags={asset.data?.tags ?? []}
+        locked={locked}
+        onDuration={(id, duration) => void saveFrameDuration(id, duration)}
+        onSaveTags={(tags) => void saveTags(tags)}
+      />
       {selectedTextLayer ? (
         <TextPanel
           layer={selectedTextLayer}
@@ -4271,6 +4345,7 @@ export function EditorScreen() {
         onOpenChange={setExportOpen}
         projectId={asset.data?.projectId ?? ""}
         assetId={assetId}
+        tags={(asset.data?.tags ?? []).map((tag) => ({ id: tag.id, name: tag.name }))}
         frameId={frameId ?? ""}
         frameName={frame?.name ?? ""}
         assetName={asset.data?.name ?? ""}

@@ -1,3 +1,5 @@
+/// <reference path="./gifenc.d.ts" />
+/// <reference path="./upng-js.d.ts" />
 import {
   pixelProjectSchema,
   type FrameBuffer,
@@ -70,3 +72,14 @@ export {
   artboardBytes,
   type ArtboardFormat,
 } from "./artboard.js";
+
+export { framesToGif, type GifFrame } from "./gif.js";
+export { framesToApng, type ApngFrame } from "./apng.js";
+export {
+  framesToSheet,
+  type AtlasFrame,
+  type SheetAtlas,
+  type SheetFrame,
+  type SheetOptions,
+  type SheetResult,
+} from "./sheet.js";

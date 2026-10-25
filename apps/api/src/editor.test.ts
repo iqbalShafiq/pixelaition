@@ -149,6 +149,74 @@ describe.skipIf(!db)("editor import and palette routes", () => {
     }
   });
 
+  it("sets frame timing and a tag, then exports GIF, APNG, and a sheet", async () => {
+    const { projectId, asset } = await createAsset("timing");
+    try {
+      const frames = asset.frames;
+      const added = await request(app)
+        .post(`/api/assets/${asset.id}/frames`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ name: "second" });
+      expect(added.status).toBe(201);
+      const second = added.body.frames.find(
+        (frame: { name: string }) => frame.name === "second",
+      );
+      const first = frames[0];
+      if (!first || !second) throw new Error("missing timing fixture frames");
+      const timing = await request(app)
+        .patch(`/api/assets/${asset.id}/frames/${first.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ durationMs: 120 });
+      expect(timing.status).toBe(200);
+      expect(
+        timing.body.frames.find((frame: { id: string }) => frame.id === first.id)
+          .durationMs,
+      ).toBe(120);
+
+      const tagged = await request(app)
+        .put(`/api/assets/${asset.id}/tags`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          tags: [
+            {
+              name: "idle",
+              fromFrameId: first.id,
+              toFrameId: second.id,
+              direction: "pingpong",
+              loop: true,
+            },
+          ],
+        });
+      expect(tagged.status).toBe(200);
+      expect(tagged.body.tags).toHaveLength(1);
+
+      const gif = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "gif" });
+      expect(gif.status).toBe(200);
+      expect(gif.headers["content-type"]).toBe("image/gif");
+      expect((gif.body as Buffer).subarray(0, 6).toString("ascii")).toBe("GIF89a");
+
+      const apng = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "apng" });
+      expect(apng.status).toBe(200);
+      expect(apng.headers["content-type"]).toBe("image/apng");
+
+      const sheet = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "sheet" });
+      expect(sheet.status).toBe(200);
+      expect(sheet.headers["content-type"]).toBe("application/zip");
+      expect(sheet.headers["content-disposition"]).toContain(".zip");
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
   it("imports two indexed frames into the asset palette", async () => {
     const { projectId, asset } = await createAsset("import");
     try {

@@ -4,6 +4,7 @@ import { frameToPng, type ExportScale } from "@pixelaition/export";
 import {
   addFrame,
   applyCommand,
+  blendModes,
   bufferToFrame,
   checkAnimation,
   composite,
@@ -18,6 +19,7 @@ import {
   type Command,
   type Frame,
   type FrameBuffer,
+  type FrameTag,
   type TextLayerSpec,
 } from "@pixelaition/pixel";
 import { drawText } from "@pixelaition/artboard";
@@ -93,6 +95,55 @@ function resolveFrame(
   const frame = run.frames.get(id);
   if (!frame) throw new Error("Choose or create a frame first.");
   return { id, name: frame.name, buffer: frame.buffer, frame };
+}
+
+/**
+ * Validate and persist a full tag list. Tags may name frames by id or name, but
+ * they are always stored as ids; the range must exist and run forwards.
+ */
+async function saveTimelineTags(
+  run: BoundRunBinding,
+  input: Array<{
+    id?: string;
+    name: string;
+    fromFrameId: string;
+    toFrameId: string;
+    direction: "forward" | "reverse" | "pingpong";
+    loop: boolean;
+    color?: string;
+  }>,
+): Promise<FrameTag[]> {
+  if (!run.onFrameChange) throw new Error("This run cannot save animation tags.");
+  const tags: FrameTag[] = [];
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const item of input) {
+    const name = item.name.trim();
+    if (!name) throw new Error("A tag needs a name.");
+    if (names.has(name.toLowerCase())) throw new Error(`Two tags are named ${name}.`);
+    names.add(name.toLowerCase());
+    const fromFrameId = resolveFrameId(run, item.fromFrameId);
+    const toFrameId = resolveFrameId(run, item.toFrameId);
+    const from = run.frames.get(fromFrameId);
+    const to = run.frames.get(toFrameId);
+    if (!from || !to) throw new Error(`Tag ${name} names a frame outside this run.`);
+    if (from.index > to.index) throw new Error(`Tag ${name} starts after it ends.`);
+    const id = item.id ?? crypto.randomUUID();
+    if (ids.has(id)) throw new Error(`Two tags share the id ${id}.`);
+    ids.add(id);
+    tags.push({
+      id,
+      name,
+      fromFrameId,
+      toFrameId,
+      direction: item.direction,
+      loop: item.loop,
+      ...(item.color ? { color: item.color } : {}),
+    });
+  }
+  await run.onFrameChange({ type: "tags", tags });
+  run.tags = tags;
+  return tags;
 }
 
 /** Apply a command to one frame's buffer and write the result back to the run. */
@@ -1787,6 +1838,260 @@ export function createPixelTools(
     },
   });
 
+  const readTimeline = createTool({
+    name: "read_timeline",
+    description:
+      "Read the bound asset's animation timeline: each sprite frame's delay in milliseconds and the named tags with their ranges and directions.",
+    inputSchema: z.object({}),
+    execute: (_input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frames = [...run.frames].map(([id, frame]) => ({
+        id,
+        name: frame.name,
+        index: frame.index,
+        durationMs: frame.durationMs ?? 100,
+      }));
+      return {
+        assetId: run.assetId,
+        frames: frames.sort((left, right) => left.index - right.index),
+        tags: run.tags ?? [],
+      };
+    },
+  });
+
+  const setFrameDuration = createTool({
+    name: "set_frame_duration",
+    description:
+      "Set one frame's animation delay in milliseconds (10–60000). Frame ids and names both work. This writes the timeline, not the pixels.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      durationMs: z.number().int().min(10).max(60_000),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      if (!run.onFrameChange) throw new Error("This run cannot save frame timing.");
+      await run.onFrameChange({
+        type: "duration",
+        frameId: frame.id,
+        durationMs: input.durationMs,
+      });
+      frame.frame.durationMs = input.durationMs;
+      return { frameId: frame.id, name: frame.name, durationMs: input.durationMs };
+    },
+  });
+
+  const setTags = createTool({
+    name: "set_tags",
+    description:
+      "Replace the asset's animation tags with a full list. Each tag names a from/to frame, a direction (forward, reverse, pingpong) and whether it loops. Use read_timeline first; this replaces rather than merges.",
+    inputSchema: z.object({
+      tags: z
+        .array(
+          z.object({
+            id: z.string().optional(),
+            name: z.string().min(1).max(40),
+            fromFrameId: z.string().min(1),
+            toFrameId: z.string().min(1),
+            direction: z.enum(["forward", "reverse", "pingpong"]),
+            loop: z.boolean(),
+            color: z.string().optional(),
+          }),
+        )
+        .max(64),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const tags = await saveTimelineTags(run, input.tags);
+      return { tags };
+    },
+  });
+
+  const addTag = createTool({
+    name: "add_tag",
+    description:
+      "Add one animation tag without replacing the existing tags. Frame ids and names both work.",
+    inputSchema: z.object({
+      name: z.string().min(1).max(40),
+      fromFrameId: z.string().min(1),
+      toFrameId: z.string().min(1),
+      direction: z.enum(["forward", "reverse", "pingpong"]).optional(),
+      loop: z.boolean().optional(),
+      color: z.string().optional(),
+    }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const tags = await saveTimelineTags(run, [
+        ...(run.tags ?? []),
+        {
+          ...input,
+          direction: input.direction ?? "forward",
+          loop: input.loop ?? true,
+        },
+      ]);
+      return { tags };
+    },
+  });
+
+  const deleteTag = createTool({
+    name: "delete_tag",
+    description: "Remove one animation tag by name or id.",
+    inputSchema: z.object({ tag: z.string().min(1) }),
+    requiresApproval: () => false,
+    execute: async (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const existing = run.tags ?? [];
+      const match = existing.find(
+        (tag) =>
+          tag.id === input.tag || tag.name.toLowerCase() === input.tag.toLowerCase(),
+      );
+      if (!match) throw new Error("That tag is not on this asset.");
+      const tags = await saveTimelineTags(
+        run,
+        existing.filter((tag) => tag.id !== match.id),
+      );
+      return { tags };
+    },
+  });
+
+  const checkTimeline = createTool({
+    name: "check_timeline",
+    description:
+      "Measure the timeline before calling it finished: delay ranges, tag ranges and directions, duplicate tag names, and tags that point at missing frames.",
+    inputSchema: z.object({}),
+    execute: (_input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frames = [...run.frames].map(([id, frame]) => ({ id, frame }));
+      const frameIds = new Set(frames.map((entry) => entry.id));
+      const issues: string[] = [];
+      for (const { frame } of frames) {
+        const duration = frame.durationMs ?? 100;
+        if (!Number.isInteger(duration) || duration < 10 || duration > 60_000) {
+          issues.push(`${frame.name} has a ${duration} ms delay outside 10–60000 ms.`);
+        }
+      }
+      const names = new Set<string>();
+      for (const tag of run.tags ?? []) {
+        if (names.has(tag.name.toLowerCase())) {
+          issues.push(`Two tags are named ${tag.name}.`);
+        }
+        names.add(tag.name.toLowerCase());
+        if (!frameIds.has(tag.fromFrameId) || !frameIds.has(tag.toFrameId)) {
+          issues.push(`Tag ${tag.name} points at a frame outside this run.`);
+          continue;
+        }
+        const from = frames.find((entry) => entry.id === tag.fromFrameId)?.frame;
+        const to = frames.find((entry) => entry.id === tag.toFrameId)?.frame;
+        if (from && to && from.index > to.index) {
+          issues.push(`Tag ${tag.name} starts after it ends.`);
+        }
+      }
+      return { ok: issues.length === 0, issues, frames, tags: run.tags ?? [] };
+    },
+  });
+
+  const setLayerOpacity = createTool({
+    name: "set_layer_opacity",
+    description:
+      "Set a layer's opacity from 0 to 1. The layer's pixels stay indexed; the shared renderer composites them for the canvas and every export.",
+    inputSchema: z.object({
+      layerId: z.string(),
+      opacity: z.number().min(0).max(1),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerOpacity",
+        layerId: input.layerId,
+        opacity: input.opacity,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { layerId: input.layerId, opacity: input.opacity };
+    },
+  });
+
+  const setLayerBlend = createTool({
+    name: "set_layer_blend",
+    description:
+      "Set a layer's blend mode (normal, multiply, screen, overlay, add, subtract, darken, lighten, difference, exclusion, hard-light, soft-light, color-dodge, color-burn).",
+    inputSchema: z.object({
+      layerId: z.string(),
+      blend: z.enum(blendModes),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerBlend",
+        layerId: input.layerId,
+        blend: input.blend,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { layerId: input.layerId, blend: input.blend };
+    },
+  });
+
+  const setLayerLocked = createTool({
+    name: "set_layer_locked",
+    description:
+      "Lock or unlock a layer. A locked layer can be read but every pixel write is refused; locking is still allowed so a layer can be protected.",
+    inputSchema: z.object({ layerId: z.string(), locked: z.boolean() }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const edited = editFrame(run, undefined, {
+        type: "setLayerLocked",
+        layerId: input.layerId,
+        locked: input.locked,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { layerId: input.layerId, locked: input.locked };
+    },
+  });
+
+  const duplicateLayer = createTool({
+    name: "duplicate_layer",
+    description:
+      "Duplicate a layer directly above itself, with a new name. The copy keeps the source's opacity, blend mode, lock state and text spec.",
+    inputSchema: z.object({
+      layerId: z.string(),
+      name: z.string().min(1).max(40).optional(),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run);
+      const source = frame.buffer.layers.find(
+        (layer) => layer.id === input.layerId || layer.name === input.layerId,
+      );
+      if (!source) throw new Error("That layer is not on this frame.");
+      const id = crypto.randomUUID();
+      const name = (input.name?.trim() || `${source.name} copy`).slice(0, 40);
+      const edited = editFrame(run, undefined, {
+        type: "duplicateLayer",
+        layerId: source.id,
+        id,
+        name,
+      });
+      run.onStroke?.({ label: "layers", points: [] }, edited.buffer, edited.id);
+      return { layerId: id, name, layers: edited.buffer.layers.length };
+    },
+  });
+
   const plan = createTool({
     name: "plan",
     description:
@@ -2569,6 +2874,16 @@ export function createPixelTools(
     editTextTool,
     renameLayerTool,
     setLayerVisibleTool,
+    readTimeline,
+    setFrameDuration,
+    setTags,
+    addTag,
+    deleteTag,
+    checkTimeline,
+    setLayerOpacity,
+    setLayerBlend,
+    setLayerLocked,
+    duplicateLayer,
     removeLayerTool,
     plan,
     presentPlan,

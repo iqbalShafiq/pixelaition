@@ -16,7 +16,7 @@ const scopes = [
 ] as const;
 type Scope = (typeof scopes)[number]["id"];
 
-const formats = ["png", "jpg", "svg", "zip", "pxl"] as const;
+const formats = ["png", "jpg", "svg", "zip", "pxl", "gif", "apng", "sheet"] as const;
 type Format = (typeof formats)[number];
 
 const scales = ["1", "2", "4", "8", "10"] as const;
@@ -30,6 +30,7 @@ export function ExportDialog({
   frameName,
   assetName,
   social = false,
+  tags = [],
   onBeforeExport,
 }: {
   open: boolean;
@@ -41,6 +42,7 @@ export function ExportDialog({
   assetName: string;
   /** Social frames render at the preset's native size, not the sprite grid. */
   social?: boolean;
+  tags?: Array<{ id: string; name: string }>;
   /** Writes any pending edit before the server renders the export. */
   onBeforeExport: () => void | Promise<void>;
 }) {
@@ -48,16 +50,25 @@ export function ExportDialog({
   const [format, setFormat] = useState<Format>("png");
   const [scale, setScale] = useState<string>("1");
   const [background, setBackground] = useState("#0a0a09");
+  const [tagId, setTagId] = useState("");
+  const [loop, setLoop] = useState("0");
+  const [columns, setColumns] = useState("");
   const [state, setState] = useState<{
     kind: "idle" | "busy" | "failed";
     message?: string;
   }>({ kind: "idle" });
 
   const pxlNeedsProject = format === "pxl" && scope !== "project";
+  const animated = format === "gif" || format === "apng" || format === "sheet";
   const socialFormats = formats.filter((item) => item === "png" || item === "jpg");
   const available = social
     ? socialFormats
     : formats.filter((item) => !(item === "pxl" && scope !== "project"));
+  const scopeOptions = social
+    ? scopes.filter((item) => item.id === "frame").map((item) => item.id)
+    : animated
+      ? scopes.filter((item) => item.id !== "project").map((item) => item.id)
+      : scopes.map((item) => item.id);
 
   async function run() {
     setState({ kind: "busy", message: "Rendering on the server." });
@@ -73,13 +84,16 @@ export function ExportDialog({
             social
               ? { frameId, format: format === "jpg" ? "jpg" : "png" }
               : {
-                  scope,
+                  scope: animated && scope === "project" ? "asset" : scope,
                   projectId,
                   assetId,
                   frameId,
                   format,
                   scale: Number(scale),
                   background,
+                  ...(tagId ? { tagId } : {}),
+                  loop: Number(loop),
+                  ...(format === "sheet" && columns ? { columns: Number(columns) } : {}),
                 },
           ),
         },
@@ -119,9 +133,7 @@ export function ExportDialog({
             id="export-scope"
             label="Scope"
             value={scope}
-            options={(social ? scopes.filter((item) => item.id === "frame") : scopes).map(
-              (item) => item.id,
-            )}
+            options={scopeOptions}
             onChange={(next) => setScope(next as Scope)}
           />
         </Field>
@@ -155,6 +167,39 @@ export function ExportDialog({
             />
           </Field>
         )}
+        {animated && tags.length > 0 ? (
+          <Field label="Tag" htmlFor="export-tag">
+            <SelectControl
+              id="export-tag"
+              label="Tag"
+              value={tagId}
+              options={["", ...tags.map((tag) => tag.id)]}
+              onChange={setTagId}
+            />
+          </Field>
+        ) : null}
+        {format === "gif" || format === "apng" ? (
+          <Field label="Loop" htmlFor="export-loop">
+            <SelectControl
+              id="export-loop"
+              label="Loop"
+              value={loop}
+              options={["0", "-1", "1", "2", "3"]}
+              onChange={setLoop}
+            />
+          </Field>
+        ) : null}
+        {format === "sheet" ? (
+          <Field label="Columns" htmlFor="export-columns">
+            <TextInput
+              id="export-columns"
+              inputMode="numeric"
+              value={columns}
+              placeholder="auto"
+              onChange={(event) => setColumns(event.currentTarget.value)}
+            />
+          </Field>
+        ) : null}
         {format === "jpg" || format === "zip" ? (
           <Field label="Background" htmlFor="export-background">
             <TextInput
@@ -177,6 +222,12 @@ export function ExportDialog({
       {format === "zip" ? (
         <Callout>
           ZIP holds a PNG and an SVG for every frame in scope, at the chosen scale.
+        </Callout>
+      ) : null}
+      {animated ? (
+        <Callout>
+          Animation export uses sprite frames only, honours each frame delay, and writes
+          tags into the sheet atlas.
         </Callout>
       ) : null}
       {state.kind === "failed" ? (

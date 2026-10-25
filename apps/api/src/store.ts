@@ -3,6 +3,7 @@ import {
   apiKeys,
   assets,
   createVersion,
+  frameTags,
   frames,
   generationRuns,
   generationThreads,
@@ -155,12 +156,18 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
     .from(frames)
     .where(eq(frames.assetId, assetId))
     .orderBy(frames.index);
+  const tagRows = await db
+    .select()
+    .from(frameTags)
+    .where(eq(frameTags.assetId, assetId))
+    .orderBy(frameTags.name);
   return {
     ...row.asset,
     style: row.style as StyleGuide,
     projectId: row.projectId,
     projectName: row.projectName,
     frames: frameRows as StoredFrame[],
+    tags: tagRows,
   };
 }
 
@@ -334,7 +341,9 @@ function asPixelAsset(record: AssetRecord): Asset {
         index: frame.index,
         layers: frame.layers,
         groups: (frame.groups ?? []) as Frame["groups"],
+        durationMs: frame.durationMs,
       })),
+    tags: record.tags as never,
   };
 }
 
@@ -2096,4 +2105,139 @@ export async function copySocialBackgroundRecord(
     .set({ updatedAt: new Date() })
     .where(eq(assets.id, targetAssetId));
   return { asset: await getAssetRecord(db, userId, targetAssetId) };
+}
+
+/** Set one sprite frame's animation delay. */
+export async function updateFrameDuration(
+  db: Database,
+  userId: string,
+  assetId: string,
+  frameId: string,
+  durationMs: number,
+) {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  const frame = record.frames.find((item) => item.id === frameId);
+  if (!frame)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That frame is not available." },
+    };
+  if (frame.kind === "social") {
+    return {
+      asset: undefined,
+      failure: {
+        code: "NOT_A_SPRITE_FRAME",
+        message: "Native-size frames have no animation timing.",
+      },
+    };
+  }
+  if (!Number.isInteger(durationMs) || durationMs < 10 || durationMs > 60_000) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "INVALID_DURATION",
+        message: "A frame delay must be 10–60000 ms.",
+      },
+    };
+  }
+  await db
+    .update(frames)
+    .set({ durationMs, updatedAt: new Date() })
+    .where(eq(frames.id, frameId));
+  const next = await getAssetRecord(db, userId, assetId);
+  if (next) await recordAssetVersion(db, assetId, "timing", next);
+  return { asset: next };
+}
+
+/**
+ * Replace an asset's frame tags in one step. The frame ids are validated
+ * against this asset, so a tag can never point at another asset's frame.
+ */
+export async function replaceFrameTags(
+  db: Database,
+  userId: string,
+  assetId: string,
+  tags: Array<{
+    id?: string;
+    name: string;
+    fromFrameId: string;
+    toFrameId: string;
+    direction: "forward" | "reverse" | "pingpong";
+    loop: boolean;
+    color?: string;
+  }>,
+) {
+  const record = await getAssetRecord(db, userId, assetId);
+  if (!record)
+    return {
+      asset: undefined,
+      failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  const framesById = new Map(
+    record.frames
+      .filter((frame) => frame.kind !== "social")
+      .map((frame) => [frame.id, frame]),
+  );
+  const names = new Set<string>();
+  for (const tag of tags) {
+    const name = tag.name.trim();
+    if (!name || name.length > 40) {
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_TAG",
+          message: "A tag needs a name of 1–40 characters.",
+        },
+      };
+    }
+    if (names.has(name.toLowerCase())) {
+      return {
+        asset: undefined,
+        failure: { code: "INVALID_TAG", message: `Two tags are named "${name}".` },
+      };
+    }
+    names.add(name.toLowerCase());
+    const from = framesById.get(tag.fromFrameId);
+    const to = framesById.get(tag.toFrameId);
+    if (!from || !to) {
+      return {
+        asset: undefined,
+        failure: {
+          code: "INVALID_TAG",
+          message: `Tag "${name}" names a frame outside this asset.`,
+        },
+      };
+    }
+    if (from.index > to.index) {
+      return {
+        asset: undefined,
+        failure: { code: "INVALID_TAG", message: `Tag "${name}" starts after it ends.` },
+      };
+    }
+  }
+  await db.transaction(async (tx) => {
+    await tx.delete(frameTags).where(eq(frameTags.assetId, assetId));
+    if (tags.length > 0) {
+      await tx.insert(frameTags).values(
+        tags.map((tag) => ({
+          id: tag.id ?? randomUUID(),
+          assetId,
+          name: tag.name.trim(),
+          fromFrameId: tag.fromFrameId,
+          toFrameId: tag.toFrameId,
+          direction: tag.direction,
+          loop: tag.loop,
+          ...(tag.color ? { color: tag.color } : {}),
+        })),
+      );
+    }
+  });
+  const next = await getAssetRecord(db, userId, assetId);
+  if (next) await recordAssetVersion(db, assetId, "tags", next);
+  return { asset: next };
 }

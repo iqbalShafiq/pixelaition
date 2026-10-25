@@ -12,12 +12,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@pixelaition/artboard": "workspace:*",
     "@pixelaition/pixel": "workspace:*",
     "fflate": "^0.8.2",
+    "gifenc": "^1.0.3",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
-    "zod": "^4.6.5",
-    "@pixelaition/artboard": "workspace:*"
+    "upng-js": "^2.1.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@pixelaition/config": "workspace:*",

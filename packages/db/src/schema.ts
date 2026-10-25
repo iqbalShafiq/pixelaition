@@ -132,6 +132,8 @@ export const frames = pgTable(
     layers: jsonb("layers").notNull(),
     /** Layer groups are frame-local; empty keeps the old flat-layer shape. */
     groups: jsonb("groups").notNull().default([]),
+    /** Frame delay in milliseconds; native-size frames ignore it. */
+    durationMs: integer("duration_ms").notNull().default(100),
     /** `sprite` frames paint layers; `social` frames own a scene at native size. */
     kind: text("kind").$type<"sprite" | "social">().notNull().default("sprite"),
     width: integer("width"),
@@ -145,6 +147,32 @@ export const frames = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("frames_asset_index").on(table.assetId, table.index)],
+);
+
+export const frameTags = pgTable(
+  "frame_tags",
+  {
+    id: text("id").primaryKey(),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    fromFrameId: text("from_frame_id")
+      .notNull()
+      .references(() => frames.id, { onDelete: "cascade" }),
+    toFrameId: text("to_frame_id")
+      .notNull()
+      .references(() => frames.id, { onDelete: "cascade" }),
+    /** forward | reverse | pingpong */
+    direction: text("direction").notNull().default("forward"),
+    loop: boolean("loop").notNull().default(true),
+    color: text("color"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("frame_tags_asset_name").on(table.assetId, table.name),
+    index("frame_tags_asset").on(table.assetId),
+  ],
 );
 
 /**

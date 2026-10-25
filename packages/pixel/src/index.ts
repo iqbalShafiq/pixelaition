@@ -66,6 +66,7 @@ export {
   MIN_SIZE,
   blendModes,
   isBlendMode,
+  tagDirections,
   TRANSPARENT,
   zoomSteps,
 } from "./types.js";
@@ -75,6 +76,7 @@ export type {
   Asset,
   BlendMode,
   Camera,
+  FrameTag,
   Command,
   CommandResult,
   CritiqueIssue,
@@ -85,5 +87,6 @@ export type {
   LayerGroup,
   PixelProject,
   StyleGuide,
+  TagDirection,
   TextLayerSpec,
 } from "./types.js";

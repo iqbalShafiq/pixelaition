@@ -266,8 +266,40 @@ function dither(
   return { ok: true, buffer: replaceLayer(buffer, layerId, next) };
 }
 
+/** Which layer, if any, a pixel mutation would write while locked. */
+function lockedLayerFor(buffer: FrameBuffer, command: Command): Layer | undefined {
+  const readOnly = new Set([
+    "setPalette",
+    "reindexPalette",
+    "resize",
+    "addLayer",
+    "replaceLayer",
+    "renameLayer",
+    "setLayerVisible",
+    "setLayerOpacity",
+    "setLayerBlend",
+    "setLayerLocked",
+    "duplicateLayer",
+    "removeLayer",
+  ]);
+  if (readOnly.has(command.type)) return undefined;
+  const layerId = (command as { layerId?: string }).layerId;
+  if (layerId !== undefined) {
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    return layer?.locked ? layer : undefined;
+  }
+  if (command.type === "mirror") {
+    return buffer.layers.find((layer) => layer.locked);
+  }
+  return undefined;
+}
+
 export function applyCommand(source: FrameBuffer, command: Command): CommandResult {
   const buffer = cloneBuffer(source);
+  const locked = lockedLayerFor(buffer, command);
+  if (locked) {
+    return fail("LAYER_LOCKED", `The layer "${locked.name}" is locked.`);
+  }
   switch (command.type) {
     case "paint":
       return paintPoints(
@@ -518,6 +550,70 @@ export function applyCommand(source: FrameBuffer, command: Command): CommandResu
           ),
         },
       };
+    }
+    case "setLayerOpacity": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      const opacity = Number.isFinite(command.opacity)
+        ? Math.max(0, Math.min(1, command.opacity))
+        : 1;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId ? { ...layer, opacity } : layer,
+          ),
+        },
+      };
+    }
+    case "setLayerBlend": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId ? { ...layer, blend: command.blend } : layer,
+          ),
+        },
+      };
+    }
+    case "setLayerLocked": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      return {
+        ok: true,
+        buffer: {
+          ...buffer,
+          layers: buffer.layers.map((layer) =>
+            layer.id === command.layerId ? { ...layer, locked: command.locked } : layer,
+          ),
+        },
+      };
+    }
+    case "duplicateLayer": {
+      const gate = requireLayer(buffer, command.layerId);
+      if ("ok" in gate) return gate;
+      if (buffer.layers.some((layer) => layer.id === command.id)) {
+        return fail("LAYER_EXISTS", "That layer id is already on this frame.");
+      }
+      const source = buffer.layers.find((layer) => layer.id === command.layerId);
+      if (!source) return fail("LAYER_NOT_FOUND", "That layer is not on this frame.");
+      const name = command.name.trim();
+      if (!name) return fail("LAYER_NAME", "A layer needs a name.");
+      const index = buffer.layers.findIndex((layer) => layer.id === source.id);
+      const copy = {
+        ...source,
+        id: command.id,
+        name,
+        pixels: clonePixels(source.pixels),
+        ...(source.text ? { text: { ...source.text } } : {}),
+      };
+      const layers = [...buffer.layers];
+      layers.splice(index + 1, 0, copy);
+      return { ok: true, buffer: { ...buffer, layers } };
     }
     case "removeLayer": {
       const gate = requireLayer(buffer, command.layerId);

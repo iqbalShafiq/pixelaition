@@ -1,4 +1,4 @@
-import type { TextLayerSpec } from "@pixelaition/pixel";
+import type { BlendMode, FrameTag, LayerGroup, TextLayerSpec } from "@pixelaition/pixel";
 
 export type LayerDto = {
   id: string;
@@ -6,6 +6,10 @@ export type LayerDto = {
   visible: boolean;
   pixels: string;
   text?: TextLayerSpec;
+  opacity?: number;
+  blend?: BlendMode;
+  locked?: boolean;
+  parentGroupId?: string;
 };
 
 import type { ArtboardScene, CopyOverride, CopyDeck } from "@pixelaition/artboard";
@@ -24,6 +28,8 @@ export type FrameDto = {
   status?: string;
   version?: number;
   updatedAt?: string;
+  durationMs?: number;
+  groups?: LayerGroup[];
 };
 
 export type AssetDto = {
@@ -33,6 +39,7 @@ export type AssetDto = {
   height: number;
   palette: string[];
   paletteLocked: boolean;
+  tags?: FrameTag[];
   copy: CopyDeck;
   frames: FrameDto[];
   projectId: string;

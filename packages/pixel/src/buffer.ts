@@ -124,6 +124,7 @@ export function bufferToFrame(
   frame: Pick<Frame, "id" | "name" | "index"> & {
     width?: number | null;
     height?: number | null;
+    durationMs?: number;
   },
 ): Frame {
   return {
@@ -132,6 +133,7 @@ export function bufferToFrame(
     index: frame.index,
     ...(frame.width !== undefined ? { width: frame.width } : {}),
     ...(frame.height !== undefined ? { height: frame.height } : {}),
+    ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
     ...(buffer.groups ? { groups: buffer.groups.map((group) => ({ ...group })) } : {}),
     layers: buffer.layers.map((layer) => ({
       id: layer.id,
