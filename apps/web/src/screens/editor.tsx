@@ -16,6 +16,8 @@ import {
   fitZoom,
   frameToBuffer,
   linePoints,
+  paletteFromImage,
+  quantizeToPalette,
   pushHistory,
   redoHistory,
   stepZoom,
@@ -28,6 +30,7 @@ import {
   type StyleGuide,
   type TextLayerSpec,
 } from "@pixelaition/pixel";
+import type { PaletteImage } from "@pixelaition/artboard";
 import {
   checkScene,
   getPreset,
@@ -49,6 +52,7 @@ import {
 import { FormatPicker } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
 import { ImportImageDialog } from "../components/import-image-dialog.js";
+import { decodeImageFile } from "../lib/image-import.js";
 import { TimelinePanel } from "../components/timeline-panel.js";
 import { SlicesPanel } from "../components/slices-panel.js";
 import { TilePreviewDialog } from "../components/tile-preview-dialog.js";
@@ -320,6 +324,8 @@ export function EditorScreen() {
   const [onion, setOnion] = useState(false);
   const [symmetry, setSymmetry] = useState<"none" | "x" | "y">("none");
   const [tileOpen, setTileOpen] = useState(false);
+  const [reference, setReference] = useState<PaletteImage | null>(null);
+  const referenceInput = useRef<HTMLInputElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [prompt, setPrompt] = useState("");
   const attachments = useAttachments();
@@ -3397,6 +3403,28 @@ export function EditorScreen() {
     />
   );
 
+  async function loadReferenceFile(file: File | undefined) {
+    if (!file) return;
+    try {
+      const image = await decodeImageFile(file);
+      const palette = paletteFromImage(image, 32);
+      if (!palette[0] || palette[0].slice(-2).toLowerCase() !== "00") {
+        palette.unshift("#00000000");
+      }
+      setReference({
+        width: image.width,
+        height: image.height,
+        palette,
+        indices: quantizeToPalette(image, palette),
+      });
+    } catch (reason) {
+      notify({
+        title: "The reference did not load",
+        description: reason instanceof Error ? reason.message : "Unknown error",
+      });
+    }
+  }
+
   async function saveFrameDuration(targetFrameId: string, durationMs: number) {
     if (running) return;
     try {
@@ -3467,6 +3495,9 @@ export function EditorScreen() {
       onOnion={setOnion}
       onSymmetry={setSymmetry}
       onTile={() => setTileOpen(true)}
+      onReference={() => referenceInput.current?.click()}
+      onClearReference={() => setReference(null)}
+      referenceActive={reference !== null}
     />
   );
 
@@ -3867,6 +3898,7 @@ export function EditorScreen() {
                     locked={locked || preview !== null}
                     agentCursor={frameId ? (agentCursors[frameId] ?? null) : null}
                     overlay={socialFrame ? null : sceneOverlay}
+                    reference={reference}
                     textBoxes={textBoxes}
                     selectedTextBoxId={selectedTextId}
                     onSelectText={(id) => {
@@ -4406,6 +4438,16 @@ export function EditorScreen() {
         onPick={(presetId) => addSocialFrame.mutate(presetId)}
         onCustom={(width, height) => addCustomFrame.mutate({ width, height })}
         busy={addSocialFrame.isPending || addCustomFrame.isPending}
+      />
+      <input
+        ref={referenceInput}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={(event) => {
+          void loadReferenceFile(event.currentTarget.files?.[0]);
+          event.currentTarget.value = "";
+        }}
       />
       <TilePreviewDialog
         open={tileOpen}

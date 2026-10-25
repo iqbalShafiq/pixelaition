@@ -3,6 +3,7 @@ import type { Tool } from "./pixel-canvas.js";
 import {
   Circle,
   Eraser,
+  Eye,
   Fill,
   Grid,
   Hand,
@@ -263,6 +264,9 @@ export function ViewPanel({
   zones,
   onZones,
   onTile,
+  onReference,
+  onClearReference,
+  referenceActive = false,
 }: {
   grid: boolean;
   checker: boolean;
@@ -276,6 +280,9 @@ export function ViewPanel({
   zones?: boolean;
   onZones?: (next: boolean) => void;
   onTile?: () => void;
+  onReference?: () => void;
+  onClearReference?: () => void;
+  referenceActive?: boolean;
 }) {
   if (onZones) {
     return (
@@ -312,6 +319,16 @@ export function ViewPanel({
         {onTile ? (
           <IconButton label="Tile preview" subtle onClick={onTile}>
             <Grid />
+          </IconButton>
+        ) : null}
+        {onReference ? (
+          <IconButton
+            label={referenceActive ? "Clear reference" : "Reference image"}
+            subtle
+            active={referenceActive}
+            onClick={referenceActive ? onClearReference : onReference}
+          >
+            <Eye />
           </IconButton>
         ) : null}
       </div>

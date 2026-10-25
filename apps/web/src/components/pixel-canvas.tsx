@@ -71,6 +71,7 @@ type Props = {
   locked: boolean;
   /** Scene elements drawn over the pixel base, in document coordinates. */
   overlay?: PaletteImage | null;
+  reference?: PaletteImage | null;
   /** The cell the agent is about to ink. Drawn with the same border as a hover. */
   agentCursor?: Point | null;
   /** Editable text layers, in document coordinates, drawn as selection boxes. */
@@ -303,6 +304,7 @@ export function PixelCanvas({
   locked,
   agentCursor = null,
   overlay = null,
+  reference = null,
   textBoxes = [],
   selectedTextBoxId = null,
   onSelectText,
@@ -367,6 +369,7 @@ export function PixelCanvas({
     onCamera,
     ghost,
     overlay,
+    reference,
     locked,
     textBoxes,
     selectedTextBoxId,
@@ -387,6 +390,7 @@ export function PixelCanvas({
     onCamera,
     ghost,
     overlay,
+    reference,
     locked,
     textBoxes,
     selectedTextBoxId,
@@ -521,6 +525,19 @@ export function PixelCanvas({
         );
       }
 
+      const referenceImage = latest.current.reference;
+      if (referenceImage) {
+        context.save();
+        context.globalAlpha = 0.35;
+        context.drawImage(
+          overlayBitmapFor(referenceImage, overlayBitmaps.current),
+          originX,
+          originY,
+          docWidth,
+          docHeight,
+        );
+        context.restore();
+      }
       const sceneOverlay = latest.current.overlay;
       if (sceneOverlay) {
         context.drawImage(
@@ -673,6 +690,7 @@ export function PixelCanvas({
     locked,
     agentCursor,
     overlay,
+    reference,
     selectedTextBoxId,
     textBoxes,
   ]);
