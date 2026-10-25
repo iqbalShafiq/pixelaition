@@ -137,6 +137,8 @@ export const frames = pgTable(
     layers: jsonb("layers").notNull(),
     /** Layer groups are frame-local; empty keeps the old flat-layer shape. */
     groups: jsonb("groups").notNull().default([]),
+    /** Server-backed undo/redo stacks, so an edit survives a tab or device. */
+    undoHistory: jsonb("undo_history"),
     /** Frame delay in milliseconds; native-size frames ignore it. */
     durationMs: integer("duration_ms").notNull().default(100),
     /** `sprite` frames paint layers; `social` frames own a scene at native size. */

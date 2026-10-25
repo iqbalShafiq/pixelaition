@@ -85,6 +85,7 @@ import { useRejoinPacer, useRunStream } from "../lib/run-stream.js";
 import { useTaskSnapshot, useTaskStream, type TaskSnapshot } from "../lib/task.js";
 import { ExportDialog } from "../components/export-dialog.js";
 import { HistoryPanel, type VersionPreview } from "../components/history-panel.js";
+import { decodeHistory, encodeHistory } from "../lib/history-persist.js";
 import { QueueDock } from "../components/queue-dock.js";
 import { QuestionSummary } from "../components/question-summary.js";
 import {
@@ -800,14 +801,11 @@ export function EditorScreen() {
       const next = { ...current };
       for (const item of data.frames) {
         if (next[item.id] || item.kind === "social") continue;
-        next[item.id] = createHistory(
-          frameToBuffer(
-            item,
-            item.width ?? data.width,
-            item.height ?? data.height,
-            data.palette,
-          ),
-        );
+        const width = item.width ?? data.width;
+        const height = item.height ?? data.height;
+        next[item.id] =
+          decodeHistory(item.undoHistory, width, height, data.palette) ??
+          createHistory(frameToBuffer(item, width, height, data.palette));
         changed = true;
       }
       return changed ? next : current;
@@ -967,7 +965,11 @@ export function EditorScreen() {
   );
 
   const save = useMutation({
-    mutationFn: async (input: { frameId: string; buffer: FrameBuffer }) => {
+    mutationFn: async (input: {
+      frameId: string;
+      buffer: FrameBuffer;
+      history?: unknown;
+    }) => {
       await api(`/api/assets/${assetId}/frames/${input.frameId}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -987,6 +989,7 @@ export function EditorScreen() {
             pixels: bytesToBase64(layer.pixels),
           })),
           groups: input.buffer.groups ?? [],
+          ...(input.history !== undefined ? { history: input.history } : {}),
         }),
       });
     },
@@ -996,14 +999,11 @@ export function EditorScreen() {
     if (!id) return;
     const saved = data.frames.find((item) => item.id === id);
     if (!saved || saved.kind === "social") return;
-    const next = createHistory(
-      frameToBuffer(
-        saved,
-        saved.width ?? data.width,
-        saved.height ?? data.height,
-        data.palette,
-      ),
-    );
+    const width = saved.width ?? data.width;
+    const height = saved.height ?? data.height;
+    const next =
+      decodeHistory(saved.undoHistory, width, height, data.palette) ??
+      createHistory(frameToBuffer(saved, width, height, data.palette));
     draftsRef.current = { ...draftsRef.current, [id]: next };
     setDrafts((current) => ({ ...current, [id]: next }));
   }
@@ -1605,28 +1605,34 @@ export function EditorScreen() {
 
   const persistFrame = useCallback(
     (frameId: string, buffer: FrameBuffer) =>
-      mutate.current({ frameId, buffer }).then(
-        () => true,
-        (reason: unknown) => {
-          // A live run owns the asset: the API answers RUN_IN_PROGRESS. The
-          // edit is the user's own and the agent will never write it, so the
-          // save waits for the run to release the asset instead of surfacing
-          // "A frame did not save" over a run that is working exactly as told.
-          if (
-            reason instanceof ApiError &&
-            (reason.status === 409 || reason.code === "RUN_IN_PROGRESS")
-          ) {
-            refusedSaves.current.set(frameId, buffer);
+      mutate
+        .current({
+          frameId,
+          buffer,
+          history: encodeHistory(draftsRef.current[frameId] ?? createHistory(buffer)),
+        })
+        .then(
+          () => true,
+          (reason: unknown) => {
+            // A live run owns the asset: the API answers RUN_IN_PROGRESS. The
+            // edit is the user's own and the agent will never write it, so the
+            // save waits for the run to release the asset instead of surfacing
+            // "A frame did not save" over a run that is working exactly as told.
+            if (
+              reason instanceof ApiError &&
+              (reason.status === 409 || reason.code === "RUN_IN_PROGRESS")
+            ) {
+              refusedSaves.current.set(frameId, buffer);
+              return false;
+            }
+            notify({
+              id: "frame-save",
+              title: "A frame did not save",
+              description: reason instanceof Error ? reason.message : "Unknown error",
+            });
             return false;
-          }
-          notify({
-            id: "frame-save",
-            title: "A frame did not save",
-            description: reason instanceof Error ? reason.message : "Unknown error",
-          });
-          return false;
-        },
-      ),
+          },
+        ),
     [notify],
   );
 

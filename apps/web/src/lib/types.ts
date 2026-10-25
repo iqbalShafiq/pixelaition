@@ -39,6 +39,7 @@ export type FrameDto = {
   updatedAt?: string;
   durationMs?: number;
   groups?: LayerGroup[];
+  undoHistory?: unknown;
 };
 
 export type AssetDto = {

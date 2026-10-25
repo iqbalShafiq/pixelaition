@@ -288,6 +288,7 @@ export async function saveFrame(
   frameId: string,
   layers: Frame["layers"],
   groups?: Frame["groups"],
+  undoHistory?: unknown,
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const asset = await getAssetRecord(db, userId, assetId);
   if (!asset) return { asset: undefined };
@@ -324,7 +325,12 @@ export async function saveFrame(
   }
   await db
     .update(frames)
-    .set({ layers, ...(groups !== undefined ? { groups } : {}), updatedAt: new Date() })
+    .set({
+      layers,
+      ...(groups !== undefined ? { groups } : {}),
+      ...(undoHistory !== undefined ? { undoHistory } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(frames.id, frameId), eq(frames.assetId, assetId)));
   await db.update(assets).set({ updatedAt: new Date() }).where(eq(assets.id, assetId));
   await recordFrameVersion(db, assetId, frameId, "edit", frame.name, layers);

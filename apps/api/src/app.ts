@@ -795,6 +795,7 @@ export function createApp() {
           }),
         ),
         groups: z.array(layerGroupSchema).optional(),
+        history: z.unknown().optional(),
       })
       .parse(req.body);
     // Defence in depth: a live agent owns every frame, so the client cannot
@@ -814,6 +815,7 @@ export function createApp() {
       req.params.frameId ?? "",
       body.layers,
       body.groups,
+      body.history,
     );
     if (!saved.asset)
       return fail(
