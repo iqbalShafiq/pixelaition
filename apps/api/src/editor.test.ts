@@ -228,6 +228,16 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(apng.status).toBe(200);
       expect(apng.headers["content-type"]).toBe("image/apng");
 
+      const ase = await request(app)
+        .post("/api/export")
+        .set("authorization", `Bearer ${token}`)
+        .send({ scope: "asset", projectId, assetId: asset.id, format: "ase" });
+      expect(ase.status).toBe(200);
+      expect(ase.headers["content-type"]).toBe("image/x-aseprite");
+      if (Buffer.isBuffer(ase.body)) {
+        expect(ase.body.readUInt16LE(4)).toBe(0xa5e0);
+      }
+
       const webp = await request(app)
         .post("/api/export")
         .set("authorization", `Bearer ${token}`)

@@ -91,3 +91,5 @@ export { sheetToAsepriteJson, type AsepriteJson, type AsepriteTag } from "./asep
 export { atlasForEngine, atlasPresets, type AtlasPreset } from "./atlas-presets.js";
 
 export { frameToTileset, type TilesetResult, type TilesetTile } from "./tileset.js";
+
+export { framesToAse, type AseFrame, type AseTag } from "./ase.js";

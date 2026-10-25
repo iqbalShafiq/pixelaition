@@ -21,6 +21,7 @@ import {
   frameToPng,
   frameToTileset,
   framesToApng,
+  framesToAse,
   framesToGif,
   framesToSheet,
   sheetToAsepriteJson,
@@ -152,6 +153,33 @@ async function exportProject(args: string[]): Promise<void> {
   }
   if (format === "apng") {
     await writeFile(out, framesToApng(frames, { scale }));
+    return;
+  }
+  if (format === "ase") {
+    const tags = (asset.tags ?? []).flatMap((tag) => {
+      const from = frames.findIndex((entry) => entry.frame.id === tag.fromFrameId);
+      const to = frames.findIndex((entry) => entry.frame.id === tag.toFrameId);
+      if (from < 0 || to < 0) return [];
+      return [
+        {
+          name: tag.name,
+          from: Math.min(from, to),
+          to: Math.max(from, to),
+          direction: tag.direction,
+          loop: tag.loop,
+        },
+      ];
+    });
+    await writeFile(
+      out,
+      framesToAse(
+        frames.map((entry) => ({
+          buffer: entry.buffer,
+          durationMs: entry.durationMs,
+        })),
+        tags,
+      ),
+    );
     return;
   }
   if (format === "tileset") {

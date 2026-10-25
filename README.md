@@ -182,7 +182,7 @@ Frames are added, duplicated, renamed, timed and deleted from the left column. T
 
 ## Export
 
-`POST /api/export` takes a scope of `frame`, `asset` or `project`, then `png`, `jpg`, `svg`, `zip`, `pxl`, `gif`, `apng`, `webp`, `sheet`, `png-sequence`, `aseprite-json` or `tileset`, at a scale of 1, 2, 4, 8 or 10. Animation formats read sprite frames only, honour each frame's delay, and accept `loop` (`0` forever, `-1` once), `tagId`, `frameIds`, `columns`, `padding` and `margin`. `sheet` returns a ZIP with the PNG and a JSON atlas; `png-sequence` returns a ZIP of numbered PNGs; `tileset` cuts one frame into equal tiles plus a `pixelaition-tileset` index. Animated WebP is transcoded from the same indexed GIF on the server, so it cannot invent a second palette.
+`POST /api/export` takes a scope of `frame`, `asset` or `project`, then `png`, `jpg`, `svg`, `zip`, `pxl`, `gif`, `apng`, `webp`, `sheet`, `png-sequence`, `aseprite-json`, `tileset` or `ase`, at a scale of 1, 2, 4, 8 or 10. Animation formats read sprite frames only, honour each frame's delay, and accept `loop` (`0` forever, `-1` once), `tagId`, `frameIds`, `columns`, `padding` and `margin`. `sheet` returns a ZIP with the PNG and a JSON atlas; `png-sequence` returns a ZIP of numbered PNGs; `tileset` cuts one frame into equal tiles plus a `pixelaition-tileset` index. `ase` writes an indexed Aseprite document with layers, raw cels, delays and tags; group layers and slices stay in `.pxl`/the atlas. Animated WebP is transcoded from the same indexed GIF on the server, so it cannot invent a second palette.
 
 ```json
 {

@@ -410,8 +410,8 @@ Implemented:
 
 Still open from the matrix above:
 
-- Binary `.ase`/`.aseprite` import/export (only Aseprite's JSON spritesheet
-  dialect is covered).
+- Binary `.ase`/`.aseprite` import (indexed `.ase` export is in; import and
+  group/slice chunks are not).
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, brush dynamics, RGB/grayscale color modes and scripting.

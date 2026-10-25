@@ -22,6 +22,7 @@ import {
   atlasForEngine,
   atlasPresets,
   frameToTileset,
+  framesToAse,
   framesToSheet,
   serializeProject,
   sheetToAsepriteJson,
@@ -3619,6 +3620,7 @@ export function createApp() {
           "png-sequence",
           "aseprite-json",
           "tileset",
+          "ase",
         ]),
         scale: scaleSchema.default(1),
         background: z.string().optional(),
@@ -3644,6 +3646,7 @@ export function createApp() {
         "png-sequence",
         "aseprite-json",
         "tileset",
+        "ase",
       ].includes(body.format)
     ) {
       if (body.scope === "project" || body.scope === "artboard" || body.scope === "set") {
@@ -3722,6 +3725,32 @@ export function createApp() {
         return [{ frame, buffer, durationMs: frame.durationMs ?? 100 }];
       });
       const slugName = slug(asset.name);
+      if (body.format === "ase") {
+        const aseTags = tags.flatMap((tag) => {
+          const from = selected.findIndex((frame) => frame.id === tag.fromFrameId);
+          const to = selected.findIndex((frame) => frame.id === tag.toFrameId);
+          if (from < 0 || to < 0) return [];
+          return [
+            {
+              name: tag.name,
+              from: Math.min(from, to),
+              to: Math.max(from, to),
+              direction: tag.direction,
+              loop: tag.loop,
+            },
+          ];
+        });
+        const bytes = framesToAse(
+          entries.map((entry) => ({
+            buffer: entry.buffer,
+            durationMs: entry.durationMs,
+          })),
+          aseTags,
+        );
+        res.setHeader("content-type", "image/x-aseprite");
+        res.setHeader("content-disposition", `attachment; filename="${slugName}.ase"`);
+        return res.send(Buffer.from(bytes));
+      }
       if (body.format === "tileset") {
         const first = entries[0];
         if (!first)
