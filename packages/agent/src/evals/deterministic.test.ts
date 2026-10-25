@@ -424,6 +424,36 @@ describe("generation decisions and tools", () => {
     releaseRun("run-workflow");
   });
 
+  it("applies a tilemap through the eval runner", async () => {
+    const buffer = createBuffer({ width: 8, height: 8 });
+    const layerId = activeLayerId(buffer);
+    const layer = buffer.layers.find((item) => item.id === layerId);
+    if (!layer) throw new Error("missing layer");
+    layer.pixels[0] = 1;
+    bindFrames("run-tilemap", [{ id: "frame", name: "idle", buffer }]);
+    const applied = (await toolFor("apply_tilemap").call(
+      {
+        frameId: "frame",
+        tilemap: {
+          version: 1,
+          width: 4,
+          height: 4,
+          tileWidth: 2,
+          tileHeight: 2,
+          tileset: [{ index: 0, name: "tile", x: 0, y: 0, width: 2, height: 2 }],
+          layers: [{ name: layer.name, data: Array.from({ length: 16 }, () => 0) }],
+        },
+      },
+      { operationId: "run-tilemap/tool:1" },
+    )) as { committed: boolean };
+    expect(applied.committed).toBe(true);
+    const live = getRun("run-tilemap")?.frames.get("frame")?.buffer.layers[0]?.pixels;
+    expect(live?.[0]).toBe(1);
+    expect(live?.[2 * 8 + 2]).toBe(1);
+    expect(live?.[6 * 8 + 6]).toBe(1);
+    releaseRun("run-tilemap");
+  });
+
   it("fails a summary that invents a color", async () => {
     const result = await runEvalSuite({
       name: "pixelaition-draws",

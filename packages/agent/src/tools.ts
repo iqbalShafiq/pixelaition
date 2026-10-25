@@ -1,6 +1,11 @@
 import { createThinkTool, createTool, type ToolApprovalContext } from "@anvia/core";
 import { ToolOutput } from "@anvia/core/tool";
-import { frameToPng, type ExportScale } from "@pixelaition/export";
+import {
+  applyTilemap,
+  frameToPng,
+  type ExportScale,
+  type TilemapJson,
+} from "@pixelaition/export";
 import {
   addFrame,
   applyCommand,
@@ -2119,6 +2124,54 @@ export function createPixelTools(
     },
   });
 
+  const applyTilemapTool = createTool({
+    name: "apply_tilemap",
+    description:
+      "Apply a tile-index map to a frame. The tileset rectangles are read from the same frame before any cell is written, so a map can reuse the frame's own tiles.",
+    inputSchema: z.object({
+      frameId: z.string().optional(),
+      tilemap: z.object({
+        version: z.literal(1),
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+        tileWidth: z.number().int().positive(),
+        tileHeight: z.number().int().positive(),
+        tileset: z.array(
+          z.object({
+            index: z.number().int().nonnegative(),
+            name: z.string(),
+            x: z.number().int().nonnegative(),
+            y: z.number().int().nonnegative(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          }),
+        ),
+        layers: z.array(
+          z.object({
+            name: z.string(),
+            data: z.array(z.number().int().min(-1)),
+          }),
+        ),
+      }),
+    }),
+    requiresApproval: () => false,
+    execute: (input, context) => {
+      const run = requireRun(context.operationId);
+      requireAsset(run);
+      const frame = resolveFrame(run, input.frameId);
+      const next = applyTilemap(frame.buffer, input.tilemap as TilemapJson);
+      for (const layer of next.layers) {
+        editFrame(run, frame.id, {
+          type: "replaceLayer",
+          layerId: layer.id,
+          pixels: layer.pixels,
+        });
+      }
+      run.onStroke?.({ label: "tilemap", points: [] }, frame.buffer, frame.id);
+      return { committed: true, layers: next.layers.length };
+    },
+  });
+
   const removeBackground = createTool({
     name: "remove_background",
     description:
@@ -3170,6 +3223,7 @@ export function createPixelTools(
     drawLine,
     drawEllipse,
     tileFillTool,
+    applyTilemapTool,
     removeBackground,
     moveRegionTool,
     rotateRegionTool,

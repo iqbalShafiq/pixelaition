@@ -36,6 +36,7 @@ const PAINT_TOOLS: readonly string[] = [
   "draw_line",
   "draw_ellipse",
   "tile_fill",
+  "apply_tilemap",
   "remove_background",
   "move_region",
   "rotate_region",
