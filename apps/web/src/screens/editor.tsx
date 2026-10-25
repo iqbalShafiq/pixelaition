@@ -2918,11 +2918,12 @@ export function EditorScreen() {
     width?: number;
     height?: number;
     palette?: string[];
+    styleLocked?: boolean;
   }) {
     if (running) return;
     if (
-      (input.width !== undefined && (input.width < 8 || input.width > 128)) ||
-      (input.height !== undefined && (input.height < 8 || input.height > 128))
+      (input.width !== undefined && (input.width < 8 || input.width > 4096)) ||
+      (input.height !== undefined && (input.height < 8 || input.height > 4096))
     ) {
       const text = "Canvas size must be a whole number from 8 to 4096.";
       setError(text);
@@ -3726,9 +3727,11 @@ export function EditorScreen() {
         width={frame?.width ?? asset.data?.width ?? 32}
         height={frame?.height ?? asset.data?.height ?? 32}
         colorMode={asset.data?.colorMode ?? "indexed"}
+        styleLocked={asset.data?.styleLocked ?? false}
         readOnly={frame !== null && frame.width !== asset.data?.width}
         onResize={(width, height) => void updateAsset({ width, height })}
         onColorMode={(mode) => void saveColorMode(mode)}
+        onStyleLock={(locked) => void updateAsset({ styleLocked: locked })}
       />
     </div>
   );

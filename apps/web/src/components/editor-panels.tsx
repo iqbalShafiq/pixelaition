@@ -1720,16 +1720,20 @@ export function StylePanel({
   width,
   height,
   colorMode = "indexed",
+  styleLocked = false,
   onResize,
   onColorMode,
+  onStyleLock,
   readOnly = false,
 }: {
   style: StyleGuide;
   width: number;
   height: number;
   colorMode?: (typeof colorModes)[number];
+  styleLocked?: boolean;
   onResize?: (width: number, height: number) => void;
   onColorMode?: (mode: (typeof colorModes)[number]) => void;
+  onStyleLock?: (locked: boolean) => void;
   /** Native-size frames show their real output size and cannot be resized. */
   readOnly?: boolean;
 }) {
@@ -1757,6 +1761,20 @@ export function StylePanel({
         </div>
       </dl>
       {style.notes ? <p className="text-[12px] text-muted">{style.notes}</p> : null}
+      {onStyleLock ? (
+        <div className="flex items-center justify-between gap-2 border-t-2 border-line pt-1.5">
+          <span className="text-pixel-mono text-muted">
+            {styleLocked ? "style locked" : "style open"}
+          </span>
+          <Button
+            tone={styleLocked ? "solid" : "ghost"}
+            className="px-2 py-1 text-pixel-label"
+            onClick={() => onStyleLock(!styleLocked)}
+          >
+            {styleLocked ? "Unlock style" : "Lock style"}
+          </Button>
+        </div>
+      ) : null}
       {onColorMode ? (
         <Field label="Color mode" htmlFor="asset-color-mode">
           <SelectControl

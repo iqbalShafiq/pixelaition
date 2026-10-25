@@ -349,6 +349,7 @@ function asPixelAsset(record: AssetRecord): Asset {
     tags: record.tags as never,
     slices: (record.slices ?? []) as never,
     colorMode: record.colorMode as ColorMode,
+    styleLocked: record.styleLocked,
   };
 }
 
@@ -366,6 +367,7 @@ async function persistAsset(
       width: asset.width,
       height: asset.height,
       palette: asset.palette,
+      styleLocked: asset.styleLocked ?? false,
       updatedAt: new Date(),
     })
     .where(eq(assets.id, assetId));
@@ -858,7 +860,13 @@ async function applyAssetUpdate(
   db: Database,
   userId: string,
   assetId: string,
-  input: { name?: string; width?: number; height?: number; palette?: string[] },
+  input: {
+    name?: string;
+    width?: number;
+    height?: number;
+    palette?: string[];
+    styleLocked?: boolean;
+  },
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const record = await getAssetRecord(db, userId, assetId);
   if (!record) return { asset: undefined };
@@ -866,6 +874,9 @@ async function applyAssetUpdate(
   let asset = before;
   const trimmed = input.name?.trim();
   if (trimmed) asset = { ...asset, name: trimmed };
+  if (input.styleLocked !== undefined) {
+    asset = { ...asset, styleLocked: input.styleLocked };
+  }
   const firstId = asset.frames[0]?.id;
   if (!firstId) return { asset: await persistAsset(db, userId, assetId, asset, before) };
 
@@ -914,7 +925,13 @@ export async function updateAssetRecord(
   db: Database,
   userId: string,
   assetId: string,
-  input: { name?: string; width?: number; height?: number; palette?: string[] },
+  input: {
+    name?: string;
+    width?: number;
+    height?: number;
+    palette?: string[];
+    styleLocked?: boolean;
+  },
 ): Promise<{ asset: AssetRecord | undefined; failure?: StoreFailure }> {
   const result = await applyAssetUpdate(db, userId, assetId, input);
   if (!result.asset) return result;
@@ -923,9 +940,11 @@ export async function updateAssetRecord(
       ? "resize"
       : input.palette !== undefined
         ? "palette"
-        : input.name !== undefined
-          ? "rename"
-          : undefined;
+        : input.styleLocked !== undefined
+          ? "style-lock"
+          : input.name !== undefined
+            ? "rename"
+            : undefined;
   if (kind) await recordAssetVersion(db, assetId, kind, result.asset);
   return result;
 }

@@ -930,6 +930,7 @@ export function createApp() {
         width: z.number().int().optional(),
         height: z.number().int().optional(),
         palette: z.array(z.string()).min(2).max(256).optional(),
+        styleLocked: z.boolean().optional(),
       })
       .parse(req.body);
     if (await activeRunFor(req.params.id ?? "")) {

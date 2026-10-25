@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ADD COLUMN "style_locked" boolean DEFAULT false NOT NULL;

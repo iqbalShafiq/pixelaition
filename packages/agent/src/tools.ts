@@ -634,6 +634,8 @@ export function createPixelTools(
         height: run.height,
         palette: run.palette.map((hex, index) => ({ index, hex })),
         paletteLocked: run.paletteLocked === true,
+        styleLocked: run.styleLocked === true,
+        colorMode: run.colorMode ?? "indexed",
         layers: frame.buffer.layers.map((layer) => ({
           id: layer.id,
           name: layer.name,
@@ -2979,6 +2981,8 @@ export function createPixelTools(
           assetName: run.assetName,
           palette: run.palette.map((hex, index) => ({ index, hex })),
           paletteLocked: run.paletteLocked === true,
+          styleLocked: run.styleLocked === true,
+          colorMode: run.colorMode ?? "indexed",
         };
       }
       const view = await resolveReadFrame(run, { assetId: input.assetId });

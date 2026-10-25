@@ -253,6 +253,13 @@
       "when": 1792922605671,
       "tag": "0035_asset_color_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792923469195,
+      "tag": "0036_style_lock",
+      "breakpoints": true
     }
   ]
 }

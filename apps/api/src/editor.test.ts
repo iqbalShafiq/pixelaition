@@ -213,6 +213,13 @@ describe.skipIf(!db)("editor import and palette routes", () => {
         pivot: { x: 8, y: 12 },
       });
 
+      const lockedStyle = await request(app)
+        .patch(`/api/assets/${asset.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ styleLocked: true });
+      expect(lockedStyle.status).toBe(200);
+      expect(lockedStyle.body.styleLocked).toBe(true);
+
       const grayscale = await request(app)
         .put(`/api/assets/${asset.id}/color-mode`)
         .set("authorization", `Bearer ${token}`)

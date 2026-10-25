@@ -91,6 +91,7 @@ export const assetSchema = z.object({
   palette: z.array(hex).min(2).max(256),
   frames: z.array(frameSchema).min(1),
   colorMode: z.enum(colorModes).optional(),
+  styleLocked: z.boolean().optional(),
   slices: z.array(sliceSchema).optional(),
   tags: z
     .array(

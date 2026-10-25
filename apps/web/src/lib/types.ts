@@ -47,6 +47,7 @@ export type AssetDto = {
   palette: string[];
   paletteLocked: boolean;
   colorMode?: ColorMode;
+  styleLocked?: boolean;
   tags?: FrameTag[];
   slices?: Slice[];
   copy: CopyDeck;

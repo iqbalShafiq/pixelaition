@@ -142,6 +142,8 @@ export type Asset = {
   palette: string[];
   frames: Frame[];
   colorMode?: ColorMode;
+  /** When true, the project style guide is not changed for this asset. */
+  styleLocked?: boolean;
   tags?: FrameTag[];
   slices?: Slice[];
 };

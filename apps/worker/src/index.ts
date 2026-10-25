@@ -3184,6 +3184,8 @@ function bindAssetRun(options: {
     ),
     palette: [...asset.palette],
     paletteLocked: asset.paletteLocked,
+    styleLocked: asset.styleLocked,
+    colorMode: asset.colorMode as string,
     tags: asset.tags,
     slices: (asset.slices ?? []) as Slice[],
     width: asset.width,
@@ -4069,6 +4071,8 @@ function bindWorkspaceRun(options: {
       height: asset.height,
       palette: [...asset.palette],
       paletteLocked: asset.paletteLocked,
+      styleLocked: asset.styleLocked,
+      colorMode: asset.colorMode,
       style: asset.style,
       frames: framesByIndex.map((frame) => ({
         id: frame.id,
@@ -4146,6 +4150,8 @@ function bindWorkspaceRun(options: {
         height: asset.height,
         palette: asset.palette,
         paletteLocked: false,
+        styleLocked: false,
+        colorMode: "indexed",
         // A fresh asset has no generated summary yet; the summarizer fills it.
         summary: "",
         summaryAt: null,

@@ -115,6 +115,7 @@ export const assets = pgTable("assets", {
   slices: jsonb("slices").notNull().default([]),
   /** indexed | grayscale | monochrome; pixels stay indexed either way. */
   colorMode: text("color_mode").notNull().default("indexed"),
+  styleLocked: boolean("style_locked").notNull().default(false),
   /** Shared social copy deck; sprite frames ignore it. */
   copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
