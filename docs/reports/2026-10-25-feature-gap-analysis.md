@@ -420,9 +420,9 @@ Still open from the matrix above:
   linked cels, palette, tags and slices all cross `.pxl` and `.ase`. The
   editor can import an `.ase`/`.aseprite` file into the current asset, and
   imported frame dimensions survive the asset read path.
-- Tilemap authoring with persistent tile-index layers and terrain transitions;
-  tile stamping from slices, tile fill, tileset packaging, tile preview, seam
-  reports and tile-size suggestions are in.
+- Tilemap authoring with persistent tile-index layers; edge-aware tile
+  stamping, tile fill, tileset packaging, tile preview, seam reports and
+  tile-size suggestions are in.
 - Richer dynamics, true RGB color mode and Lua/visual scripting; full-colour
   selection brushes, square/round/spray brushes, pressure sizing,
   grayscale/monochrome modes and command-script CLI/API exist.
