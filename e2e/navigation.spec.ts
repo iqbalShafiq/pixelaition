@@ -20,6 +20,7 @@ test("opens a library card in the editor without a long freeze", async ({ page }
   await page.goto("/projects");
   const card = page.getByRole("link", { name: /navigable/ }).first();
   await expect(card).toBeVisible();
+  await expect(page.locator('img[src*="/thumbnail"]').first()).toBeVisible();
   const start = Date.now();
   await card.click();
   await expect(page.getByRole("img", { name: /Pixel canvas/ })).toBeVisible({

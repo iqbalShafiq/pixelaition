@@ -12,7 +12,13 @@ describe("persistent undo history", () => {
     writeCell(after.layers[0]!.pixels, 63, 0x00ff00ff);
     const history = pushHistory(createHistory(before), after);
     const stepped = pushHistory(history, before);
-    const restored = decodeHistory(encodeHistory(stepped), 8, 8, palette);
+    const restored = decodeHistory(
+      encodeHistory(stepped),
+      8,
+      8,
+      palette,
+      stepped.present,
+    );
     expect(restored?.past).toHaveLength(2);
     expect(restored?.future).toHaveLength(0);
     expect(restored?.present.layers[0]?.pixels).toEqual(before.layers[0]?.pixels);
@@ -36,7 +42,7 @@ describe("persistent undo history", () => {
     const stored = encodeHistory(pushHistory(createHistory(past), present));
     expect(stored.past[0]?.layers[0]?.pixels).toBeTypeOf("string");
     expect(stored.past[0]?.layers[1]?.pixels).toBeUndefined();
-    const restored = decodeHistory(stored, 8, 8, palette);
+    const restored = decodeHistory(stored, 8, 8, palette, present);
     expect(restored?.past[0]?.layers[1]?.pixels).toEqual(past.layers[1]?.pixels);
   });
 

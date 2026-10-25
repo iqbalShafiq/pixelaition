@@ -63,7 +63,18 @@ import {
 } from "./artboards.js";
 import { toNodeHandler } from "better-auth/node";
 import { artboards } from "@pixelaition/db";
-import { and, asc, count, desc, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  notInArray,
+  or,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import compression from "compression";
 import express, { type NextFunction, type Request, type Response } from "express";
@@ -779,6 +790,43 @@ export function createApp() {
     };
   }
 
+  app.get("/api/assets/:id/thumbnail", async (req, res) => {
+    const [asset] = await db
+      .select({
+        width: assets.width,
+        height: assets.height,
+        palette: assets.palette,
+      })
+      .from(assets)
+      .innerJoin(projects, eq(assets.projectId, projects.id))
+      .where(
+        and(
+          eq(assets.id, req.params.id ?? ""),
+          eq(projects.userId, res.locals.userId as string),
+        ),
+      )
+      .limit(1);
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const [frame] = await db
+      .select()
+      .from(frames)
+      .where(and(eq(frames.assetId, req.params.id ?? ""), ne(frames.kind, "social")))
+      .orderBy(asc(frames.index))
+      .limit(1);
+    if (!frame) return fail(res, 404, "NOT_FOUND", "That asset has no pixel frame.");
+    const width = frame.width ?? asset.width;
+    const height = frame.height ?? asset.height;
+    try {
+      const png = frameToPng(
+        frameToBuffer(frame as never, width, height, asset.palette as string[]),
+        1,
+      );
+      res.type("png").set("cache-control", "private, max-age=60").send(Buffer.from(png));
+    } catch {
+      return fail(res, 422, "THUMBNAIL_FAILED", "That frame could not be rendered.");
+    }
+  });
+
   app.get("/api/assets/:id", async (req, res) => {
     const asset = await getAssetRecord(
       db,
@@ -798,7 +846,14 @@ export function createApp() {
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
     const frame = asset.frames.find((item) => item.id === req.params.frameId);
     if (!frame) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
-    res.json({ history: frame.undoHistory ?? null });
+    const history = frame.undoHistory;
+    // The present snapshot is the frame's own layers, saved in the same PUT.
+    // Dropping it here keeps older rows from re-sending a duplicate canvas.
+    if (history && typeof history === "object" && "present" in history) {
+      const { present: _present, ...rest } = history as Record<string, unknown>;
+      return res.json({ history: rest });
+    }
+    res.json({ history: history ?? null });
   });
 
   app.put("/api/assets/:id/frames/:frameId", async (req, res) => {

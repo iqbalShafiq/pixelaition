@@ -20,7 +20,8 @@ export type StoredBuffer = {
 
 export type StoredHistory = {
   past: StoredBuffer[];
-  present: StoredBuffer;
+  /** Older rows carried the present snapshot; new rows omit it. */
+  present?: StoredBuffer;
   future: StoredBuffer[];
 };
 
@@ -57,7 +58,6 @@ export function encodeHistory(history: History): StoredHistory {
     buffers.slice(-MAX_STEPS).map((buffer) => encodeBuffer(buffer, history.present));
   return {
     past: trim(history.past),
-    present: encodeBuffer(history.present),
     future: trim(history.future),
   };
 }
@@ -67,20 +67,20 @@ export function decodeHistory(
   width: number,
   height: number,
   palette: string[],
+  presentBuffer?: FrameBuffer,
 ): History | null {
   if (!value || typeof value !== "object") return null;
   const stored = value as Partial<StoredHistory>;
-  if (
-    !Array.isArray(stored.past) ||
-    !Array.isArray(stored.future) ||
-    !stored.present ||
-    typeof stored.present !== "object"
-  ) {
+  if (!Array.isArray(stored.past) || !Array.isArray(stored.future)) {
     return null;
   }
+  if (!stored.present && !presentBuffer) return null;
   try {
-    const presentStored = stored.present as StoredBuffer;
-    const present = decodeBuffer(presentStored, presentStored, width, height, palette);
+    const present = stored.present
+      ? decodeBuffer(stored.present, stored.present, width, height, palette)
+      : presentBuffer!;
+    if (present.width !== width || present.height !== height) return null;
+    const presentStored = stored.present ?? encodeBuffer(present);
     const decode = (buffer: StoredBuffer) =>
       decodeBuffer(buffer, presentStored, width, height, palette);
     return {

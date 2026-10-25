@@ -307,6 +307,8 @@ export function EditorScreen() {
   const [drafts, setDrafts] = useState<Record<string, History>>({});
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
+  const assetDataRef = useRef(asset.data);
+  assetDataRef.current = asset.data;
   const {
     receive: receiveStroke,
     stop: stopStroke,
@@ -792,32 +794,36 @@ export function EditorScreen() {
     return () => window.cancelAnimationFrame(id);
   }, [frameId, buffer?.width, buffer?.height, fit]);
 
-  // Seed a draft for every frame the server knows about, keeping local edits.
+  // Only the frame in view is decoded up front. Other frames become drafts
+  // when they are opened, so a wide cover frame cannot freeze the first paint
+  // of the frame the user actually clicked.
   useEffect(() => {
     if (!asset.data) return;
-    const data = asset.data;
-    setDrafts((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const item of data.frames) {
-        if (next[item.id] || item.kind === "social") continue;
-        const width = item.width ?? data.width;
-        const height = item.height ?? data.height;
-        next[item.id] =
-          decodeHistory(item.undoHistory, width, height, data.palette) ??
-          createHistory(frameToBuffer(item, width, height, data.palette));
-        changed = true;
-      }
-      return changed ? next : current;
-    });
-    setFrameId((current) => current ?? data.frames[0]?.id ?? null);
+    setFrameId((current) => current ?? asset.data?.frames[0]?.id ?? null);
   }, [asset.data]);
+
+  useEffect(() => {
+    if (!asset.data || !frameId) return;
+    const item = asset.data.frames.find((entry) => entry.id === frameId);
+    if (!item || item.kind === "social") return;
+    setDrafts((current) => {
+      if (current[frameId]) return current;
+      const width = item.width ?? asset.data!.width;
+      const height = item.height ?? asset.data!.height;
+      return {
+        ...current,
+        [frameId]: createHistory(frameToBuffer(item, width, height, asset.data!.palette)),
+      };
+    });
+  }, [asset.data, frameId]);
 
   // The undo stack is not part of the asset payload: it is fetched for the
   // frame in view, so opening the editor never waits on megabytes of history.
   const loadedHistory = useRef(new Set<string>());
+  const hydratedHistory = useRef(new Set<string>());
+  const draftReady = Boolean(frameId && drafts[frameId]?.present);
   useEffect(() => {
-    if (!asset.data || !frameId) return;
+    if (!asset.data || !frameId || !draftReady) return;
     const frame = asset.data.frames.find((item) => item.id === frameId);
     if (!frame || frame.kind === "social") return;
     const key = `${assetId}:${frameId}`;
@@ -829,7 +835,13 @@ export function EditorScreen() {
         if (!active || !history) return;
         const width = frame.width ?? asset.data!.width;
         const height = frame.height ?? asset.data!.height;
-        const restored = decodeHistory(history, width, height, asset.data!.palette);
+        const restored = decodeHistory(
+          history,
+          width,
+          height,
+          asset.data!.palette,
+          draftsRef.current[frameId]?.present,
+        );
         if (!restored) return;
         setDrafts((current) => {
           const existing = current[frameId];
@@ -841,11 +853,14 @@ export function EditorScreen() {
       })
       .catch(() => {
         // A missing history is an empty undo stack, not an editor failure.
+      })
+      .finally(() => {
+        hydratedHistory.current.add(key);
       });
     return () => {
       active = false;
     };
-  }, [asset.data, assetId, frameId]);
+  }, [asset.data, assetId, frameId, draftReady]);
 
   // Hydrate the composer once, after both the catalog and the saved
   // preference are readable. The two used to race: the catalog effect ran with
@@ -980,8 +995,20 @@ export function EditorScreen() {
         "replaceLayer",
       ]);
       if (!propagates.has(command.type)) return;
-      for (const [otherId, other] of Object.entries(draftsRef.current)) {
-        if (otherId === frameKey) continue;
+      const data = assetDataRef.current;
+      const otherFrames = data?.frames ?? [];
+      for (const item of otherFrames) {
+        if (item.id === frameKey || item.kind === "social") continue;
+        const other =
+          draftsRef.current[item.id] ??
+          createHistory(
+            frameToBuffer(
+              item,
+              item.width ?? data!.width,
+              item.height ?? data!.height,
+              data!.palette,
+            ),
+          );
         const target = other.present.layers.find(
           (layer) => layer.linkId === linked.linkId,
         );
@@ -991,8 +1018,13 @@ export function EditorScreen() {
           layerId: target.id,
         } as Command);
         if (!next.ok) continue;
-        update(otherId, pushHistory(other, next.buffer));
-        save.mutate({ frameId: otherId, buffer: next.buffer });
+        const nextHistory = pushHistory(other, next.buffer);
+        update(item.id, nextHistory);
+        save.mutate({
+          frameId: item.id,
+          buffer: next.buffer,
+          history: encodeHistory(nextHistory),
+        });
       }
     },
     [notify, update],
@@ -1636,10 +1668,19 @@ export function EditorScreen() {
   // dependency of the effects below or they re-arm forever.
   const mutate = useRef(save.mutateAsync);
   mutate.current = save.mutateAsync;
+  // `notify` is recreated by the toast host; keeping it out of the save
+  // callback's identity stops the autosave effect from re-arming every render.
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
 
   const persistFrame = useCallback(
-    (frameId: string, buffer: FrameBuffer) =>
-      mutate
+    (frameId: string, buffer: FrameBuffer) => {
+      // The mount save waits for the undo stack: writing the freshly seeded
+      // empty history over the stored one would erase redo on every reload.
+      if (!hydratedHistory.current.has(`${assetId}:${frameId}`)) {
+        return Promise.resolve(false);
+      }
+      return mutate
         .current({
           frameId,
           buffer,
@@ -1648,10 +1689,6 @@ export function EditorScreen() {
         .then(
           () => true,
           (reason: unknown) => {
-            // A live run owns the asset: the API answers RUN_IN_PROGRESS. The
-            // edit is the user's own and the agent will never write it, so the
-            // save waits for the run to release the asset instead of surfacing
-            // "A frame did not save" over a run that is working exactly as told.
             if (
               reason instanceof ApiError &&
               (reason.status === 409 || reason.code === "RUN_IN_PROGRESS")
@@ -1659,15 +1696,16 @@ export function EditorScreen() {
               refusedSaves.current.set(frameId, buffer);
               return false;
             }
-            notify({
+            notifyRef.current({
               id: "frame-save",
               title: "A frame did not save",
               description: reason instanceof Error ? reason.message : "Unknown error",
             });
             return false;
           },
-        ),
-    [notify],
+        );
+    },
+    [assetId],
   );
 
   const flush = useCallback(async () => {
