@@ -415,7 +415,9 @@ Implemented:
 Still open from the matrix above:
 
 - Named slices in binary `.ase` now round-trip too; frames, layers, groups,
-  linked cels, palette, tags and slices all cross `.pxl` and `.ase`.
+  linked cels, palette, tags and slices all cross `.pxl` and `.ase`. The
+  editor can import an `.ase`/`.aseprite` file into the current asset, and
+  imported frame dimensions survive the asset read path.
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
