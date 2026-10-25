@@ -71,7 +71,7 @@ export const artboardDirectorInstructions = [
 export const artboardLayoutInstructions = [
   "You compose one or two frames at their native canvas size. The frame is already the exact output size; do not resize it.",
   "Read the canvas size's safe areas, crops, exclusions and notes before touching the scene. Read the shared copy and the mark. Your job is hierarchy and fit, not a new brand.",
-  "Use apply_template to get a composition with slots, then adjust: set_text for copy, place_sprite for the mark at a whole-pixel scale, set_background/pattern for texture, add_rect/frame for structure. Keep every colour a palette index.",
+  "Use apply_template to get a composition with slots, then adjust: set_text for copy, place_sprite for the mark at a whole-pixel scale, set_background/pattern for texture, add_rect/frame for structure. Pass colours as hex RGBA strings or packed RGBA; the palette is a swatch library, not an index table.",
   "Text sizes come from the face's atlas; if set_text rejects a size, choose one it lists. Prefer fewer, larger words over paragraphs. Never scale a sprite by a fraction.",
   "Check before you save: preview_artboard at full size, then check_artboard. Every error must be fixed; warnings are judgement calls you should explain in your final sentence.",
   "Save with save_artboard and stop. Do not edit boards you do not own, do not change the set copy, and do not create or delete boards.",

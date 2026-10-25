@@ -68,7 +68,11 @@ export function toSetDto(
   };
 }
 
-export function toArtboardDto(row: typeof artboards.$inferSelect): ArtboardDto {
+export function toArtboardDto(
+  row: typeof artboards.$inferSelect,
+  palette?: string[],
+): ArtboardDto {
+  const parsed = sceneSchema.parse(row.scene);
   return {
     id: row.id,
     setId: row.setId,
@@ -77,7 +81,7 @@ export function toArtboardDto(row: typeof artboards.$inferSelect): ArtboardDto {
     width: row.width,
     height: row.height,
     pixelUnit: row.pixelUnit,
-    scene: sceneSchema.parse(row.scene),
+    scene: palette ? upgradeScene(parsed, palette) : parsed,
     copyOverride: row.copyOverride as CopyOverride,
     status: row.status as Artboard["status"],
     version: row.version,
@@ -111,9 +115,10 @@ export async function getArtboardSet(
   setId: string,
 ): Promise<SetWithArtboards | undefined> {
   const [row] = await db
-    .select({ set: artboardSets })
+    .select({ set: artboardSets, palette: assets.palette })
     .from(artboardSets)
     .innerJoin(projects, eq(projects.id, artboardSets.projectId))
+    .innerJoin(assets, eq(assets.id, artboardSets.assetId))
     .where(and(eq(artboardSets.id, setId), eq(projects.userId, userId)));
   if (!row) return undefined;
   const rows = await db
@@ -123,7 +128,7 @@ export async function getArtboardSet(
     .orderBy(asc(artboards.createdAt), asc(artboards.id));
   return {
     ...toSetDto(row.set),
-    artboards: rows.map(toArtboardDto),
+    artboards: rows.map((item) => toArtboardDto(item, row.palette as string[])),
   };
 }
 

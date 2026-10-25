@@ -621,7 +621,7 @@ export function createArtboardTools(options: { vision?: boolean } = {}) {
 
   const addFrame = createTool({
     name: "add_frame",
-    description: "Add a rectangular border in a palette colour.",
+    description: "Add a rectangular border in an RGBA colour.",
     inputSchema: z.object({
       artboardId,
       elementId: z.string().min(1).max(80).optional(),

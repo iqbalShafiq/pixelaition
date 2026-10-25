@@ -167,12 +167,20 @@ export async function getAssetRecord(db: Database, userId: string, assetId: stri
     .from(frameTags)
     .where(eq(frameTags.assetId, assetId))
     .orderBy(frameTags.name);
+  const palette = row.asset.palette as string[];
   return {
     ...row.asset,
     style: row.style as StyleGuide,
     projectId: row.projectId,
     projectName: row.projectName,
-    frames: frameRows as StoredFrame[],
+    frames: frameRows.map((frame) =>
+      frame.scene
+        ? {
+            ...frame,
+            scene: upgradeScene(sceneSchema.parse(frame.scene), palette),
+          }
+        : frame,
+    ) as StoredFrame[],
     tags: tagRows,
   };
 }
