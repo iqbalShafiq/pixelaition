@@ -129,7 +129,12 @@ export function FrameThumb({
       ref={ref}
       aria-hidden
       className="shrink-0 border-2 border-line bg-screen"
-      style={{ width: size, height: size, imageRendering: "pixelated" }}
+      style={{
+        width: size,
+        height: size,
+        imageRendering: "pixelated",
+        objectFit: "contain",
+      }}
     />
   );
 }
