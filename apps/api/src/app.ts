@@ -30,6 +30,8 @@ import {
   type ArtboardScene,
   type FormatPreset,
 } from "@pixelaition/artboard";
+import { importFrames } from "./import.js";
+import { mutatePalette } from "./palette.js";
 import {
   createArtboard,
   createArtboardSet,
@@ -793,6 +795,113 @@ export function createApp() {
         saved.failure?.message ?? "That frame is not available.",
       );
     res.json(saved.asset);
+  });
+
+  app.post("/api/assets/:id/import", async (req, res) => {
+    const body = z
+      .object({
+        palette: z.array(z.string()).min(2).max(256),
+        mode: z.enum(["frames", "layers"]).default("frames"),
+        targetFrameId: z.string().optional(),
+        frames: z
+          .array(
+            z.object({
+              name: z.string().max(80).optional(),
+              width: z.number().int().min(8).max(4096),
+              height: z.number().int().min(8).max(4096),
+              layers: z
+                .array(
+                  z.object({
+                    name: z.string().max(80).optional(),
+                    pixels: z.string().min(1),
+                  }),
+                )
+                .min(1),
+              groups: z.array(layerGroupSchema).optional(),
+            }),
+          )
+          .min(1)
+          .max(256),
+      })
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await importFrames(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body,
+    );
+    if (!result.asset) {
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "INVALID",
+        result.failure?.message ?? "That import could not be saved.",
+      );
+    }
+    res.status(201).json(result.asset);
+  });
+
+  app.patch("/api/assets/:id/palette", async (req, res) => {
+    const body = z
+      .discriminatedUnion("action", [
+        z.object({
+          action: z.literal("edit"),
+          index: z.number().int().nonnegative(),
+          color: z.string(),
+        }),
+        z.object({ action: z.literal("add"), color: z.string() }),
+        z.object({
+          action: z.literal("remove"),
+          index: z.number().int().nonnegative(),
+          remapTo: z.number().int().nonnegative().optional(),
+        }),
+        z.object({
+          action: z.literal("reorder"),
+          order: z.array(z.number().int().nonnegative()),
+        }),
+        z.object({
+          action: z.literal("replace"),
+          palette: z.array(z.string()).min(2).max(256),
+        }),
+        z.object({
+          action: z.literal("import"),
+          palette: z.array(z.string()).min(2).max(256),
+          mode: z.enum(["merge", "replace"]).default("merge"),
+        }),
+        z.object({ action: z.literal("lock"), locked: z.boolean() }),
+      ])
+      .parse(req.body);
+    if (await activeRunFor(req.params.id ?? "")) {
+      return fail(
+        res,
+        409,
+        "RUN_IN_PROGRESS",
+        "The agent is working on this asset right now.",
+      );
+    }
+    const result = await mutatePalette(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+      body,
+    );
+    if (!result.asset) {
+      return fail(
+        res,
+        result.failure?.code === "NOT_FOUND" ? 404 : 422,
+        result.failure?.code ?? "INVALID",
+        result.failure?.message ?? "That palette could not be changed.",
+      );
+    }
+    res.json(result.asset);
   });
 
   app.patch("/api/assets/:id", async (req, res) => {

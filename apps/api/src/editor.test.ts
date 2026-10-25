@@ -1,0 +1,200 @@
+import { randomUUID } from "node:crypto";
+import { createDatabase, projects, user, type Database } from "@pixelaition/db";
+import { eq, sql } from "drizzle-orm";
+import type { Express } from "express";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createApiKey } from "./store.js";
+
+async function probe(url: string | undefined): Promise<Database | undefined> {
+  if (!url) return undefined;
+  const candidate = createDatabase(url);
+  try {
+    await Promise.race([
+      candidate.execute(sql`select 1`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+    ]);
+    return candidate;
+  } catch {
+    await candidate.$client.end({ timeout: 1 }).catch(() => undefined);
+    return undefined;
+  }
+}
+
+const db = await probe(process.env.DATABASE_URL);
+process.env.BETTER_AUTH_SECRET ??= "editor-test-secret";
+const appModule = db ? await import("./app.js") : undefined;
+
+const base64 = (values: number[]) =>
+  Buffer.from(Uint8Array.from(values)).toString("base64");
+
+describe.skipIf(!db)("editor import and palette routes", () => {
+  const userId = randomUUID();
+  let live: Database;
+  let app: Express;
+  let token: string;
+
+  beforeAll(async () => {
+    if (!db || !appModule) throw new Error("database probe did not resolve");
+    live = db;
+    app = appModule.createApp();
+    await live.insert(user).values({
+      id: userId,
+      name: "Editor Test",
+      email: `editor-${userId}@test.local`,
+    });
+    token = (await createApiKey(live, userId, "editor-test")).token;
+  });
+
+  afterAll(async () => {
+    if (!live) return;
+    await live.delete(user).where(eq(user.id, userId));
+    const { db: appDb } = await import("./auth.js");
+    await appDb.$client.end({ timeout: 5 });
+    await live.$client.end({ timeout: 5 });
+  });
+
+  async function createAsset(name: string) {
+    const project = await request(app)
+      .post("/api/projects")
+      .set("authorization", `Bearer ${token}`)
+      .send({ name: `${name} project` });
+    expect(project.status).toBe(201);
+    const asset = await request(app)
+      .post(`/api/projects/${project.body.id}/assets`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ name });
+    expect(asset.status).toBe(201);
+    return {
+      projectId: project.body.id as string,
+      asset: asset.body as {
+        id: string;
+        width: number;
+        height: number;
+        palette: string[];
+        frames: Array<{ id: string; layers: Array<{ id: string; pixels: string }> }>;
+      },
+    };
+  }
+
+  it("locks the palette, refuses additions, and unlocks", async () => {
+    const { projectId, asset } = await createAsset("lock");
+    try {
+      const locked = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ action: "lock", locked: true });
+      expect(locked.status).toBe(200);
+      expect(locked.body.paletteLocked).toBe(true);
+
+      const refused = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ action: "add", color: "#ff0000" });
+      expect(refused.status).toBe(422);
+      expect(refused.body.code).toBe("PALETTE_LOCKED");
+
+      const unlocked = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ action: "lock", locked: false });
+      expect(unlocked.status).toBe(200);
+      expect(unlocked.body.paletteLocked).toBe(false);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  it("remaps pixels and social scenes when a colour is removed", async () => {
+    const { projectId, asset } = await createAsset("remap");
+    try {
+      const replaced = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          action: "replace",
+          palette: ["#00000000", "#ff0000", "#0000ff"],
+        });
+      expect(replaced.status).toBe(200);
+
+      const frame = replaced.body.frames[0];
+      const pixels = new Array(asset.width * asset.height).fill(1);
+      pixels[0] = 2;
+      const painted = await request(app)
+        .put(`/api/assets/${asset.id}/frames/${frame.id}`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          layers: [
+            {
+              id: frame.layers[0].id,
+              name: frame.layers[0].name,
+              visible: true,
+              pixels: base64(pixels),
+            },
+          ],
+        });
+      if (painted.status !== 200) console.log("painted", painted.body);
+      expect(painted.status).toBe(200);
+
+      const removed = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ action: "remove", index: 1, remapTo: 2 });
+      expect(removed.status).toBe(200);
+      expect(removed.body.palette).toEqual(["#00000000", "#0000ff"]);
+      const stored = removed.body.frames[0].layers[0].pixels as string;
+      expect(stored).toBe(base64(new Array(asset.width * asset.height).fill(1)));
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
+  it("imports two indexed frames into the asset palette", async () => {
+    const { projectId, asset } = await createAsset("import");
+    try {
+      const sourcePalette = ["#00000000", "#ff0000", "#0000ff"];
+      const replaced = await request(app)
+        .patch(`/api/assets/${asset.id}/palette`)
+        .set("authorization", `Bearer ${token}`)
+        .send({ action: "replace", palette: sourcePalette });
+      expect(replaced.status).toBe(200);
+
+      const framePixels = new Array(64).fill(1);
+      framePixels[0] = 2;
+      const imported = await request(app)
+        .post(`/api/assets/${asset.id}/import`)
+        .set("authorization", `Bearer ${token}`)
+        .send({
+          palette: sourcePalette,
+          mode: "frames",
+          frames: [
+            {
+              name: "hero",
+              width: 8,
+              height: 8,
+              layers: [{ name: "body", pixels: base64(framePixels) }],
+            },
+            {
+              name: "hero-copy",
+              width: 8,
+              height: 8,
+              layers: [{ name: "body", pixels: base64(framePixels) }],
+            },
+          ],
+        });
+      if (imported.status !== 201) console.log("imported", imported.body);
+      expect(imported.status).toBe(201);
+      expect(imported.body.frames).toHaveLength(3);
+      expect(
+        imported.body.frames.some((frame: { name: string }) => frame.name === "hero"),
+      ).toBe(true);
+      const hero = imported.body.frames.find(
+        (frame: { name: string }) => frame.name === "hero",
+      );
+      expect(hero.layers[0].pixels).toBe(base64(framePixels));
+      expect(imported.body.palette).toEqual(sourcePalette);
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+});

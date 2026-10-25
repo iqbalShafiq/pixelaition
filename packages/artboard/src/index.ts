@@ -46,3 +46,5 @@ export {
   type TextLayout,
   type TextLine,
 } from "./text.js";
+
+export { mapSceneIndices } from "./palette.js";

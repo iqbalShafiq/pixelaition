@@ -36,6 +36,7 @@ import {
 import {
   buildTemplateScene,
   getPreset,
+  mapSceneIndices,
   renderScene,
   sceneSchema,
   type ArtboardScene,
@@ -229,7 +230,7 @@ function assetSnapshot(asset: {
   };
 }
 
-async function recordFrameVersion(
+export async function recordFrameVersion(
   db: Database,
   assetId: string,
   frameId: string,
@@ -247,7 +248,7 @@ async function recordFrameVersion(
   });
 }
 
-async function recordAssetVersion(
+export async function recordAssetVersion(
   db: Database,
   assetId: string,
   kind: string,
@@ -1769,40 +1770,8 @@ function mapScenePalette(
   source: string[],
   target: string[],
 ): ArtboardScene {
-  const mapping = paletteIndexMap(source, target);
-  const mapColor = (value: number) => mapping[value] ?? 0;
-  return {
-    ...scene,
-    background:
-      scene.background.kind === "solid"
-        ? { ...scene.background, color: mapColor(scene.background.color) }
-        : scene.background.kind === "pattern"
-          ? {
-              ...scene.background,
-              colorA: mapColor(scene.background.colorA),
-              colorB: mapColor(scene.background.colorB),
-            }
-          : scene.background,
-    elements: scene.elements.map((element) => {
-      switch (element.kind) {
-        case "rect":
-        case "frame":
-          return { ...element, color: mapColor(element.color) };
-        case "pattern":
-          return {
-            ...element,
-            colorA: mapColor(element.colorA),
-            colorB: mapColor(element.colorB),
-          };
-        case "text":
-          return { ...element, color: mapColor(element.color) };
-        default:
-          return element;
-      }
-    }),
-  };
+  return mapSceneIndices(scene, paletteIndexMap(source, target));
 }
-
 export async function importFrameRecord(
   db: Database,
   userId: string,
@@ -1936,6 +1905,15 @@ export async function importPaletteRecord(
     return {
       asset: undefined,
       failure: { code: "NOT_FOUND", message: "That asset is not available." },
+    };
+  }
+  if (target.paletteLocked) {
+    return {
+      asset: undefined,
+      failure: {
+        code: "PALETTE_LOCKED",
+        message: "The palette is locked for this asset.",
+      },
     };
   }
   const nextPalette = source.palette as string[];

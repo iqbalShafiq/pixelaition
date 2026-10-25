@@ -109,6 +109,8 @@ export const assets = pgTable("assets", {
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   palette: jsonb("palette").notNull(),
+  /** When true, neither the editor nor an agent may add, remove or reorder. */
+  paletteLocked: boolean("palette_locked").notNull().default(false),
   /** Shared social copy deck; sprite frames ignore it. */
   copy: jsonb("copy").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

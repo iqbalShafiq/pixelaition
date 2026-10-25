@@ -225,6 +225,13 @@
       "when": 1792916449440,
       "tag": "0031_frame_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792916700273,
+      "tag": "0032_palette_lock",
+      "breakpoints": true
     }
   ]
 }
