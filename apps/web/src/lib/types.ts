@@ -28,6 +28,9 @@ export type FrameDto = {
   name: string;
   index: number;
   layers: LayerDto[];
+  /** Present on the summary asset: layers arrive from the frame route. */
+  layerCount?: number;
+  linkIds?: string[];
   kind?: "sprite" | "social";
   width?: number | null;
   height?: number | null;

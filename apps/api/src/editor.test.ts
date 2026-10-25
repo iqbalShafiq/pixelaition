@@ -79,6 +79,27 @@ describe.skipIf(!db)("editor import and palette routes", () => {
     };
   }
 
+  it("serves a layerless asset summary and one full frame on demand", async () => {
+    const { projectId, asset } = await createAsset("summary");
+    try {
+      const summary = await request(app)
+        .get(`/api/assets/${asset.id}?view=summary`)
+        .set("authorization", `Bearer ${token}`);
+      expect(summary.status).toBe(200);
+      expect(summary.body.frames[0].layers).toEqual([]);
+      expect(summary.body.frames[0].layerCount).toBeGreaterThan(0);
+
+      const detail = await request(app)
+        .get(`/api/assets/${asset.id}/frames/${summary.body.frames[0].id}`)
+        .set("authorization", `Bearer ${token}`);
+      expect(detail.status).toBe(200);
+      expect(detail.body.frame.layers.length).toBeGreaterThan(0);
+      expect(detail.body.frame.undoHistory).toBeUndefined();
+    } finally {
+      await live.delete(projects).where(eq(projects.id, projectId));
+    }
+  });
+
   it("locks the palette, refuses additions, and unlocks", async () => {
     const { projectId, asset } = await createAsset("lock");
     try {

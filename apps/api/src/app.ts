@@ -827,6 +827,25 @@ export function createApp() {
     }
   });
 
+  function withoutLayers(asset: Awaited<ReturnType<typeof getAssetRecord>>) {
+    if (!asset) return asset;
+    return {
+      ...asset,
+      frames: asset.frames.map(({ layers, ...frame }) => ({
+        ...frame,
+        layers: [],
+        layerCount: layers.length,
+        linkIds: [
+          ...new Set(
+            layers
+              .map((layer) => layer.linkId)
+              .filter((linkId): linkId is string => Boolean(linkId)),
+          ),
+        ],
+      })),
+    };
+  }
+
   app.get("/api/assets/:id", async (req, res) => {
     const asset = await getAssetRecord(
       db,
@@ -834,7 +853,24 @@ export function createApp() {
       req.params.id ?? "",
     );
     if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
-    res.json(withoutUndoHistory(asset));
+    res.json(
+      req.query.view === "summary"
+        ? withoutUndoHistory(withoutLayers(asset))
+        : withoutUndoHistory(asset),
+    );
+  });
+
+  app.get("/api/assets/:id/frames/:frameId", async (req, res) => {
+    const asset = await getAssetRecord(
+      db,
+      res.locals.userId as string,
+      req.params.id ?? "",
+    );
+    if (!asset) return fail(res, 404, "NOT_FOUND", "That asset is not available.");
+    const frame = asset.frames.find((item) => item.id === req.params.frameId);
+    if (!frame) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
+    const { undoHistory: _undoHistory, ...visible } = frame;
+    res.json({ frame: visible });
   });
 
   app.get("/api/assets/:id/frames/:frameId/history", async (req, res) => {

@@ -246,7 +246,7 @@ export function EditorScreen() {
 
   const asset = useQuery({
     queryKey: ["asset", assetId],
-    queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
+    queryFn: () => api<AssetDto>(`/api/assets/${assetId}?view=summary`),
   });
   const resources = useQuery({
     queryKey: ["project-resources", asset.data?.projectId ?? ""],
@@ -802,20 +802,77 @@ export function EditorScreen() {
     setFrameId((current) => current ?? asset.data?.frames[0]?.id ?? null);
   }, [asset.data]);
 
+  const loadedDetail = useRef(new Set<string>());
+  const loadFrameDetail = useCallback(
+    (id: string) => {
+      if (!asset.data) return;
+      const key = `${asset.data.id}:${id}`;
+      if (loadedDetail.current.has(key)) return;
+      loadedDetail.current.add(key);
+      void api<{ frame: AssetDto["frames"][number] }>(
+        `/api/assets/${asset.data.id}/frames/${id}`,
+      )
+        .then(({ frame }) => {
+          setDrafts((current) => {
+            if (current[id]) return current;
+            const width = frame.width ?? asset.data!.width;
+            const height = frame.height ?? asset.data!.height;
+            return {
+              ...current,
+              [id]: createHistory(
+                frameToBuffer(frame, width, height, asset.data!.palette),
+              ),
+            };
+          });
+        })
+        .catch(() => {
+          loadedDetail.current.delete(key);
+        });
+    },
+    [asset.data],
+  );
+
   useEffect(() => {
     if (!asset.data || !frameId) return;
     const item = asset.data.frames.find((entry) => entry.id === frameId);
     if (!item || item.kind === "social") return;
-    setDrafts((current) => {
-      if (current[frameId]) return current;
-      const width = item.width ?? asset.data!.width;
-      const height = item.height ?? asset.data!.height;
-      return {
-        ...current,
-        [frameId]: createHistory(frameToBuffer(item, width, height, asset.data!.palette)),
-      };
-    });
-  }, [asset.data, frameId]);
+    if (drafts[frameId]) return;
+    if ((item.layers?.length ?? 0) > 0) {
+      const width = item.width ?? asset.data.width;
+      const height = item.height ?? asset.data.height;
+      setDrafts((current) =>
+        current[frameId]
+          ? current
+          : {
+              ...current,
+              [frameId]: createHistory(
+                frameToBuffer(item, width, height, asset.data!.palette),
+              ),
+            },
+      );
+      return;
+    }
+    if ((item.layerCount ?? 0) === 0) return;
+    loadFrameDetail(frameId);
+  }, [asset.data, frameId, drafts, loadFrameDetail]);
+
+  // A linked layer can be edited from any frame that carries it. Fetch just
+  // those sibling frames once the layer list is known; everything else stays
+  // undecoded until opened.
+  useEffect(() => {
+    if (!asset.data || !frameId || !buffer) return;
+    const links = new Set(
+      buffer.layers
+        .map((layer) => layer.linkId)
+        .filter((linkId): linkId is string => Boolean(linkId)),
+    );
+    if (links.size === 0) return;
+    for (const item of asset.data.frames) {
+      if (item.id === frameId || drafts[item.id]) continue;
+      if (!item.linkIds?.some((linkId) => links.has(linkId))) continue;
+      loadFrameDetail(item.id);
+    }
+  }, [asset.data, frameId, buffer, drafts, loadFrameDetail]);
 
   // The undo stack is not part of the asset payload: it is fetched for the
   // frame in view, so opening the editor never waits on megabytes of history.
@@ -918,18 +975,23 @@ export function EditorScreen() {
     for (const offset of [-1, 1]) {
       const item = asset.data.frames[index + offset];
       if (item && item.kind !== "social") {
-        neighbors.push(
-          frameToBuffer(
-            item,
-            item.width ?? asset.data.width,
-            item.height ?? asset.data.height,
-            asset.data.palette,
-          ),
-        );
+        const draft = drafts[item.id];
+        if (draft) neighbors.push(draft.present);
       }
     }
     return neighbors;
-  }, [onion, asset.data, frame]);
+  }, [onion, asset.data, drafts, frame]);
+
+  useEffect(() => {
+    if (!onion || !asset.data || !frameId) return;
+    const index = asset.data.frames.findIndex((item) => item.id === frameId);
+    for (const offset of [-1, 1]) {
+      const item = asset.data.frames[index + offset];
+      if (item && item.kind !== "social" && !drafts[item.id]) {
+        loadFrameDetail(item.id);
+      }
+    }
+  }, [onion, asset.data, frameId, drafts, loadFrameDetail]);
 
   const update = useCallback((frameKey: string, next: History) => {
     setDrafts((current) => ({ ...current, [frameKey]: next }));
@@ -999,26 +1061,51 @@ export function EditorScreen() {
       const otherFrames = data?.frames ?? [];
       for (const item of otherFrames) {
         if (item.id === frameKey || item.kind === "social") continue;
-        const other =
-          draftsRef.current[item.id] ??
-          createHistory(
-            frameToBuffer(
-              item,
-              item.width ?? data!.width,
-              item.height ?? data!.height,
-              data!.palette,
-            ),
-          );
-        const target = other.present.layers.find(
+        const stored = draftsRef.current[item.id];
+        if (!stored) {
+          // A lazy summary has no layers yet. Fetch that frame, then replay
+          // the same command on its linked layer before saving it.
+          const width = item.width ?? data!.width;
+          const height = item.height ?? data!.height;
+          void api<{ frame: AssetDto["frames"][number] }>(
+            `/api/assets/${assetId}/frames/${item.id}`,
+          )
+            .then(({ frame }) => {
+              const other = createHistory(
+                frameToBuffer(frame, width, height, data!.palette),
+              );
+              const target = other.present.layers.find(
+                (layer) => layer.linkId === linked.linkId,
+              );
+              if (!target) return;
+              const next = applyCommand(other.present, {
+                ...command,
+                layerId: target.id,
+              } as Command);
+              if (!next.ok) return;
+              const nextHistory = pushHistory(other, next.buffer);
+              update(item.id, nextHistory);
+              save.mutate({
+                frameId: item.id,
+                buffer: next.buffer,
+                history: encodeHistory(nextHistory),
+              });
+            })
+            .catch(() => {
+              // A frame that cannot load cannot take this linked edit.
+            });
+          continue;
+        }
+        const target = stored.present.layers.find(
           (layer) => layer.linkId === linked.linkId,
         );
         if (!target) continue;
-        const next = applyCommand(other.present, {
+        const next = applyCommand(stored.present, {
           ...command,
           layerId: target.id,
         } as Command);
         if (!next.ok) continue;
-        const nextHistory = pushHistory(other, next.buffer);
+        const nextHistory = pushHistory(stored, next.buffer);
         update(item.id, nextHistory);
         save.mutate({
           frameId: item.id,
@@ -1960,7 +2047,7 @@ export function EditorScreen() {
     void client
       .fetchQuery({
         queryKey: ["asset", assetId],
-        queryFn: () => api<AssetDto>(`/api/assets/${assetId}`),
+        queryFn: () => api<AssetDto>(`/api/assets/${assetId}?view=summary`),
       })
       .then((data) => {
         client.setQueryData(["asset", assetId], data);
