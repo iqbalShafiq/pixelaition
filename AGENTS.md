@@ -11,6 +11,7 @@ pnpm lint
 pnpm test
 pnpm eval
 pnpm db:migrate
+pnpm --filter @pixelaition/db migrate:rgba-scenes -- --apply
 ```
 
 `pnpm dev` expects the root `.env`. Do not add a `.env` inside a package.
