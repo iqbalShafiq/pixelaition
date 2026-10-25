@@ -336,6 +336,7 @@ export function EditorScreen() {
   const [tileSource, setTileSource] = useState<
     NonNullable<AssetDto["slices"]>[number] | null
   >(null);
+  const [autoTile, setAutoTile] = useState(false);
   const [customBrush, setCustomBrush] = useState<BrushPattern | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
   const asepriteInput = useRef<HTMLInputElement | null>(null);
@@ -2715,12 +2716,77 @@ export function EditorScreen() {
         ) {
           return;
         }
+        const candidates = autoTile
+          ? (asset.data?.slices ?? []).filter(
+              (slice) =>
+                slice.width === tileSource.width &&
+                slice.height === tileSource.height &&
+                slice.x + slice.width <= buffer.width &&
+                slice.y + slice.height <= buffer.height,
+            )
+          : [];
+        let chosen = tileSource;
+        if (candidates.length > 1) {
+          let best = -1;
+          for (const candidate of candidates) {
+            let matches = 0;
+            let compared = 0;
+            for (let row = 0; row < candidate.height; row += 1) {
+              if (x > 0) {
+                compared += 1;
+                if (
+                  layer.pixels[(candidate.y + row) * buffer.width + candidate.x] ===
+                  layer.pixels[(y + row) * buffer.width + x - 1]
+                ) {
+                  matches += 1;
+                }
+              }
+              if (x + candidate.width < buffer.width) {
+                compared += 1;
+                if (
+                  layer.pixels[
+                    (candidate.y + row) * buffer.width + candidate.x + candidate.width - 1
+                  ] === layer.pixels[(y + row) * buffer.width + x + candidate.width]
+                ) {
+                  matches += 1;
+                }
+              }
+            }
+            for (let column = 0; column < candidate.width; column += 1) {
+              if (y > 0) {
+                compared += 1;
+                if (
+                  layer.pixels[candidate.y * buffer.width + candidate.x + column] ===
+                  layer.pixels[(y - 1) * buffer.width + x + column]
+                ) {
+                  matches += 1;
+                }
+              }
+              if (y + candidate.height < buffer.height) {
+                compared += 1;
+                if (
+                  layer.pixels[
+                    (candidate.y + candidate.height - 1) * buffer.width +
+                      candidate.x +
+                      column
+                  ] === layer.pixels[(y + candidate.height) * buffer.width + x + column]
+                ) {
+                  matches += 1;
+                }
+              }
+            }
+            const ratio = compared === 0 ? 0 : matches / compared;
+            if (ratio > best) {
+              best = ratio;
+              chosen = candidate;
+            }
+          }
+        }
         const pixels: number[] = [];
-        for (let row = 0; row < tileSource.height; row += 1) {
-          for (let column = 0; column < tileSource.width; column += 1) {
+        for (let row = 0; row < chosen.height; row += 1) {
+          for (let column = 0; column < chosen.width; column += 1) {
             pixels.push(
-              layer.pixels[(tileSource.y + row) * buffer.width + tileSource.x + column] ??
-                0,
+              layer.pixels[(chosen.y + row) * buffer.width + chosen.x + column] ?? 0,
             );
           }
         }
@@ -2729,8 +2795,8 @@ export function EditorScreen() {
           layerId: activeLayerId,
           x,
           y,
-          width: tileSource.width,
-          height: tileSource.height,
+          width: chosen.width,
+          height: chosen.height,
           pixels,
         });
         return;
@@ -3962,6 +4028,8 @@ export function EditorScreen() {
         height={frame?.height ?? asset.data?.height ?? 32}
         locked={locked}
         onSave={(slices) => void saveSlices(slices)}
+        autoTile={autoTile}
+        onAutoTile={setAutoTile}
         onUseTile={(slice) => {
           setTileSource(slice);
           setTool("tile");

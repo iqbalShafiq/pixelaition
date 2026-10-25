@@ -1,6 +1,6 @@
 import type { Slice } from "@pixelaition/pixel";
 import { useEffect, useState } from "react";
-import { Button, Field, Panel, TextInput } from "./ui.js";
+import { Button, Checkbox, Field, Panel, TextInput } from "./ui.js";
 
 /** Asset-level export slices; the same list rides the sheet atlas. */
 export function SlicesPanel({
@@ -11,6 +11,8 @@ export function SlicesPanel({
   onSave,
   onTileFill,
   onUseTile,
+  autoTile = false,
+  onAutoTile,
 }: {
   slices: Slice[];
   width: number;
@@ -19,6 +21,8 @@ export function SlicesPanel({
   onSave: (slices: Slice[]) => void;
   onTileFill?: (slice: Slice) => void;
   onUseTile?: (slice: Slice) => void;
+  autoTile?: boolean;
+  onAutoTile?: (next: boolean) => void;
 }) {
   const [draft, setDraft] = useState<Slice[]>(slices);
   const [dirty, setDirty] = useState(false);
@@ -73,6 +77,14 @@ export function SlicesPanel({
         <p className="text-pixel-mono text-muted">
           No slices. Slices become named rectangles in the sheet atlas.
         </p>
+      ) : null}
+      {onAutoTile ? (
+        <Checkbox
+          label="Auto-pick neighbouring tile"
+          checked={autoTile}
+          disabled={locked}
+          onChange={onAutoTile}
+        />
       ) : null}
       <div className="grid gap-2">
         {draft.map((slice, index) => (
