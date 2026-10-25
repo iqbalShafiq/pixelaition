@@ -2,7 +2,7 @@
 // Read one task's or one compose run's Langfuse traces back and judge whether
 // every generation got the context it needed.
 // Usage: node tools/trace-check.mjs <durableTaskId>
-//        node tools/trace-check.mjs --run <durableRunId>
+//        node tools/trace-check.mjs --run <durableRunId> [--role ask|image-compose]
 // Env: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL (from .env).
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -36,6 +36,12 @@ const taskArg = process.argv.indexOf("--task");
 const runArg = process.argv.indexOf("--run");
 const taskId = taskArg === -1 ? (runArg === -1 ? process.argv[2] : undefined) : process.argv[taskArg + 1];
 const durableRunId = runArg === -1 ? undefined : process.argv[runArg + 1];
+const roleArg = process.argv.indexOf("--role");
+const requestedRole = roleArg === -1 ? undefined : process.argv[roleArg + 1];
+if (requestedRole && !["ask", "image-compose"].includes(requestedRole)) {
+  console.error("--role must be ask or image-compose when checking one run.");
+  process.exit(2);
+}
 if (!taskId && !durableRunId) {
   console.error(
     "usage: node tools/trace-check.mjs [--task] <durableTaskId> | --run <durableRunId>",
@@ -56,7 +62,7 @@ const childRows = children.trim()
 const roleOf = (key) =>
   key.startsWith("plan") ? "draw-plan" : key.startsWith("w") ? "draw-worker" : key.startsWith("review") ? "draw-review" : "draw-fix";
 const traces = durableRunId
-  ? [{ id: durableRunId, role: "image-compose" }]
+  ? [{ id: durableRunId, role: requestedRole ?? "image-compose" }]
   : [
       { id: taskId, role: "draw-task" },
       ...childRows.map((row) => ({ id: row.runId, role: roleOf(row.key) })),
@@ -72,6 +78,7 @@ const MARKERS = {
   // work log, and bounds the writer to the ordered layers.
   "draw-fix": ["Frame:", "The review asks:", "Paint only"],
   "image-compose": ["image asset", "list_formats", "list_project_sprites"],
+  ask: ["read_project", "read_frame"],
 };
 /** Tool failures the model sees as `error-*`; every one is a refused call worth naming. */
 const REFUSAL = /"type":"error-(text|json)"/;
