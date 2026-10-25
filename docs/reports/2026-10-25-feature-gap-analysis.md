@@ -414,8 +414,8 @@ Implemented:
 
 Still open from the matrix above:
 
-- Named slices in binary `.ase`; frames, layers, groups, linked cels, palette,
-  tags and slices metadata round-trip through `.pxl` and Aseprite JSON.
+- Named slices in binary `.ase` now round-trip too; frames, layers, groups,
+  linked cels, palette, tags and slices all cross `.pxl` and `.ase`.
 - Tilemap authoring (tileset packaging, tile preview, seam reports and tile-size
   suggestions are in; the map layer/editor is not).
 - Custom brush images, richer dynamics, true RGB color mode and Lua/visual
