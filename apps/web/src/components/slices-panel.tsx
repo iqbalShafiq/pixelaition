@@ -14,6 +14,8 @@ export function SlicesPanel({
   autoTile = false,
   onAutoTile,
   onApplyTilemap,
+  terrainMask = false,
+  onTerrainMask,
 }: {
   slices: Slice[];
   width: number;
@@ -25,6 +27,8 @@ export function SlicesPanel({
   autoTile?: boolean;
   onAutoTile?: (next: boolean) => void;
   onApplyTilemap?: () => void;
+  terrainMask?: boolean;
+  onTerrainMask?: (next: boolean) => void;
 }) {
   const [draft, setDraft] = useState<Slice[]>(slices);
   const [dirty, setDirty] = useState(false);
@@ -98,6 +102,14 @@ export function SlicesPanel({
           checked={autoTile}
           disabled={locked}
           onChange={onAutoTile}
+        />
+      ) : null}
+      {onTerrainMask ? (
+        <Checkbox
+          label="Terrain mask (slices 0–15)"
+          checked={terrainMask}
+          disabled={locked}
+          onChange={onTerrainMask}
         />
       ) : null}
       <div className="grid gap-2">

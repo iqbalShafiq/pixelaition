@@ -337,6 +337,7 @@ export function EditorScreen() {
     NonNullable<AssetDto["slices"]>[number] | null
   >(null);
   const [autoTile, setAutoTile] = useState(false);
+  const [terrainMask, setTerrainMask] = useState(false);
   const [jitter, setJitter] = useState(false);
   const [customBrush, setCustomBrush] = useState<BrushPattern | null>(null);
   const referenceInput = useRef<HTMLInputElement | null>(null);
@@ -973,6 +974,22 @@ export function EditorScreen() {
     },
   });
 
+  function adoptFrameFromAsset(data: AssetDto, id: string | null) {
+    if (!id) return;
+    const saved = data.frames.find((item) => item.id === id);
+    if (!saved || saved.kind === "social") return;
+    const next = createHistory(
+      frameToBuffer(
+        saved,
+        saved.width ?? data.width,
+        saved.height ?? data.height,
+        data.palette,
+      ),
+    );
+    draftsRef.current = { ...draftsRef.current, [id]: next };
+    setDrafts((current) => ({ ...current, [id]: next }));
+  }
+
   async function applyTilemapFile(file: File | undefined) {
     if (!file || !frameId) return;
     try {
@@ -982,6 +999,7 @@ export function EditorScreen() {
         body: JSON.stringify({ frameId, tilemap }),
       });
       client.setQueryData(["asset", assetId], data);
+      adoptFrameFromAsset(data, frameId);
       notify({ title: "Tilemap applied" });
     } catch (reason) {
       notify({
@@ -2736,6 +2754,32 @@ export function EditorScreen() {
         ) {
           return;
         }
+        const cellOccupied = (cellX: number, cellY: number) => {
+          if (
+            cellX < 0 ||
+            cellY < 0 ||
+            cellX + tileSource.width > buffer.width ||
+            cellY + tileSource.height > buffer.height
+          ) {
+            return false;
+          }
+          for (let row = 0; row < tileSource.height; row += 1) {
+            for (let column = 0; column < tileSource.width; column += 1) {
+              if (layer.pixels[(cellY + row) * buffer.width + cellX + column] !== 0) {
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+        const terrain = terrainMask
+          ? (asset.data?.slices ?? [])[
+              (cellOccupied(x, y - tileSource.height) ? 1 : 0) |
+                (cellOccupied(x + tileSource.width, y) ? 2 : 0) |
+                (cellOccupied(x, y + tileSource.height) ? 4 : 0) |
+                (cellOccupied(x - tileSource.width, y) ? 8 : 0)
+            ]
+          : undefined;
         const candidates = autoTile
           ? (asset.data?.slices ?? []).filter(
               (slice) =>
@@ -2745,8 +2789,16 @@ export function EditorScreen() {
                 slice.y + slice.height <= buffer.height,
             )
           : [];
-        let chosen = tileSource;
-        if (candidates.length > 1) {
+        let chosen =
+          terrain &&
+          terrain.width === tileSource.width &&
+          terrain.height === tileSource.height
+            ? terrain
+            : tileSource;
+        if (terrain) {
+          // A terrain mask is an explicit 16-slice contract; do not fall
+          // through to edge matching when the user chose it.
+        } else if (candidates.length > 1) {
           let best = -1;
           for (const candidate of candidates) {
             let matches = 0;
@@ -4050,6 +4102,8 @@ export function EditorScreen() {
         onSave={(slices) => void saveSlices(slices)}
         autoTile={autoTile}
         onAutoTile={setAutoTile}
+        terrainMask={terrainMask}
+        onTerrainMask={setTerrainMask}
         onUseTile={(slice) => {
           setTileSource(slice);
           setTool("tile");
@@ -5054,6 +5108,7 @@ export function EditorScreen() {
         activeLayerId={activeLayerId}
         onSaved={(data) => {
           client.setQueryData(["asset", assetId], data);
+          adoptFrameFromAsset(data, frameId);
           notify({ title: "Script committed" });
         }}
       />
