@@ -20,6 +20,16 @@ export {
   moveFrame,
   writeFrame,
 } from "./document.js";
+export {
+  paletteFromImage,
+  quantizeToPalette,
+  remapIndices,
+  resizeRgbaNearest,
+  sliceSheet,
+  type QuantizeOptions,
+  type RgbaImageData,
+  type SheetGrid,
+} from "./image.js";
 export { createHistory, pushHistory, redoHistory, undoHistory } from "./history.js";
 export {
   compositeIndexed,

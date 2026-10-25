@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "image-q": "^4.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
