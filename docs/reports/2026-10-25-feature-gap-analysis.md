@@ -420,6 +420,8 @@ Implemented:
   and passes `tools/trace-check.mjs --run … --role ask`.
 - The agent can apply a tilemap through `apply_tilemap`, covered by the
   deterministic eval suite.
+- Touch pinch zooms and two-finger drag pans the canvas; wheel zoom and the
+  toolbar's zoom steps remain.
 
 Still open from the matrix above:
 
