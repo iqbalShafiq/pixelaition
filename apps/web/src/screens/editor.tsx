@@ -48,6 +48,7 @@ import {
 } from "../lib/artboard.js";
 import { FormatPicker } from "../components/artboard-panels.js";
 import { ImportFrameDialog } from "../components/import-frame-dialog.js";
+import { ImportImageDialog } from "../components/import-image-dialog.js";
 import { Composer } from "../components/composer.js";
 import { RunConsole, type HistoryRun } from "../components/run-console.js";
 import { sessionTotalsFrom, type LiveTurn, type TurnMeta } from "../lib/run-usage.js";
@@ -94,6 +95,7 @@ import {
 } from "../components/editor-panels.js";
 import { Toolbar, ViewPanel } from "../components/editor-toolbar.js";
 import { defaultTextSpec, renderTextSpec, textLayerBox } from "../lib/text-layer.js";
+import type { PaletteAction } from "../lib/palette.js";
 import { Minus, Plus } from "../components/pixel-icons.js";
 import {
   normalizeRect,
@@ -423,6 +425,7 @@ export function EditorScreen() {
   const textDragHistory = useRef<{ frameId: string; history: History } | null>(null);
   const [socialPickerOpen, setSocialPickerOpen] = useState(false);
   const [importFrameOpen, setImportFrameOpen] = useState(false);
+  const [importImageOpen, setImportImageOpen] = useState(false);
   const [paletteImportOpen, setPaletteImportOpen] = useState(false);
   const [backgroundImportOpen, setBackgroundImportOpen] = useState(false);
   const [paletteSourceId, setPaletteSourceId] = useState("");
@@ -2570,6 +2573,36 @@ export function EditorScreen() {
     }
   }
 
+  async function paletteAction(action: PaletteAction) {
+    if (running) return;
+    try {
+      const data = await api<AssetDto>(`/api/assets/${assetId}/palette`, {
+        method: "PATCH",
+        body: JSON.stringify(action),
+      });
+      client.setQueryData(["asset", assetId], data);
+      if (action.action !== "lock") {
+        setDrafts({});
+        fitted.current = null;
+        setSelection(null);
+      }
+      notify({
+        title: action.action === "lock" ? "Palette lock changed" : "Palette updated",
+        description:
+          action.action === "lock"
+            ? data.paletteLocked
+              ? "The agent and editor cannot change this palette."
+              : "The palette is editable again."
+            : "Pixels and scenes were remapped through the same palette.",
+      });
+      void client.invalidateQueries({ queryKey: ["versions", assetId] });
+    } catch (reason) {
+      const text = reason instanceof Error ? reason.message : "That change failed.";
+      setError(text);
+      notify({ title: "Palette change failed", description: text });
+    }
+  }
+
   function generate(textOverride?: string, withAttachments = true) {
     const text = (textOverride ?? prompt).trim();
     // Frame context with a live task: the message steers that frame's worker
@@ -3007,6 +3040,7 @@ export function EditorScreen() {
         onTogglePlay={() => setPlaying((value) => !value)}
         onAdd={() => setSocialPickerOpen(true)}
         onImport={() => setImportFrameOpen(true)}
+        onImportImage={() => setImportImageOpen(true)}
         onDuplicate={(id) => void frameAction("duplicate", undefined, id)}
         onRename={(id, name) => void frameAction("rename", name, id)}
         onDelete={(id) => void frameAction("delete", undefined, id)}
@@ -3079,8 +3113,17 @@ export function EditorScreen() {
       palette={activePalette}
       color={color}
       usedColors={usedColors}
+      locked={asset.data?.paletteLocked ?? false}
       onPick={(index) => setColor(index)}
+      onPalette={(action) => void paletteAction(action)}
       onImportPalette={() => {
+        if (asset.data?.paletteLocked) {
+          notify({
+            title: "The palette is locked",
+            description: "Unlock it before importing another palette.",
+          });
+          return;
+        }
         setPaletteSourceId("");
         setPaletteImportOpen(true);
       }}
@@ -3089,7 +3132,7 @@ export function EditorScreen() {
           setColor(activePalette.indexOf(hex));
           return;
         }
-        void updateAsset({ palette: [...activePalette, hex] });
+        void paletteAction({ action: "add", color: hex });
       }}
     />
   );
@@ -3968,6 +4011,25 @@ export function EditorScreen() {
           </Button>
         </div>
       </Dialog>
+      {asset.data ? (
+        <ImportImageDialog
+          open={importImageOpen}
+          onOpenChange={setImportImageOpen}
+          asset={asset.data}
+          frame={frame}
+          onImported={(next) => {
+            client.setQueryData(["asset", assetId], next);
+            setDrafts({});
+            setFrameId(next.frames.at(-1)?.id ?? null);
+            setSelection(null);
+            notify({
+              title: "Image imported",
+              description: "Colours were mapped into this asset's palette.",
+            });
+            void client.invalidateQueries({ queryKey: ["versions", assetId] });
+          }}
+        />
+      ) : null}
       <ImportFrameDialog
         open={backgroundImportOpen}
         onOpenChange={setBackgroundImportOpen}

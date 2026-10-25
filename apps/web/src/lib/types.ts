@@ -32,6 +32,7 @@ export type AssetDto = {
   width: number;
   height: number;
   palette: string[];
+  paletteLocked: boolean;
   copy: CopyDeck;
   frames: FrameDto[];
   projectId: string;

@@ -19,10 +19,14 @@ import {
 import { ArtboardCanvas } from "./artboard-canvas.js";
 import { artboardForFrame } from "../lib/artboard.js";
 import type { AssetDto } from "../lib/types.js";
+import type { PaletteAction } from "../lib/palette.js";
+import { decodeImageFile } from "../lib/image-import.js";
+import { paletteFromImage } from "@pixelaition/pixel";
 import {
   Check,
   Copy,
   Menu as MenuIcon,
+  Minus,
   Pencil,
   Play,
   Plus,
@@ -426,6 +430,7 @@ export function FramePanel({
   onTogglePlay,
   onAdd,
   onImport,
+  onImportImage,
   onDuplicate,
   onRename,
   onDelete,
@@ -450,6 +455,7 @@ export function FramePanel({
   onTogglePlay: () => void;
   onAdd: () => void;
   onImport?: () => void;
+  onImportImage?: () => void;
   onDuplicate: (frameId: string) => void;
   onRename: (frameId: string, name: string) => void;
   onDelete: (frameId: string) => void;
@@ -604,6 +610,16 @@ export function FramePanel({
           disabled={locked}
         >
           Import project frame
+        </Button>
+      ) : null}
+      {onImportImage ? (
+        <Button
+          tone="ghost"
+          className="mt-1 justify-start px-2 py-1 text-pixel-label"
+          onClick={onImportImage}
+          disabled={locked}
+        >
+          Import image
         </Button>
       ) : null}
 
@@ -1099,22 +1115,118 @@ export function ElementLayerPanel({
 
 /* ----------------------------------------------------------------- palette */
 
+const palettePresets = [
+  {
+    name: "Sweetie 16",
+    colors: [
+      "#00000000",
+      "#1a1c2c",
+      "#5d275d",
+      "#b13e53",
+      "#ef7d57",
+      "#ffcd75",
+      "#a7f070",
+      "#38b764",
+      "#257179",
+      "#29366f",
+      "#3b5dc9",
+      "#41a6f6",
+      "#73eff7",
+      "#f4f4f4",
+      "#94b0c2",
+      "#566c86",
+      "#333c57",
+    ],
+  },
+  {
+    name: "DB32",
+    colors: [
+      "#00000000",
+      "#000000",
+      "#222034",
+      "#45283c",
+      "#663931",
+      "#8f563b",
+      "#df7126",
+      "#d9a066",
+      "#eec39a",
+      "#fbf236",
+      "#99e550",
+      "#6abe30",
+      "#37946e",
+      "#4b692f",
+      "#524b24",
+      "#323c39",
+      "#3f3f74",
+      "#306082",
+      "#5b6ee1",
+      "#639bff",
+      "#5fcde4",
+      "#cbdbfc",
+      "#ffffff",
+      "#9badb7",
+      "#847e87",
+      "#696a6a",
+      "#595652",
+      "#76428a",
+      "#ac3232",
+      "#d95763",
+      "#d77bba",
+      "#8f974a",
+      "#8a6f30",
+    ],
+  },
+  {
+    name: "PICO-8",
+    colors: [
+      "#00000000",
+      "#000000",
+      "#1d2b53",
+      "#7e2553",
+      "#008751",
+      "#ab5236",
+      "#5f574f",
+      "#c2c3c7",
+      "#fff1e8",
+      "#ff004d",
+      "#ffa300",
+      "#ffec27",
+      "#00e436",
+      "#29adff",
+      "#83769c",
+      "#ff77a8",
+      "#ffccaa",
+    ],
+  },
+  {
+    name: "Game Boy",
+    colors: ["#00000000", "#0f380f", "#306230", "#8bac0f", "#9bbc0f"],
+  },
+];
+
 export function PalettePanel({
   palette,
   color,
   usedColors,
+  locked = false,
   onPick,
   onAdd,
+  onPalette,
   onImportPalette,
 }: {
   palette: string[];
   color: number;
   usedColors: number;
+  locked?: boolean;
   onPick: (index: number) => void;
   onAdd: (hex: string) => void;
+  onPalette?: (action: PaletteAction) => void;
   onImportPalette?: () => void;
 }) {
   const [draft, setDraft] = useState("#d8a64e");
+  const [pendingRemove, setPendingRemove] = useState<number | null>(null);
+  const [pendingPalette, setPendingPalette] = useState<string[] | null>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const [hsv, setHsv] = useState(() => hexToHsv("#d8a64e"));
   const valid = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(draft);
   const exists = palette.includes(draft.toLowerCase());
@@ -1161,6 +1273,15 @@ export function PalettePanel({
       action={
         <span className="flex min-w-0 items-center gap-2">
           <span className="text-pixel-mono text-muted">{usedColors} colors used</span>
+          {onPalette ? (
+            <Button
+              tone={locked ? "solid" : "quiet"}
+              className="px-1.5 py-1 text-pixel-mono"
+              onClick={() => onPalette({ action: "lock", locked: !locked })}
+            >
+              {locked ? "Locked" : "Lock"}
+            </Button>
+          ) : null}
         </span>
       }
     >
@@ -1265,6 +1386,133 @@ export function PalettePanel({
           </div>
         </Popover>
       </div>
+      {onPalette ? (
+        <Popover
+          label="Manage palette"
+          trigger={
+            <Button tone="ghost" className="justify-start px-2 py-1 text-pixel-label">
+              Manage colors
+            </Button>
+          }
+        >
+          <div className="grid max-h-64 gap-1 overflow-y-auto pr-1">
+            {palette.map((swatch, index) =>
+              index === 0 ? null : (
+                <div key={`${index}-${swatch}`} className="flex items-center gap-1">
+                  <span
+                    aria-hidden
+                    className="h-5 w-5 shrink-0 border-2 border-line"
+                    style={{ background: swatch }}
+                  />
+                  <TextInput
+                    aria-label={`Color ${index} hex`}
+                    defaultValue={swatch}
+                    disabled={locked}
+                    className="min-w-0 flex-1 px-1.5 py-1 font-mono text-[11px]"
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value.trim().toLowerCase();
+                      if (
+                        /^#([0-9a-f]{6}|[0-9a-f]{8})$/.test(value) &&
+                        value !== swatch
+                      ) {
+                        onPalette({ action: "edit", index, color: value });
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Move color ${index} up`}
+                    disabled={locked || index <= 1}
+                    className="grid h-7 w-7 place-items-center border-2 border-line text-muted disabled:opacity-30"
+                    onClick={() => {
+                      const order = palette.map((_, position) => position);
+                      [order[index - 1], order[index]] = [
+                        order[index]!,
+                        order[index - 1]!,
+                      ];
+                      onPalette({ action: "reorder", order });
+                    }}
+                  >
+                    <Minus />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move color ${index} down`}
+                    disabled={locked || index >= palette.length - 1}
+                    className="grid h-7 w-7 place-items-center border-2 border-line text-muted disabled:opacity-30"
+                    onClick={() => {
+                      const order = palette.map((_, position) => position);
+                      [order[index + 1], order[index]] = [
+                        order[index]!,
+                        order[index + 1]!,
+                      ];
+                      onPalette({ action: "reorder", order });
+                    }}
+                  >
+                    <Plus />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove color ${index}`}
+                    disabled={locked}
+                    className="grid h-7 w-7 place-items-center border-2 border-line text-muted hover:border-erase hover:text-erase disabled:opacity-30"
+                    onClick={() => setPendingRemove(index)}
+                  >
+                    <Trash />
+                  </button>
+                </div>
+              ),
+            )}
+          </div>
+          <div className="mt-2 border-t-2 border-line pt-2">
+            <p className="mb-1 text-pixel-mono text-muted">Merge a preset</p>
+            <div className="flex flex-wrap gap-1">
+              {palettePresets.map((preset) => (
+                <Button
+                  key={preset.name}
+                  tone="ghost"
+                  disabled={locked}
+                  className="px-1.5 py-1 text-pixel-mono"
+                  onClick={() =>
+                    onPalette({ action: "import", palette: preset.colors, mode: "merge" })
+                  }
+                >
+                  {preset.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-2 border-t-2 border-line pt-2">
+            <Button
+              tone="ghost"
+              disabled={locked}
+              className="px-1.5 py-1 text-pixel-mono"
+              onClick={() => imageInput.current?.click()}
+            >
+              Palette from image
+            </Button>
+            <input
+              ref={imageInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="sr-only"
+              aria-label="Choose a palette image"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                void decodeImageFile(file)
+                  .then((image) => {
+                    const next = paletteFromImage(image, 32);
+                    if (next.length < 2) throw new Error("That image has no colours.");
+                    setPendingPalette(next);
+                  })
+                  .catch(() => setPendingPalette(null));
+              }}
+            />
+          </div>
+        </Popover>
+      ) : null}
       {onImportPalette ? (
         <Button
           tone="ghost"
@@ -1274,6 +1522,35 @@ export function PalettePanel({
           Import project palette
         </Button>
       ) : null}
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingRemove(null);
+        }}
+        title="Remove this colour?"
+        description="Pixels that use it become transparent. This is one undoable version, and the palette stays shared by every frame."
+        confirmLabel="Remove colour"
+        onConfirm={() => {
+          if (pendingRemove !== null) {
+            onPalette?.({ action: "remove", index: pendingRemove, remapTo: 0 });
+          }
+          setPendingRemove(null);
+        }}
+      />
+      <ConfirmDialog
+        open={pendingPalette !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingPalette(null);
+        }}
+        title="Use this image's colours?"
+        description="The palette is replaced and every existing pixel and scene is remapped to the nearest new colour."
+        confirmLabel="Replace palette"
+        onConfirm={() => {
+          if (pendingPalette) onPalette?.({ action: "replace", palette: pendingPalette });
+          setPendingPalette(null);
+        }}
+      />
     </Panel>
   );
 }
