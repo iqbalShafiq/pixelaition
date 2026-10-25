@@ -16,6 +16,7 @@ import {
   emptyPixels,
   normalizeHex,
   seamReport,
+  suggestedTileSize,
   type Asset,
   type Command,
   type Frame,
@@ -1849,7 +1850,12 @@ export function createPixelTools(
       const run = requireRun(context.operationId);
       requireAsset(run);
       const frame = resolveFrame(run, input.frameId);
-      return { frameId: frame.id, name: frame.name, ...seamReport(frame.buffer) };
+      return {
+        frameId: frame.id,
+        name: frame.name,
+        ...seamReport(frame.buffer),
+        suggestedTile: suggestedTileSize(frame.buffer),
+      };
     },
   });
 

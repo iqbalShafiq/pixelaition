@@ -1,4 +1,9 @@
-import { renderFrameDocument, seamReport, type FrameBuffer } from "@pixelaition/pixel";
+import {
+  renderFrameDocument,
+  scanTileSizes,
+  seamReport,
+  type FrameBuffer,
+} from "@pixelaition/pixel";
 import { useEffect, useRef } from "react";
 import { Dialog, DialogClose } from "./ui.js";
 
@@ -19,6 +24,7 @@ export function TilePreviewDialog({
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const report = buffer ? seamReport(buffer) : null;
+  const candidates = buffer ? scanTileSizes(buffer, 64).slice(0, 3) : [];
 
   useEffect(() => {
     const element = canvas.current;
@@ -75,6 +81,14 @@ export function TilePreviewDialog({
             <span className={report.seamless ? "text-accent" : "text-erase"}>
               {report.seamless ? "Seamless." : "The edges do not meet yet."}
             </span>
+            {candidates.length > 0 ? (
+              <span className="text-muted">
+                Tile sizes:{" "}
+                {candidates
+                  .map((candidate) => `${candidate.size}px (${candidate.mismatches})`)
+                  .join(" · ")}
+              </span>
+            ) : null}
           </div>
         ) : null}
         <div className="flex items-center gap-2">

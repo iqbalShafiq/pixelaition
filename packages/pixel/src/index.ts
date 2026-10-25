@@ -93,4 +93,10 @@ export type {
   TextLayerSpec,
 } from "./types.js";
 
-export { seamReport, type SeamReport } from "./tiling.js";
+export {
+  scanTileSizes,
+  seamReport,
+  suggestedTileSize,
+  type SeamReport,
+  type TileCandidate,
+} from "./tiling.js";

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import {
+  applyCommand,
   bufferToFrame,
   createBuffer,
   createProject,
@@ -8,6 +9,7 @@ import {
   pixelProjectSchema,
   quantizeToPalette,
   type Asset,
+  type Command,
   type Frame,
   type FrameBuffer,
   type Slice,
@@ -51,6 +53,10 @@ export async function runCli(argv: string[]): Promise<void> {
     await inspectProject(rest);
     return;
   }
+  if (command === "apply-script") {
+    await applyScript(rest);
+    return;
+  }
   throw new Error(`Unknown command "${command}". Try --help.`);
 }
 
@@ -61,6 +67,7 @@ function printHelp(): void {
   pixelaition export <project.pxl> --out <path> [--format png|jpg|gif|apng|sheet|png-sequence] [--asset name] [--scale n]
   pixelaition import <image.png> --out <project.pxl> [--name name] [--colors 32]
   pixelaition import-aseprite <sheet.png> <atlas.json> --out <project.pxl> [--name name] [--colors 32]
+  pixelaition apply-script <project.pxl> <script.json> --out <project.pxl>
 
 Formats use the editor's palette, renderer, and atlas contract.`);
 }
@@ -373,6 +380,66 @@ async function importAsepriteJson(args: string[]): Promise<void> {
   const project = createProject(asset.name);
   project.assets.push(asset);
   await writeFile(out, `${JSON.stringify(project, null, 2)}\n`);
+}
+
+type CommandScript = {
+  asset?: string;
+  frame?: string;
+  commands: Command[];
+};
+
+/** Apply a JSON command script; every command still goes through applyCommand. */
+async function applyScript(args: string[]): Promise<void> {
+  const input = args[0];
+  const scriptPath = args[1];
+  const out = option(args, "out");
+  if (!input || !scriptPath || !out) {
+    throw new Error("apply-script needs a project, a script, and --out.");
+  }
+  const project = await readProject(input);
+  const script = JSON.parse(await readFile(scriptPath, "utf8")) as CommandScript;
+  const asset = selectedAsset(project, script.asset);
+  const frame = script.frame
+    ? asset.frames.find((item) => item.name === script.frame || item.id === script.frame)
+    : asset.frames[0];
+  if (!frame) throw new Error(`No frame named "${script.frame ?? "the first frame"}".`);
+  let buffer = frameToBuffer(frame, asset.width, asset.height, asset.palette);
+  const layerIds = new Map(buffer.layers.map((layer) => [layer.name, layer.id]));
+  for (const [index, raw] of script.commands.entries()) {
+    const command =
+      "layerId" in raw && typeof raw.layerId === "string"
+        ? ({ ...raw, layerId: layerIds.get(raw.layerId) ?? raw.layerId } as Command)
+        : raw;
+    const result = applyCommand(buffer, command);
+    if (!result.ok) {
+      throw new Error(`Command ${index + 1} (${raw.type}): ${result.message}`);
+    }
+    buffer = result.buffer;
+  }
+  const nextFrame: Frame = {
+    ...bufferToFrame(buffer, {
+      id: frame.id,
+      name: frame.name,
+      index: frame.index,
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+    }),
+  };
+  const nextAsset: Asset = {
+    ...asset,
+    palette: [...buffer.palette],
+    frames: asset.frames.map((item) => (item.id === frame.id ? nextFrame : item)),
+  };
+  await writeFile(
+    out,
+    `${JSON.stringify(
+      {
+        ...project,
+        assets: project.assets.map((item) => (item.id === asset.id ? nextAsset : item)),
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 function slug(value: string): string {
