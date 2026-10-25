@@ -431,8 +431,9 @@ Still open from the matrix above:
 - More dynamics, true RGB color mode and Lua/visual scripting; full-colour
   selection brushes, square/round/spray brushes, pressure sizing, jitter,
   grayscale/monochrome modes and command-script CLI/API exist.
-- Terrain-aware auto-tiling remains design work; tile fill from slices,
-  linked layers, the style lock, mirrored variant frames, selection-scoped
-  prompts, AI animation and reference overlays are in place.
+- A 16-slice terrain mask (`up/right/down/left`) auto-picks tiles from
+  neighbours; edge matching and tile fill remain available. Linked layers,
+  the style lock, mirrored variant frames, selection-scoped prompts, AI
+  animation and reference overlays are in place.
 - Masked selections now support flip, rotate, move and nudge as well as
   copy/cut/paste and mask-aware drawing.
