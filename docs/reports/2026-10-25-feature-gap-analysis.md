@@ -428,6 +428,10 @@ Implemented:
   `.ase` and tilemap JSON exports see the same slices as the editor; e2e tests
   import a two-frame binary `.ase` and download a tilemap JSON from the
   export dialog.
+- The editor can create a tile-index layer (`TILEMAP` badge); tile stamping
+  records the slice index in `layer.tilemap.data`, persists it through the
+  frame PUT, and tilemap JSON export prefers that stored index over pixel
+  recovery.
 - A 16-slice terrain mask (`up/right/down/left`) auto-picks tiles from
   neighbours; edge matching and tile fill remain available.
 - Masked selections support flip, rotate, move and nudge as well as
@@ -435,9 +439,6 @@ Implemented:
 
 Still open from the matrix above:
 
-- A persistent tile-index layer in the editor; edge-aware stamping, terrain
-  masks, tile fill, tileset packaging, tilemap JSON recovery/apply from the
-  editor and CLI, tile preview, seam reports and tile-size suggestions are in.
 - True RGB color mode and Lua/visual scripting; full-colour selection
   brushes, square/round/spray brushes, pressure sizing, jitter,
   grayscale/monochrome modes and command-script CLI/API exist.

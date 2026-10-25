@@ -84,6 +84,14 @@ export function frameToTilemapJson(buffer: FrameBuffer, slices: Slice[]): Tilema
       height: slice.height,
     })),
     layers: buffer.layers.map((layer) => {
+      if (
+        layer.tilemap &&
+        layer.tilemap.tileWidth === tileWidth &&
+        layer.tilemap.tileHeight === tileHeight &&
+        layer.tilemap.data.length === columns * rows
+      ) {
+        return { name: layer.name, data: [...layer.tilemap.data] };
+      }
       const data: number[] = [];
       for (let row = 0; row < rows; row += 1) {
         for (let column = 0; column < columns; column += 1) {
