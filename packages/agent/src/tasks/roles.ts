@@ -125,41 +125,26 @@ function catalog(
 /** A writer saves the frame it finished; the write cursor is its fixed home. */
 const WRITER_TOOLS: readonly string[] = ["save_frame"];
 
-export const WORKER_TOOL_NAMES: ReadonlySet<string> = catalog(
-  READ_TOOLS,
-  PAINT_TOOLS,
-  TRANSFER_TOOLS,
-  WRITER_TOOLS,
-  // A worker can own more than one frame (for example a profile and its wide
-  // cover). It may move between those frames, but `use_frame` still rejects a
-  // frame outside its assignment. It may also correct its own frame's canvas
-  // to the planned size; the tool still checks ownership.
-  [USE_FRAME, "resize_frame"],
-);
-
-export const REVIEW_TOOL_NAMES: ReadonlySet<string> = catalog(
-  READ_TOOLS.filter((tool) => tool !== "ask_user"),
-  REVIEW_TOOLS,
-);
-
-/** A fix child paints, saves pixels and compares, but never judges or resizes. */
-export const FIX_TOOL_NAMES: ReadonlySet<string> = catalog(
-  WORKER_TOOL_NAMES,
-  // A fix moves between the frames its order names and may watch the numbers
-  // it is asked to move; it never switches to an unrelated frame and never
-  // delivers a verdict.
-  ["check_animation", "write_frame"],
-);
-
-/** The supervisor owns the plan, the structure, the palette and the verdict. */
-export const PLAN_TOOL_NAMES: ReadonlySet<string> = catalog(
+/**
+ * Every editing role now receives the whole editor catalogue. Ownership and
+ * the plan still say which frames a role may write; tool availability must not
+ * be the thing that makes a supervisor, worker, or fixer fail a call. The role
+ * gate consumes the same sets, so a registered tool is always callable.
+ */
+export const ALL_TOOL_NAMES: ReadonlySet<string> = catalog(
   READ_TOOLS,
   PAINT_TOOLS,
   TRANSFER_TOOLS,
   REVIEW_TOOLS,
   SUPERVISOR_TOOLS,
-  [USE_FRAME],
+  WRITER_TOOLS,
+  [USE_FRAME, "write_frame"],
 );
+
+export const WORKER_TOOL_NAMES: ReadonlySet<string> = ALL_TOOL_NAMES;
+export const REVIEW_TOOL_NAMES: ReadonlySet<string> = ALL_TOOL_NAMES;
+export const FIX_TOOL_NAMES: ReadonlySet<string> = ALL_TOOL_NAMES;
+export const PLAN_TOOL_NAMES: ReadonlySet<string> = ALL_TOOL_NAMES;
 
 export function toolNamesForRole(role: AgentRole): ReadonlySet<string> {
   if (role === "plan") return PLAN_TOOL_NAMES;
@@ -172,7 +157,6 @@ export function toolsForRole<T extends { name: string }>(
   role: AgentRole,
   tools: readonly T[],
 ): T[] {
-  if (role === "plan") return [...tools];
   const names = toolNamesForRole(role);
   return tools.filter((tool) => names.has(tool.name));
 }

@@ -213,17 +213,20 @@ describe("worker frame ownership", () => {
     expect(strokes).toEqual([{ width: 1080, height: 1080, frameId: "frame-1" }]);
     releaseRun("run-1");
   });
-  it("refuses a structural tool to a worker, with the cause named", async () => {
+  it("offers a structural tool to a worker without a catalog refusal", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
       ownedFrameIds: new Set(["frame-1"]),
     });
     await expect(
-      tool("add_frame").call({ name: "extra" }, { operationId: "run-1" }),
-    ).rejects.toThrow("The worker role cannot call add_frame.");
+      tool("add_frame").call(
+        { name: "extra", width: 8, height: 8 },
+        { operationId: "run-1" },
+      ),
+    ).resolves.toBeDefined();
     releaseRun("run-1");
   });
-  it("refuses painting to the review pass", async () => {
+  it("offers painting to the review pass instead of refusing the tool", async () => {
     boundRun(undefined, undefined, { role: "review" });
     await expect(
       tool("paint_stroke").call(
@@ -235,7 +238,7 @@ describe("worker frame ownership", () => {
         },
         { operationId: "run-1" },
       ),
-    ).rejects.toThrow("The review role cannot call paint_stroke.");
+    ).resolves.toMatchObject({ committed: 1 });
     releaseRun("run-1");
   });
   it("resizes one frame without a human approval card", async () => {
@@ -266,19 +269,19 @@ describe("worker frame ownership", () => {
     releaseRun("run-1");
   });
 
-  it("refuses a structural tool when the operation id carries the durable run prefix", async () => {
+  it("resolves the durable prefix and offers a structural tool", async () => {
     boundRun(undefined, undefined, {
       role: "worker",
       ownedFrameIds: new Set(["frame-1"]),
     });
     // Durable child runs receive "<runId>/<operationKey>" as the operation id;
-    // a raw lookup misses the binding and would let the call through.
+    // the run binding must resolve before the tool catalog is checked.
     await expect(
       tool("resize_canvas").call(
         { width: 8, height: 8 },
         { operationId: "run-1/0:tool:4:call-1" },
       ),
-    ).rejects.toThrow("The worker role cannot call resize_canvas.");
+    ).resolves.toBeDefined();
     releaseRun("run-1");
   });
   it("lets a worker read a sibling frame but not write it", async () => {
@@ -1710,15 +1713,14 @@ describe("workspace tools", () => {
         assetCount: 1,
       },
     ];
-    // A worker reads the whole project, but through the catalog a worker
-    // actually carries: the workspace listing and target tools belong to the
-    // supervisor, so the worker is never offered one.
+    // Every role carries the whole catalogue, including target and review
+    // tools; ownership still decides which frames a write may touch.
     await expect(
       tool("list_projects").call({}, { operationId: "run-1" }),
-    ).rejects.toThrow("The worker role cannot call list_projects.");
+    ).resolves.toBeDefined();
     await expect(
       tool("critique_frame").call({}, { operationId: "run-1" }),
-    ).rejects.toThrow("The worker role cannot call critique_frame.");
+    ).resolves.toBeDefined();
     await expect(
       tool("list_project_frames").call({}, { operationId: "run-1" }),
     ).resolves.toMatchObject({ assets: [{ name: "slime" }] });

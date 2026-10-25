@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_TOOL_NAMES,
   FIX_TOOL_NAMES,
+  PLAN_TOOL_NAMES,
   REVIEW_TOOL_NAMES,
   WORKER_TOOL_NAMES,
   toolsForRole,
@@ -50,116 +52,24 @@ const names = (role: Parameters<typeof toolsForRole>[0]) =>
   toolsForRole(role, tools).map((tool) => tool.name);
 
 describe("role tool catalogs", () => {
-  it("gives a worker the full painting kit, transfer tools and project reads", () => {
-    const kept = names("worker");
-    for (const tool of [
-      "paint_stroke",
-      "fill_rect",
-      "add_layer",
-      "rename_layer",
-      "mirror_frame",
-      "copy_region",
-      "paste_region",
-      "mirror_region",
-      "repeat_region",
-      "copy_layers",
-      "read_frame",
-      "read_region",
-      "read_palette",
-      "list_project_frames",
-      "preview_frame",
-      "compare_frames",
-      "web_search",
-      "view_image",
-      "ask_user",
-      "save_frame",
-    ]) {
-      expect(kept).toContain(tool);
+  it("gives every editing role the whole catalogue", () => {
+    for (const role of ["plan", "worker", "fix", "review"] as const) {
+      expect(toolsForRole(role, tools)).toHaveLength(tools.length);
     }
   });
 
-  it("offers every painting role the palette, and nobody the structure", () => {
-    for (const role of ["worker", "fix"] as const) {
-      expect(names(role)).toContain("set_palette");
-    }
-    expect(names("worker")).toContain("use_frame");
-    expect(names("worker")).toContain("resize_frame");
-    expect(names("worker")).not.toContain("add_frame");
-  });
-
-  it("never offers a worker a structural or target tool", () => {
-    const kept = names("worker");
-    for (const tool of [
-      "add_frame",
-      "delete_frame",
-      "move_frame",
-      "rename_frame",
-      "resize_canvas",
-      "use_asset",
-      "create_asset",
-      "list_projects",
-      "list_assets",
-      "plan",
-      "present_plan",
-      "write_frame",
-      "critique_frame",
-      "check_animation",
-    ]) {
-      expect(kept).not.toContain(tool);
+  it("keeps the exported sets identical and complete", () => {
+    expect(WORKER_TOOL_NAMES).toBe(ALL_TOOL_NAMES);
+    expect(FIX_TOOL_NAMES).toBe(ALL_TOOL_NAMES);
+    expect(REVIEW_TOOL_NAMES).toBe(ALL_TOOL_NAMES);
+    expect(PLAN_TOOL_NAMES).toBe(ALL_TOOL_NAMES);
+    for (const tool of tools) {
+      expect(ALL_TOOL_NAMES.has(tool.name)).toBe(true);
     }
   });
 
-  it("gives the review reads and judgement, and no painting", () => {
-    const kept = names("review");
-    expect(kept).toEqual(
-      expect.arrayContaining([
-        "read_frame",
-        "read_region",
-        "list_project_frames",
-        "preview_frame",
-        "compare_frames",
-        "critique_frame",
-        "check_animation",
-        "web_search",
-        "view_image",
-      ]),
-    );
-    for (const tool of ["paint_stroke", "paste_region", "ask_user", "add_frame"]) {
-      expect(kept).not.toContain(tool);
-    }
-  });
-
-  it("lets a fix paint, transfer, compare and save, but never judge", () => {
-    const kept = names("fix");
-    for (const tool of [
-      "paint_stroke",
-      "paste_region",
-      "copy_region",
-      "copy_layers",
-      "preview_frame",
-      "compare_frames",
-      "check_animation",
-      "write_frame",
-      "save_frame",
-    ]) {
-      expect(kept).toContain(tool);
-    }
-    for (const tool of ["critique_frame", "add_frame"]) {
-      expect(kept).not.toContain(tool);
-    }
-    expect(kept).toContain("resize_frame");
-    expect(kept).toContain("use_frame");
-  });
-
-  it("gives the plan the whole catalogue", () => {
-    expect(toolsForRole("plan", tools)).toHaveLength(tools.length);
-  });
-
-  it("keeps the sets exported so the worker can register one agent per role", () => {
-    expect(WORKER_TOOL_NAMES.has("paint_stroke")).toBe(true);
-    expect(WORKER_TOOL_NAMES.has("set_palette")).toBe(true);
-    expect(REVIEW_TOOL_NAMES.has("paint_stroke")).toBe(false);
-    expect(FIX_TOOL_NAMES.has("save_frame")).toBe(true);
-    expect(FIX_TOOL_NAMES.has("paste_region")).toBe(true);
+  it("still exposes save and write only where the editor defines them", () => {
+    expect(names("worker")).toContain("save_frame");
+    expect(names("fix")).toContain("write_frame");
   });
 });
