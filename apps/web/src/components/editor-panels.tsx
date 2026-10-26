@@ -31,13 +31,19 @@ import {
 import {
   Check,
   Copy,
+  Eraser,
+  File,
+  Files,
+  Flip,
+  FlipVertical,
   Folder,
   Grid,
+  Image2Plus,
+  ImportIcon,
   Lock,
   Menu as MenuIcon,
   Minus,
   Pencil,
-  Wrench,
   Play,
   Plus,
   Stop,
@@ -394,10 +400,10 @@ function FrameRow({
                   {onVariant ? (
                     <>
                       <MenuItem disabled={locked} onClick={() => onVariant("horizontal")}>
-                        <Copy /> Mirror variant H
+                        <Flip /> Mirror variant H
                       </MenuItem>
                       <MenuItem disabled={locked} onClick={() => onVariant("vertical")}>
-                        <Copy /> Mirror variant V
+                        <FlipVertical /> Mirror variant V
                       </MenuItem>
                     </>
                   ) : null}
@@ -585,6 +591,30 @@ export function FramePanel({
           >
             {playing ? <Stop /> : <Play />}
           </IconButton>
+          {onImport || onImportImage || onImportAseprite ? (
+            <Menu
+              label="Import frames"
+              icon={<ImportIcon />}
+              align="start"
+              disabled={locked}
+            >
+              {onImport ? (
+                <MenuItem disabled={locked} onClick={onImport}>
+                  <Files /> Import project frame
+                </MenuItem>
+              ) : null}
+              {onImportImage ? (
+                <MenuItem disabled={locked} onClick={onImportImage}>
+                  <Image2Plus /> Import image
+                </MenuItem>
+              ) : null}
+              {onImportAseprite ? (
+                <MenuItem disabled={locked} onClick={onImportAseprite}>
+                  <File /> Import Aseprite
+                </MenuItem>
+              ) : null}
+            </Menu>
+          ) : null}
           <IconButton label="Add frame" disabled={locked} onClick={onAdd}>
             <Plus />
           </IconButton>
@@ -649,37 +679,6 @@ export function FramePanel({
           </Reorder.Group>
         </div>
       )}
-
-      {onImport ? (
-        <Button
-          tone="ghost"
-          className="mt-1 justify-start px-2 py-1 text-pixel-label"
-          onClick={onImport}
-          disabled={locked}
-        >
-          Import project frame
-        </Button>
-      ) : null}
-      {onImportImage ? (
-        <Button
-          tone="ghost"
-          className="mt-1 justify-start px-2 py-1 text-pixel-label"
-          onClick={onImportImage}
-          disabled={locked}
-        >
-          Import image
-        </Button>
-      ) : null}
-      {onImportAseprite ? (
-        <Button
-          tone="ghost"
-          className="mt-1 justify-start px-2 py-1 text-pixel-label"
-          onClick={onImportAseprite}
-          disabled={locked}
-        >
-          Import Aseprite
-        </Button>
-      ) : null}
 
       <ConfirmDialog
         open={pendingDelete !== null}
@@ -1119,116 +1118,152 @@ export function LayerPanel({
                         >
                           <Pencil />
                         </IconButton>
-                        {onOpacity || onBlend || onLock ? (
-                          <Popover
-                            label={`Settings for ${layer.name}`}
-                            trigger={<Wrench />}
-                            triggerClassName="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm transition-colors duration-150 hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent"
-                          >
-                            <div className="grid min-w-48 gap-2">
-                              <Field label="Opacity" htmlFor={`opacity-${layer.id}`}>
-                                <input
-                                  id={`opacity-${layer.id}`}
-                                  type="range"
-                                  min={0}
-                                  max={100}
-                                  value={Math.round((layer.opacity ?? 1) * 100)}
-                                  disabled={locked || !onOpacity}
-                                  onChange={(event) =>
-                                    onOpacity?.(
-                                      layer.id,
-                                      Number(event.currentTarget.value) / 100,
-                                    )
-                                  }
-                                  className="w-full accent-accent"
-                                />
-                              </Field>
-                              <Field label="Blend" htmlFor={`blend-${layer.id}`}>
-                                <SelectControl
-                                  id={`blend-${layer.id}`}
-                                  label="Blend"
-                                  value={layer.blend ?? "normal"}
-                                  options={[...blendModes]}
-                                  onChange={(next) =>
-                                    onBlend?.(
-                                      layer.id,
-                                      next as (typeof blendModes)[number],
-                                    )
-                                  }
-                                />
-                              </Field>
-                              {onMoveGroup ? (
-                                <Field label="Group" htmlFor={`group-${layer.id}`}>
-                                  <SelectControl
-                                    id={`group-${layer.id}`}
-                                    label="Group"
-                                    value={layer.parentGroupId ?? ""}
-                                    options={[
-                                      { value: "", label: "No group" },
-                                      ...(buffer?.groups ?? []).map((group) => ({
-                                        value: group.id,
-                                        label: group.name,
-                                      })),
-                                    ]}
-                                    onChange={(next) =>
-                                      onMoveGroup(layer.id, next || null)
-                                    }
-                                  />
-                                </Field>
-                              ) : null}
-                              {onLink ? (
-                                <Button
-                                  tone="ghost"
-                                  className="justify-start px-2 py-1 text-pixel-label"
-                                  onClick={() => onLink(layer.id)}
+                        <Popover
+                          label={`Actions for ${layer.name}`}
+                          trigger={<span aria-hidden>⋯</span>}
+                          triggerClassName="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm transition-colors duration-150 hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent"
+                          popupClassName="w-64"
+                        >
+                          <div className="grid gap-2">
+                            {onOpacity ||
+                            onBlend ||
+                            onMoveGroup ||
+                            onLink ||
+                            onRemoveBackground ? (
+                              <div className="grid gap-2">
+                                <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">
+                                  Layer settings
+                                </p>
+                                {onOpacity ? (
+                                  <Field
+                                    label={`Opacity · ${Math.round((layer.opacity ?? 1) * 100)}%`}
+                                    htmlFor={`opacity-${layer.id}`}
+                                  >
+                                    <input
+                                      id={`opacity-${layer.id}`}
+                                      type="range"
+                                      min={0}
+                                      max={100}
+                                      value={Math.round((layer.opacity ?? 1) * 100)}
+                                      disabled={locked}
+                                      onChange={(event) =>
+                                        onOpacity(
+                                          layer.id,
+                                          Number(event.currentTarget.value) / 100,
+                                        )
+                                      }
+                                      className="w-full accent-accent"
+                                    />
+                                  </Field>
+                                ) : null}
+                                {onBlend ? (
+                                  <Field label="Blend" htmlFor={`blend-${layer.id}`}>
+                                    <SelectControl
+                                      id={`blend-${layer.id}`}
+                                      label="Blend"
+                                      value={layer.blend ?? "normal"}
+                                      options={[...blendModes]}
+                                      disabled={locked}
+                                      onChange={(next) =>
+                                        onBlend(
+                                          layer.id,
+                                          next as (typeof blendModes)[number],
+                                        )
+                                      }
+                                    />
+                                  </Field>
+                                ) : null}
+                                {onMoveGroup ? (
+                                  <Field label="Group" htmlFor={`group-${layer.id}`}>
+                                    <SelectControl
+                                      id={`group-${layer.id}`}
+                                      label="Group"
+                                      value={layer.parentGroupId ?? ""}
+                                      disabled={locked}
+                                      options={[
+                                        { value: "", label: "No group" },
+                                        ...(buffer?.groups ?? []).map((group) => ({
+                                          label: group.name,
+                                          value: group.id,
+                                        })),
+                                      ]}
+                                      onChange={(next) =>
+                                        onMoveGroup(layer.id, next || null)
+                                      }
+                                    />
+                                  </Field>
+                                ) : null}
+                                {onLink || onRemoveBackground ? (
+                                  <div className="grid gap-0.5 border-t-2 border-line pt-1">
+                                    {onLink ? (
+                                      <PopoverAction
+                                        icon={<Files />}
+                                        disabled={locked}
+                                        onClick={() => onLink(layer.id)}
+                                      >
+                                        {layer.linkId
+                                          ? "Unlink layer"
+                                          : "Link across frames"}
+                                      </PopoverAction>
+                                    ) : null}
+                                    {onRemoveBackground ? (
+                                      <PopoverAction
+                                        icon={<Eraser />}
+                                        disabled={locked || layer.locked}
+                                        onClick={() => onRemoveBackground(layer.id)}
+                                      >
+                                        Remove background
+                                      </PopoverAction>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            <div className="grid gap-0.5 border-t-2 border-line pt-1">
+                              <p className="text-pixel-mono tracking-[0.14em] text-muted uppercase">
+                                Layer actions
+                              </p>
+                              {layer.text ? (
+                                <PopoverAction
+                                  icon={<Pencil />}
+                                  disabled={locked}
+                                  onClick={() => startEdit(layer.id, layer.name)}
                                 >
-                                  {layer.linkId ? "Unlink layer" : "Link across frames"}
-                                </Button>
+                                  Rename layer
+                                </PopoverAction>
                               ) : null}
-                              {onRemoveBackground ? (
-                                <Button
-                                  tone="ghost"
-                                  className="justify-start px-2 py-1 text-pixel-label"
-                                  disabled={locked || layer.locked}
-                                  onClick={() => onRemoveBackground(layer.id)}
+                              {onDuplicate ? (
+                                <PopoverAction
+                                  icon={<Copy />}
+                                  disabled={locked}
+                                  onClick={() => onDuplicate(layer.id)}
                                 >
-                                  Remove background
-                                </Button>
+                                  Duplicate
+                                </PopoverAction>
                               ) : null}
+                              {onLock ? (
+                                <PopoverAction
+                                  icon={layer.locked ? <Unlock /> : <Lock />}
+                                  onClick={() => onLock(layer.id, !layer.locked)}
+                                >
+                                  {layer.locked ? "Unlock" : "Lock"}
+                                </PopoverAction>
+                              ) : null}
+                              <PopoverAction
+                                icon={<Trash />}
+                                disabled={locked || layers.length <= 1}
+                                onClick={() =>
+                                  setPendingDelete({
+                                    id: layer.id,
+                                    name: layer.name,
+                                  })
+                                }
+                              >
+                                Delete
+                              </PopoverAction>
                             </div>
-                          </Popover>
-                        ) : null}
-                        <Menu label={`Actions for ${layer.name}`}>
-                          {layer.text ? (
-                            <MenuItem
-                              disabled={locked}
-                              onClick={() => startEdit(layer.id, layer.name)}
-                            >
-                              <Pencil /> Rename layer
-                            </MenuItem>
-                          ) : null}
-                          {onDuplicate ? (
-                            <MenuItem
-                              disabled={locked}
-                              onClick={() => onDuplicate(layer.id)}
-                            >
-                              <Copy /> Duplicate
-                            </MenuItem>
-                          ) : null}
-                          {onLock ? (
-                            <MenuItem onClick={() => onLock(layer.id, !layer.locked)}>
-                              <Wrench /> {layer.locked ? "Unlock" : "Lock"}
-                            </MenuItem>
-                          ) : null}
-                          <MenuItem
-                            disabled={locked || layers.length <= 1}
-                            onClick={() =>
-                              setPendingDelete({ id: layer.id, name: layer.name })
-                            }
-                          >
-                            <Trash /> Delete
-                          </MenuItem>
-                        </Menu>
+                          </div>
+                        </Popover>
                       </motion.span>
                     )}
                   </AnimatePresence>
@@ -1471,6 +1506,31 @@ function LockToggle({
     >
       {locked ? <Lock /> : <Unlock />}
     </IconButton>
+  );
+}
+
+/** A menu-like row inside the layer popover; it does not close on drag. */
+function PopoverAction({
+  icon,
+  children,
+  disabled = false,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[13px] text-ink transition-colors duration-150 hover:bg-accent hover:text-coffee disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 

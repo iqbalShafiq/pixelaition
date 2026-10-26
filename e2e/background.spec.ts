@@ -52,7 +52,7 @@ test("removes a flat background from a layer", async ({ page }) => {
 
   await page.waitForTimeout(500);
 
-  const settings = page.getByRole("button", { name: "Settings for pixels" }).first();
+  const settings = page.getByRole("button", { name: "Actions for pixels" }).first();
   await settings.click();
   await page.getByRole("button", { name: "Remove background" }).click();
   await page.waitForTimeout(800);

@@ -15,10 +15,14 @@ import {
   Eraser as RawEraser,
   Eye as RawEye,
   EyeOff as RawEyeOff,
+  File as RawFile,
+  Files as RawFiles,
   FlipHorizontal2 as RawFlipHorizontal2,
+  FlipVertical2 as RawFlipVertical2,
   Folder as RawFolder,
   Grid3x3 as RawGrid3x3,
   Hand as RawHand,
+  Image2Plus as RawImage2Plus,
   Layout as RawLayout,
   Lock as RawLock,
   Logout as RawLogout,
@@ -36,6 +40,7 @@ import {
   Tools as RawTools,
   Trash as RawTrash,
   Unlock as RawUnlock,
+  Upload as RawUpload,
 } from "pixelarticons/react";
 import type { ComponentType, SVGProps } from "react";
 
@@ -124,6 +129,11 @@ export const EyeOff = crisp(RawEyeOff);
 export const Folder = crisp(RawFolder);
 export const Clipboard = crisp(RawClipboard);
 export const Flip = crisp(RawFlipHorizontal2);
+export const FlipVertical = crisp(RawFlipVertical2);
+export const File = crisp(RawFile);
+export const Files = crisp(RawFiles);
+export const Image2Plus = crisp(RawImage2Plus);
+export const ImportIcon = crisp(RawUpload);
 export const Wrench = crisp(RawTools);
 export const Brain = crisp(RawRobot);
 export const Checklist = crisp(RawCheckboxOn);

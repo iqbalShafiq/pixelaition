@@ -489,9 +489,11 @@ export function SelectControl({
   label,
   placeholder = "Select",
   className = "",
+  disabled = false,
 }: {
   id?: string;
   value: string;
+  disabled?: boolean;
   /** Plain strings use the value as the label; objects keep the two apart. */
   options: Array<string | { value: string; label: string }>;
   onChange: (value: string) => void;
@@ -508,7 +510,8 @@ export function SelectControl({
         id={id}
         aria-label={label}
         title={items.find((item) => item.value === value)?.label ?? placeholder}
-        className={`flex min-w-0 items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] text-ink shadow-[inset_2px_2px_0_0_rgba(241,239,233,0.08),inset_-2px_-2px_0_0_rgba(11,9,6,0.5),2px_2px_0_0_var(--color-coffee)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none ${className}`}
+        disabled={disabled}
+        className={`flex min-w-0 items-center justify-between gap-2 border-2 border-line bg-field px-2.5 py-2 text-[13px] text-ink shadow-[inset_2px_2px_0_0_rgba(241,239,233,0.08),inset_-2px_-2px_0_0_rgba(11,9,6,0.5),2px_2px_0_0_var(--color-coffee)] transition-colors duration-150 hover:border-line-strong focus:border-accent active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       >
         <Select.Value placeholder={placeholder} className="min-w-0">
           {(selected: string | null) => (
@@ -547,11 +550,16 @@ export function Menu({
   children,
   align = "end",
   trigger,
+  icon,
+  disabled = false,
   popupClassName = "",
 }: {
   label: string;
   children: ReactNode;
   align?: "start" | "end";
+  /** A glyph-only native trigger; the default is the ⋯ frame-actions button. */
+  icon?: ReactNode;
+  disabled?: boolean;
   /**
    * A custom trigger element, for a menu that needs more than the ⋯ glyph.
    * Base UI merges its own props (ARIA, keyboard, `data-popup-open`) onto it,
@@ -566,9 +574,11 @@ export function Menu({
       {trigger === undefined ? (
         <BaseMenu.Trigger
           aria-label={label}
-          className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink"
+          title={label}
+          disabled={disabled}
+          className="grid h-9 w-9 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm hover:border-line-strong hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 data-[popup-open]:border-accent data-[popup-open]:text-accent"
         >
-          ⋯
+          {icon ?? "⋯"}
         </BaseMenu.Trigger>
       ) : (
         <BaseMenu.Trigger aria-label={label} render={trigger} />

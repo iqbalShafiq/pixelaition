@@ -26,7 +26,10 @@ test("imports an image into new frames and locks the palette", async ({ page }) 
   const assetBody = (await asset.json()) as { id: string; frames: Array<{ id: string }> };
 
   await page.goto(`/projects/${projectBody.id}/assets/${assetBody.id}`);
-  await page.getByRole("button", { name: "Import image" }).click();
+  await page.getByRole("button", { name: "Import frames" }).click();
+  await expect(page.getByRole("menuitem")).toHaveCount(3);
+  await expect(page.getByRole("menuitem").locator("svg")).toHaveCount(3);
+  await page.getByRole("menuitem", { name: "Import image" }).click();
   await page.setInputFiles("#import-image-input", {
     name: "hero.png",
     mimeType: "image/png",
