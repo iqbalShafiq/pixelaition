@@ -41,6 +41,9 @@ test("imports an image into new frames and locks the palette", async ({ page }) 
   await expect(
     page.getByRole("button", { name: "Unlock palette", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText(/Locked — palette colors/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add a color" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Manage palette" })).toBeDisabled();
 
   await page.getByRole("button", { name: "Lock style guide", exact: true }).click();
   await expect(

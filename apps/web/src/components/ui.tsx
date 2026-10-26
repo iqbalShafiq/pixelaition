@@ -618,6 +618,7 @@ export function Popover({
   triggerClassName = "border-2 border-line text-muted hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent",
   popupClassName = "w-64",
   openOnHover = false,
+  disabled = false,
 }: {
   trigger: ReactNode;
   label: string;
@@ -629,13 +630,16 @@ export function Popover({
   popupClassName?: string;
   /** Open on hover as well: a detail read, while click and keyboard still work. */
   openOnHover?: boolean;
+  /** A locked panel keeps its trigger as a visible but inert affordance. */
+  disabled?: boolean;
 }) {
   return (
     <BasePopover.Root>
       <BasePopover.Trigger
         aria-label={label}
+        disabled={disabled}
         {...(openOnHover ? { openOnHover: true, delay: 120, closeDelay: 80 } : {})}
-        className={triggerClassName}
+        className={`${triggerClassName} ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
       >
         {trigger}
       </BasePopover.Trigger>

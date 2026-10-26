@@ -1558,11 +1558,11 @@ export function PalettePanel({
         </span>
       }
     >
-      {locked ? (
-        <p className="text-pixel-mono text-accent">
-          Locked — palette colors cannot be added, removed, or replaced.
-        </p>
-      ) : null}
+      <p className={`text-pixel-mono ${locked ? "text-accent" : "text-muted"}`}>
+        {locked
+          ? "Locked — palette colors cannot be added, removed, or replaced."
+          : "Unlocked — colors can be edited."}
+      </p>
       <div className="grid grid-cols-8 gap-1">
         {palette.map((swatch, index) => (
           <button
@@ -1579,96 +1579,101 @@ export function PalettePanel({
             style={index === 0 ? undefined : { background: swatch }}
           />
         ))}
-        <Popover
-          label="Add a color"
-          trigger={
-            <span className="grid aspect-square place-items-center text-pixel-mono">
-              +
-            </span>
-          }
-        >
-          <div className="grid gap-2">
-            <div
-              role="slider"
-              aria-label="Saturation and brightness"
-              aria-valuemin={0}
-              aria-valuemax={1}
-              aria-valuenow={Math.round(hsv.s * 100) / 100}
-              aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
-              tabIndex={0}
-              className="relative h-24 cursor-pointer border-2 border-line-strong"
-              style={{
-                background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${hsvToHex(hsv.h, 1, 1)})`,
-              }}
-              onKeyDown={(event) => {
-                const step = 0.05;
-                if (event.key === "ArrowLeft")
-                  setFromHsv({ ...hsv, s: Math.max(0, hsv.s - step) });
-                else if (event.key === "ArrowRight")
-                  setFromHsv({ ...hsv, s: Math.min(1, hsv.s + step) });
-                else if (event.key === "ArrowUp")
-                  setFromHsv({ ...hsv, v: Math.min(1, hsv.v + step) });
-                else if (event.key === "ArrowDown")
-                  setFromHsv({ ...hsv, v: Math.max(0, hsv.v - step) });
-                else return;
-                event.preventDefault();
-              }}
-              onPointerDown={(event) => {
-                event.currentTarget.setPointerCapture(event.pointerId);
-                squareHandlers(event);
-              }}
-              onPointerMove={(event) => {
-                if (event.buttons === 1) squareHandlers(event);
-              }}
-            >
-              <span
-                aria-hidden
-                className="pointer-events-none absolute h-2 w-2 border-2 border-ink"
+        {!locked ? (
+          <Popover
+            label="Add a color"
+            trigger={
+              <span className="grid aspect-square place-items-center text-pixel-mono">
+                +
+              </span>
+            }
+          >
+            <div className="grid gap-2">
+              <div
+                role="slider"
+                aria-label="Saturation and brightness"
+                aria-valuemin={0}
+                aria-valuemax={1}
+                aria-valuenow={Math.round(hsv.s * 100) / 100}
+                aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
+                tabIndex={0}
+                className="relative h-24 cursor-pointer border-2 border-line-strong"
                 style={{
-                  left: `calc(${hsv.s * 100}% - 4px)`,
-                  top: `calc(${(1 - hsv.v) * 100}% - 4px)`,
+                  background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${hsvToHex(hsv.h, 1, 1)})`,
                 }}
-              />
-            </div>
-            <input
-              aria-label="Hue"
-              type="range"
-              min={0}
-              max={359}
-              value={Math.round(hsv.h)}
-              onChange={(event) => setFromHsv({ ...hsv, h: Number(event.target.value) })}
-              className="hue-strip w-full border-2 border-line-strong bg-transparent"
-            />
-            <div className="grid grid-cols-8 gap-1">
-              {sweetie16.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  aria-label={`Preset ${preset}`}
-                  onClick={() => setFromHex(preset)}
-                  className="aspect-square border-2 border-line hover:border-line-strong"
-                  style={{ background: preset }}
+                onKeyDown={(event) => {
+                  const step = 0.05;
+                  if (event.key === "ArrowLeft")
+                    setFromHsv({ ...hsv, s: Math.max(0, hsv.s - step) });
+                  else if (event.key === "ArrowRight")
+                    setFromHsv({ ...hsv, s: Math.min(1, hsv.s + step) });
+                  else if (event.key === "ArrowUp")
+                    setFromHsv({ ...hsv, v: Math.min(1, hsv.v + step) });
+                  else if (event.key === "ArrowDown")
+                    setFromHsv({ ...hsv, v: Math.max(0, hsv.v - step) });
+                  else return;
+                  event.preventDefault();
+                }}
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  squareHandlers(event);
+                }}
+                onPointerMove={(event) => {
+                  if (event.buttons === 1) squareHandlers(event);
+                }}
+              >
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute h-2 w-2 border-2 border-ink"
+                  style={{
+                    left: `calc(${hsv.s * 100}% - 4px)`,
+                    top: `calc(${(1 - hsv.v) * 100}% - 4px)`,
+                  }}
                 />
-              ))}
+              </div>
+              <input
+                aria-label="Hue"
+                type="range"
+                min={0}
+                max={359}
+                value={Math.round(hsv.h)}
+                onChange={(event) =>
+                  setFromHsv({ ...hsv, h: Number(event.target.value) })
+                }
+                className="hue-strip w-full border-2 border-line-strong bg-transparent"
+              />
+              <div className="grid grid-cols-8 gap-1">
+                {sweetie16.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    aria-label={`Preset ${preset}`}
+                    onClick={() => setFromHex(preset)}
+                    className="aspect-square border-2 border-line hover:border-line-strong"
+                    style={{ background: preset }}
+                  />
+                ))}
+              </div>
+              <TextInput
+                value={draft}
+                aria-label="Hex color"
+                onChange={(event) => setFromHex(event.target.value)}
+              />
+              <Button
+                tone="solid"
+                disabled={!valid || exists}
+                onClick={() => onAdd(draft.toLowerCase())}
+              >
+                {exists ? "In palette" : "Add color"}
+              </Button>
             </div>
-            <TextInput
-              value={draft}
-              aria-label="Hex color"
-              onChange={(event) => setFromHex(event.target.value)}
-            />
-            <Button
-              tone="solid"
-              disabled={!valid || exists}
-              onClick={() => onAdd(draft.toLowerCase())}
-            >
-              {exists ? "In palette" : "Add color"}
-            </Button>
-          </div>
-        </Popover>
+          </Popover>
+        ) : null}
       </div>
       {onPalette ? (
         <Popover
           label="Manage palette"
+          disabled={locked}
           trigger={<span className="text-left">Manage colors</span>}
           triggerClassName="inline-flex items-center justify-start border-2 border-line-strong bg-panel px-2 py-1 text-pixel-label text-ink shadow-pixel-stone transition-colors duration-150 hover:bg-raised data-[popup-open]:border-accent"
         >
@@ -1793,6 +1798,7 @@ export function PalettePanel({
       {onImportPalette ? (
         <Button
           tone="ghost"
+          disabled={locked}
           className="justify-start px-2 py-1 text-pixel-label"
           onClick={onImportPalette}
         >
