@@ -426,7 +426,7 @@ export function Panel({
 }) {
   return (
     <section className={`flex min-h-0 min-w-0 flex-col gap-2 ${className}`}>
-      <header className="flex items-center justify-between gap-2 border-b-2 border-line pb-1.5">
+      <header className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b-2 border-line pb-1.5">
         {/* Micro-label decision: panel headers are Silkscreen 16, the same
             display face as dialog and sheet titles (see DESIGN.md). */}
         <div className="min-w-0">

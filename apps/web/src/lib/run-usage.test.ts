@@ -191,6 +191,8 @@ describe("formatting", () => {
     expect(formatDuration(900)).toBe("0.9s");
     expect(formatDuration(12_000)).toBe("12s");
     expect(formatDuration(121_000)).toBe("2m 01s");
+    expect(formatDuration(1_319_600)).toBe("22m 00s");
+    expect(formatDuration(3_599_600)).toBe("60m 00s");
   });
 
   it("reads the send time as a clock, adding the date on older turns", () => {

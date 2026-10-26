@@ -827,6 +827,46 @@ export function createApp() {
     }
   });
 
+  /** One frame's small PNG, for the frame rail while layers stay lazy. */
+  app.get("/api/assets/:id/frames/:frameId/thumbnail", async (req, res) => {
+    const [row] = await db
+      .select({
+        width: frames.width,
+        height: frames.height,
+        layers: frames.layers,
+        assetWidth: assets.width,
+        assetHeight: assets.height,
+        palette: assets.palette,
+      })
+      .from(frames)
+      .innerJoin(assets, eq(frames.assetId, assets.id))
+      .innerJoin(projects, eq(assets.projectId, projects.id))
+      .where(
+        and(
+          eq(frames.id, req.params.frameId ?? ""),
+          eq(frames.assetId, req.params.id ?? ""),
+          ne(frames.kind, "social"),
+          eq(projects.userId, res.locals.userId as string),
+        ),
+      )
+      .limit(1);
+    if (!row) return fail(res, 404, "NOT_FOUND", "That frame is not available.");
+    const width = row.width ?? row.assetWidth;
+    const height = row.height ?? row.assetHeight;
+    try {
+      const png = frameToPng(
+        frameToBuffer(row as never, width, height, row.palette as string[]),
+        1,
+      );
+      res
+        .type("png")
+        .set("cache-control", "private, max-age=0, must-revalidate")
+        .send(Buffer.from(png));
+    } catch {
+      return fail(res, 422, "THUMBNAIL_FAILED", "That frame could not be rendered.");
+    }
+  });
+
   function withoutLayers(asset: Awaited<ReturnType<typeof getAssetRecord>>) {
     if (!asset) return asset;
     return {

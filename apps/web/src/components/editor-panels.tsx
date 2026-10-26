@@ -105,6 +105,7 @@ function paintThumb(canvas: HTMLCanvasElement, buffer: FrameBuffer) {
 export function FrameThumb({
   frame,
   palette,
+  assetId,
   size = 36,
   width,
   height,
@@ -112,6 +113,8 @@ export function FrameThumb({
 }: {
   frame: FrameDto;
   palette: string[];
+  /** Set on the lazy summary rail: the frame's layers are not loaded yet. */
+  assetId?: string;
   size?: number;
   /** Document size. Without it a square frame is inferred from its pixels. */
   width?: number;
@@ -127,6 +130,30 @@ export function FrameThumb({
     if (!buffer) return;
     paintThumb(canvas, buffer);
   }, [frame, palette, width, height, live]);
+  // A summary frame has no layers to paint locally. Its PNG is one small
+  // request and keeps the rail honest without decoding every layer.
+  if (
+    assetId !== undefined &&
+    live === undefined &&
+    frame.kind !== "social" &&
+    frame.layers.length === 0
+  ) {
+    const version = frame.updatedAt ?? String(frame.version ?? 0);
+    return (
+      <img
+        src={`/api/assets/${assetId}/frames/${frame.id}/thumbnail?v=${encodeURIComponent(version)}`}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="shrink-0 border-2 border-line bg-screen object-contain"
+        style={{
+          width: size,
+          height: size,
+          imageRendering: "pixelated",
+        }}
+      />
+    );
+  }
   return (
     <canvas
       ref={ref}
@@ -270,6 +297,7 @@ function FrameRow({
             <FrameThumb
               frame={frame}
               palette={live?.palette ?? palette}
+              assetId={asset?.id}
               width={frame.width ?? pixelWidth}
               height={frame.height ?? pixelHeight}
               live={live}
@@ -1092,14 +1120,8 @@ export function LayerPanel({
                         {onOpacity || onBlend || onLock ? (
                           <Popover
                             label={`Settings for ${layer.name}`}
-                            trigger={
-                              <IconButton
-                                label={`Settings for ${layer.name}`}
-                                disabled={locked}
-                              >
-                                <Wrench />
-                              </IconButton>
-                            }
+                            trigger={<Wrench />}
+                            triggerClassName="grid h-7 w-7 shrink-0 place-items-center border-2 border-line text-muted shadow-pixel-sm transition-colors duration-150 hover:border-line-strong hover:bg-raised hover:text-ink data-[popup-open]:border-accent data-[popup-open]:text-accent"
                           >
                             <div className="grid min-w-48 gap-2">
                               <Field label="Opacity" htmlFor={`opacity-${layer.id}`}>
@@ -1604,11 +1626,8 @@ export function PalettePanel({
       {onPalette ? (
         <Popover
           label="Manage palette"
-          trigger={
-            <Button tone="ghost" className="justify-start px-2 py-1 text-pixel-label">
-              Manage colors
-            </Button>
-          }
+          trigger={<span className="text-left">Manage colors</span>}
+          triggerClassName="inline-flex items-center justify-start border-2 border-line-strong bg-panel px-2 py-1 text-pixel-label text-ink shadow-pixel-stone transition-colors duration-150 hover:bg-raised data-[popup-open]:border-accent"
         >
           <div className="grid max-h-64 gap-1 overflow-y-auto pr-1">
             {palette.map((swatch, index) =>

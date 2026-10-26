@@ -95,6 +95,13 @@ describe.skipIf(!db)("editor import and palette routes", () => {
       expect(detail.status).toBe(200);
       expect(detail.body.frame.layers.length).toBeGreaterThan(0);
       expect(detail.body.frame.undoHistory).toBeUndefined();
+
+      const thumb = await request(app)
+        .get(`/api/assets/${asset.id}/frames/${summary.body.frames[0].id}/thumbnail`)
+        .set("authorization", `Bearer ${token}`);
+      expect(thumb.status).toBe(200);
+      expect(thumb.headers["content-type"]).toContain("image/png");
+      expect(thumb.body.subarray(1, 4).toString()).toBe("PNG");
     } finally {
       await live.delete(projects).where(eq(projects.id, projectId));
     }
