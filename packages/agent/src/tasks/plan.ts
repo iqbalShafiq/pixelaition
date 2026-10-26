@@ -36,7 +36,24 @@ export const paletteAdditionSchema = z.object({
 export const planReferenceSchema = z.object({
   url: z.string().url(),
   note: z.string(),
-  appliesTo: z.union([z.literal("all"), z.array(z.string().min(1).max(40)).min(1)]),
+  // Models naturally name one frame ("duduk") or list several in one string
+  // ("ancang, melompat"). Both mean the same as the explicit array form.
+  appliesTo: z
+    .union([
+      z.literal("all"),
+      z.array(z.string().min(1).max(40)).min(1),
+      z.string().min(1),
+    ])
+    .transform((value) => {
+      if (value === "all" || Array.isArray(value)) return value;
+      return value
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
+    })
+    .refine((value) => value === "all" || value.length > 0, {
+      message: "Name at least one frame or use all.",
+    }),
 });
 export const planWorkerSchema = z.object({
   key: z.string().regex(/^w[1-4]$/),

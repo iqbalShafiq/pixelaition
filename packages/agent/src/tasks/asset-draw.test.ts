@@ -714,6 +714,21 @@ describe("parsePlanOutput", () => {
     const result = parsePlanOutput('{"frames":[]}');
     expect(result.ok).toBe(false);
   });
+  it("accepts a comma-separated frame list in a reference", () => {
+    const plan = JSON.parse(planJson);
+    plan.references = [
+      {
+        url: "https://example.com/cat.jpg",
+        note: "orange cat",
+        appliesTo: "idle, walk",
+      },
+    ];
+    const result = parsePlanOutput(JSON.stringify(plan));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.plan.references[0]?.appliesTo).toEqual(["idle", "walk"]);
+    }
+  });
 });
 
 describe("plan limits", () => {
