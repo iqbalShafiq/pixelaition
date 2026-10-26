@@ -37,8 +37,18 @@ test("imports an image into new frames and locks the palette", async ({ page }) 
   await expect(page.getByText("2 frames")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("hero", { exact: true }).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Lock", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Locked", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Lock palette", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Unlock palette", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByRole("button", { name: "Lock style guide", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Unlock style guide", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  // A metadata-only update must not leave the lazy canvas blank.
+  await expect(page.getByText("0 layers", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Unlock style guide", exact: true }).click();
 
   await page.request.delete(`/api/projects/${projectBody.id}`).catch(() => undefined);
 });

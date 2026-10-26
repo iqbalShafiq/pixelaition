@@ -33,6 +33,7 @@ import {
   Copy,
   Folder,
   Grid,
+  Lock,
   Menu as MenuIcon,
   Minus,
   Pencil,
@@ -41,6 +42,7 @@ import {
   Plus,
   Stop,
   Trash,
+  Unlock,
 } from "./pixel-icons.js";
 import {
   Button,
@@ -1439,6 +1441,39 @@ const palettePresets = [
   },
 ];
 
+/**
+ * One lock affordance for the two things the right panel can pin. The icon
+ * shows the current state (closed = locked) while the label names the action,
+ * so the same button never says "Lock" when it is already locked.
+ */
+function LockToggle({
+  locked,
+  subject,
+  hint,
+  onToggle,
+  disabled = false,
+}: {
+  locked: boolean;
+  subject: "palette" | "style guide";
+  hint: string;
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <IconButton
+      label={locked ? `Unlock ${subject}` : `Lock ${subject}`}
+      hint={hint}
+      active={locked}
+      subtle
+      size="sm"
+      disabled={disabled}
+      onClick={onToggle}
+    >
+      {locked ? <Lock /> : <Unlock />}
+    </IconButton>
+  );
+}
+
 export function PalettePanel({
   palette,
   color,
@@ -1506,20 +1541,28 @@ export function PalettePanel({
     <Panel
       title="Palette"
       action={
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
           <span className="text-pixel-mono text-muted">{usedColors} colors used</span>
           {onPalette ? (
-            <Button
-              tone={locked ? "solid" : "quiet"}
-              className="px-1.5 py-1 text-pixel-mono"
-              onClick={() => onPalette({ action: "lock", locked: !locked })}
-            >
-              {locked ? "Locked" : "Lock"}
-            </Button>
+            <LockToggle
+              locked={locked}
+              subject="palette"
+              hint={
+                locked
+                  ? "Palette colors are fixed for this asset."
+                  : "Allow adding, removing, or replacing colors."
+              }
+              onToggle={() => onPalette({ action: "lock", locked: !locked })}
+            />
           ) : null}
         </span>
       }
     >
+      {locked ? (
+        <p className="text-pixel-mono text-accent">
+          Locked — palette colors cannot be added, removed, or replaced.
+        </p>
+      ) : null}
       <div className="grid grid-cols-8 gap-1">
         {palette.map((swatch, index) => (
           <button
@@ -1818,7 +1861,23 @@ export function StylePanel({
   useEffect(() => setW(String(width)), [width]);
   useEffect(() => setH(String(height)), [height]);
   return (
-    <Panel title="Style guide">
+    <Panel
+      title="Style guide"
+      action={
+        onStyleLock ? (
+          <LockToggle
+            locked={styleLocked}
+            subject="style guide"
+            hint={
+              styleLocked
+                ? "Marked final for this asset. Click to reopen."
+                : "Mark the guide final for this asset."
+            }
+            onToggle={() => onStyleLock(!styleLocked)}
+          />
+        ) : undefined
+      }
+    >
       <dl className="grid gap-1 text-pixel-mono">
         <div className="flex items-baseline justify-between gap-2">
           <dt className="text-muted">outline</dt>
@@ -1837,20 +1896,6 @@ export function StylePanel({
         </div>
       </dl>
       {style.notes ? <p className="text-[12px] text-muted">{style.notes}</p> : null}
-      {onStyleLock ? (
-        <div className="flex items-center justify-between gap-2 border-t-2 border-line pt-1.5">
-          <span className="text-pixel-mono text-muted">
-            {styleLocked ? "style locked" : "style open"}
-          </span>
-          <Button
-            tone={styleLocked ? "solid" : "ghost"}
-            className="px-2 py-1 text-pixel-label"
-            onClick={() => onStyleLock(!styleLocked)}
-          >
-            {styleLocked ? "Unlock style" : "Lock style"}
-          </Button>
-        </div>
-      ) : null}
       {onColorMode ? (
         <Field label="Color mode" htmlFor="asset-color-mode">
           <SelectControl
@@ -1912,7 +1957,9 @@ export function StylePanel({
         </Field>
       )}
       <p className="text-xs text-muted">
-        The style guide belongs to the project, so every asset in it stays related.
+        {styleLocked
+          ? "Marked final for this asset; the project guide stays the source."
+          : "The style guide belongs to the project, so every asset in it stays related."}
       </p>
     </Panel>
   );

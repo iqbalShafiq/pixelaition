@@ -20,6 +20,7 @@ import {
   Grid3x3 as RawGrid3x3,
   Hand as RawHand,
   Layout as RawLayout,
+  Lock as RawLock,
   Logout as RawLogout,
   Menu as RawMenu,
   Minus as RawMinus,
@@ -34,6 +35,7 @@ import {
   Stop as RawStop,
   Tools as RawTools,
   Trash as RawTrash,
+  Unlock as RawUnlock,
 } from "pixelarticons/react";
 import type { ComponentType, SVGProps } from "react";
 
@@ -129,6 +131,8 @@ export const Check = crisp(RawCheck);
 export const Close = crisp(RawClose);
 export const Grid = crisp(RawGrid3x3);
 export const Export = crisp(RawDownload);
+export const Lock = crisp(RawLock);
+export const Unlock = crisp(RawUnlock);
 export const Undo = crisp(RawArrowLeft);
 export const Redo = crisp(RawArrowRight);
 export const Menu = crisp(RawMenu);
