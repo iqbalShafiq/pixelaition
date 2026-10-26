@@ -731,6 +731,29 @@ describe("parsePlanOutput", () => {
   });
 });
 
+describe("plan approval", () => {
+  it("sends a plan that never called present_plan back to the card", async () => {
+    const task = createAssetDrawTask({
+      ...deps,
+      planWasPresented: async () => false,
+    });
+    const { ctx, spawns } = fakeCtx({
+      checkpoint: { phase: "plan", attempt: 0, planKey: "plan" },
+      children: [
+        {
+          id: "child-plan",
+          key: "plan",
+          outcome: { status: "completed", output: planJson },
+        },
+      ],
+    });
+    const transition = await run(task, ctx);
+    expect(transition).toMatchObject({ status: "waiting" });
+    expect(spawns.map((spawn) => spawn.key)).toEqual(["plan-present"]);
+    expect(spawns[0]?.continueFrom).toBe("plan");
+  });
+});
+
 describe("plan limits", () => {
   it("reads a motion request as needing key frames", () => {
     expect(minFramesFor("a bird flapping its wings")).toBe(3);

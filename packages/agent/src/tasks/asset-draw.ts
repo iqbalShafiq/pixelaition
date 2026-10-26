@@ -76,6 +76,8 @@ const PHASE_EXTRAS = {
   retries: z.record(z.string(), z.number().int().min(0).max(3)).optional(),
   framesCreateTried: z.boolean().optional(),
   framesCreateKey: z.string().optional(),
+  /** A plan child that returned JSON without ever presenting a card. */
+  planPresentTried: z.boolean().optional(),
 };
 
 export const assetDrawCheckpointSchema = z.discriminatedUnion("phase", [
@@ -465,7 +467,7 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
     return {
       status: "waiting",
       checkpoint: {
-        phase: "plan",
+        ...checkpoint,
         attempt: checkpoint.attempt + 1,
         planKey: `plan-${checkpoint.attempt + 1}`,
       },
@@ -475,6 +477,39 @@ async function planPhase(ctx: Ctx, deps: AssetDrawDeps): Promise<Transition> {
   const plan = parsed.ok ? parsed.plan : undefined;
   if (plan === undefined) {
     return { status: "failed", error: "The plan was invalid twice: unknown." };
+  }
+  if (deps.planWasPresented !== undefined) {
+    // A model can answer with the JSON without ever calling present_plan. The
+    // plan is the one thing the user must approve, so send that same child
+    // back to present it rather than treating a silent plan as consent.
+    const presented = await deps.planWasPresented(ctx.input);
+    if (!presented) {
+      if (checkpoint.planPresentTried === true) {
+        return {
+          status: "failed",
+          error: "The plan was never presented, so the user never approved it.",
+        };
+      }
+      const id = ctx.spawnAgent("plan-present", {
+        agentId: ctx.input.agentId,
+        continueFrom: checkpoint.planKey,
+        prompt: [
+          "The plan JSON is ready, but it was never shown to the user.",
+          "Call present_plan now with a one-sentence summary. Do not change the frames, workers, palette, or references.",
+          "After the user answers, reply with the same plan JSON object and nothing else.",
+        ].join("\n"),
+        maxModelTurns: 6,
+      });
+      return {
+        status: "waiting",
+        checkpoint: {
+          ...checkpoint,
+          planPresentTried: true,
+          planKey: "plan-present",
+        },
+        wait: { type: "children", ids: [id], policy: "allSettled" },
+      };
+    }
   }
   // The approval is only half the job: a supervisor that ends its turn without
   // creating the frames it promised would leave the asset empty, so the task
@@ -1007,6 +1042,11 @@ export type WorkerContext = {
 };
 export type AssetDrawDeps = {
   loadPlanContext(input: AssetDrawInput): Promise<PlanContext>;
+  /**
+   * Whether this plan child reached the approval card. A plan answer without
+   * that call is not consent; the task sends it back to present.
+   */
+  planWasPresented?(input: AssetDrawInput): Promise<boolean>;
   /**
    * Every earlier drawing turn on this asset: user text, reference images,
    * and compact agent steps. Omitted in tests, which then plan from this

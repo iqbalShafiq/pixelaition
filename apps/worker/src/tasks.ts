@@ -191,6 +191,18 @@ export function buildTaskDeps(
         frames: frameRows.map((frame) => frame.name),
       };
     },
+    planWasPresented: async (input: AssetDrawInput) => {
+      if (input.taskId === undefined) return false;
+      const rows = await db
+        .select({ approvedScope: generationRuns.approvedScope })
+        .from(generationRuns)
+        .where(
+          and(eq(generationRuns.taskId, input.taskId), eq(generationRuns.role, "plan")),
+        );
+      return rows.some(
+        (row) => Array.isArray(row.approvedScope) && row.approvedScope.length > 0,
+      );
+    },
     claimDefaultFrame: async (input: AssetDrawInput, name: string) => {
       const rows = await db
         .select({ id: frames.id, name: frames.name, layers: frames.layers })
