@@ -51,25 +51,40 @@ test("a linked layer follows edits into the other frame", async ({ page }) => {
     steps: 5,
   });
   await page.mouse.up();
-  await page.waitForTimeout(900);
 
   await page.getByRole("button", { name: /Select second/ }).click();
-  await page.waitForTimeout(400);
 
-  const saved = await page.request.get(`/api/assets/${assetBody.id}`);
-  const body = (await saved.json()) as {
+  type Body = {
     frames: Array<{ name: string; layers: Array<{ linkId?: string; pixels: string }> }>;
   };
-  const first = body.frames.find((frame) => frame.name !== "second");
-  const second = body.frames.find((frame) => frame.name === "second");
+  async function readFrames() {
+    const saved = await page.request.get(`/api/assets/${assetBody.id}`);
+    const body = (await saved.json()) as Body;
+    return {
+      first: body.frames.find((frame) => frame.name !== "second"),
+      second: body.frames.find((frame) => frame.name === "second"),
+    };
+  }
+  // The linked sibling can be hydrated after the first paint, so the write is
+  // eventual rather than part of the stroke's synchronous path.
+  await expect
+    .poll(
+      async () => {
+        const { first, second } = await readFrames();
+        return (
+          second?.layers[0]?.pixels === first?.layers[0]?.pixels &&
+          [...Buffer.from(second?.layers[0]?.pixels ?? "", "base64")].some(
+            (value) => value !== 0,
+          )
+        );
+      },
+      { timeout: 15_000, intervals: [250, 500, 1_000] },
+    )
+    .toBe(true);
+
+  const { first, second } = await readFrames();
   expect(first?.layers[0]?.linkId).toBeTruthy();
   expect(second?.layers[0]?.linkId).toBe(first?.layers[0]?.linkId);
-  expect(second?.layers[0]?.pixels).toBe(first?.layers[0]?.pixels);
-  expect(
-    [...Buffer.from(second?.layers[0]?.pixels ?? "", "base64")].some(
-      (value) => value !== 0,
-    ),
-  ).toBe(true);
 
   await page.request.delete(`/api/projects/${projectBody.id}`).catch(() => undefined);
 });
