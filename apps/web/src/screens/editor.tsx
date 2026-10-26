@@ -3588,6 +3588,10 @@ export function EditorScreen() {
         body: JSON.stringify(input),
       });
       setDrafts({});
+      // Asset metadata can arrive without frame layers. Forget the detail
+      // cache too, or the lazy seed sees "already fetched" and leaves the
+      // canvas blank after a style-lock or resize refresh.
+      loadedDetail.current.clear();
       fitted.current = null;
       setSelection(null);
       await refresh();
